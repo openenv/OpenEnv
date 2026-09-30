@@ -62,6 +62,7 @@ is a one-line change.
 | `NovitaSandboxProvider` | Novita AI sandboxes | `pip install openenv[novita]` | ✅ |
 | `HFSandboxProvider` | Hugging Face sandboxes (billed as HF Jobs) | core | ✅ |
 | `KubernetesProvider` | Kubernetes cluster | `pip install openenv[kubernetes]` | ✅ |
+| `TensorlakeProvider` | Tensorlake sandboxes | `pip install openenv[tensorlake]` | ✅ |
 
 Cloud-provider SDKs are optional extras, imported lazily, so installing core
 OpenEnv pulls in no cloud SDK. The core providers (`LocalDockerProvider`,
@@ -319,6 +320,38 @@ start command is a keepalive rather than the image's `CMD`, which leaves port
 8000 free for the server the provider launches itself. That launch writes a PID
 file, so `wait_for_ready` can report a crashed server immediately instead of
 waiting out the full timeout.
+
+### TensorlakeProvider
+
+Runs the server in a Tensorlake sandbox. Install with
+`pip install openenv[tensorlake]`. Requires the `TENSORLAKE_API_KEY`
+environment variable.
+
+The sandbox boots from a registered Tensorlake sandbox image. OpenEnv CI
+publishes public environment images to GHCR. Register one with the `tl` CLI:
+
+```bash
+tl sbx image import ghcr.io/huggingface/openenv-echo-env:latest --registered-name echo-env
+```
+
+```python
+from openenv.core.containers.runtime.tensorlake_provider import TensorlakeProvider
+
+provider = TensorlakeProvider(image="echo-env", public=True)
+```
+
+The provider replaces the image `CMD` with a keep-alive command, so the image
+does not start its own server. It then starts the server from the `app` field
+of `/app/env/openenv.yaml` (pass `cmd=` to override) and exposes port 8000 on a
+**public** HTTPS URL. Anyone with the URL can reach the server while the
+sandbox runs, so you must pass `public=True` to accept this.
+
+The provider always blocks egress to `169.254.0.0/16`, which includes the
+cloud metadata endpoint. To block all other egress, pass an allowlist, for
+example `allow_out=["huggingface.co"]`. To block all egress, DNS included,
+pass `allow_out=[]`. To block more destinations, pass `deny_out=[...]`.
+
+Full example: [`examples/tensorlake_echo_env.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/tensorlake_echo_env.py).
 
 ### UVProvider
 
