@@ -11,6 +11,9 @@ on:
         description: "PEP 440 suffix for the TestPyPI build, for example .dev123 or rc1. Defaults to .dev<run_number><run_attempt>."
         required: false
         type: string
+  push:
+    branches:
+      - "testpypi/**"
 
 
 concurrency:
@@ -152,7 +155,7 @@ jobs:
           python -m pip install --index-url https://pypi.org/simple/ dist/*.whl
           python -m pip uninstall -y openenv
 
-          for attempt in 1 2 3 4 5; do
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             if python -m pip install \
               --no-deps \
               --index-url https://test.pypi.org/simple/ \
