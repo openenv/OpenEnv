@@ -40,7 +40,14 @@ from .tasks import Task, TASKS
 
 logger = logging.getLogger(__name__)
 
-TEST_SEED = int(os.environ.get("POSTTRAIN_TEST_SEED") or secrets.randbelow(2**31))
+if os.environ.get("POSTTRAIN_TEST_SEED"):
+    TEST_SEED = int(os.environ["POSTTRAIN_TEST_SEED"])
+else:
+    TEST_SEED = secrets.randbelow(2**31)
+    logger.warning(
+        "POSTTRAIN_TEST_SEED is not set: the hidden test split is random for this "
+        "process, so scores are not comparable with other server processes"
+    )
 TOOL_TIMEOUT_S = 120.0
 MAX_LOG_CHARS = 20_000
 
@@ -457,7 +464,6 @@ class PostTrainEnvironment(MCPEnvironment):
             script_path=task.eval_script_path,
             flavor=task.eval_flavor,
             timeout_minutes=task.eval_timeout_minutes,
-            dependencies=list(task.eval_dependencies),
             env={
                 "POSTTRAIN_SPLIT": split,
                 "POSTTRAIN_SEED": str(seed),

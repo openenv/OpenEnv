@@ -5,7 +5,8 @@
 Each task tells the agent what to train, which HF Jobs hardware it may use and
 how much it may spend. The evaluator script runs as its own job: the agent's
 checkpoint is mounted read-only at `/model`, and the job prints one
-`POSTTRAIN_SCORE {...}` line that the broker parses.
+`POSTTRAIN_SCORE {...}` line that the broker parses. Evaluators pin their
+dependencies in their own PEP 723 header, so scores don't drift with releases.
 """
 
 from dataclasses import dataclass
@@ -40,8 +41,6 @@ class Task:
             Hardware flavor for dev and score evaluations.
         eval_timeout_minutes (`int`):
             Timeout for one evaluation job.
-        eval_dependencies (`tuple[str, ...]`):
-            Packages the evaluator needs, passed to `uv run --with`.
         dev_seed (`int`):
             Seed of the public dev split.
         max_episode_minutes (`int`):
@@ -58,7 +57,6 @@ class Task:
     eval_script: str
     eval_flavor: str
     eval_timeout_minutes: int
-    eval_dependencies: tuple[str, ...] = ()
     dev_seed: int = 0
     max_episode_minutes: int = 240
 
@@ -96,11 +94,13 @@ TASKS = {
         prompt=(
             "Fine-tune `HuggingFaceTB/SmolLM2-135M-Instruct` so that it answers "
             "two-digit addition in an exact format. The evaluator sends the chat "
-            "message `What is {{a}} + {{b}}?` (0 <= a, b <= 99) through the "
-            "tokenizer's chat template with `add_generation_prompt=True`, decodes "
-            "up to 16 new tokens greedily, and counts an answer as correct only if "
-            "the stripped reply is exactly `#### {{a+b}}`. Save the full model and "
-            "tokenizer with `save_pretrained` to `/data/outputs/`. The reward is "
+            "message `What is {{a}} + {{b}}?` (0 <= a, b <= 99) through the base "
+            "model's chat template with `add_generation_prompt=True`, decodes up to "
+            "16 new tokens greedily, and counts an answer as correct only if the "
+            "stripped reply is exactly `#### {{a+b}}`. Only your weights are used: "
+            "the tokenizer, chat template, config and generation settings are the "
+            "base model's, so keep its architecture and vocabulary. Save the model "
+            "with `save_pretrained` (safetensors) to `/data/outputs/`. The reward is "
             "the accuracy on a hidden test split; `dev_evaluate` scores the public "
             "dev split (seed 1234). " + OUTPUTS_NOTE
         ),
@@ -112,7 +112,6 @@ TASKS = {
         eval_script="t0_arithmetic_format_eval.py",
         eval_flavor="cpu-upgrade",
         eval_timeout_minutes=20,
-        eval_dependencies=("torch", "transformers"),
         dev_seed=1234,
     ),
 }

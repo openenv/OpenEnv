@@ -43,6 +43,11 @@ openenv-artifact://<episode>/<job_id>/outputs
 Evaluations run the task's evaluator script as their own job with that folder
 mounted read-only at `/model`. The evaluator prints one `POSTTRAIN_SCORE {...}`
 line. A missing line, or a score outside [0, 1], scores 0 as `invalid`.
+Evaluators take only weights from the artifact, loaded as safetensors. The
+tokenizer, chat template, config and generation settings come from the base
+model at a pinned revision, because a chat template is a program that sees the
+question and could write the answer into the prompt. Each evaluator pins its
+dependencies in its PEP 723 header, with an `exclude-newer` date for the rest.
 
 Jobs are started with an explicit flavor, namespace, timeout and labels, and
 with no secrets. The broker never passes its own token into a job: a job holding
@@ -103,7 +108,7 @@ Configuration, all read by the server only:
 | `HF_TOKEN` | Broker token. A fine-grained token with "Start and manage Jobs" plus write access to `<namespace>/jobs-artifacts`. A Jobs-only token is refused when the script is uploaded |
 | `POSTTRAIN_NAMESPACE` | Namespace jobs run and bill in. Defaults to the token's owner |
 | `POSTTRAIN_RESOURCE_GROUP_ID` | Resource Group to bill. Its Jobs spend limit caps total spend even if the ledger is wrong |
-| `POSTTRAIN_TEST_SEED` | Seed of the hidden test split. Random per process if unset, so scores are only comparable within one server process |
+| `POSTTRAIN_TEST_SEED` | Seed of the hidden test split. Set it for any run whose scores you compare: if unset it is random per process (the server logs a warning), so scores are only comparable within one server process. Keep it secret from the agent |
 
 Run the server where its token is not shared with the agent, for example a
 container you control. Do not deploy it as a public Space: a Space gives no

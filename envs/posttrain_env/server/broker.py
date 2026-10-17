@@ -270,7 +270,6 @@ class Broker:
         script_path: Path,
         flavor: str,
         timeout_minutes: int,
-        dependencies: list[str],
         env: dict[str, str],
     ) -> Job:
         """Run an evaluator job on `source`'s artifact, mounted read-only at `/model`."""
@@ -294,7 +293,7 @@ class Broker:
             flavor=flavor,
             timeout_minutes=timeout_minutes,
             reservation=reservation,
-            dependencies=dependencies,
+            dependencies=[],
             env=env,
             volumes=[model],
         )

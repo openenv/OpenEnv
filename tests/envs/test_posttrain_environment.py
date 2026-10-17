@@ -308,7 +308,7 @@ class TestEvaluation:
         )
         assert run["env"]["POSTTRAIN_SPLIT"] == "dev"
         assert run["env"]["POSTTRAIN_SEED"] == "1234"
-        assert run["dependencies"] == ["torch", "transformers"]
+        assert run["dependencies"] == []
         assert run["labels"]["openenv-role"] == "dev_eval"
         assert "POSTTRAIN_SCORE" in run["script"]
 
