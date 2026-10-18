@@ -60,8 +60,8 @@ Money is tracked in micro-USD from the prices `list_jobs_hardware` reports.
 A job settles at its price per minute times its running minutes, rounded up to
 whole minutes. Grader evaluations are not charged to the agent.
 
-Every observation carries the episode's spend, so a trainer can pass it to a
-cost-aware sampler (RFC 013) as `costs`:
+Every observation carries the episode's spend, for accounting and for planning
+budgets and concurrency. It is not a sampling weight (RFC 013):
 
 ```python
 obs.metadata["service_spend"]

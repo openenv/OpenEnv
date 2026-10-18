@@ -29,7 +29,7 @@ Environments answer five questions ad hoc:
 
 1. A service contract an environment declares, instead of per-env plumbing.
 2. Credentials that stay with a broker; the agent and its jobs hold none.
-3. A per-rollout budget that reserves before spending and settles after, published in a stable form for cost-aware samplers (RFC 013).
+3. A per-rollout budget that reserves before spending and settles after, published in a stable form so trainers can account for spend and plan budgets and concurrency.
 4. Jobs with handles, cancellation at episode end and a defined orphan state.
 5. Evaluation split into an agent-callable dev endpoint and a grader-only score.
 
@@ -77,7 +77,7 @@ budget: {usd: 3.0, scope: rollout}
 
 **Budget ledger.** Money is integer micro-USD. Before a job starts the broker reserves its worst case, the flavor's per-minute price times the job's timeout, and refuses the job with a typed `budget_exhausted` error if it does not fit. When the job ends the reservation is replaced by the real cost, the per-minute price times the minutes the job ran, rounded up to whole minutes as HF Jobs bills. Budgets are per rollout and set by the orchestrator, so every rollout in a GRPO group faces the same limit. The agent sees its remaining budget as data, never as reward. The ledger is the broker's estimate; the provider's bill is authoritative, and a provider-side cap is the backstop (see Credentials).
 
-Every observation carries a stable spend entry. RFC 013's sampler never reads the environment: the trainer reads this entry from the final observation and forwards one value per rollout as `costs` to `update(task, rewards, costs)`.
+Every observation carries a stable spend entry. It is for accounting and for planning budgets and concurrency, never a sampling weight: dividing a task's sampling weight by its cost would starve expensive, hard tasks. RFC 013's sampler never reads the environment; the trainer reads this entry from the final observation and can report one value per rollout as `costs` to `update(task, rewards, costs)`.
 
 ```python
 obs.metadata["service_spend"] = {
@@ -202,6 +202,6 @@ Also: audit records keyed to `(episode, step, tool_call_id)` as OpenTelemetry Ge
 ## Related
 
 - RFC 009 openenvd (#1053, #1354, #1355): the base for credential custody and the grader zone.
-- RFC 013 task sampling (#1256): consumes `service_spend`.
+- RFC 013 task sampling (#1256): reports `service_spend` as cost, not as a sampling weight.
 - RFC 003: the MCP 2026-07-28 amendment. RFC 004: `score` feeds rubrics. RFC 005/006: LLM proxying is the future model-call profile. RFC 008: contract checks for declared services, plus #1357's adversarial panel. RFC 012: separate-verifier precedent.
 - Issues: #898, #1026, #1232, #1299, #1357, #779.
