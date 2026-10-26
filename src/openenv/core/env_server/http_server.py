@@ -288,6 +288,7 @@ class HTTPEnvServer:
             self._concurrency_config.session_timeout
         )
         self._reaper_task: Optional[asyncio.Task[None]] = None
+        self._reaper_stop_event = asyncio.Event()
 
     def _default_env_name(self) -> str:
         factory = self._env_factory
@@ -553,7 +554,13 @@ class HTTPEnvServer:
         interval = max(timeout / 4, 5.0)  # check frequently enough
         while True:
             try:
-                await asyncio.sleep(interval)
+                try:
+                    await asyncio.wait_for(
+                        self._reaper_stop_event.wait(), timeout=interval
+                    )
+                    return
+                except asyncio.TimeoutError:
+                    pass
                 now = time.time()
                 stale_ids: list[str] = []
                 async with self._session_lock:
@@ -564,6 +571,8 @@ class HTTPEnvServer:
                         ):
                             stale_ids.append(sid)
                 for sid in stale_ids:
+                    if self._reaper_stop_event.is_set():
+                        return
                     # Re-check under lock: activity may have arrived since
                     # the snapshot was taken, making this session active again.
                     # Refresh `now` so slow _destroy_session calls don't cause
@@ -589,12 +598,14 @@ class HTTPEnvServer:
     def _start_reaper(self) -> None:
         """Start the idle-session reaper if a timeout is configured."""
         if self._session_idle_timeout_s is not None and self._reaper_task is None:
+            self._reaper_stop_event.clear()
             self._reaper_task = asyncio.create_task(self._reap_idle_sessions())
 
-    def _stop_reaper(self) -> None:
-        """Cancel the reaper background task."""
+    async def _stop_reaper(self) -> None:
+        """Stop the reaper after any in-progress session cleanup finishes."""
         if self._reaper_task is not None:
-            self._reaper_task.cancel()
+            self._reaper_stop_event.set()
+            await self._reaper_task
             self._reaper_task = None
 
     def get_session_info(self, session_id: str) -> Optional[SessionInfo]:
@@ -899,20 +910,24 @@ class HTTPEnvServer:
                     f"Invalid mode: '{mode}'. Must be one of: {valid_modes}"
                 )
 
-        # Wire up idle-session reaper lifecycle via app events
+        # Wire up session lifecycle via app events
         server_ref = self
 
         async def _start_session_reaper() -> None:
             server_ref._start_reaper()
 
-        async def _stop_session_reaper() -> None:
-            server_ref._stop_reaper()
+        async def _shutdown_sessions() -> None:
+            await server_ref._stop_reaper()
+            async with server_ref._session_lock:
+                session_ids = list(server_ref._sessions)
+            for session_id in session_ids:
+                await server_ref._destroy_session(session_id)
             if server_ref._shared_session_executor is not None:
                 server_ref._shared_session_executor.shutdown(wait=True)
 
         if not getattr(app.router, "_openenv_reaper_registered", False):
             app.router.on_startup.append(_start_session_reaper)
-            app.router.on_shutdown.append(_stop_session_reaper)
+            app.router.on_shutdown.append(_shutdown_sessions)
             app.router._openenv_reaper_registered = True  # type: ignore[attr-defined]
 
         # Helper function to handle reset endpoint
