@@ -106,6 +106,41 @@ def test_hidden_directories_are_skipped(tmp_path):
     assert [p.name for p in tasks._task_dirs_from_directory(tmp_path)] == ["real"]
 
 
+def test_grouped_task_folders_are_found(tmp_path):
+    """terminal-bench-science nests tasks as `tasks/<field>/<subfield>/<task>/`."""
+    grouped = tmp_path / "tasks"
+    for rel in ("earth/ocean/b-task", "earth/geo/a-task", "life/c-task"):
+        (grouped / rel).mkdir(parents=True)
+        (grouped / rel / "task.toml").write_text("")
+    found = tasks._task_dirs_from_directory(tmp_path)
+    assert [p.name for p in found] == ["a-task", "b-task", "c-task"]
+
+
+def test_a_flat_folder_without_task_toml_does_not_trigger_the_nested_search(tmp_path):
+    """One broken task must not reshuffle the indexes of the others."""
+    for name in ("t2", "t1", "broken"):
+        (tmp_path / "tasks" / name).mkdir(parents=True)
+    for name in ("t1", "t2"):
+        (tmp_path / "tasks" / name / "task.toml").write_text("")
+    assert [p.name for p in tasks._task_dirs_from_directory(tmp_path)] == [
+        "broken",
+        "t1",
+        "t2",
+    ]
+
+
+def test_a_grouped_layout_does_not_follow_symlinks(tmp_path):
+    """A symlinked folder can point outside the dataset, or back into it (a loop); neither is walked."""
+    (tmp_path / "tasks" / "group" / "a").mkdir(parents=True)
+    (tmp_path / "tasks" / "group" / "a" / "task.toml").write_text("")
+    (tmp_path / "outside" / "b").mkdir(parents=True)
+    (tmp_path / "outside" / "b" / "task.toml").write_text("")
+    (tmp_path / "tasks" / "linked").symlink_to(tmp_path / "outside")
+    (tmp_path / "tasks" / "group" / "loop").symlink_to(tmp_path / "tasks")
+    found = tasks._task_dirs_from_directory(tmp_path)
+    assert [p.relative_to(tmp_path).as_posix() for p in found] == ["tasks/group/a"]
+
+
 def test_discovery_does_not_validate_by_default(tmp_path):
     """Validation costs a file read per task, and discovery is on every /splits call.
 

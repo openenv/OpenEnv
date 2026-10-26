@@ -124,10 +124,10 @@ class FinQAEnvironment(MCPEnvironment):
         # Pass the MCP server to the base class
         super().__init__(mcp)
 
-        # Shuffle dataset for sequential selection
-        self._shuffled_questions = self.questions.copy()
-        random.shuffle(self._shuffled_questions)
-        self._question_index = 0
+        # Shuffle dataset for sequential selection. The env owns its RNG so
+        # that reset(seed=...) can make the question order reproducible.
+        self._rng = random.Random()
+        self._start_new_pass()
 
         self._state = FinQAState()
         self._history: List[Dict[str, Any]] = []
@@ -159,11 +159,16 @@ class FinQAEnvironment(MCPEnvironment):
 
         return questions
 
+    def _start_new_pass(self) -> None:
+        """Shuffle the full dataset into a new order and start from the top."""
+        self._shuffled_questions = self.questions.copy()
+        self._rng.shuffle(self._shuffled_questions)
+        self._question_index = 0
+
     def _get_next_question(self) -> Dict[str, Any]:
         """Get the next question using sequential shuffle selection."""
         if self._question_index >= len(self._shuffled_questions):
-            random.shuffle(self._shuffled_questions)
-            self._question_index = 0
+            self._start_new_pass()
 
         question = self._shuffled_questions[self._question_index]
         self._question_index += 1
@@ -178,9 +183,19 @@ class FinQAEnvironment(MCPEnvironment):
         """
         Reset the environment for a new episode.
 
+        Args:
+            seed: If given, reseed the question order. The same seed always
+                yields the same question, and the same sequence of questions
+                on the unseeded resets that follow.
+            episode_id: Optional episode identifier (generated if omitted)
+
         Returns:
             Initial observation with the question
         """
+        if seed is not None:
+            self._rng = random.Random(seed)
+            self._start_new_pass()
+
         question = self._get_next_question()
         self._state = FinQAState(
             episode_id=episode_id or str(uuid.uuid4()),

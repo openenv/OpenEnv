@@ -2,9 +2,11 @@
 
 """FastAPI application for the Pelican SVG environment."""
 
+import os
+
 from openenv.core.env_server import create_app
 
-from ..models import PelicanSvgAction, PelicanSvgObservation
+from ..models import PelicanSvgAction, PelicanSvgObservation, PelicanSvgState
 from .pelican_svg_environment import PelicanSvgEnvironment
 
 # The class is passed rather than an instance so each WebSocket session gets
@@ -14,6 +16,8 @@ app = create_app(
     PelicanSvgAction,
     PelicanSvgObservation,
     env_name="pelican_svg_env",
+    state_cls=PelicanSvgState,
+    max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
 )
 
 

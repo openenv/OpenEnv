@@ -1,4 +1,4 @@
-# Reward Design
+# Rewards
 
 Good reward signals are the single biggest lever on RL training outcomes — and the hardest thing to get right. This page covers the design principles that apply in OpenEnv and points to the [Rubrics tutorial](../tutorials/rubrics.md) for the concrete implementation API.
 
@@ -89,5 +89,5 @@ Per-turn progress helps the agent explore, but the terminal outcome still domina
 
 - [Rubrics tutorial](../tutorials/rubrics.md) — full API walkthrough with composable examples.
 - [RFC 004](https://github.com/huggingface/OpenEnv/blob/main/rfcs/004-rubrics.md) — design rationale.
-- [RL Framework Integration](rl-integration.md) — consume the reward signal in a training loop.
+- [Training with OpenEnv](training.md) — consume the reward signal in a training loop.
 - [Concepts](concepts.md) — where the rubric plugs in.

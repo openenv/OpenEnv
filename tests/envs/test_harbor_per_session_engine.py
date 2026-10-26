@@ -93,6 +93,20 @@ def test_the_probe_is_cached_per_engine(monkeypatch):
     assert calls == ["http://train:8000"], f"probed {len(calls)} times, expected 1"
 
 
+def test_a_forgotten_engine_drops_its_client_and_is_probed_again(monkeypatch):
+    """`forget` is for a caller whose key should not outlive their use of it."""
+    app, calls = app_with(monkeypatch, probe={"http://train:8000": "tokens"})
+    with TestClient(app) as client:
+        client.post("/sessions", json={"llm_url": "http://train:8000", "api_key": "k"})
+        pool = app.state.upstreams
+        upstream = sessions.Upstream(llm_url="http://train:8000", api_key="k")
+        pool.forget(upstream)
+        assert pool.known() == []
+        pool.forget(upstream)  # forgetting twice is harmless
+        client.post("/sessions", json={"llm_url": "http://train:8000", "api_key": "k"})
+    assert calls == ["http://train:8000", "http://train:8000"]
+
+
 def test_a_session_with_no_engine_and_no_default_is_told_so(monkeypatch):
     """Better than forwarding to an empty base URL, which reads as a connection fault."""
     app, _ = app_with(monkeypatch)
@@ -129,6 +143,23 @@ def test_health_lists_the_engines_it_has_measured(monkeypatch):
             "capture_level": "tokens",
         }
     ]
+
+
+def test_health_keeps_other_callers_engines_behind_the_admin_key(monkeypatch):
+    """On a public Space, `/health` is public, and probed engines are other visitors' endpoints."""
+    app, _ = app_with(monkeypatch, probe={"http://train:8000": "tokens"})
+    app.state.admin_key = "admin"
+    with TestClient(app) as client:
+        client.post(
+            "/sessions",
+            json={"llm_url": "http://train:8000"},
+            headers={"Authorization": "Bearer admin"},
+        )
+        assert client.get("/health").json()["upstreams"] == []
+        listed = client.get(
+            "/health", headers={"Authorization": "Bearer admin"}
+        ).json()["upstreams"]
+    assert [u["llm_url"] for u in listed] == ["http://train:8000"]
 
 
 def test_an_unprobeable_engine_is_the_weakest_tier_not_a_crash():

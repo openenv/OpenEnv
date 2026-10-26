@@ -14,8 +14,6 @@ claiming to be the main one.
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 models = pytest.importorskip("openenv.harbor.models")
@@ -235,7 +233,7 @@ def test_turns_html_does_not_show_the_tools_offered_count():
         }
     )
     assert "24 tools" not in out
-    assert "bash" in out and "confidence" in out
+    assert "bash" in out and "confidence" in out.lower()
 
 
 def test_escaping_prevents_markup_injection_from_a_model_reply():
@@ -258,7 +256,7 @@ def test_escaping_prevents_markup_injection_from_a_model_reply():
 # --- the training contract --------------------------------------------------
 def test_contract_keeps_full_logprobs(tmp_path):
     """The reason it is a separate artifact: these cannot be recovered by replaying the prompt."""
-    path = ui._write_contract(
+    data = ui._contract(
         {
             "task_name": "t",
             "reward": 1.0,
@@ -274,7 +272,6 @@ def test_contract_keeps_full_logprobs(tmp_path):
             ],
         }
     )
-    data = json.loads(open(path).read())
     assert data["turns"][0]["per_token_logps"] == [-0.01, -0.02]
     assert data["turns"][0]["prompt_token_ids"] == [1, 2]
     assert data["reward"] == 1.0
@@ -282,7 +279,7 @@ def test_contract_keeps_full_logprobs(tmp_path):
 
 def test_contract_keeps_discarded_turns_but_flags_them():
     """A trainer must be able to exclude them deliberately, not never learn they happened."""
-    path = ui._write_contract(
+    data = ui._contract(
         {
             "task_name": "t",
             "reward": 0.0,
@@ -296,35 +293,8 @@ def test_contract_keeps_discarded_turns_but_flags_them():
             ],
         }
     )
-    assert json.loads(open(path).read())["turns"][0]["discarded"] is True
+    assert data["turns"][0]["discarded"] is True
 
 
-def test_no_turns_means_no_contract_file():
-    assert ui._write_contract({"task_name": "t", "turns": []}) is None
-
-
-def test_summary_json_collapses_token_arrays():
-    """Printing 8000 integers first buries every field that carries meaning."""
-    compact = json.loads(
-        ui._summary_json(
-            {
-                "reward": 1.0,
-                "turns": [
-                    {
-                        "turn": 0,
-                        "prompt_token_ids": list(range(8000)),
-                        "completion_token_ids": [1],
-                        "per_token_logps": [-0.1],
-                        "tool_calls": [{"name": "bash"}],
-                    }
-                ],
-                "conversations": [
-                    {"role": "agent", "n_turns": 1, "messages": [{}, {}]}
-                ],
-            }
-        )
-    )
-    assert compact["turns"][0]["prompt_token_ids"] == "<8000 ids>"
-    assert compact["turns"][0]["action"] == ["bash"]
-    assert compact["conversations"][0]["messages"] == "<2 messages>"
-    assert compact["reward"] == 1.0
+def test_no_turns_means_no_contract():
+    assert ui._contract({"task_name": "t", "turns": []}) is None

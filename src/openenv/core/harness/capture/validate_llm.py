@@ -49,7 +49,12 @@ import urllib.request
 from dataclasses import dataclass, field
 
 from .compat import behaviour_warnings, diagnose, MAX_FIXES
-from .upstream import auth_headers, normalise_engine_base, normalize_response
+from .upstream import (
+    auth_headers,
+    normalise_engine_base,
+    normalize_response,
+    openai_api_base,
+)
 from .validate import check_upstream_response
 
 # The one place the engine requirements are spelled out. Three call sites used to carry their own
@@ -166,7 +171,7 @@ def list_models(
     """Served model ids, or [] if the endpoint is unreachable or does not publish a list."""
     try:
         request = urllib.request.Request(
-            f"{normalise_engine_base(llm_url)}/v1/models",
+            f"{openai_api_base(llm_url)}/models",
             headers=auth_headers(api_key, auth_header),
         )
         with urllib.request.urlopen(request, timeout=timeout) as r:
@@ -291,7 +296,7 @@ def probe_tool_support(
     while True:
         try:
             payload = _post(
-                f"{base}/v1/chat/completions",
+                f"{openai_api_base(base)}/chat/completions",
                 body,
                 timeout,
                 api_key=api_key,
@@ -362,7 +367,7 @@ def probe_logprobs_mode(
 
     Args:
         base (`str`):
-            Engine root, already normalised.
+            OpenAI-compatible base URL, with or without `/v1`.
         model (`str`):
             Model id to probe.
         timeout (`float`, *optional*, defaults to `60.0`):
@@ -398,7 +403,7 @@ def probe_logprobs_mode(
             fix.apply(body)
         try:
             payload = _post(
-                f"{base}/v1/chat/completions",
+                f"{openai_api_base(base)}/chat/completions",
                 body,
                 timeout,
                 api_key=api_key,
@@ -538,7 +543,8 @@ def validate_llm(
 
     Args:
         llm_url (`str`):
-            OpenAI-spec endpoint. Accepts both `http://host:8000` and `http://host:8000/v1`.
+            OpenAI-spec endpoint. Accepts `http://host:8000`, `http://host:8000/v1`, or a
+            provider base with its own path such as `.../v1beta/openai`.
         model (`str`):
             Model id to probe.
         timeout (`float`, *optional*, defaults to `120.0`):
@@ -551,15 +557,15 @@ def validate_llm(
     Returns:
         [`LLMReport`]: `capture_level`, whether it is trainable, and every workaround applied.
     """
-    # Accepts both `http://host:8000` and `http://host:8000/v1`, so a URL that works with any
-    # OpenAI SDK also works here instead of probing `/v1/v1/models` and reporting it dead.
+    # Same base rule as the OpenAI SDK, so a URL that works there also works here instead of
+    # probing `/v1/v1/models` or `/v1beta/openai/v1/models` and reporting it dead.
     if provider not in {"openai", "anthropic", "hf", "vllm"}:
         raise ValueError(f"Unknown upstream provider: {provider}")
     if provider == "anthropic":
         return _validate_anthropic(
             llm_url, model, timeout=timeout, api_key=api_key, check_tools=check_tools
         )
-    base = normalise_engine_base(llm_url)
+    base = openai_api_base(llm_url)
     served = list_models(
         base, timeout=min(timeout, 30.0), api_key=api_key, auth_header=auth_header
     )
@@ -603,7 +609,7 @@ def validate_llm(
     while payload is None:
         try:
             payload = _post(
-                f"{base}/v1/chat/completions",
+                f"{base}/chat/completions",
                 body,
                 timeout,
                 api_key=api_key,

@@ -136,6 +136,17 @@ class TestDeclaredResetClass:
         assert received["task_id"] == "not-an-int"
         assert received["extra"] == "x"
 
+    def test_websocket_reset_is_not_validated_against_reset_cls(self, declared_client):
+        with declared_client.websocket_connect("/ws") as ws:
+            ws.send_json(
+                {"type": "reset", "data": {"task_id": "not-an-int", "extra": "x"}}
+            )
+            response = ws.receive_json()
+        assert response["type"] == "observation"
+        [received] = RecordingEnvironment.reset_calls
+        assert received["task_id"] == "not-an-int"
+        assert received["extra"] == "x"
+
 
 class TestDefaultResetClass:
     """Omitting `reset_cls` publishes the base `ResetRequest` schema."""

@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PROJECT = ROOT / "tests/validation_runtime"
 FIXTURE = ROOT / "tests/fixtures/validation/runtime/served_probe"
+ECHO_OVERLAY = ROOT / "tests/fixtures/validation/runtime/echo_canary"
 MAX_LOG_BYTES = 1024 * 1024
 
 
@@ -349,6 +350,56 @@ def stage_image(work, output, pins, manifest):
     return context, image
 
 
+def stage_echo_canary(work, context, output, manifest):
+    """Stage unchanged reference-environment sources without importing them."""
+    import yaml
+
+    source = ROOT / "envs/echo_env"
+    if any(path.is_symlink() for path in source.rglob("*")):
+        raise RuntimeError("Echo source snapshots do not permit symlinks")
+    target = work / "echo-subject"
+    target.mkdir()
+    shutil.copytree(
+        source,
+        target / "echo_env",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".venv", "*.egg-info"),
+    )
+    copied = hashes(target / "echo_env")
+    if any(digest(source / name) != value for name, value in copied.items()):
+        raise RuntimeError("Echo source changed while the canary was staged")
+    # The wheelhouse and pinned, offline installation are shared with the probe.
+    shutil.copytree(context / "wheelhouse", target / "wheelhouse")
+    shutil.copyfile(context / "requirements.txt", target / "requirements.txt")
+    dockerfile = (context / "Dockerfile").read_text()
+    substitutions = {
+        "COPY served_probe /app/served_probe": "COPY echo_env /app/echo_env",
+        '["python", "-m", "served_probe.app"]': '["python", "-m", "echo_env.server.app"]',
+    }
+    for before, after in substitutions.items():
+        if dockerfile.count(before) != 1:
+            raise RuntimeError("Shared image recipe changed; review the Echo canary")
+        dockerfile = dockerfile.replace(before, after)
+    (target / "Dockerfile").write_text(dockerfile)
+    declaration = yaml.safe_load((source / "openenv.yaml").read_text())
+    declaration["validation"]["execution"] = json.loads(
+        (ECHO_OVERLAY / "execution.json").read_text()
+    )
+    (target / "openenv.yaml").write_text(yaml.safe_dump(declaration, sort_keys=False))
+    shutil.copytree(ECHO_OVERLAY / "validation", target / "validation")
+    provenance = {
+        "source_directory": "envs/echo_env",
+        "source_hashes": copied,
+        "overlay_hashes": hashes(ECHO_OVERLAY),
+        "dockerfile_sha256": digest(target / "Dockerfile"),
+        "manifest_sha256": digest(target / "openenv.yaml"),
+        "wheel_sha256": manifest["wheel_sha256"],
+        "subject_imported_on_host": False,
+    }
+    manifest["echo_canary"] = provenance
+    write_json(output / "echo-canary-source.json", provenance)
+    return target
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -368,11 +419,14 @@ def main():
     run_id = f"l2-{uuid.uuid4().hex[:12]}"
     output = (args.output / run_id).resolve()
     output.mkdir(parents=True)
+    inventory = PROJECT / "acceptance.json"
+    shutil.copyfile(inventory, output / "acceptance.json")
     print(f"Evidence: {output}", flush=True)
     manifest = {
         "schema_version": "1",
         "run_id": run_id,
         "suite": args.suite,
+        "acceptance_inventory_sha256": digest(inventory),
         "argv": sys.argv,
         "head_sha": run(["git", "rev-parse", "HEAD"]),
         "dirty": bool(run(["git", "status", "--porcelain"])),
@@ -389,6 +443,7 @@ def main():
     status = 1
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
+    environment.pop("PYTEST_ADDOPTS", None)
     environment["OPENENV_VALIDATION_ARTIFACTS"] = str(output)
     environment["OPENENV_REQUIRE_COMPLETE"] = "1" if args.require_complete else "0"
     try:
@@ -417,10 +472,14 @@ def main():
                     )
                 }
                 context, image = stage_image(Path(temporary), output, pins, manifest)
+                echo_context = stage_echo_canary(
+                    Path(temporary), context, output, manifest
+                )
                 environment.update(
                     {
                         "OPENENV_VALIDATION_IMAGE": image,
                         "OPENENV_VALIDATION_CONTEXT": str(context),
+                        "OPENENV_VALIDATION_ECHO_CONTEXT": str(echo_context),
                         "OPENENV_REQUIRE_DOCKER": "1",
                     }
                 )

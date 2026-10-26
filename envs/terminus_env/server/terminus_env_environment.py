@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from typing import Any, Iterable, Optional
 from uuid import uuid4
@@ -25,6 +26,7 @@ except ImportError:  # pragma: no cover
 
 
 REWARD_FILE = "/home/user/logs/verifier/reward.txt"
+_CLEAR_REWARD_FILE = f"rm -f {REWARD_FILE} && test ! -e {REWARD_FILE}"
 
 
 class TerminusEnvironment(MCPEnvironment):
@@ -228,11 +230,16 @@ class TerminusEnvironment(MCPEnvironment):
             return {"passed": 0, "total": 0, "reward": None}
 
         self._sandbox.run_shell("mkdir -p /home/user/logs/verifier")
+        # The override is documented as verify-written, so drop anything the
+        # policy wrote there during the episode before verification starts.
+        cleared = self._sandbox.run_shell(_CLEAR_REWARD_FILE).success
         verify_results = self._run_shell_commands(self._state.verify_commands)
         self._state.verify_results = verify_results
         passed = sum(1 for result in verify_results if result.success)
         total = len(verify_results)
-        reward = _read_reward_override(self._sandbox)
+        reward, self._state.reward_override_ignored = _read_reward_override(
+            self._sandbox, cleared
+        )
         if reward is None and total:
             reward = passed / total
         self._state.last_reward = reward
@@ -258,12 +265,33 @@ def _format_for_llm(result) -> str:
     return "\n".join(parts) if parts else "(no output)"
 
 
-def _read_reward_override(sandbox: E2BSandbox) -> Optional[float]:
+def _read_reward_override(
+    sandbox: E2BSandbox, cleared: bool
+) -> tuple[Optional[float], Optional[str]]:
+    if not cleared:
+        return None, "reward file could not be removed before verification"
     result = sandbox.run_shell(f"cat {REWARD_FILE} 2>/dev/null || true")
-    raw = (result.stdout or "").strip()
+    return _parse_reward_override(result.stdout or "")
+
+
+def _parse_reward_override(raw: str) -> tuple[float | None, str | None]:
+    """Parse the reward file written by a verify command.
+
+    The value comes from the task author rather than the agent, so any finite
+    reward is accepted, including negative ones and values above 1. Only a
+    value that would poison training is rejected.
+
+    Returns `(reward, None)` for a finite value, `(None, None)` when the file
+    is empty, and `(None, reason)` when the value is rejected, in which case
+    the caller falls back to the verify pass rate.
+    """
+    raw = raw.strip()
     if not raw:
-        return None
+        return None, None
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
-        return None
+        return None, f"not a number: {raw[:40]!r}"
+    if not math.isfinite(value):
+        return None, f"not finite: {raw[:40]!r}"
+    return value, None

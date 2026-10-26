@@ -8,14 +8,17 @@ Environment Variables:
     FINQA_TASK: Task name (default: finqa)
 """
 
+import inspect
 import json
 import os
 from typing import Any, Dict
 
 from openenv.core.env_server.http_server import create_app
 from openenv.core.env_server.mcp_types import CallToolAction, CallToolObservation
+from openenv.core.env_server.types import Observation
 from pydantic import field_validator
 
+from ..models import FinQAState
 from .finqa_environment import FinQAEnvironment
 
 DATA_PATH = os.environ.get("FINQA_DATA_PATH", "/app/env/data")
@@ -43,8 +46,21 @@ class FinQACallToolAction(CallToolAction):
         return v
 
 
+# Older openenv-core releases lack these model parameters.
+_create_app_kwargs = (
+    {"reset_observation_cls": Observation}
+    if "reset_observation_cls" in inspect.signature(create_app).parameters
+    else {}
+)
+if "state_cls" in inspect.signature(create_app).parameters:
+    _create_app_kwargs["state_cls"] = FinQAState
+
 app = create_app(
-    _env_factory, FinQACallToolAction, CallToolObservation, env_name="finqa_env"
+    _env_factory,
+    FinQACallToolAction,
+    CallToolObservation,
+    **_create_app_kwargs,
+    env_name="finqa_env",
 )
 
 

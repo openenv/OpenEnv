@@ -12,6 +12,7 @@ Vehicle must navigate to a goal location using basic controls.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import Any, Dict
 
@@ -20,7 +21,8 @@ from .base import BaseScenario, ScenarioConfig
 
 @dataclass
 class MazeConfig(ScenarioConfig):
-    goal_distance: float = 150.0
+    min_goal_distance: float = 80.0
+    max_goal_distance: float = 300.0
     success_radius: float = 5.0
 
 
@@ -28,7 +30,8 @@ class MazeScenario(BaseScenario[MazeConfig]):
     """
     Maze navigation: drive to a goal location.
 
-    No actors to spawn. ``is_done`` checks goal proximity, collision, or timeout.
+    The goal is a spawn point ``min_goal_distance``..``max_goal_distance`` away from
+    the ego vehicle. ``is_done`` checks goal proximity, collision, or timeout.
     """
 
     def reset(self, state: Any) -> None:
@@ -36,8 +39,23 @@ class MazeScenario(BaseScenario[MazeConfig]):
         state["scenario_state"]["maze"] = {}
 
     def setup(self, state: Any) -> None:
-        # No actors to spawn for maze navigation.
-        pass
+        runtime = state["carla"]
+        if runtime is None:
+            # Mock mode: goal straight ahead of the origin
+            goal = (self.config.min_goal_distance, 0.0, 0.5)
+        else:
+            ego = runtime.ego_vehicle.get_location()
+            spawns = [sp.location for sp in runtime.map.get_spawn_points()]
+            candidates = [
+                loc
+                for loc in spawns
+                if self.config.min_goal_distance
+                <= loc.distance(ego)
+                <= self.config.max_goal_distance
+            ]
+            loc = random.choice(candidates or spawns)
+            goal = (loc.x, loc.y, loc.z)
+        state["scenario_data"]["goal_location"] = goal
 
     def is_done(self, state: Any) -> bool:
         step = int(state.get("env_step", state.get("step_count", 0)))

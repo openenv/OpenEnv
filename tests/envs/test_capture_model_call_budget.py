@@ -153,7 +153,7 @@ def test_other_upstream_errors_are_not_converted_to_budget_stops(
     assert session.graph.stats()["n_turns"] == 0
 
 
-def test_single_turn_without_recorded_budget_stop_still_fails(app_and_engine):
+def test_single_turn_without_recorded_budget_stop_warns(app_and_engine):
     from openenv.core.harness.capture.export import export_session
 
     app, _ = app_and_engine
@@ -162,7 +162,7 @@ def test_single_turn_without_recorded_budget_stop_still_fails(app_and_engine):
         _chat(client, session.session_id)
     document = export_session(session, capture_level="text")
     assert any(
-        "[FATAL] degenerate_rollout" in finding for finding in document["validation"]
+        "[WARN] degenerate_rollout" in finding for finding in document["validation"]
     )
 
 

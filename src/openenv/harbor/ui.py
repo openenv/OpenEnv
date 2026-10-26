@@ -1,793 +1,736 @@
 """Human-facing UI for a Harbor env server.
 
-Two columns: the LLM on the left, the task on the right. Validate, pick, run.
+Three tabs. **Tasks**: pick a dataset and a task, read it (instruction, files, settings), and run an
+agent on it. **Runs**: every rollout this server has run, live or finished, one at a time or two to
+four side by side. **Setup**: what this machine can run, and why anything it cannot.
 
-Status text is deliberately terse. The long explanations belong in docs — what a person needs on
-screen is whether it will work, what got rewritten, and which sandboxes are usable.
+It is a Gradio app, like every OpenEnv UI, with custom HTML components where Gradio has no widget
+for the job: the task list (thousands of rows, filtered as you type), the task viewer (a file tree
+read on demand), the run card, the run list and the trajectory. Gradio supplies the tabs, the state
+and the event wiring.
 
-Validation is a gate, not a hint: an LLM endpoint without token-id capture answers every request
-normally and returns nothing trainable, so a rollout looks perfect and is worthless.
+A rollout uses the endpoint the server was started with, or one the visitor connects in the page: a
+Hugging Face token and a model on Inference Providers, or any OpenAI-compatible URL such as vLLM.
+Connecting is a gate, not a hint: an endpoint without token-id capture answers every request
+normally and returns nothing trainable, so a rollout looks perfect and is worthless for training.
+What visitors may do (use the server's endpoint, bring their own, see each other's runs) is set per
+deployment; see `ui_settings`.
 
-Rich output (the rollout graph, per-turn tokens) is rendered as HTML rather than Gradio widgets,
-because a conversation tree with branches and discarded retries is a shape, and a dataframe cannot
-show a shape.
+Every argument that names a dataset is checked against the datasets this server serves or that were
+added from the Hub in this process. The UI's handlers are callable by anyone who can load the page,
+and a dataset spec that is a local path would otherwise let a browser list and read the server's
+own files.
 """
 
 from __future__ import annotations
 
 import html
 import json
+import os
 import re
+import threading
+import time
+from collections import OrderedDict
+from importlib import resources
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import gradio as gr
 
-_UNVALIDATED = "_Enter your LLM URL and press Validate._"
+from . import ui_data, ui_icons, ui_pages, ui_runs, ui_settings
+from .ui_icons import js_prelude
 
-_CSS = """
-.hb-wrap { max-width: 1400px; margin: 0 auto; }
-.hb-card { border: 1px solid var(--border-color-primary); border-radius: 10px; padding: 14px 16px; }
-.hb-dim   { opacity: .6; }
-.hb-kv    { display: flex; gap: 22px; flex-wrap: wrap; margin: 4px 0 2px; }
-.hb-kv b  { font-variant-numeric: tabular-nums; }
-
-/* The two panels read as one undifferentiated wall of controls without a boundary; the border is
-   what makes "pick a model" and "pick a task" look like two separate decisions. */
-.hb-cell  { border: 1px solid var(--border-color-primary); border-radius: 10px;
-            padding: 14px 16px; }
-.hb-panel { border: 1px solid var(--border-color-primary) !important;
-            border-radius: 10px !important; padding: 16px !important;
-            background: var(--block-background-fill); }
-.hb-cell { min-width: 0 !important; }
-.hb-wrap .hb-panel + .hb-panel { margin-top: 12px; }
-.hb-tx, .hb-card { overflow-wrap: anywhere; }
-@media (max-width: 700px) {
-    .hb-cell, .hb-panel { padding: 12px !important; }
-    .hb-hero { flex-wrap: wrap; }
-    .hb-kv { gap: 12px; }
-}
-@media (prefers-reduced-motion: reduce) {
-    .hb-pulse, .hb-step.now .hb-dot { animation: none; }
-}
-
-/* Live conversation. Roles are colour-coded down the left edge so the shape of the loop
-   (assistant calls a tool, tool answers, assistant calls again) is readable at a glance. */
-/* No max-height here. A fixed-height scroll box nests a second scroller inside the page:
-   the wheel gets captured while the pointer is over the conversation, and the page stops
-   growing so there is nothing left to scroll to. Let it run at natural height and let the
-   page do the scrolling. Length is bounded by the message cap, not by CSS. */
-.hb-tx    { margin-top: 10px; }
-.hb-msg   { border-left: 3px solid var(--border-color-primary); padding: 6px 0 6px 10px;
-            margin: 8px 0; font-size: 13px; line-height: 1.45; }
-.hb-msg pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0;
-              font-size: 12px; opacity: .85; }
-.hb-role  { display: inline-block; font-size: 11px; text-transform: uppercase;
-            letter-spacing: .04em; opacity: .65; margin-bottom: 2px; }
-.hb-assistant { border-left-color: #22c55e; }
-.hb-tool      { border-left-color: #38bdf8; }
-.hb-user      { border-left-color: #a78bfa; }
-.hb-system    { border-left-color: #94a3b8; opacity: .75; }
-.hb-tc    { margin-top: 4px; padding: 4px 8px; border-radius: 6px;
-            background: var(--background-fill-secondary); }
-.hb-tc    { display: block; }
-.hb-tc b  { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.hb-arrow { opacity: .5; margin-right: 6px; }
-.hb-tr    { margin-top: 4px; padding: 4px 8px; border-radius: 6px; border-left: 2px solid #38bdf8;
-            background: var(--background-fill-secondary); }
-/* No inner scroller here either, for the same reason as the conversation above, and the previous
-   version of this rule was the bug: `overscroll-behavior: contain` does not stop a box from
-   swallowing the page scroll, it is what *prevents* the wheel from chaining to the page once the
-   box reaches its own end. Tool output is clipped to 500 characters server side, but 500
-   characters of shell output is 25 short lines, which overflowed the 220px cap and left the page
-   feeling frozen wherever the pointer happened to be. Length is bounded by the clip, not by CSS. */
-.hb-tr pre{ margin: 0; font-size: 11.5px; opacity: .8; }
-
-/* A run in flight should look like one. */
-.hb-live  { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.hb-pulse { width: 8px; height: 8px; border-radius: 50%; background: #22c55e;
-            animation: hb-blink 1.2s ease-in-out infinite; }
-@keyframes hb-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
-.hb-drop-msg { opacity: .5; border-left-color: #ef4444; }
-
-/* Verdict. The outcome should be legible from across the room; the numbers behind it should not
-   compete with it for attention. */
-.hb-verdict { border-left-width: 4px; }
-.hb-head  { font-size: 17px; font-weight: 650; margin-bottom: 8px; }
-.hb-good  { border-left-color: #22c55e; }
-.hb-warn  { border-left-color: #f59e0b; }
-.hb-bad   { border-left-color: #ef4444; }
-.hb-err   { white-space: pre-wrap; word-break: break-word; font-size: 12px; margin: 10px 0 0;
-            padding: 8px 10px; border-radius: 6px; background: var(--background-fill-secondary); }
-
-/* A qualifier on the result: true, load-bearing, and not an error. Bordered rather than coloured
-   like a finding, so "this rollout is eval-only" does not read as "this rollout failed". */
-.hb-note  { font-size: 12.5px; line-height: 1.5; margin: 10px 0 0; padding: 8px 11px;
-            border-radius: 6px; border: 1px solid var(--border-color-primary);
-            background: var(--background-fill-secondary); }
-.hb-note code { font-size: 11.5px; }
-
-/* Hover explanations. `data-tip` rather than `title=` for the two long ones: the native tooltip
-   truncates, takes a second to appear, and cannot wrap a paragraph. Short hints use Gradio's own
-   `info=`, which renders under the label and needs no hover at all. */
-.hb-i     { display: inline-flex; align-items: center; justify-content: center; cursor: help;
-            width: 15px; height: 15px; margin-left: 6px; border-radius: 50%; font-size: 10px;
-            font-weight: 700; font-style: normal; vertical-align: 1px;
-            border: 1px solid var(--border-color-primary); opacity: .75; position: relative; }
-.hb-i:hover { opacity: 1; }
-.hb-i::after { content: attr(data-tip); position: absolute; left: 50%; bottom: 130%;
-            transform: translateX(-50%); width: max-content; max-width: 320px; padding: 8px 10px;
-            border-radius: 6px; border: 1px solid var(--border-color-primary);
-            background: var(--background-fill-primary); color: var(--body-text-color);
-            font-size: 11.5px; font-weight: 400; line-height: 1.5; text-align: left;
-            white-space: pre-line; opacity: 0; visibility: hidden; transition: opacity .12s;
-            z-index: 40; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
-.hb-i:hover::after { opacity: 1; visibility: visible; }
-/* The label row the icon sits on, so the icon lines up with a Gradio label rather than floating. */
-.hb-lbl   { display: flex; align-items: center; font-size: 13px; font-weight: 600;
-            margin: 2px 0 -6px; }
-
-/* Findings carry severity: a FATAL means unusable, a WARN means read before training on it. */
-.hb-find  { font-size: 12.5px; margin: 5px 0; line-height: 1.45; }
-.hb-tag   { display: inline-block; min-width: 46px; margin-right: 8px; padding: 1px 6px;
-            border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .04em;
-            text-align: center; vertical-align: 1px; }
-.hb-fatal .hb-tag { background: #ef4444; color: #fff; }
-.hb-warn2 .hb-tag { background: #f59e0b; color: #1f2937; }
-.hb-info  .hb-tag { background: var(--background-fill-secondary); opacity: .7; }
-.hb-info  { opacity: .7; }
-
-/* Turn table: dense, aligned, and the numbers read as numbers. */
-.hb-tbl   { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
-.hb-tbl th{ text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase;
-            letter-spacing: .04em; opacity: .55; padding: 4px 10px 6px 0;
-            border-bottom: 1px solid var(--border-color-primary); }
-.hb-tbl td{ padding: 7px 10px 7px 0; border-bottom: 1px solid var(--border-color-primary);
-            vertical-align: top; }
-.hb-tbl code { font-size: 12px; padding: 1px 6px; border-radius: 4px;
-               background: var(--background-fill-secondary); }
-.hb-num   { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap;
-            padding-right: 14px !important; }
-.hb-prev  { margin-top: 3px; font-size: 12px; }
-.hb-drop-row { opacity: .45; }
-.hb-drop-tag { background: #ef4444; color: #fff; }
-.hb-conf  { display: inline-block; width: 76px; height: 7px; border-radius: 4px;
-            background: var(--background-fill-secondary); overflow: hidden; vertical-align: middle; }
-.hb-conf span { display: block; height: 100%; }
-
-/* Each conversation folds away; the main one starts open. */
-.hb-convo { margin-top: 10px; border-top: 1px solid var(--border-color-primary); padding-top: 8px; }
-.hb-convo summary { cursor: pointer; padding: 4px 0; }
-
-/* Setup, before the agent has said anything. */
-.hb-steps { margin: 8px 0 0; }
-.hb-step  { display: flex; align-items: center; gap: 9px; padding: 3px 0; font-size: 13px; }
-.hb-dot   { width: 7px; height: 7px; border-radius: 50%; background: var(--border-color-primary); }
-.hb-step.done .hb-dot { background: #22c55e; }
-.hb-step.now  .hb-dot { background: #f59e0b; animation: hb-blink 1.2s ease-in-out infinite; }
-.hb-step.todo { opacity: .45; }
-
-/* The outcome, at a glance. */
-.hb-hero  { display: flex; align-items: center; justify-content: space-between; gap: 20px;
-            padding-bottom: 12px; margin-bottom: 4px;
-            border-bottom: 1px solid var(--border-color-primary); }
-.hb-badge { display: inline-flex; align-items: center; gap: 9px; font-size: 19px;
-            font-weight: 700; letter-spacing: -.01em; }
-.hb-mark  { display: inline-flex; align-items: center; justify-content: center;
-            width: 30px; height: 30px; border-radius: 50%; font-size: 15px; color: #fff; }
-.hb-b-good .hb-mark { background: #22c55e; }
-.hb-b-warn .hb-mark { background: #f59e0b; }
-.hb-b-bad  .hb-mark { background: #ef4444; }
-.hb-score   { text-align: right; line-height: 1.05; }
-.hb-score-v { font-size: 42px; font-weight: 700; font-variant-numeric: tabular-nums;
-              letter-spacing: -.02em; }
-.hb-score-c { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .55; }
-.hb-kv-big span   { font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
-                    opacity: .55; }
-.hb-kv-big b      { display: block; font-size: 19px; margin-top: 3px; text-transform: none;
-                    letter-spacing: normal; opacity: 1; }
-.hb-kv-big .hb-key b { color: var(--body-text-color); }
-.hb-kv-big .hb-key   { opacity: .85; }
-
-footer { display: none !important; }
-"""
+# Hub datasets added from the page in this process, on top of the ones the server was started with.
+_ADDED: list[str] = []
+_ADDED_LOCK = threading.RLock()
+_REMOVING: set[str] = set()
+_HUB_ID = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
 
 
-def _labelled(label: str, tip: str) -> str:
-    """A field label with a hover-explained `i` beside it.
-
-    For the explanations too long to sit under a Gradio label as `info=` text — which is where every
-    one-liner belongs instead, since it needs no hover to be seen.
-    """
-    return (
-        f'<div class="hb-lbl">{html.escape(label)}'
-        f'<span class="hb-i" data-tip="{html.escape(tip, quote=True)}">i</span></div>'
-    )
+def _asset(name: str) -> str:
+    return resources.files("openenv.harbor").joinpath("ui_assets", name).read_text()
 
 
-_KEY_TIP = (
-    "Only needed for a hosted endpoint: OpenAI, Anthropic, HF Inference Providers.\n\n"
-    "It is sent to the inference endpoint by this server and nothing else. It is NOT the key the "
-    "agent receives — that one is a capture session id, minted per rollout, which is how one proxy "
-    "serves many rollouts and how an unregistered caller is rejected.\n\n"
-    "Leave empty for a local vLLM or SGLang."
-)
-
-_LEVEL_TIP = (
-    "There are two kinds of rollout, and the endpoint decides which you get.\n\n"
-    "TRAIN needs the engine to return token ids and per-token logprobs: vLLM started with "
-    "--return-tokens-as-token-ids --logprobs-mode processed_logprobs, or SGLang built from git "
-    "main. You get the reward, the trace, and the exact tokens and logprobs to train on.\n\n"
-    "EVAL is everything else, including a vLLM started without those flags. You get the reward and "
-    "the full trace; there are no token ids, so nothing is trainable. Logprobs alone do not help — "
-    "with no ids to pair them with there is nothing to align them to."
-)
+def _can_add_datasets() -> bool:
+    """Whether the page may download datasets from the Hub. Off by default on a Space: a public page
+    that downloads any dataset a visitor names is a disk-filling button."""
+    return ui_settings.load().add_datasets
 
 
-def _clip(text: Any, limit: int = 400) -> str:
-    """Escape and shorten a value for display, keeping the head where the meaning usually is."""
-    body = text if isinstance(text, str) else json.dumps(text, default=str)
-    body = body.strip()
-    return html.escape(body[:limit]) + ("…" if len(body) > limit else "")
+def _allowed(spec: str, served: list[str]) -> bool:
+    with _ADDED_LOCK:
+        return bool(spec) and (spec in served or spec in _ADDED)
 
 
-def _tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
-    """Tool calls on a message, normalised across all four dialects.
+_MAX_ADDED = 20
+_MAX_INSPECTED = 128
+_INSPECT_TTL = 300
+_INSPECTED: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+_INSPECTED_LOCK = threading.Lock()
 
-    Chat-completions puts them in `tool_calls`; Anthropic puts them in the content block list as
-    `tool_use`. Reading only the former shows claude-code as a stream of text with no visible
-    actions, which is exactly the case the live view exists to make visible.
-    """
-    out: list[dict[str, Any]] = []
-    for call in message.get("tool_calls") or []:
-        function = call.get("function") or {}
-        name = function.get("name") or call.get("name")
-        if name:
-            out.append(
-                {
-                    "name": str(name),
-                    "arguments": function.get("arguments", call.get("arguments", "")),
-                }
-            )
-    content = message.get("content")
-    if isinstance(content, list):
-        for block in content:
+
+def _added_file(settings: ui_settings.UISettings) -> Path | None:
+    """Where datasets added from the page are listed, so they come back after a restart: next to
+    the run history, whose runs may refer to them. `None` when history is off."""
+    if settings.bucket and settings.bucket_mount:
+        return None  # the bucket's own folders are the list (`ui_data.added_in_bucket`)
+    return settings.runs_dir / ".added-datasets.json" if settings.runs_dir else None
+
+
+def _save_added(settings: ui_settings.UISettings) -> None:
+    path = _added_file(settings)
+    if path is None:
+        return
+    with _ADDED_LOCK:
+        saved = sorted(set(_ADDED))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(saved, indent=0))
+    except OSError:
+        pass
+
+
+def _load_added(settings: ui_settings.UISettings, served: list[str]) -> None:
+    path = _added_file(settings)
+    if path is None or not settings.add_datasets:
+        return
+    try:
+        listed = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return
+    with _ADDED_LOCK:
+        for spec in listed if isinstance(listed, list) else []:
+            # Checked again without the network: the file is ours, but a path must never slip in.
+            spec = str(spec)
+            parts = spec.split("/")
             if (
-                isinstance(block, dict)
-                and block.get("type") == "tool_use"
-                and block.get("name")
+                _HUB_ID.match(spec)
+                and not any(p in (".", "..") or p.startswith(".") for p in parts)
+                and spec not in served
+                and spec not in _ADDED
+                and len(_ADDED) < _MAX_ADDED
             ):
-                out.append(
-                    {"name": str(block["name"]), "arguments": block.get("input", "")}
-                )
-    return out
+                _ADDED.append(spec)
 
 
-def _message_text(message: dict[str, Any]) -> str:
-    """Readable text of a message, ignoring tool-call and tool-result blocks."""
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") in ("tool_use", "tool_result"):
-                continue
-            if block.get("text"):
-                parts.append(str(block["text"]))
-        return " ".join(parts)
-    return ""
+def _inspect_hub(spec: str) -> dict[str, Any]:
+    """Inspect one Hub dataset, caching only successful answers for a bounded time."""
+    now = time.monotonic()
+    with _INSPECTED_LOCK:
+        cached = _INSPECTED.get(spec)
+        if cached is not None and now - cached[0] < _INSPECT_TTL:
+            _INSPECTED.move_to_end(spec)
+            return cached[1]
+        _INSPECTED.pop(spec, None)
+    summary = ui_data.hub_summary(spec)
+    with _INSPECTED_LOCK:
+        _INSPECTED[spec] = (time.monotonic(), summary)
+        _INSPECTED.move_to_end(spec)
+        while len(_INSPECTED) > _MAX_INSPECTED:
+            _INSPECTED.popitem(last=False)
+    return summary
 
 
-def _tool_results(message: dict[str, Any]) -> list[str]:
-    """What came back from a tool, in either the chat-completions or the Anthropic shape."""
-    if message.get("role") == "tool":
-        return [
-            _message_text(message) or json.dumps(message.get("content"), default=str)
-        ]
-    content = message.get("content")
-    if not isinstance(content, list):
-        return []
-    out = []
-    for block in content:
-        if isinstance(block, dict) and block.get("type") == "tool_result":
-            body = block.get("content")
-            if isinstance(body, list):
-                body = " ".join(b.get("text", "") for b in body if isinstance(b, dict))
-            out.append(str(body if body is not None else ""))
-    return out
+def _remove_added(
+    spec: str, served: list[str], settings: ui_settings.UISettings
+) -> dict[str, Any]:
+    """Serialise removal so two requests cannot delete or mutate the same dataset."""
+    with _ADDED_LOCK:
+        if spec in served or spec not in _ADDED or spec in _REMOVING:
+            return {"error": "Only datasets added from this page can be removed."}
+        _REMOVING.add(spec)
+    try:
+        ui_data.remove_added(spec, settings)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            return {
+                "error": f"Could not remove it: {type(exc).__name__}: {str(exc)[:200]}"
+            }
+        finally:
+            with _ADDED_LOCK:
+                _REMOVING.discard(spec)
+    with _ADDED_LOCK:
+        _ADDED.remove(spec)
+        _REMOVING.discard(spec)
+        _save_added(settings)
+        return {"ok": True, "spec": spec}
 
 
-def _render_calls(calls: list[dict[str, Any]]) -> str:
-    return "".join(
-        f'<div class="hb-tc"><span class="hb-arrow">▸</span>'
-        f"<b>{html.escape(str(c.get('name', 'tool')))}</b>"
-        f"<pre>{_clip(c.get('arguments', ''), 600)}</pre></div>"
-        for c in calls
-    )
+def _hub_problem(spec: str) -> str | None:
+    """Why a dataset typed into the page may not be added, or `None`.
 
-
-def _render_message(message: dict[str, Any], *, label: str = "") -> str:
-    """One row of the conversation: who spoke, what they said, what they invoked or returned."""
-    role = str(message.get("role", "?"))
-    calls = _tool_calls(message)
-    results = _tool_results(message)
-    text = _message_text(message)
-
-    # A user message carrying only tool results is the tool speaking, not the user; labelling it
-    # "user" makes the agent look like it is being prompted between every action.
-    shown_role = "tool" if results and role != "assistant" else role
-    # For a `role: tool` message the content IS the result, so rendering both duplicates it.
-    if shown_role == "tool":
-        text = ""
-    body = _clip(text, 700 if shown_role in ("user", "system") else 450) if text else ""
-    blocks = "".join(
-        f'<div class="hb-tr"><pre>{_clip(r, 500)}</pre></div>' for r in results
-    )
-    if not body and not blocks and not calls:
-        return ""
-    return (
-        f'<div class="hb-msg hb-{html.escape(shown_role)}">'
-        f'<span class="hb-role">{html.escape(label or shown_role)}</span>'
-        + (f"<div>{body}</div>" if body else "")
-        + _render_calls(calls)
-        + blocks
-        + "</div>"
-    )
-
-
-def _transcript_html(session: Any) -> str:
-    """The conversation as it stands right now: what the agent said, called, and got back.
-
-    Counters answer "is it alive"; this answers "is it doing the right thing", which is the question
-    worth asking while a rollout is still running. The newest turn's `request_messages` already holds
-    the whole conversation the harness assembled, tool results included, so rendering that plus the
-    latest response needs no reconstruction from deltas.
+    A public Hub dataset only. Not a local path (the loader tries one first, so `src/..` would serve
+    this server's own files), and not a private or gated one, which the server's token might open
+    for a visitor who has no access of their own.
     """
-    nodes = sorted(session.graph.nodes(), key=lambda n: n.index)
-    if not nodes:
-        return ""
-    latest = nodes[-1]
+    parts = spec.split("/")
+    if (
+        not _HUB_ID.match(spec)
+        or any(p in (".", "..") or p.startswith(".") for p in parts)
+        or Path(spec).expanduser().exists()
+    ):
+        return "Enter a Hugging Face dataset id, like org/name."
+    try:
+        from huggingface_hub import HfApi
 
-    rows = [
-        row
-        for row in (_render_message(m) for m in (latest.request_messages or []))
-        if row
-    ]
-
-    response = latest.response_message or {}
-    tail = _render_message(
-        {**response, "role": "assistant"},
-        label=f"assistant · completed call {latest.index + 1}",
-    )
-    if tail:
-        rows.append(tail)
-
-    # Only the tail is ever new, so cap from the front and say what was dropped.
-    shown = rows[-18:]
-    elided = (
-        f'<div class="hb-dim">… {len(rows) - len(shown)} earlier message(s)</div>'
-        if len(rows) > len(shown)
-        else ""
-    )
-    # Count across the conversation, not just the response messages: Anthropic carries tool use in
-    # the assistant content blocks the harness replays back, so a response-only tally reads 0.
-    calls_so_far = sum(
-        len(_tool_calls(m)) for m in (latest.request_messages or [])
-    ) + len(_tool_calls(latest.response_message or {}))
-    return (
-        f'<div class="hb-card hb-tx"><div class="hb-live">'
-        f'<span class="hb-pulse"></span><b>Live conversation</b>'
-        f'<span class="hb-dim">turn {latest.index} · {calls_so_far} tool call(s) so far · '
-        f"{latest.n_tools} tool(s) offered</span></div>{elided}{''.join(shown)}</div>"
-    )
+        info = HfApi(token=False).dataset_info(spec)
+    except Exception:  # noqa: BLE001 - private, missing, or the Hub is down: all the same answer
+        return f"{spec} is not a public dataset on the Hub."
+    if info.private or info.gated:
+        return f"{spec} is private or gated. Only public datasets can be added from the page."
+    return None
 
 
-# Capture-session creation precedes sandbox allocation; it is not evidence that
-# setup has finished. Only a completed captured call proves the agent is running.
-_SETUP_STEPS = (
-    "preparing the sandbox, task and agent",
-    "waiting for a completed model call",
+from .ui_trace import (  # noqa: F401 - re-exported: tests and callers read them from `ui`
+    _conversation_html,
+    _findings_html,
+    _markdown,
+    _result_html,
+    _transcript_html,
+    _turns_html,
+    count_actions,
 )
 
 
-def _steps_html(stage: int) -> str:
-    """The setup sequence, with the current stage marked."""
-    rows = []
-    for i, label in enumerate(_SETUP_STEPS):
-        cls = "done" if i < stage else ("now" if i == stage else "todo")
-        rows.append(
-            f'<div class="hb-step {cls}"><span class="hb-dot"></span>'
-            f"<span>{html.escape(label)}</span></div>"
-        )
-    return f'<div class="hb-steps">{"".join(rows)}</div>'
+def _contract(r: dict[str, Any]) -> dict[str, Any] | None:
+    """Keep the legacy audit export, including excluded turns and task rewards.
 
-
-def _live_html(
-    harness: str,
-    sandbox: str,
-    phase: str,
-    elapsed: float,
-    stats: dict[str, Any] | None,
-    stage: int = -1,
-) -> str:
-    """The running header: what is running, how far in, and what it has produced so far."""
-    bits = [
-        f'<div class="hb-card hb-verdict hb-warn">'
-        f'<div class="hb-live"><span class="hb-pulse"></span>'
-        f"<b>Running</b> <code>{html.escape(harness)}</code> on "
-        f"<code>{html.escape(sandbox)}</code>"
-        f'<span class="hb-dim">{html.escape(phase)} · {elapsed:.0f}s</span></div>'
-    ]
-    # Before the first call there are no numbers worth showing, so show progress instead. A row of
-    # zeros for a minute reads as "stuck" when the sandbox is simply still booting.
-    if stage >= 0:
-        bits.append(_steps_html(stage))
-    if stats:
-        bits.append(
-            '<div class="hb-kv">'
-            + "".join(f"<span>{k}<br><b>{v}</b></span>" for k, v in stats.items())
-            + "</div>"
-        )
-    bits.append("</div>")
-    return "".join(bits)
-
-
-# `warn` is already a verdict tone; the finding variant needs its own class name.
-_FINDING_CLASS = {"FATAL": "fatal", "WARN": "warn2", "INFO": "info"}
-
-
-def _findings_html(findings: list[str]) -> str:
-    """Findings, grouped by how much they should worry you.
-
-    They were previously all rendered the same dim grey and truncated to 220 characters, which put
-    "the intercept saw no model calls" and "3 roots across 7 turns" at equal weight. A FATAL means
-    the rollout is unusable; a WARN means read it before training on it.
+    Eval rollouts return None; malformed captures raise ValueError.
     """
-    if not findings:
-        return ""
-    buckets: dict[str, list[str]] = {"FATAL": [], "WARN": [], "INFO": []}
-    for raw in findings:
-        level = (
-            "FATAL"
-            if raw.startswith("[FATAL")
-            else "WARN"
-            if raw.startswith("[WARN")
-            else "INFO"
-        )
-        buckets[level].append(
-            raw.split("]", 1)[-1].strip() if raw.startswith("[") else raw
-        )
-
-    out = []
-    for level, items in buckets.items():
-        for item in items:
-            out.append(
-                f'<div class="hb-find hb-{_FINDING_CLASS[level]}">'
-                f'<span class="hb-tag">{level}</span>{html.escape(item[:400])}</div>'
-            )
-    return "".join(out)
-
-
-def _result_html(r: dict[str, Any]) -> str:
-    """The verdict, the numbers behind it, and anything that qualifies it.
-
-    The outcome is the one thing every reader wants first, so the reward is set at display size and
-    the supporting counts are deliberately quieter. Getting that hierarchy wrong is how a failed
-    rollout reads as a successful one at a glance.
-    """
-    reward = r.get("reward")
-    if not r.get("ok"):
-        tone, mark, label = "bad", "✕", "Failed"
-        value, caption = "—", str(r.get("exception_type") or "error")
-    elif reward is None:
-        # Not a zero. The verifier never ran, so this says nothing about the model.
-        tone, mark, label = "warn", "!", "Not graded"
-        value, caption = "—", "the verifier never ran"
-    elif reward > 0:
-        tone, mark, label = "good", "✓", "Solved"
-        value, caption = f"{reward:.2f}", "reward"
-    else:
-        tone, mark, label = "warn", "○", "Not solved"
-        value, caption = f"{reward:.2f}", "reward"
-
-    turns = r.get("turns") or []
-    generated = sum(len(t.get("completion_token_ids") or []) for t in turns)
-    dropped = sum(
-        len(t.get("completion_token_ids") or []) for t in turns if t.get("discarded")
-    )
-    tools = sum(len(t.get("tool_calls") or []) for t in turns)
-    atif = r.get("atif", "none")
-
-    # `key` marks the figures that decide whether this rollout is usable, as opposed to describing it.
-    # The initial prompt: task instruction plus the harness's system prompt and tool manifest.
-    # Constant across turns, so it is a property of the rollout rather than a per-row column.
-    context = len((turns[0].get("prompt_token_ids") or [])) if turns else 0
-
-    is_eval = r.get("rollout_type", "train") == "eval"
-    kv = [
-        # "trainable tokens: 0" on an eval rollout reads as a capture failure. It is not one, so the
-        # slot says what kind of rollout this is instead of reporting a zero that means nothing here.
-        ("rollout", f"EVAL · {r.get('capture_level', '?')}", True)
-        if is_eval
-        else ("trainable tokens", f"{r.get('n_trainable_tokens', 0):,}", True),
-        ("context", f"{context:,}", False),
-        ("trace check", atif, atif != "match"),
-        ("model calls", r.get("n_turns", 0), False),
-        ("tool calls", tools, False),
-        ("conversations", r.get("n_roots", 0), False),
-        (
-            "generated",
-            f"{generated:,}" + (f" · {dropped:,} discarded" if dropped else ""),
-            False,
-        ),
-        ("wall", f"{r.get('wall_s', 0):.0f}s", False),
-    ]
-
-    out = [
-        f'<div class="hb-card hb-verdict hb-{tone}">',
-        '<div class="hb-hero">',
-        f'<div class="hb-badge hb-b-{tone}"><span class="hb-mark">{mark}</span>'
-        f"<span>{html.escape(label)}</span></div>",
-        f'<div class="hb-score"><div class="hb-score-v">{html.escape(value)}</div>'
-        f'<div class="hb-score-c">{html.escape(caption)}</div></div>',
-        "</div>",
-        '<div class="hb-kv hb-kv-big">'
-        + "".join(
-            f'<span class="{"hb-key" if key else ""}">{k}<br><b>{v}</b></span>'
-            for k, v, key in kv
-        )
-        + "</div>",
-    ]
-
-    if is_eval:
-        out.append(
-            '<div class="hb-note">This is an <b>eval rollout</b>. The endpoint returned '
-            f"{'logprobs but no token ids' if r.get('capture_level') == 'logprobs' else 'no token ids and no logprobs'}, "
-            "so you get the reward and the full trace below, but nothing trainable — there is no "
-            "<code>contract.json</code> and no per-token logprobs. Point the server at vLLM "
-            "(<code>--return-tokens-as-token-ids --logprobs-mode processed_logprobs</code>) or "
-            "SGLang built from main for trainable rollouts.</div>"
-        )
-    for fix in r.get("param_fixes") or []:
-        out.append(
-            f'<div class="hb-note hb-dim">upstream compatibility: {html.escape(fix)} — '
-            "the request differs from what the harness asked for.</div>"
-        )
-
-    rewards = r.get("rewards") or {}
-    if len(rewards) > 1:
-        chosen = r.get("reward_key", "")
-        parts = [
-            f"<b>{html.escape(k)}</b> {v:.3f}" + (" ←" if k == chosen else "")
-            for k, v in sorted(rewards.items())
-        ]
-        out.append(f'<div class="hb-kv hb-dim">{" &nbsp; ".join(parts)}</div>')
-
-    for step in r.get("step_results") or []:
-        vals = ", ".join(f"{k}={v:.2f}" for k, v in (step.get("rewards") or {}).items())
-        out.append(
-            f'<div class="hb-dim">step <b>{html.escape(step.get("name", ""))}</b> {vals}</div>'
-        )
-
-    if r.get("error"):
-        out.append(f'<pre class="hb-err">{html.escape(str(r["error"])[:1200])}</pre>')
-    if r.get("agent_log_tail"):
-        out.append(
-            '<details class="hb-dim"><summary>agent log</summary>'
-            f"<pre>{html.escape(str(r['agent_log_tail'])[:4000])}</pre></details>"
-        )
-
-    out.append(_findings_html(r.get("findings") or []))
-    out.append(
-        '<div class="hb-dim" style="margin-top:10px">Capture quality and reward are '
-        "independent: a perfectly captured rollout can still score 0 because the model was "
-        "wrong, and reward <b>—</b> means the verifier never ran at all.</div></div>"
-    )
-    return "".join(out)
-
-
-def _conversation_html(r: dict[str, Any]) -> str:
-    """The whole conversation as it was actually sent: system prompt, tools, results, replies.
-
-    Rebuilt from the result rather than the live session, so it survives the run. Several are
-    possible: each root is a separate conversation, and an auxiliary one (a next-speaker check, a
-    summariser) is labelled as such so it is not mistaken for the agent working on the task.
-    """
-    conversations = r.get("conversations") or []
-    if not conversations:
-        return ""
-
-    agents = [c for c in conversations if c.get("role", "agent") == "agent"]
-    blocks = []
-    seen_agents = 0
-    for i, convo in enumerate(conversations):
-        role = convo.get("role", "agent")
-        if role == "agent":
-            seen_agents += 1
-            # Numbered when there is more than one, so two blocks are never both "main".
-            badge = (
-                "main conversation"
-                if len(agents) == 1
-                else f"conversation {seen_agents} of {len(agents)}"
-            )
-        else:
-            badge = {
-                "auxiliary": "auxiliary call",
-                "discarded": "discarded branch",
-            }.get(role, role)
-        rows = [
-            row
-            for row in (_render_message(m) for m in convo.get("messages") or [])
-            if row
-        ]
-        if not rows:
-            continue
-        blocks.append(
-            f'<details class="hb-convo" {"open" if role == "agent" and i == 0 else ""}>'
-            f"<summary><b>{html.escape(badge)}</b> "
-            f'<span class="hb-dim">{convo.get("n_turns", 0)} model call(s), '
-            f"{len(rows)} message(s)</span></summary>{''.join(rows)}</details>"
-        )
-    if not blocks:
-        return ""
-    return (
-        f'<div class="hb-card hb-tx"><b>Conversation</b> '
-        f'<span class="hb-dim">everything the model saw and produced</span>'
-        f"{''.join(blocks)}</div>"
-    )
-
-
-def _confidence(mean_logp: float) -> str:
-    """A bar for mean logprob. Closer to 0 is more confident; -1.0 is the practical floor here."""
-    pct = max(0.0, min(1.0, 1.0 + mean_logp))  # -0 -> 1.0, -1 -> 0.0
-    hue = 8 + int(112 * pct)  # red through amber to green
-    return (
-        f'<span class="hb-conf" title="mean logprob {mean_logp:.3f}">'
-        f'<span style="width:{pct * 100:.0f}%;background:hsl({hue} 75% 45%)"></span></span>'
-    )
-
-
-def _turns_html(r: dict[str, Any]) -> str:
-    """Turn by turn: what it did, how much it wrote, how sure it was.
-
-    Replaces a table whose most prominent column was "tools", meaning the number of tools *offered*
-    to the model. That number is a property of the harness, identical on every row, and told nobody
-    anything. What varies per turn, and is worth reading, is the action taken, the tokens spent on
-    it, and the model's confidence while producing them.
-    """
-    turns = r.get("turns") or []
-    if not turns:
-        return '<div class="hb-dim">No model calls were captured.</div>'
-
-    used: dict[str, int] = {}
-    for t in turns:
-        for call in t.get("tool_calls") or []:
-            name = str(call.get("name", "?"))
-            used[name] = used.get(name, 0) + 1
-
-    rows = []
-    for t in turns:
-        lp = t.get("per_token_logps") or []
-        mean = sum(lp) / len(lp) if lp else 0.0
-        gen = len(t.get("completion_token_ids") or [])
-        calls = t.get("tool_calls") or []
-        if calls:
-            action = " ".join(
-                f"<code>{html.escape(str(c.get('name', 'tool')))}</code>" for c in calls
-            )
-        elif t.get("finish_reason") == "stop":
-            action = '<span class="hb-dim">final answer</span>'
-        else:
-            action = '<span class="hb-dim">text only</span>'
-        note = (
-            ' <span class="hb-tag hb-drop-tag">discarded</span>'
-            if t.get("discarded")
-            else ""
-        )
-        preview = _clip(t.get("text") or "", 160)
-        rows.append(
-            f'<tr class="{"hb-drop-row" if t.get("discarded") else ""}">'
-            f'<td class="hb-num">{t.get("turn")}</td>'
-            f"<td>{action}{note}"
-            + (f'<div class="hb-dim hb-prev">{preview}</div>' if preview else "")
-            + f'</td><td class="hb-num">{gen:,}</td>'
-            f"<td>{_confidence(mean) if lp else ''}</td>"
-            f'<td class="hb-dim">{html.escape(str(t.get("finish_reason") or ""))}</td></tr>'
-        )
-
-    histogram = ""
-    if used:
-        top = sorted(used.items(), key=lambda kv: -kv[1])
-        histogram = (
-            '<div class="hb-dim" style="margin-top:10px">tools used: '
-            + " &nbsp; ".join(f"<code>{html.escape(k)}</code>×{v}" for k, v in top)
-            + "</div>"
-        )
-
-    return (
-        '<div class="hb-card"><b>Turn by turn</b>'
-        '<table class="hb-tbl"><thead><tr><th>#</th><th>action</th><th>tokens</th>'
-        "<th>confidence</th><th>stopped because</th></tr></thead><tbody>"
-        + "".join(rows)
-        + "</tbody></table>"
-        + histogram
-        + '<div class="hb-dim" style="margin-top:6px">Confidence is the mean logprob of the '
-        "sampled tokens: full bar means the model was near-certain, short means it was "
-        "guessing. Discarded turns were generated and billed but lead nowhere, so they are "
-        "excluded from training paths.</div></div>"
-    )
-
-
-def _write_contract(r: dict[str, Any]) -> str | None:
-    """Write `contract.json`: exactly what a trainer consumes, nothing else.
-
-    Per turn, `(prompt_token_ids, completion_token_ids, per_token_logps)` plus the reward. The
-    logprobs are the load-bearing part and the reason this is a separate file: they are the
-    behaviour policy's, recorded at sampling time, and cannot be recovered afterwards by re-running
-    the prompt. Discarded turns are kept but flagged, because they were generated and billed and a
-    trainer must be able to see them in order to exclude them deliberately.
-
-    Returns `None` for an eval rollout. Writing a file whose every `prompt_token_ids` is `[]` would
-    hand someone a download named `contract.json` containing no contract, and a file on disk is far
-    more convincing than an empty list in a JSON blob.
-    """
-    import tempfile
-    from pathlib import Path as _Path
-
     turns = r.get("turns") or []
     if not turns or r.get("rollout_type", "train") == "eval":
         return None
     from .contract import export_training_contract
     from .models import HarborRolloutResult
 
-    contract = export_training_contract(HarborRolloutResult.model_validate(r))
-    name = re.sub(r"[^A-Za-z0-9_.-]", "_", str(r.get("task_name") or "rollout"))
-    target = (
-        _Path(tempfile.mkdtemp(prefix="harbor-contract-")) / f"{name}.contract.json"
+    return export_training_contract(HarborRolloutResult.model_validate(r))
+
+
+def _training_trace(r: dict[str, Any]) -> dict[str, Any] | None:
+    """Download the same validated token objects returned by HarborSession."""
+    if not r.get("turns") or r.get("rollout_type", "train") == "eval":
+        return None
+    from .contract import to_training_trace
+    from .models import HarborRolloutResult
+
+    return to_training_trace(HarborRolloutResult.model_validate(r)).model_dump(
+        mode="json"
     )
-    target.write_text(json.dumps(contract, indent=2))
-    return str(target)
 
 
-def _summary_json(r: dict[str, Any]) -> str:
-    """The result with the token arrays summarised, which is the part anyone actually reads.
+# ── the page's own pieces ─────────────────────────────────────────────────────────────────────────
 
-    The full document stays available below; printing 8000 integers first buries the fields that
-    carry meaning.
+
+# Capabilities are credential checks and SDK imports. Worth doing once, not per page load, and
+# worth redoing on request, because adding a key is the usual fix for an unusable sandbox.
+_CAPS: dict[str, Any] = {"value": None}
+_CAPS_LOCK = threading.Lock()
+
+
+def _capabilities(datasets: list[str], *, refresh: bool = False) -> Any:
+    from .capabilities import capabilities
+    from .serving import HarborService
+
+    with _CAPS_LOCK:
+        if _CAPS["value"] is None or refresh:
+            service = HarborService.current()
+            llm = (
+                {
+                    "url": service.llm_url,
+                    "model": service.model,
+                    "capture_level": service.capture_level,
+                    "reachable": True,
+                    "ok": service.capture_level == "tokens",
+                }
+                if service is not None and service.llm_url
+                else {}
+            )
+            _CAPS["value"] = capabilities(datasets=datasets or None, llm=llm)
+        return _CAPS["value"]
+
+
+def _agent_choices(
+    caps: Any, *, purpose: str, provider: str, include_experimental: bool
+) -> tuple[list[tuple[str, str]], dict[str, str], int]:
+    """Which agents to offer, per the qualification evidence, and the profile each was qualified with.
+
+    Stable agents are offered by default and experimental ones only on request, as the provider
+    qualification guide specifies. Without a report every agent is experimental, which is why the
+    count of hidden ones is returned: an empty list with no reason reads as a broken page.
+
+    Returns:
+        `tuple` of `(label, name)` choices, `{harness: profile}`, and how many experimental agents
+        the filter hides.
     """
-    compact = {k: v for k, v in r.items() if k not in ("turns", "conversations")}
-    compact["turns"] = [
-        {
-            "turn": t.get("turn"),
-            "action": [c.get("name") for c in (t.get("tool_calls") or [])] or "text",
-            "prompt_token_ids": f"<{len(t.get('prompt_token_ids') or [])} ids>",
-            "completion_token_ids": f"<{len(t.get('completion_token_ids') or [])} ids>",
-            "per_token_logps": f"<{len(t.get('per_token_logps') or [])} floats>",
-            "finish_reason": t.get("finish_reason"),
-            "discarded": t.get("discarded"),
-            "text": (t.get("text") or "")[:200],
-        }
-        for t in (r.get("turns") or [])[:200]
-    ]
-    compact["conversations"] = [
-        {
-            "role": c.get("role"),
-            "n_turns": c.get("n_turns"),
-            "messages": f"<{len(c.get('messages') or [])} messages>",
-        }
-        for c in (r.get("conversations") or [])
-    ]
-    return json.dumps(compact, indent=2)[:200_000]
+    from .qualification import harness_maturity_rows
+    from .seams import get as get_seam
 
-
-def _read(path: Any, limit: int = 20000) -> str:
+    report_path = os.environ.get("OPENENV_HARBOR_QUALIFICATION_REPORT", "")
     try:
-        text = path.read_text(errors="replace")
-    except Exception:  # noqa: BLE001
+        evidence = json.loads(Path(report_path).read_text()) if report_path else None
+        tiers = {
+            name: tier
+            for name, tier, _ in harness_maturity_rows(
+                [h.name for h in caps.harnesses], evidence
+            )
+        }
+    except (OSError, ValueError, TypeError):
+        tiers = {h.name: "experimental" for h in caps.harnesses}
+        evidence = None
+    profile_provider = "vllm" if purpose == "train" else provider
+    profiles: dict[str, str] = {}
+    unavailable: set[str] = set()
+    for cell in (evidence or {}).get("cells", []):
+        if cell.get("provider") != profile_provider:
+            continue
+        config = cell.get("configuration") or {}
+        profile = config.get("acp_profile") or config.get("nemo_profile")
+        if profile:
+            name = cell["harness"]
+            profiles[name] = profile
+            try:
+                get_seam(name, profile=profile)
+            except (ValueError, KeyError):
+                unavailable.add(name)
+    # Agents that passed a development run first, so the likely choices lead the list.
+    ordered = sorted(
+        (h for h in caps.harnesses if h.name not in unavailable),
+        key=lambda h: (h.status != "validated", h.name),
+    )
+    choices, hidden = [], 0
+    for h in ordered:
+        tier = tiers.get(h.name, "experimental")
+        if tier == "stable" or (include_experimental and tier == "experimental"):
+            label = f"{h.name} · {h.dialect} · {tier}"
+            if h.name in profiles:
+                label += f" · profile: {profiles[h.name]}"
+            choices.append((label, h.name))
+        elif tier == "experimental":
+            hidden += 1
+    return choices, profiles, hidden
+
+
+def _server_engine(
+    caps: Any,
+    include_experimental: bool = False,
+    settings: ui_settings.UISettings | None = None,
+) -> dict[str, Any]:
+    """The endpoint the server was started with, as the page's default engine.
+
+    It carries no key: the capture proxy already holds the server's credential and uses it for any
+    rollout that does not name a different endpoint. A deployment that does not share it with
+    visitors (`OPENENV_HARBOR_UI_SERVER_ENDPOINT=0`) starts every visitor with no engine.
+    """
+
+    settings = settings or ui_settings.load()
+    service = ui_settings.shared_endpoint(settings)
+    if service is None:
+        return {
+            "ok": False,
+            "reason": "Connect a model to run rollouts.",
+            "include_experimental": include_experimental,
+        }
+    level = service.capture_level
+    purpose = "train" if level == "tokens" else "eval"
+    provider = str(service.provider or "openai")
+    choices, profiles, hidden = _agent_choices(
+        caps,
+        purpose=purpose,
+        provider=provider,
+        include_experimental=include_experimental,
+    )
+    return {
+        "ok": True,
+        "server_default": True,
+        "source": "server",
+        "url": "",
+        "model": service.model,
+        "host": urlparse(service.llm_url).netloc or service.llm_url,
+        "capture_level": level,
+        "trainable": level == "tokens",
+        "purpose": purpose,
+        "provider": provider,
+        "allowed_harnesses": [v for _, v in choices],
+        "harness_profiles": profiles,
+        "choices": choices,
+        "hidden_agents": hidden,
+        "include_experimental": include_experimental,
+        "notes": [],
+    }
+
+
+def validate_endpoint(
+    url: str,
+    model: str,
+    api_key: str,
+    provider: str = "openai",
+    purpose: str = "eval",
+    include_experimental: bool = False,
+    datasets: list[str] | None = None,
+    private_urls: bool = True,
+    kind: str = "custom URL",
+) -> dict[str, Any]:
+    """Probe an endpoint typed into the page and describe it as an engine for this browser session.
+
+    A rollout reaches it through the capture proxy's pool, so the tier comes from a real probe of
+    this endpoint rather than from what the server booted with.
+
+    Args:
+        url (`str`):
+            OpenAI-spec endpoint.
+        model (`str`):
+            Served model id; read from the endpoint when it serves exactly one.
+        api_key (`str`):
+            Credential for a hosted endpoint, or `""`.
+        provider (`str`, *optional*, defaults to `"openai"`):
+            Upstream API family.
+        purpose (`str`, *optional*, defaults to `"eval"`):
+            `"eval"`, or `"train"` to require exact token capture.
+        include_experimental (`bool`, *optional*, defaults to `False`):
+            Offer agents the qualification evidence marks experimental.
+        datasets (`list[str]`, *optional*):
+            Served datasets, for the capability report.
+        private_urls (`bool`, *optional*, defaults to `True`):
+            Whether `url` may resolve to a loopback or private address. The server makes the call, so
+            on a public deployment this is off (see `ui_settings.url_problem`).
+        kind (`str`, *optional*, defaults to `"custom URL"`):
+            How a run from this engine is labelled in the run list.
+
+    Returns:
+        `dict`: the engine, with `ok` and either `reason` or the agent choices. It holds `api_key`
+        for the server-side session state; the page is only ever sent `_card` of it.
+    """
+    from openenv.core.harness.capture.validate_llm import list_models, validate_llm
+
+    from .capabilities import capabilities
+    from .seams import agent_facing_model
+    from .serving import HarborService
+
+    url = (url or "").strip().rstrip("/")
+    api_key = (api_key or "").strip() or None
+    base = {
+        "include_experimental": include_experimental,
+        "custom": {
+            "url": url,
+            "model": model or "",
+            "provider": provider,
+            "purpose": purpose,
+        },
+    }
+    if not url:
+        return {
+            **base,
+            "ok": False,
+            "reason": "Enter the endpoint's URL.",
+        }
+    problem = ui_settings.url_problem(url, private_ok=private_urls)
+    if problem:
+        return {**base, "ok": False, "reason": problem}
+    if not model:
+        served_models = list_models(url, timeout=15, api_key=api_key)
+        if len(served_models) != 1:
+            return {
+                **base,
+                "ok": False,
+                "reason": "Pick a model: this endpoint serves "
+                + ", ".join(served_models[:12])
+                if served_models
+                else "Nothing reachable at that URL. Check it, and the API key if it needs one.",
+            }
+        model = served_models[0]
+    # Bounded: the page waits on this, and an endpoint that never answers must not hold it for minutes.
+    report = validate_llm(url, model, api_key=api_key, provider=provider, timeout=45)
+    if not report.reachable or (purpose == "train" and not report.trainable):
+        why = "; ".join(report.findings) or (
+            "exact engine tokens are required for training"
+            if report.reachable
+            else "unreachable"
+        )
+        return {
+            **base,
+            "ok": False,
+            "reason": f"Not usable: {why}. Training needs vLLM with --return-tokens-as-token-ids "
+            "--logprobs-mode processed_logprobs, or SGLang from git main; eval works with any "
+            "reachable endpoint.",
+        }
+    caps = capabilities(
+        datasets=list(datasets or []) or None,
+        llm={
+            "url": url,
+            "model": model,
+            "ok": report.ok,
+            "capture_level": report.capture_level,
+            "reachable": True,
+            "authenticated": bool(api_key),
+        },
+    )
+    choices, profiles, hidden = _agent_choices(
+        caps,
+        purpose=purpose,
+        provider=provider,
+        include_experimental=include_experimental,
+    )
+    notes = []
+    leaf = agent_facing_model(model)
+    if leaf != model:
+        notes.append(f"Sent to agents as {leaf}, rewritten back on the way out.")
+    notes += [f"Upstream compatibility: {fix}" for fix in report.param_fixes]
+    notes += [
+        f.split(": ", 2)[-1]
+        for f in report.findings
+        if "behaviour_changed" in f or "tool_call" in f
+    ]
+    service = HarborService.current()
+    server_url = service.llm_url if service is not None else ""
+    if server_url and server_url.rstrip("/") != url:
+        notes.append(
+            "Rollouts from this page use this endpoint, not the server's default."
+        )
+    return {
+        **base,
+        "ok": True,
+        "kind": kind,
+        "url": url,
+        "model": model,
+        "host": urlparse(url).netloc or url,
+        "capture_level": report.capture_level,
+        "trainable": report.trainable,
+        # Held in server-side session state so Run can reach a token-gated endpoint. Never sent
+        # back to the page: `_card` leaves it out.
+        "api_key": api_key or "",
+        "provider": provider,
+        "purpose": purpose,
+        "allowed_harnesses": [v for _, v in choices],
+        "harness_profiles": profiles,
+        "choices": choices,
+        "hidden_agents": hidden,
+        "sandboxes": list(caps.available_sandboxes),
+        "notes": notes,
+    }
+
+
+def _local_token() -> str:
+    try:
+        from huggingface_hub import get_token
+
+        return get_token() or ""
+    except Exception:  # noqa: BLE001 - no hub client, or an unreadable token file: just none
         return ""
-    return text if len(text) <= limit else text[:limit] + "\n…truncated…"
+
+
+def connect_endpoint(
+    form: dict[str, Any],
+    *,
+    include_experimental: bool = False,
+    datasets: list[str] | None = None,
+    settings: ui_settings.UISettings | None = None,
+    account_token: str | None = None,
+) -> dict[str, Any]:
+    """The run card's endpoint form, validated into an engine.
+
+    Two sources. `hf`: a model on Hugging Face Inference Providers, reached through the router with
+    the visitor's token (or, run locally, this machine's), optionally pinned to one provider or to the
+    router's `fastest`/`cheapest` policy. `url`: any OpenAI-compatible or Anthropic endpoint, such as a
+    vLLM the visitor runs. Both end in `validate_endpoint`, which probes the endpoint for real.
+
+    Args:
+        form (`dict`):
+            `source`, and for `hf`: `model`, `route`, `api_key`, `local_token`, `use_account`; for
+            `url`: `url`, `model`, `api_key`, `api` (`openai` or `anthropic`), `purpose`.
+        account_token (`str`, *optional*):
+            The signed-in visitor's Hugging Face token (`inference-api` scope), used when the form
+            asks for `use_account`. Gradio reads it from the session; it is never in the form.
+
+    Returns:
+        `dict`: the engine, as `validate_endpoint` returns it, with the form (minus the key) under
+        `custom` so the card can show what was connected.
+    """
+    settings = settings or ui_settings.load()
+    source = "hf" if form.get("source") == "hf" else "url"
+    key = str(form.get("api_key") or "").strip()
+    remembered = {
+        k: form.get(k)
+        for k in (
+            "source",
+            "model",
+            "route",
+            "url",
+            "api",
+            "purpose",
+            "local_token",
+            "use_account",
+        )
+        if k in form
+    }
+    remembered["source"] = source
+    if not settings.visitor_endpoints:
+        return {
+            "ok": False,
+            "custom": remembered,
+            "reason": "This server runs rollouts on its own endpoint only.",
+        }
+    common = {"include_experimental": include_experimental, "datasets": datasets}
+    if source == "hf":
+        model = str(form.get("model") or "").strip()
+        route = str(form.get("route") or "").strip()
+        if not model:
+            return {"ok": False, "custom": remembered, "reason": "Pick a model."}
+        if not key and form.get("use_account") and settings.hf_login:
+            key = account_token or ""
+            if not key:
+                return {
+                    "ok": False,
+                    "custom": remembered,
+                    "reason": "Your Hugging Face sign-in has expired. Sign in again, or paste a token.",
+                }
+        if not key and form.get("local_token") and settings.local_token:
+            key = _local_token()
+        if not key:
+            return {
+                "ok": False,
+                "custom": remembered,
+                "reason": "Enter a Hugging Face token with the Inference Providers permission.",
+            }
+        engine = validate_endpoint(
+            ui_data.HF_ROUTER,
+            f"{model}:{route}" if route else model,
+            key,
+            provider="hf",
+            purpose="eval",  # the router returns no token ids, so nothing from it is trainable
+            kind="Hugging Face",
+            **common,
+        )
+    else:
+        engine = validate_endpoint(
+            str(form.get("url") or ""),
+            str(form.get("model") or ""),
+            key,
+            provider="anthropic" if form.get("api") == "anthropic" else "openai",
+            purpose="train" if form.get("purpose") == "train" else "eval",
+            private_urls=settings.private_urls,
+            kind="custom URL",
+            **common,
+        )
+    engine["source"] = source
+    engine["custom"] = remembered
+    return engine
+
+
+def _card(
+    engine: dict[str, Any],
+    selection: dict[str, Any] | None,
+    caps: Any,
+    message: tuple[str, str] | None = None,
+    settings: ui_settings.UISettings | None = None,
+    profile: Any = None,
+) -> dict[str, Any]:
+    """What the run card shows. Everything the browser receives about the engine is chosen here, so
+    the API key held in the engine never reaches the page. `profile` is the signed-in visitor's
+    Hugging Face profile, where sign-in is set up and they used it."""
+    from .serving import HarborService
+
+    settings = settings or ui_settings.load()
+    service = HarborService.current()
+    shared = ui_settings.shared_endpoint(settings)
+    server = (
+        {
+            "model": shared.model,
+            "host": urlparse(shared.llm_url).netloc or shared.llm_url,
+            "level_text": ui_pages.LEVEL_TEXT.get(shared.capture_level, ""),
+            "train": shared.capture_level == "tokens",
+        }
+        if shared is not None
+        else None
+    )
+    sources = (["server"] if server else []) + (
+        ["hf", "url"] if settings.visitor_endpoints else []
+    )
+    public = str(service.public_url or "") if service is not None else ""
+    host = urlparse(public).hostname or ""
+    harnesses = {h.name: h for h in caps.harnesses}
+    agents = []
+    for label, name in engine.get("choices") or []:
+        h = harnesses.get(name)
+        agents.append(
+            {
+                "value": name,
+                "label": label,
+                "host_side": h is not None and h.kind == "base",
+            }
+        )
+    values = [a["value"] for a in agents]
+    hidden = engine.get("hidden_agents") or 0
+    sandboxes = [
+        {"name": s.name, "available": bool(s.available), "detail": s.detail}
+        for s in caps.sandboxes
+    ]
+    available = [s["name"] for s in sandboxes if s["available"]]
+    empty = (
+        "No agent is qualified as stable for this model yet."
+        if hidden
+        else "No agent is available for this endpoint."
+    )
+    return {
+        "stamp": time.time(),
+        "task": (
+            {k: selection.get(k) for k in ("dataset", "index", "title")}
+            if selection and selection.get("spec")
+            else None
+        ),
+        "rollouts": settings.rollouts,
+        "sources": sources,
+        "server": server,
+        "local_token": settings.local_token and bool(_local_token()),
+        "hf_login": {
+            "on": settings.hf_login,
+            "user": (profile.username or profile.name) if profile is not None else None,
+        },
+        "private_urls": settings.private_urls,
+        "engine": {
+            "ok": bool(engine.get("ok")),
+            "model": engine.get("model"),
+            "host": engine.get("host"),
+            "source": engine.get("source")
+            or ("server" if engine.get("server_default") else ""),
+            "train": engine.get("purpose") == "train",
+            "level_text": ui_pages.LEVEL_TEXT.get(
+                engine.get("capture_level") or "", ""
+            ),
+            "notes": engine.get("notes") or [],
+            "reason": engine.get("reason"),
+        },
+        "custom": engine.get("custom"),
+        "agents": agents,
+        "agent": "opencode"
+        if "opencode" in values
+        else (values[0] if values else None),
+        "agents_empty": empty,
+        "hidden_agents": hidden,
+        "include_experimental": bool(engine.get("include_experimental")),
+        "sandboxes": sandboxes,
+        "sandbox": "e2b"
+        if "e2b" in available
+        else (available[0] if available else None),
+        # A capture proxy on loopback cannot be reached from a remote sandbox, only by host-side agents.
+        "proxy_local": host in ("127.0.0.1", "localhost", "0.0.0.0", "::1"),
+        "message": {"tone": message[0], "text": message[1]} if message else None,
+    }
+
+
+def _payload(evt: Any) -> dict[str, Any]:
+    data = getattr(evt, "_data", None)
+    return data if isinstance(data, dict) else {}
+
+
+def _signature(listing: list[dict[str, Any]]) -> str:
+    """What changes when a run changes state; ticks that change nothing re-render nothing."""
+    return json.dumps([(r.get("id"), r.get("status")) for r in listing])
+
+
+def _js(name: str) -> str:
+    """A component's script, with the shared icon set in front of it."""
+    return js_prelude() + _asset(name)
 
 
 def harbor_gradio_builder(
@@ -799,713 +742,778 @@ def harbor_gradio_builder(
 
     Args:
         datasets (`list[str]`, *optional*):
-            Dataset specs served by this server; each becomes a selectable split.
+            Dataset specs served by this server. Each is browsable; Hub datasets can be added from the
+            page when `OPENENV_HARBOR_UI_ADD_DATASETS` allows it.
+        title (`str`, *optional*):
+            Page title. Defaults to `"OpenEnv × Harbor"`.
 
     Returns:
         `gr.Blocks`: The interface.
     """
-    from .tasks import HarborTaskProvider, resolve_task_dirs
+    from .serving import HarborService
 
-    datasets = list(datasets or [])
+    served = list(datasets or [])
+    title = title or "OpenEnv × Harbor"
+    settings = ui_settings.load()
+    runs = ui_runs.manager()
+    if not settings.private_urls:
+        ui_settings.guard_redirects()
+    _load_added(settings, served)
+    with _ADDED_LOCK:
+        for spec in ui_data.added_in_bucket(settings, served):
+            if spec not in _ADDED:
+                _ADDED.append(spec)
 
-    def on_validate(
-        url: str,
-        model: str,
-        api_key: str,
-        provider: str = "openai",
-        purpose: str = "eval",
-        include_experimental: bool = False,
-    ):
-        from openenv.core.harness.capture.validate_llm import list_models, validate_llm
-
-        from .capabilities import capabilities
-        from .seams import agent_facing_model, get as get_seam
-        from .serving import HarborService
-
-        url = (url or "").strip().rstrip("/")
-        api_key = (api_key or "").strip() or None
-        if not url:
-            return (
-                _UNVALIDATED,
-                gr.update(),
-                gr.update(),
-                {},
-                gr.update(interactive=False),
-            )
-
-        if not model:
-            served = list_models(url, api_key=api_key)
-            if len(served) != 1:
-                hint = (
-                    f"`{', '.join(served[:12])}`"
-                    if served
-                    else "nothing reachable — check the URL, and the API key if it needs one"
-                )
-                return (
-                    f"**Pick a model** — this endpoint serves {hint}.",
-                    gr.update(),
-                    gr.update(),
-                    {},
-                    gr.update(interactive=False),
-                )
-            model = served[0]
-
-        report = validate_llm(url, model, api_key=api_key, provider=provider)
-        if not report.reachable or (purpose == "train" and not report.trainable):
-            why = "; ".join(report.findings) or (
-                "Exact engine tokens are required for training"
-                if report.reachable
-                else "unreachable"
-            )
-            return (
-                f"**Not usable** — {why}\n\n"
-                "Needs vLLM with `--return-tokens-as-token-ids --logprobs-mode "
-                "processed_logprobs`, SGLang built from git main, or any reachable OpenAI-spec "
-                "endpoint (with an API key) for eval rollouts.",
-                gr.update(),
-                gr.update(),
-                {},
-                gr.update(interactive=False),
-            )
-
-        caps = capabilities(
-            datasets=datasets,
-            llm={
-                "url": url,
-                "model": model,
-                "ok": report.ok,
-                "capture_level": report.capture_level,
-                "reachable": True,
-                "authenticated": bool(api_key),
-            },
+    def viewer(visitor: str | None) -> str | None:
+        """Whose runs this visitor may see: everyone's (`None`), or their own."""
+        return (
+            None if settings.run_visibility == "all" else ui_settings.owner_of(visitor)
         )
-        sandboxes = caps.available_sandboxes
-        from .qualification import harness_maturity_rows
 
+    def listing(visitor: str | None) -> list[dict[str, Any]]:
+        return runs.list(viewer(visitor))
+
+    # History is any `*.json` in the runs folder, so a record can be old or hand-edited. One that
+    # cannot be drawn is reported as that, rather than breaking the tab it is on.
+    def runs_page(
+        visitor: str | None, selected: str = "", compare: list[str] | None = None
+    ) -> str:
+        try:
+            return ui_pages.runs_html(
+                listing(visitor),
+                selected,
+                compare,
+                history=runs.store is not None,
+                own=settings.run_visibility == "own",
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ui_pages.unreadable("Runs", exc)
+
+    def run_page(run_id: str, visitor: str | None) -> str:
+        owner = viewer(visitor)
+        try:
+            return ui_pages.run_html(
+                runs.get(run_id, owner),
+                runs.live(run_id, owner),
+                HarborService.current(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ui_pages.unreadable("Runs", exc, run=True)
+
+    # ── server functions: called from the components' JavaScript ──────────────────────────────
+    # Gradio passes a server function one value: nothing becomes `[]`, one argument arrives as is,
+    # several arrive as a list. So each takes exactly one parameter.
+    def hb_datasets(_: Any = None) -> dict[str, Any]:
+        from .tasks import resolve_task_dirs
+
+        out = []
+        with _ADDED_LOCK:
+            added = list(_ADDED)
+        for spec in served + [s for s in added if s not in served]:
+            row: dict[str, Any] = {
+                "spec": spec,
+                "label": ui_data.hub_id(spec),
+                "added": spec not in served,
+                # Removing is adding's undo, so it takes the same permission.
+                "removable": spec in added
+                and spec not in served
+                and _can_add_datasets(),
+            }
+            try:
+                row["num_tasks"] = len(resolve_task_dirs(spec))
+            except Exception as exc:  # noqa: BLE001 - one broken dataset must not hide the others
+                row["error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+            out.append(row)
+        return {"datasets": out, "can_add": _can_add_datasets()}
+
+    def hb_tasks(spec: str) -> dict[str, Any]:
+        if not _allowed(spec, served):
+            return {"error": "That dataset is not served here."}
+        try:
+            return {"rows": ui_data.task_rows(spec)}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+
+    def hb_hub(query: str) -> list[dict[str, Any]]:
+        if not _can_add_datasets():
+            return []
+        try:
+            return ui_data.search_hub(query)
+        except Exception:  # noqa: BLE001 - the Hub being unreachable just means no suggestions
+            return []
+
+    def hb_add(spec: str) -> dict[str, Any]:
+        """Start adding a Hub dataset; the page follows it with `hb_add_status`."""
+        spec = (spec or "").strip()
+        if not _can_add_datasets():
+            return {
+                "state": "error",
+                "error": "Adding datasets is turned off on this server.",
+            }
+        target = ui_data.added_spec(spec, settings)
+        with _ADDED_LOCK:
+            if target in served or target in _ADDED or spec in served:
+                return {"spec": spec, "state": "done", "target": target}
+            full = len(_ADDED) >= _MAX_ADDED
+        problem = _hub_problem(spec)
+        if problem:
+            return {"spec": spec, "state": "error", "error": problem}
+        if full:
+            return {
+                "spec": spec,
+                "state": "error",
+                "error": f"This server already holds {_MAX_ADDED} added datasets.",
+            }
+        return ui_data.start_add(spec, _remember_added, settings)
+
+    def hb_remove(spec: str) -> dict[str, Any]:
+        """Remove a dataset added from the page, files and all: its bucket folder, or its download.
+        One the server was started with is not the page's to remove."""
+        spec = str(spec or "")
+        if not _can_add_datasets():
+            return {
+                "error": "Adding and removing datasets is turned off on this server."
+            }
+        return _remove_added(spec, served, settings)
+
+    def hb_add_status(spec: str) -> dict[str, Any]:
+        return ui_data.add_status(str(spec or "")) or {"spec": spec, "state": "unknown"}
+
+    def hb_inspect(spec: str) -> dict[str, Any]:
+        """A Hub dataset's task count (null when not in Harbor's layout) and size, before adding it."""
+        spec = str(spec or "").strip()
+        if not _can_add_datasets() or not _HUB_ID.match(spec):
+            return {"spec": spec, "tasks": None, "bytes": None}
+        try:
+            return {"spec": spec, **_inspect_hub(spec)}
+        except Exception as exc:  # noqa: BLE001 - distinguish Hub failure from an empty dataset
+            return {
+                "spec": spec,
+                "tasks": None,
+                "bytes": None,
+                "error": f"Could not inspect it: {type(exc).__name__}: {str(exc)[:200]}",
+            }
+
+    def _remember_added(spec: str) -> None:
+        with _ADDED_LOCK:
+            if spec not in _ADDED:
+                _ADDED.append(spec)
+            _save_added(settings)
+
+    def hb_file(args: list[Any]) -> dict[str, Any]:
+        spec, index, path = (list(args or []) + ["", 0, ""])[:3]
+        if not _allowed(str(spec), served):
+            return {"error": "That dataset is not served here."}
+        try:
+            return ui_data.read_task_file(spec, int(index), str(path))
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+
+    def hb_models(_: Any = None) -> dict[str, Any]:
+        if not settings.visitor_endpoints:
+            return {"models": []}
+        try:
+            return {"models": ui_data.hf_models()}
+        except Exception as exc:  # noqa: BLE001 - no list means the visitor types a model id instead
+            return {"models": [], "error": f"Could not list models: {str(exc)[:160]}"}
+
+    def hb_served(args: list[Any]) -> dict[str, Any]:
+        """The models an endpoint serves, for the card's model field. Guarded like a connect."""
+        from openenv.core.harness.capture.validate_llm import list_models
+
+        url, key = (list(args or []) + ["", ""])[:2]
+        url = str(url or "").strip().rstrip("/")
+        if not settings.visitor_endpoints:
+            return {"error": "This server runs rollouts on its own endpoint only."}
+        problem = ui_settings.url_problem(url, private_ok=settings.private_urls)
+        if problem:
+            return {"error": problem}
+        models = list_models(url, timeout=10, api_key=str(key or "").strip() or None)
+        if not models:
+            return {
+                "error": "Nothing listed at that URL. Check it, and the key if it needs one."
+            }
+        return {"models": models[:200]}
+
+    def hb_download(args: list[Any]) -> dict[str, Any]:
+        token, kind = (list(args or []) + ["", ""])[:2]
+        run_id = ui_pages.granted(str(token))
+        rec = runs.get(run_id) if run_id else None
+        result = (rec or {}).get("result")
+        if not result:
+            return {"error": "This link has expired. Open the run again."}
+        name = re.sub(r"[^A-Za-z0-9_.-]", "_", str(rec.get("id") or "rollout"))
+        if kind in {"contract", "training_trace"}:
+            try:
+                contract = (
+                    _training_trace(result)
+                    if kind == "training_trace"
+                    else _contract(result)
+                )
+            except (
+                ValueError
+            ) as exc:  # the exporter refuses a rollout with FATAL findings
+                return {"error": str(exc)[:200]}
+            if contract is None:
+                return {
+                    "error": "An eval rollout has nothing to train on, so it has no contract."
+                }
+            return {
+                "name": f"{name}.{kind}.json",
+                "text": json.dumps(contract, indent=2),
+            }
+        return {
+            "name": f"{name}.json",
+            "text": json.dumps(result, indent=2, default=str),
+        }
+
+    # ── handlers ─────────────────────────────────────────────────────────────────────────────────
+    # Each tab shows a list or one item, never both. Which one is decided by the stylesheet from what
+    # is rendered (a task head means a task is open; a run page means a run is), not by toggling
+    # visibility, so the list keeps its filters and scroll, and no late update can show both.
+
+    def on_load(visitor: str | None):
+        # Not the run card or its engine: those belong to the task page and are written when a task
+        # opens. A `#task=` link opens one while this is still running, and writing the card here too
+        # would replace that task's card with an empty one whenever this finished second.
+        visitor = visitor or ui_settings.new_visitor()
+        caps = _capabilities(served)
+        return (
+            ui_pages.header_html(title, served, caps, settings),
+            ui_pages.setup_html(caps, served, settings),
+            runs_page(visitor),
+            _signature(listing(visitor)),
+            visitor,
+        )
+
+    def open_task(
+        engine: dict, visitor: str | None, spec: str, index: int, profile: Any = None
+    ):
+        """The task page for one task: (selection, head, body, card, engine)."""
+        caps = _capabilities(served)
+        # The first task a page opens starts from the server's endpoint.
+        engine = engine or _server_engine(caps, settings=settings)
+        if not _allowed(spec, served):
+            return (gr.skip(),) * 5
+        try:
+            detail = ui_data.task_detail(spec, index)
+        except Exception as exc:  # noqa: BLE001
+            return (
+                {},
+                ui_pages.task_error_head(spec, index),
+                f'<div class="hb-panel">{ui_pages.empty("alert", "Could not open this task", html.escape(str(exc)[:300]))}</div>',
+                _card(engine, None, caps, settings=settings, profile=profile),
+                engine,
+            )
+        selection = {
+            "spec": spec,
+            "dataset": spec,
+            "index": index,
+            "name": detail["name"],
+            "title": detail["title"],
+        }
+        mine = [
+            r
+            for r in listing(visitor)
+            if r.get("dataset") == spec and r.get("task_index") == index
+        ]
+        return (
+            selection,
+            ui_pages.task_head_html(detail, ui_data.common_tags(spec)),
+            ui_pages.task_html(detail, mine),
+            _card(engine, selection, caps, settings=settings, profile=profile),
+            engine,
+        )
+
+    def on_open_task(
+        engine: dict,
+        visitor: str | None,
+        evt: gr.EventData,
+        profile: gr.OAuthProfile | None = None,
+    ):
+        data = _payload(evt)
+        return open_task(
+            engine,
+            visitor,
+            str(data.get("spec") or ""),
+            int(data.get("index") or 0),
+            profile,
+        )
+
+    def on_back_to_tasks():
+        return ""
+
+    def on_tab_again(sel: dict, visitor: str | None, evt: gr.EventData):
+        """Tasks or Runs clicked while already showing: back to that tab's list."""
+        skip = gr.skip()
+        if _payload(evt).get("back") == "tasks":
+            return "", skip, skip, skip
+        state = {**sel, "id": ""}
+        return skip, state, "", runs_page(visitor, "", sel.get("compare", []))
+
+    def show_run(run_id: str, visitor: str | None, sel: dict):
+        return {"id": run_id, "compare": sel.get("compare", [])}, run_page(
+            run_id, visitor
+        )
+
+    def on_open_run(sel: dict, visitor: str | None, evt: gr.EventData):
+        return show_run(str(_payload(evt).get("id") or ""), visitor, sel)
+
+    def on_pick_runs(sel: dict, evt: gr.EventData):
+        ids = [str(i) for i in (_payload(evt).get("ids") or [])][:4]
+        return {**sel, "compare": ids}
+
+    def on_compare(sel: dict, visitor: str | None, evt: gr.EventData):
+        ids = [str(i) for i in (_payload(evt).get("ids") or [])][:4]
+        owner = viewer(visitor)
+        return {"id": "", "compare": ids}, ui_pages.compare_html(
+            [runs.get(i, owner) for i in ids]
+        )
+
+    def on_task_page(sel: dict, visitor: str | None, evt: gr.EventData):
+        """A run listed on a task page was clicked: show it on the Runs tab."""
+        run_id = str(_payload(evt).get("run") or "")
+        if not run_id:
+            return (gr.skip(),) * 4
+        state, view = show_run(run_id, visitor, sel)
+        return gr.Tabs(selected="runs"), state, view, runs_page(visitor, run_id)
+
+    def on_run_page(
+        engine: dict,
+        sel: dict,
+        visitor: str | None,
+        evt: gr.EventData,
+        profile: gr.OAuthProfile | None = None,
+    ):
+        """The run page's own links: back to the list, another run, or the task it ran."""
+        data = _payload(evt)
+        skip = gr.skip()
+        if data.get("run"):
+            return (*show_run(str(data["run"]), visitor, sel), *(skip,) * 7)
+        if data.get("task") is not None:
+            task = open_task(
+                engine,
+                visitor,
+                str(data.get("task") or ""),
+                int(data.get("index") or 0),
+                profile,
+            )
+            return (skip, skip, gr.Tabs(selected="tasks"), *task, skip)
+        listing_now = runs_page(visitor, "", sel.get("compare", []))
+        return ({**sel, "id": ""}, "", skip, *(skip,) * 5, listing_now)
+
+    def on_experimental(
+        engine: dict,
+        selection: dict,
+        evt: gr.EventData,
+        profile: gr.OAuthProfile | None = None,
+    ):
+        include = bool(_payload(evt).get("include_experimental"))
+        caps = _capabilities(served)
+        if engine.get("server_default") or not engine:
+            engine = _server_engine(
+                caps, include_experimental=include, settings=settings
+            )
+        elif not engine.get("ok"):
+            engine = {**engine, "include_experimental": include}
+        else:
+            choices, profiles, hidden_n = _agent_choices(
+                caps,
+                purpose=engine.get("purpose", "eval"),
+                provider=engine.get("provider", "openai"),
+                include_experimental=include,
+            )
+            engine = {
+                **engine,
+                "choices": choices,
+                "allowed_harnesses": [v for _, v in choices],
+                "harness_profiles": profiles,
+                "hidden_agents": hidden_n,
+                "include_experimental": include,
+            }
+        return _card(
+            engine, selection, caps, settings=settings, profile=profile
+        ), engine
+
+    def on_connect(
+        engine: dict,
+        selection: dict,
+        evt: gr.EventData,
+        profile: gr.OAuthProfile | None = None,
+        token: gr.OAuthToken | None = None,
+    ):
+        new = connect_endpoint(
+            _payload(evt),
+            include_experimental=bool(engine.get("include_experimental")),
+            datasets=served,
+            settings=settings,
+            account_token=token.token if token is not None else None,
+        )
+        caps = _capabilities(served)
+        if not new.get("ok"):
+            # A failed check leaves the working engine exactly as it was, `custom` included: the card
+            # compares its form with `custom` to know whether Run still means what it shows.
+            return _card(
+                engine,
+                selection,
+                caps,
+                ("bad", str(new.get("reason"))),
+                settings,
+                profile=profile,
+            ), engine
+        return _card(
+            new,
+            selection,
+            caps,
+            ("ok", f"Connected to {new['model']}."),
+            settings,
+            profile=profile,
+        ), new
+
+    def on_server_default(
+        engine: dict, selection: dict, profile: gr.OAuthProfile | None = None
+    ):
+        caps = _capabilities(served)
+        new = _server_engine(
+            caps,
+            include_experimental=bool(engine.get("include_experimental")),
+            settings=settings,
+        )
+        return _card(new, selection, caps, settings=settings, profile=profile), new
+
+    def on_run(
+        engine: dict,
+        selection: dict,
+        visitor: str | None,
+        evt: gr.EventData,
+        profile: gr.OAuthProfile | None = None,
+    ):
+        """Start a rollout and show it on the Runs tab. It keeps running if the page is closed."""
+        data = _payload(evt)
+        harness, sandbox = str(data.get("agent") or ""), str(data.get("sandbox") or "")
+        caps = _capabilities(served)
+        keep = (gr.skip(),) * 5
+
+        def say(text: str):
+            return (
+                _card(
+                    engine, selection, caps, ("bad", text), settings, profile=profile
+                ),
+                *keep,
+            )
+
+        if not settings.rollouts:
+            return say("Rollouts are turned off on this server.")
+        if not engine.get("ok"):
+            return say("Connect a model first.")
+        if engine.get("server_default") and not settings.server_endpoint:
+            return say("This server's endpoint is not shared. Connect your own model.")
+        if not engine.get("server_default") and not settings.visitor_endpoints:
+            return say("This server runs rollouts on its own endpoint only.")
+        if harness not in engine.get("allowed_harnesses", []):
+            return say(
+                "That agent is outside the qualified set for this endpoint. Pick another."
+            )
+        spec = (selection or {}).get("spec", "")
+        if not _allowed(spec, served):
+            return say("Pick a task first.")
+        # The card only offers these, but the event is the browser's to send.
+        if sandbox not in caps.available_sandboxes:
+            return say("That sandbox is not available on this server.")
+        # Harbor fills `${VAR}` in a task's settings from this server's environment, where its keys
+        # are. Even a served task cannot receive them when a visitor controls the model: its trace is
+        # visible to that visitor, so the model can print a secret it finds in the sandbox.
+        try:
+            reads_env = ui_data.reads_environment(spec, int(selection.get("index", 0)))
+        except Exception as exc:  # noqa: BLE001 - a task that cannot be read cannot be run
+            return say(
+                f"Could not read this task: {type(exc).__name__}: {str(exc)[:200]}"
+            )
+        if reads_env and spec not in served:
+            return say(
+                "This task reads environment variables or files from the server, which only "
+                "datasets the server was started with may do."
+            )
+        if reads_env and not engine.get("server_default"):
+            return say(
+                "This task passes the server's environment variables or files into the sandbox, so "
+                "it runs only on the server's own endpoint, never on a model you connect."
+            )
+        service = HarborService.current()
+        if service is None:
+            return say(
+                "This server has no capture proxy running, so it cannot run rollouts."
+            )
+        visitor = visitor or ui_settings.new_visitor()
+        try:
+            run_id = runs.start(
+                engine=engine,
+                spec=spec,
+                index=int(selection.get("index", 0)),
+                harness=harness,
+                sandbox=sandbox,
+                service=service,
+                owner=ui_settings.owner_of(visitor),
+                title=str(selection.get("title") or ""),
+                per_owner=settings.max_runs_per_visitor,
+                private_urls=settings.private_urls,
+                # a browser id is free to replace, so a signed-in visitor's cap follows the account
+                quota=f"hf:{profile.username}"
+                if profile is not None and profile.username
+                else "",
+            )
+        except (RuntimeError, IndexError, ValueError) as exc:
+            return say(str(exc))
+        except Exception as exc:  # noqa: BLE001 - the card must never be left on "Starting…"
+            return say(f"Could not start: {type(exc).__name__}: {str(exc)[:200]}")
+        return (
+            _card(
+                engine,
+                selection,
+                caps,
+                ("ok", f"Started {harness} on {sandbox}."),
+                settings,
+                profile=profile,
+            ),
+            gr.Tabs(selected="runs"),
+            {"id": run_id, "compare": []},
+            runs_page(visitor, run_id),
+            run_page(run_id, visitor),
+            _signature(listing(visitor)),
+        )
+
+    def on_tick(sel: dict, sig: str, visitor: str | None):
+        """Refresh the run list when a run changes state, and the open run while it is live."""
+        items = listing(visitor)
+        new_sig = _signature(items)
+        run_id = sel.get("id") or ""
+        live = runs.live(run_id, viewer(visitor)) if run_id else None
+        changed = new_sig != sig
+        list_out = (
+            runs_page(visitor, run_id, sel.get("compare", [])) if changed else gr.skip()
+        )
+        # live: redraw as it grows; just finished: draw the result once
+        view = (
+            run_page(run_id, visitor)
+            if run_id and (live is not None or changed)
+            else gr.skip()
+        )
+        return list_out, view, new_sig
+
+    def on_refresh_setup():
+        caps = _capabilities(served, refresh=True)
+        return ui_pages.setup_html(caps, served, settings), ui_pages.header_html(
+            title, served, caps, settings
+        )
+
+    # ── layout ───────────────────────────────────────────────────────────────────────────────────
+    html_opts = {"padding": False, "apply_default_css": False, "elem_classes": "hb"}
+    with gr.Blocks(title=title, fill_width=True) as app:
+        # apply_default_css=False on every HTML block: Gradio's default wraps it in `.prose`, and the
+        # OpenEnv theme strips the border and background from anything directly inside `.prose`.
+        gr.HTML(
+            f"<style>{_asset('harbor.css')}</style>{ui_icons.json_tag()}",
+            padding=False,
+            apply_default_css=False,
+        )
+        header = gr.HTML(
+            ui_pages.header_html(title, served, settings=settings),
+            js_on_load=_js("header.js"),
+            **html_opts,
+        )
+        engine_state = gr.State({})
+        selection = gr.State({})
+        run_sel = gr.State({"id": "", "compare": []})
+        runs_sig = gr.State("")
+        # Which runs are this browser's: a random id kept in the browser, stored on each run as a digest.
+        visitor = gr.BrowserState(
+            None,
+            storage_key="openenv-harbor-visitor",
+            secret=ui_settings.visitor_secret(settings),
+        )
+
+        with gr.Tabs(selected="tasks", elem_classes="hb-tabs") as tabs:
+            with gr.Tab("Tasks", id="tasks"):
+                with gr.Column(elem_classes="hb-page hb-browse"):
+                    browser = gr.HTML(
+                        html_template=_asset("task_browser.html"),
+                        js_on_load=_js("task_browser.js"),
+                        server_functions=[
+                            hb_datasets,
+                            hb_tasks,
+                            hb_hub,
+                            hb_add,
+                            hb_add_status,
+                            hb_inspect,
+                            hb_remove,
+                        ],
+                        **html_opts,
+                    )
+                with gr.Column(elem_classes="hb-page hb-taskpage"):
+                    task_head = gr.HTML("", js_on_load=_js("task_head.js"), **html_opts)
+                    with gr.Row(elem_classes="hb-row", equal_height=False):
+                        with gr.Column(elem_classes="hb-main", min_width=0):
+                            task_view = gr.HTML(
+                                "",
+                                js_on_load=_js("task_view.js"),
+                                server_functions=[hb_file],
+                                **html_opts,
+                            )
+                        with gr.Column(elem_classes="hb-side", min_width=0):
+                            card = gr.HTML(
+                                {},
+                                html_template="",
+                                js_on_load=_js("run_card.js"),
+                                server_functions=[hb_models, hb_served],
+                                **html_opts,
+                            )
+
+            with gr.Tab("Runs", id="runs"):
+                with gr.Column(elem_classes="hb-page hb-runlist"):
+                    runs_list = gr.HTML(
+                        runs_page(None), js_on_load=_js("run_list.js"), **html_opts
+                    )
+                with gr.Column(elem_classes="hb-page hb-runpage"):
+                    run_view = gr.HTML(
+                        "",
+                        js_on_load=_js("run_view.js"),
+                        server_functions=[hb_download],
+                        **html_opts,
+                    )
+
+            with gr.Tab("Setup", id="setup"):
+                setup_view = gr.HTML("", **html_opts)
+                with gr.Row(elem_classes="hb-actions"):
+                    refresh_btn = gr.Button("Check sandboxes again", size="sm")
+                _qualification_panel()
+
+        timer = gr.Timer(2.0)
+
+        # ── wiring ───────────────────────────────────────────────────────────────────────────────
+        task_out = [selection, task_head, task_view, card, engine_state]
+        run_out = [run_sel, run_view]
+        app.load(
+            on_load,
+            [visitor],
+            [header, setup_view, runs_list, runs_sig, visitor],
+        )
+        header.select(
+            on_tab_again, [run_sel, visitor], [task_head, run_sel, run_view, runs_list]
+        )
+        browser.select(on_open_task, [engine_state, visitor], task_out)
+        task_head.select(on_back_to_tasks, None, [task_head])
+        task_view.select(on_task_page, [run_sel, visitor], [tabs, *run_out, runs_list])
+        # Not `.change`: Gradio fires that on every value update from Python too, which would loop.
+        card.select(on_experimental, [engine_state, selection], [card, engine_state])
+        # Gradio runs one call of each event at a time by default. A connect waits on someone's
+        # endpoint and a tick fires every two seconds per open page, so neither may queue the rest.
+        card.input(
+            on_connect,
+            [engine_state, selection],
+            [card, engine_state],
+            concurrency_limit=8,
+        )
+        card.clear(on_server_default, [engine_state, selection], [card, engine_state])
+        card.submit(
+            on_run,
+            [engine_state, selection, visitor],
+            [card, tabs, run_sel, runs_list, run_view, runs_sig],
+            concurrency_limit=8,
+        )
+        runs_list.select(on_open_run, [run_sel, visitor], run_out)
+        runs_list.input(on_pick_runs, [run_sel], [run_sel])
+        runs_list.submit(on_compare, [run_sel, visitor], run_out)
+        run_view.select(
+            on_run_page,
+            [engine_state, run_sel, visitor],
+            [*run_out, tabs, *task_out, runs_list],
+        )
+        timer.tick(
+            on_tick,
+            [run_sel, runs_sig, visitor],
+            [runs_list, run_view, runs_sig],
+            show_progress="hidden",
+            concurrency_limit=None,
+        )
+        refresh_btn.click(on_refresh_setup, None, [setup_view, header])
+    return app
+
+
+def _qualification_panel() -> None:
+    """The recorded harness/provider evidence: what was qualified, where, and with what."""
+    from .qualification import (
+        harness_maturity_rows,
+        qualification_details,
+        qualification_rows,
+    )
+    from .seams import SEAMS
+
+    report_path = os.environ.get("OPENENV_HARBOR_QUALIFICATION_REPORT", "")
+
+    def read_evidence():
         try:
             evidence = (
                 json.loads(Path(report_path).read_text()) if report_path else None
             )
-            tiers = {
-                name: tier
-                for name, tier, _ in harness_maturity_rows(
-                    [h.name for h in caps.harnesses], evidence
-                )
-            }
-        except (OSError, ValueError, TypeError):
-            tiers = {h.name: "experimental" for h in caps.harnesses}
-            evidence = None
-        profile_provider = "vllm" if purpose == "train" else provider
-        harness_profiles = {}
-        unavailable_profiles = set()
-        for cell in (evidence or {}).get("cells", []):
-            if cell.get("provider") != profile_provider:
-                continue
-            config = cell.get("configuration") or {}
-            profile = config.get("acp_profile") or config.get("nemo_profile")
-            if profile:
-                name = cell["harness"]
-                harness_profiles[name] = profile
-                try:
-                    get_seam(name, profile=profile)
-                except (ValueError, KeyError):
-                    unavailable_profiles.add(name)
-        choices = [
-            (
-                f"{h.name} ({h.dialect}; {tiers[h.name]}"
-                + (
-                    f"; profile: {harness_profiles[h.name]}"
-                    if h.name in harness_profiles
-                    else ""
-                )
-                + ")",
-                h.name,
+            return (
+                qualification_rows(list(SEAMS), evidence),
+                qualification_details(evidence),
+                harness_maturity_rows(list(SEAMS), evidence),
+                "Loaded recorded evidence."
+                if evidence
+                else "No qualification report configured (OPENENV_HARBOR_QUALIFICATION_REPORT).",
             )
-            for h in sorted(caps.harnesses, key=lambda h: h.name)
-            if h.name not in unavailable_profiles
-            and (
-                tiers[h.name] == "stable"
-                or (include_experimental and tiers[h.name] == "experimental")
+        except (OSError, ValueError, TypeError) as exc:
+            return (
+                qualification_rows(list(SEAMS)),
+                [],
+                harness_maturity_rows(list(SEAMS)),
+                f"Invalid qualification report: {exc}",
             )
-        ]
-        values = [v for _, v in choices]
 
-        leaf = agent_facing_model(model)
-        if purpose == "train":
-            lines = [
-                f"**Endpoint ready — TRAINING CAPTURE** · `{model}` · token ids + logprobs ✓"
-            ]
-        else:
-            detail = (
-                "token capture available; training export disabled for this eval"
-                if report.capture_level == "tokens"
-                else "logprobs, no token ids"
-                if report.capture_level == "logprobs"
-                else "no token ids, no logprobs"
-            )
-            lines = [
-                f"**Endpoint ready — EVAL** · `{model}` · {detail}",
-                "Rollouts carry the reward and the full trace, but nothing trainable.",
-            ]
-        if leaf != model:
-            lines.append(f"Sent to agents as `{leaf}`, rewritten back on the way out.")
-        if not values:
-            lines.append(
-                "No agents match the support filter. Load qualification evidence or explicitly include experimental adapters."
-            )
-        for fix in report.param_fixes:
-            lines.append(f"<span style='opacity:.7'>upstream compat: {fix}</span>")
-        # The one thing a user cannot discover by reading the endpoint's own docs: whether a model
-        # will actually sustain an agent loop here. Shown at Validate rather than after a rollout,
-        # because a rollout costs a sandbox and several minutes to learn the same thing.
-        for finding in report.findings:
-            if "behaviour_changed" in finding or "tool_call" in finding:
-                detail = finding.split(": ", 2)[-1]
-                lines.append(f"⚠️ {detail}")
-
-        # Run uses the endpoint typed above. The engine is a per-rollout argument, so a browser can
-        # point this server at any reachable OpenAI-spec endpoint without restarting it — which is
-        # the whole point of validating a URL here. Say which one will be used, because a server may
-        # also have been booted with a default and the two can differ.
-        service = HarborService.current()
-        if (
-            service is not None
-            and service.llm_url
-            and service.llm_url.rstrip("/") != url
-        ):
-            lines.append(
-                f"Rollouts will use **this** endpoint, not the server's default "
-                f"(`{service.llm_url}`)."
-            )
-        lines.append(
-            f"Sandboxes: {', '.join(f'`{s}`' for s in sandboxes) or '**none usable**'}"
+    rows, details, maturity, status = read_evidence()
+    with gr.Accordion("Harness and provider qualification evidence", open=False):
+        gr.Markdown(
+            "Recorded results apply to the listed model, harness version and captures. They do not "
+            "certify the endpoint selected on the Tasks tab. Stable means all four recorded profiles "
+            "passed, including optimizer replay; experimental adapters have partial or pending "
+            "support; unstable ones have no passing profile."
         )
-        blocked = [s.name for s in caps.sandboxes if not s.available]
-        if blocked:
-            lines.append(
-                f"<span style='opacity:.6'>unavailable: {', '.join(blocked)}</span>"
-            )
-
-        return (
-            "  \n".join(lines),
-            gr.update(
-                choices=choices,
-                value="opencode"
-                if "opencode" in values
-                else (values[0] if values else None),
-            ),
-            gr.update(choices=sandboxes, value=sandboxes[0] if sandboxes else None),
-            # `ok` gates the Run button and now means "reachable", not "trainable": an eval endpoint
-            # is a perfectly good thing to press Run against.
-            {
-                "url": url,
-                "model": model,
-                "ok": True,
-                "capture_level": report.capture_level,
-                "trainable": report.trainable,
-                # Carried so Run can reach a token-gated endpoint. Without it, validating a hosted
-                # provider succeeded and pressing Run then failed to authenticate against the same
-                # URL. `gr.State` is held server-side and this is never rendered back into the page,
-                # which is the same rule the API key box itself follows.
-                "api_key": api_key or "",
-                "provider": provider,
-                "purpose": purpose,
-                "allowed_harnesses": values,
-                "harness_profiles": harness_profiles,
-            },
-            gr.update(
-                interactive=bool(sandboxes and values),
-                value="Run training capture"
-                if purpose == "train"
-                else "Run eval rollout",
-            ),
+        status_md = gr.Markdown(status)
+        maturity_table = gr.Dataframe(
+            headers=["Harness", "Maturity", "Qualification scope"],
+            value=maturity,
+            interactive=False,
         )
-
-    def on_dataset(spec: str):
-        if not spec:
-            return gr.update(), ""
-        try:
-            n = len(resolve_task_dirs(spec))
-        except Exception as exc:  # noqa: BLE001
-            return gr.update(value=0), f"Cannot load `{spec}` — {exc}"
-        return gr.update(value=0), f"**{n}** tasks · 0–{n - 1}"
-
-    def on_task(spec: str, index: int):
-        if not spec:
-            return "", "", "", "", ""
-        try:
-            task_dir = HarborTaskProvider([spec]).task_dir(spec, int(index))
-        except Exception as exc:  # noqa: BLE001
-            return f"_{exc}_", "", "", "", ""
-        env_dir, tests_dir = task_dir / "environment", task_dir / "tests"
-        return (
-            f"`{task_dir.name}`",
-            _read(task_dir / "instruction.md"),
-            _read(env_dir / "Dockerfile"),
-            _read(task_dir / "task.toml"),
-            _read(tests_dir / "test.sh"),
+        evidence_table = gr.Dataframe(
+            headers=[
+                "Harness",
+                "OpenAI eval",
+                "Anthropic eval",
+                "HF eval",
+                "vLLM training",
+            ],
+            value=rows,
+            interactive=False,
         )
-
-    def on_run(engine: dict, spec: str, index: int, harness: str, sandbox: str):
-        """Stream progress while the rollout runs, then the result and its graph."""
-        import asyncio
-        import queue
-        import threading
-        import time
-        from pathlib import Path
-
-        from .rollout import run_rollout as _run
-        from .serving import HarborService
-
-        if not engine.get("ok"):
-            yield _UNVALIDATED, "", "", "{}", None, gr.update(interactive=True)
-            return
-        if harness not in engine.get("allowed_harnesses", []):
-            yield (
-                "Selected harness is outside the validated support filter. Validate again.",
-                "",
-                "",
-                "{}",
-                None,
-                gr.update(interactive=False),
-            )
-            return
-        service = HarborService.current()
-        if service is None:
-            yield (
-                "<b>Server not initialised</b> — no capture proxy running.",
-                "",
-                "",
-                "{}",
-                None,
-                gr.update(interactive=True),
-            )
-            return
-        try:
-            task_dir = HarborTaskProvider([spec]).task_dir(spec, int(index))
-        except Exception as exc:  # noqa: BLE001
-            yield (
-                f"<b>Bad task</b> — {html.escape(str(exc))}",
-                "",
-                "",
-                "{}",
-                None,
-                gr.update(interactive=True),
-            )
-            return
-
-        done: queue.Queue = queue.Queue(maxsize=1)
-        live_sessions: queue.Queue[str] = queue.Queue(maxsize=1)
-
-        async def _run_with_engine():
-            """Resolve the engine the user validated, then run against it.
-
-            The engine is per rollout, so the URL in the box is the one used. Resolving it through the
-            capture server's pool means the tier comes from a real probe of that endpoint rather than
-            from whatever the server happened to boot with — and the probe is cached, so pressing Run
-            repeatedly costs nothing after the first time.
-            """
-            from openenv.core.harness.capture.sessions import Upstream
-
-            pool = service.capture.app.state.upstreams
-            typed_url = str((engine or {}).get("url") or "").strip()
-            if typed_url:
-                upstream = Upstream(
-                    llm_url=typed_url,
-                    model=str((engine or {}).get("model") or ""),
-                    api_key=str((engine or {}).get("api_key") or "") or None,
-                    provider=str((engine or {}).get("provider") or "openai"),
-                )
-                client, level = await pool.resolve(upstream)
-                served = client.served_model or upstream.model
-            else:
-                # Nothing validated in the box: fall back to the server's default, which is what a
-                # server booted with --llm-url provides. With neither, the rollout reports the
-                # missing engine rather than silently producing an untrainable result.
-                upstream, (client, level) = None, pool.default
-                level = getattr(service, "capture_level", "text")
-                served = service.model
-            return await _run(
-                task_dir=task_dir,
-                harness=harness,
-                harness_profile=engine.get("harness_profiles", {}).get(harness),
-                sandbox=sandbox,
-                registry=service.capture.registry,
-                intercept_url=service.public_url,
-                model=served,
-                trials_dir=Path("/tmp/openenv-harbor-trials"),
-                dataset=spec,
-                capture_level=level,
-                purpose=str((engine or {}).get("purpose") or "eval"),
-                upstream=upstream,
-                inference=client,
-                on_session_created=live_sessions.put_nowait,
-            )
-
-        def worker() -> None:
-            try:
-                res = asyncio.run(_run_with_engine())
-                done.put(("ok", res.model_dump()))
-            except Exception as exc:  # noqa: BLE001 - show it, never take the server down
-                done.put(("err", f"{type(exc).__name__}: {exc}"))
-
-        thread = threading.Thread(target=worker, daemon=True)
-        started = time.monotonic()
-        thread.start()
-        session_id = None
-
-        while thread.is_alive():
-            if session_id is None:
-                try:
-                    session_id = live_sessions.get_nowait()
-                except queue.Empty:
-                    pass
-            stats, phase, stage = None, "starting up", 0
-            if session_id:
-                session = service.capture.registry.get(session_id)
-                if session is not None:
-                    st = session.graph.stats()
-                    # n_trainable_tokens only exists after export; mid-run we can count only what
-                    # has been sampled, before masking and discards.
-                    sampled = sum(
-                        len(n.sampled_ids or []) for n in session.graph.nodes()
-                    )
-                    turns = st.get("n_turns", 0)
-                    stats = {
-                        "calls": turns,
-                        "roots": st.get("n_roots", 0),
-                        "sampled tokens": sampled,
-                        "discarded": st.get("n_discarded", 0),
-                    }
-                    if turns:
-                        stage = -1  # past setup; the numbers mean something now
-                        phase = "agent working"
-                        # Only meaningful once a call has landed. Before that `idle_seconds` counts
-                        # from session creation, which renders as a stall during a normal boot.
-                        stats["since last call"] = f"{session.idle_seconds:.0f}s"
-                    else:
-                        stage = 0
-                        phase = "preparing the run or waiting for its first response"
-            # The transcript rides in the graph slot: it is empty until the run finishes anyway,
-            # and the two answer the same question at different times.
-            transcript = ""
-            if session_id:
-                live = service.capture.registry.get(session_id)
-                if live is not None:
-                    transcript = _transcript_html(live)
-            yield (
-                _live_html(
-                    harness, sandbox, phase, time.monotonic() - started, stats, stage
-                ),
-                transcript,
-                "",
-                "{}",
-                None,
-                gr.update(interactive=False),
-            )
-            time.sleep(2.0)
-
-        kind, payload = done.get()
-        if kind == "err":
-            yield (
-                f'<div class="hb-card hb-verdict hb-bad"><div class="hb-head">Run failed</div>'
-                f'<pre class="hb-err">{html.escape(payload)}</pre></div>',
-                "",
-                "",
-                "{}",
-                None,
-                gr.update(interactive=True),
-            )
-            return
-        contract = None
-        contract_error = ""
-        try:
-            contract = _write_contract(payload)
-        except (ValueError, TypeError) as exc:
-            contract_error = (
-                "<p>Training export rejected: " + html.escape(str(exc)) + "</p>"
-            )
-        yield (
-            _result_html(payload) + contract_error,
-            _conversation_html(payload),
-            _turns_html(payload),
-            _summary_json(payload),
-            contract,
-            gr.update(interactive=True),
+        detail_table = gr.Dataframe(
+            headers=[
+                "Harness",
+                "Provider",
+                "Status",
+                "Model",
+                "Harness version",
+                "Tasks",
+                "Workflow profile",
+                "Optimizer scope",
+                "Optimizer model revision",
+                "Capture evidence",
+                "Reason",
+            ],
+            value=details,
+            interactive=False,
         )
-
-    with gr.Blocks(title=title or "Harbor") as app:
-        gr.HTML(f"<style>{_CSS}</style>")
-        state = gr.State({})
-
-        with gr.Column(elem_classes="hb-wrap"):
-            gr.Markdown(
-                "## Harbor task playground\nChoose a model, validate the connection, then run an agent "
-                "on a task. Follow its tool calls and results below. "
-                "Evaluation works with supported hosted providers; training capture requires "
-                "verified engine token IDs and log probabilities."
-            )
-
-            with gr.Row(equal_height=False):
-                # left — the model
-                with gr.Column(scale=1, elem_classes="hb-cell"):
-                    with gr.Column(elem_classes="hb-panel"):
-                        gr.Markdown("### 1 · Connect a model")
-                        # Deliberately empty. Prefilling meant the box already held whatever URL the
-                        # server was started with, so Validate confirmed a value nobody chose and a
-                        # stale endpoint could be used without anyone noticing it was stale.
-                        provider_in = gr.Dropdown(
-                            label="Upstream provider",
-                            choices=[
-                                ("OpenAI-compatible", "openai"),
-                                ("Anthropic native", "anthropic"),
-                                ("Hugging Face Inference Providers", "hf"),
-                                ("vLLM", "vllm"),
-                            ],
-                            value="openai",
-                            info="Select the upstream API. Exact training tokens are verified separately.",
-                        )
-                        purpose_in = gr.Dropdown(
-                            label="Use",
-                            choices=[
-                                ("Evaluation", "eval"),
-                                ("Training capture", "train"),
-                            ],
-                            value="eval",
-                        )
-                        url_in = gr.Textbox(
-                            label="LLM URL",
-                            placeholder="https://your-endpoint/v1",
-                            info="vLLM, SGLang, OpenAI, Anthropic, HF Inference Providers. "
-                            "Accepts a bare root or one ending in /v1.",
-                        )
-                        gr.HTML(_labelled("API key (optional)", _KEY_TIP))
-                        key_in = gr.Textbox(
-                            label="",
-                            type="password",
-                            placeholder="only for a hosted provider",
-                            show_label=False,
-                        )
-                        model_in = gr.Textbox(
-                            label="Model (optional)",
-                            placeholder="read from the endpoint",
-                            info="Required when the endpoint serves more than one model.",
-                        )
-                        validate_btn = gr.Button(
-                            "Validate connection", variant="secondary"
-                        )
-                        gr.HTML(_labelled("Capture level", _LEVEL_TIP))
-                        engine_md = gr.Markdown(_UNVALIDATED)
-
-                # right — task preview and agent. Implementation files stay folded away.
-                with gr.Column(scale=1, elem_classes="hb-cell"):
-                    gr.Markdown("### 2 · Choose a task")
-                    with gr.Row():
-                        ds_in = gr.Dropdown(
-                            label="Dataset",
-                            choices=datasets,
-                            value=datasets[0] if datasets else None,
-                            scale=3,
-                        )
-                        idx_in = gr.Number(
-                            label="Index", value=0, precision=0, minimum=0, scale=1
-                        )
-                    count_md = gr.Markdown()
-                    task_md = gr.Markdown()
-                    instruction_box = gr.Code(
-                        label="Task instruction", language="markdown", lines=10
-                    )
-                    with gr.Accordion("Task files and grader", open=False):
-                        with gr.Accordion("Dockerfile", open=False):
-                            dockerfile_box = gr.Code(
-                                label="", language="dockerfile", lines=12
-                            )
-                        with gr.Accordion("task.toml", open=False):
-                            toml_box = gr.Code(label="", language="python", lines=12)
-                        with gr.Accordion("Grader", open=False):
-                            tests_box = gr.Code(label="", language="shell", lines=12)
-
-                    with gr.Column(elem_classes="hb-panel"):
-                        gr.Markdown("### 3 · Choose an agent")
-                        experimental_in = gr.Checkbox(
-                            label="Include experimental adapters",
-                            value=False,
-                            info="Stable adapters are shown by default. Unstable adapters remain excluded.",
-                        )
-                        harness_in = gr.Dropdown(
-                            label="Agent",
-                            choices=[],
-                            info="The coding agent to run. Its dialect is shown in brackets; the "
-                            "capture proxy connects it to your selected provider.",
-                        )
-                        sandbox_in = gr.Dropdown(
-                            label="Sandbox",
-                            choices=[],
-                            info="Where the agent executes. Harbor's backends, not OpenEnv's "
-                            "container providers — only those with working credentials are listed.",
-                        )
-
-            # Full width, under both columns: the action belongs to the pair, not to either one.
-            run_btn = gr.Button(
-                "Run rollout", variant="primary", interactive=False, scale=1
-            )
-
-            with gr.Column(elem_classes="hb-panel"):
-                gr.Markdown("### Run status")
-                result_html = gr.HTML(
-                    '<p class="hb-dim">Validate your model and choose a task to begin.</p>'
-                )
-            with gr.Column(elem_classes="hb-panel"):
-                gr.Markdown(
-                    "### Live trace\nAgent messages, tool calls and tool results appear as "
-                    "model calls complete. A request in progress may take a moment."
-                )
-                convo_html = gr.HTML()
-            with gr.Accordion("Token details and training export", open=False):
-                analysis_html = gr.HTML()
-                contract_file = gr.File(
-                    label="Training contract — captured tokens, log probabilities and reward",
-                    interactive=False,
-                    visible=True,
-                )
-            with gr.Accordion("Harness/provider qualification evidence", open=False):
-                import os
-                from pathlib import Path
-
-                from .qualification import (
-                    harness_maturity_rows,
-                    qualification_details,
-                    qualification_rows,
-                )
-                from .seams import SEAMS
-
-                report_path = os.environ.get("OPENENV_HARBOR_QUALIFICATION_REPORT", "")
-
-                def read_qualification_evidence():
-                    try:
-                        evidence = (
-                            json.loads(Path(report_path).read_text())
-                            if report_path
-                            else None
-                        )
-                        return (
-                            qualification_rows(list(SEAMS), evidence),
-                            qualification_details(evidence),
-                            harness_maturity_rows(list(SEAMS), evidence),
-                            "Loaded recorded evidence."
-                            if evidence
-                            else "No qualification report configured.",
-                        )
-                    except (OSError, ValueError, TypeError) as exc:
-                        return (
-                            qualification_rows(list(SEAMS)),
-                            [],
-                            harness_maturity_rows(list(SEAMS)),
-                            "Invalid qualification report: " + str(exc),
-                        )
-
-                evidence_rows, evidence_details, maturity_rows, evidence_status = (
-                    read_qualification_evidence()
-                )
-                gr.Markdown(
-                    "Recorded results apply to the listed model, harness version, and captures. "
-                    "They do not certify the endpoint currently selected above. "
-                    "Capture/reader passes exclude optimizer validation; optimizer details state "
-                    "whether the test used diagnostic replay and whether it covered weight sync."
-                )
-                evidence_status_md = gr.Markdown(evidence_status)
-                gr.Markdown(
-                    "Stable means all four recorded profiles passed, including optimizer replay. "
-                    "It is limited to this test coverage, not a production-scale guarantee. "
-                    "Experimental adapters have partial or pending support; unstable adapters "
-                    "have no passing profile in the recorded matrix."
-                )
-                maturity_table = gr.Dataframe(
-                    headers=["Harness", "Maturity", "Qualification scope"],
-                    value=maturity_rows,
-                    interactive=False,
-                )
-                evidence_table = gr.Dataframe(
-                    headers=[
-                        "Harness",
-                        "OpenAI eval",
-                        "Anthropic eval",
-                        "HF eval",
-                        "vLLM training",
-                    ],
-                    value=evidence_rows,
-                    interactive=False,
-                )
-                evidence_detail_table = gr.Dataframe(
-                    headers=[
-                        "Harness",
-                        "Provider",
-                        "Status",
-                        "Model",
-                        "Harness version",
-                        "Tasks",
-                        "Workflow profile",
-                        "Optimizer scope",
-                        "Optimizer model revision",
-                        "Capture evidence",
-                        "Reason",
-                    ],
-                    value=evidence_details,
-                    interactive=False,
-                )
-                refresh_evidence = gr.Button("Refresh recorded evidence")
-                refresh_evidence.click(
-                    read_qualification_evidence,
-                    [],
-                    [
-                        evidence_table,
-                        evidence_detail_table,
-                        maturity_table,
-                        evidence_status_md,
-                    ],
-                )
-            with gr.Accordion("Result JSON", open=False):
-                raw_json = gr.Code(language="json", lines=22)
-
-        validate_btn.click(
-            on_validate,
-            [url_in, model_in, key_in, provider_in, purpose_in, experimental_in],
-            [engine_md, harness_in, sandbox_in, state, run_btn],
+        refresh = gr.Button("Refresh recorded evidence", size="sm")
+        refresh.click(
+            read_evidence, [], [evidence_table, detail_table, maturity_table, status_md]
         )
-        for setting in (
-            url_in,
-            model_in,
-            key_in,
-            provider_in,
-            purpose_in,
-            experimental_in,
-        ):
-            setting.change(
-                lambda: ({}, gr.update(interactive=False), _UNVALIDATED),
-                outputs=[state, run_btn, engine_md],
-            )
-        ds_in.change(on_dataset, [ds_in], [idx_in, count_md])
-        ds_in.change(
-            on_task,
-            [ds_in, idx_in],
-            [task_md, instruction_box, dockerfile_box, toml_box, tests_box],
-        )
-        idx_in.change(
-            on_task,
-            [ds_in, idx_in],
-            [task_md, instruction_box, dockerfile_box, toml_box, tests_box],
-        )
-        run_btn.click(
-            on_run,
-            [state, ds_in, idx_in, harness_in, sandbox_in],
-            [result_html, convo_html, analysis_html, raw_json, contract_file, run_btn],
-        )
-
-        if datasets:
-            app.load(on_dataset, [ds_in], [idx_in, count_md])
-            app.load(
-                on_task,
-                [ds_in, idx_in],
-                [task_md, instruction_box, dockerfile_box, toml_box, tests_box],
-            )
-    return app

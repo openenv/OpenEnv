@@ -1,5 +1,5 @@
 """
-Settings models for Calender Settings API following Google Calendar API v3 structure
+Settings models for Calendar Settings API following Google Calendar API v3 structure
 """
 
 from typing import Dict, List, Optional

@@ -1919,6 +1919,15 @@ wheels = [
 ]
 
 [[package]]
+name = "itsdangerous"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/cb/8ac0172223afbccb63986cc25049b154ecfb5e85932587206f42317be31d/itsdangerous-2.2.0.tar.gz", hash = "sha256:e0050c0b7da1eea53ffaf149c0cfbb5c6e2e2b69c4bef22c81fa6eb73e5f6173", size = 54410, upload-time = "2024-04-16T21:28:15.614Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl", hash = "sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef", size = 16234, upload-time = "2024-04-16T21:28:14.499Z" },
+]
+
+[[package]]
 name = "jaraco-classes"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2692,22 +2701,26 @@ name = "openenv-harbor-env"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "authlib" },
     { name = "fastapi" },
     { name = "gradio" },
     { name = "harbor", extra = ["beam", "blaxel", "cua", "cwsandbox", "daytona", "e2b", "ec2", "gke", "islo", "modal", "novita", "opensandbox", "runloop", "use-computer"] },
     { name = "httpx" },
     { name = "huggingface-hub" },
+    { name = "itsdangerous" },
     { name = "openenv" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "authlib", specifier = ">=1.3" },
     { name = "fastapi", specifier = ">=0.104" },
     { name = "gradio", specifier = ">=5" },
     { name = "harbor", extras = ["e2b", "modal", "daytona", "gke", "ec2", "runloop", "novita", "blaxel", "beam", "islo", "opensandbox", "cwsandbox", "use-computer", "cua"], specifier = ">=0.22.0" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "huggingface-hub", specifier = ">=1.12" },
+    { name = "huggingface-hub", specifier = ">=1.29.0" },
+    { name = "itsdangerous", specifier = ">=2.1" },
     { name = "openenv" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24" },
 ]
@@ -4022,8 +4035,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [

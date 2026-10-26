@@ -56,9 +56,9 @@ from envs.finqa_env import FinQAEnv, CallToolAction
 async def main():
     async with FinQAEnv(base_url="http://localhost:8000") as env:
         # Reset to get a question
-        obs = await env.reset()
-        question = obs.metadata["question"]
-        company = obs.metadata["company"]
+        result = await env.reset()
+        question = result.observation.metadata["question"]
+        company = result.observation.metadata["company"]
         print(f"Question: {question}")
         print(f"Company: {company}")
 
@@ -76,7 +76,8 @@ async def main():
             arguments={
                 "company_name": "alphabet",
                 "table_name": "us_gaap_ScheduleOfIncomeBeforeIncomeTaxDomesticAndForeignTableTextBlock",
-                "query": "SELECT * FROM data WHERE year = '2022'"
+                # Name the columns you need (see get_table_info); SELECT * is rejected
+                "query": "SELECT <columns> FROM data WHERE year = '2022'"
             }
         ))
         print(f"Done: {step_result.done}, Reward: {step_result.reward}")

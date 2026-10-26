@@ -1,0 +1,5 @@
+# The build context is the repository root.
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info

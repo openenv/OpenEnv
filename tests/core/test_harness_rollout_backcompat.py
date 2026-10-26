@@ -28,6 +28,7 @@ ROLLOUT_PUBLIC_NAMES = [
     "ToolResult",
     "ToolTraceEntry",
     "TraceEntry",
+    "TrainableSession",
     "VerifyResult",
     "build_harness_rollout_func",
 ]

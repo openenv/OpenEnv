@@ -219,7 +219,7 @@ class FakeSession:
         self.graph = graph
 
 
-def eval_graph():
+def eval_graph(n_tools=1):
     graph = graph_mod.RolloutGraph()
     messages = [{"role": "user", "content": "go"}]
     graph.add_turn(
@@ -229,7 +229,7 @@ def eval_graph():
             sampled_ids=[],
             request_messages=messages,
             response_message={"role": "assistant", "content": "step 1"},
-            n_tools=1,
+            n_tools=n_tools,
         )
     )
     graph.add_turn(
@@ -243,7 +243,7 @@ def eval_graph():
                 {"role": "user", "content": "result"},
             ],
             response_message={"role": "assistant", "content": "done"},
-            n_tools=1,
+            n_tools=n_tools,
         )
     )
     return graph
@@ -294,6 +294,42 @@ def test_an_eval_rollout_still_rebuilds_its_conversations():
     assert len(turns) == 2
     assert [t.text for t in turns] == ["step 1", "done"]
     assert all(t.prompt_token_ids == [] for t in turns)
+
+
+@pytest.mark.parametrize("capture_level", ["text", "logprobs"])
+@pytest.mark.parametrize("n_tools", [0, 1])
+def test_eval_export_preserves_independent_conversations(capture_level, n_tools):
+    models = pytest.importorskip("openenv.harbor.models")
+    graph = eval_graph(n_tools=n_tools)
+    graph.add_turn(
+        graph_mod.TurnNode(
+            node_id="independent",
+            prompt_ids=[],
+            sampled_ids=[],
+            request_messages=[{"role": "user", "content": "Check another task"}],
+            response_message={"role": "assistant", "content": "independent result"},
+            n_tools=n_tools,
+        )
+    )
+    document = export_mod.export_session(
+        FakeSession(graph), include_messages=True, capture_level=capture_level
+    )
+
+    conversations = models.conversations_from_document(document)
+    assert {conversation.root_id for conversation in conversations} == {
+        "a",
+        "independent",
+    }
+    turns = models.turns_from_document(document)
+    assert {turn.node_id: turn.text for turn in turns} == {
+        "a": "step 1",
+        "b": "done",
+        "independent": "independent result",
+    }
+    assert not any(turn["discarded"] for turn in document["turns"])
+    assert document["trainable"] is False
+    assert document["stats"]["n_trainable_tokens"] == 0
+    assert all(not turn.trainable for turn in turns)
 
 
 def test_a_training_contract_cannot_be_built_from_an_eval_rollout():
@@ -362,9 +398,7 @@ def test_an_eval_rollout_is_recorded_without_fatal_findings(monkeypatch):
     """`check_turn`'s FATALs (`no_prompt_ids`, `no_logprobs`) are the expected condition here.
     Letting them fire would mark every eval turn unusable and teach everyone to ignore findings.
 
-    Two calls, not one: `degenerate_rollout` is FATAL for a single-call agentic rollout and stays
-    that way on this path, because an agent that made one call and stopped did not attempt the task
-    whether or not its tokens were captured.
+    Two calls exercise the multi-turn capture contract without the single-call warning.
     """
     replies = [reply(), reply()]
 

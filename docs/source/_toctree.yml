@@ -5,40 +5,30 @@
     title: Getting Started
   title: Get Started
 - sections:
-  - local: getting_started/environment-builder
-    title: Deploying an Env
-  - local: guides/auto-discovery
-    title: Auto-Discovery
-  - local: guides/catalog-discovery
-    title: Catalog Discovery
-  - local: guides/rl-integration
-    title: RL Training
-  - local: guides/harbor-provider-qualification
-    title: Harbor Spec
-  - local: guides/rewards
-    title: Rewards
   - local: guides/concepts
     title: Core Concepts
   - local: tutorials/mcp-environment
     title: MCP Environments
+  - local: guides/rewards
+    title: Rewards
   - local: tutorials/rubrics
     title: Rubrics
+  - local: guides/auto-discovery
+    title: Auto-Discovery
+  - local: guides/catalog-discovery
+    title: Catalog Discovery
   - isExpanded: false
     sections:
-    - local: guides/customizing-web-ui
-      title: Customizing the Web UI
-    - local: guides/async-sync
-      title: Async vs Sync
     - local: guides/simulation-vs-production
       title: Simulation vs Production
-    - local: guides/mcp-environment-lifecycle
-      title: MCP Environment Lifecycle
-    - local: guides/task-api
-      title: The Task API
-    - local: guides/connecting
-      title: Connecting to Servers
+    - local: guides/async-sync
+      title: Async vs Sync
     - local: guides/runtime-providers
       title: Runtime Providers
+    - local: guides/task-api
+      title: The Task API
+    - local: guides/customizing-web-ui
+      title: Customizing the Web UI
     title: Advanced Concepts
   title: Concepts
 - sections:
@@ -49,24 +39,30 @@
       title: Hello World
     - local: guides/first-environment
       title: Your First Environment
+    - local: getting_started/environment-builder
+      title: Deploying an Environment
     title: Basics
   - sections:
+    - local: guides/training
+      title: Overview
     - local: tutorials/end-to-end-walkthrough
       title: Train a Reasoning Model
     - local: tutorials/wordle-grpo
-      title: RL Training with TRL
+      title: Play Wordle with GRPO
     - local: tutorials/rl-training-2048
-      title: RL Training with Unsloth
+      title: Play 2048 with GRPO
     - local: tutorials/sft-warmup
-      title: SFT Training with Environments
+      title: Collect Rollouts for SFT
     title: Training
   - sections:
+    - local: tutorials/harnesses
+      title: Overview
     - local: tutorials/browsergym-harness
-      title: Agentic Harness
-    - local: tutorials/opencode-agent-grpo
-      title: OpenCode
-    - local: tutorials/pi-agent-grpo
-      title: Pi
+      title: "White-Box: Train a Web Agent on BrowserGym"
+    - local: tutorials/harbor-harness
+      title: "Black-Box: Train Real Agents with Harbor"
+    - local: tutorials/claude-code-harness
+      title: Evaluate Claude Code in an Environment
     title: Harnesses
   - sections:
     - local: tutorials/evaluation-inspect
@@ -89,6 +85,8 @@
     title: Coding Tools
   - local: environments/harbor
     title: Harbor
+  - local: guides/harbor-provider-qualification
+    title: Harbor Qualification
   - local: environments/chat
     title: Chat
   - local: environments/atari
@@ -111,6 +109,8 @@
     title: Web Search
   - local: environments/browsergym
     title: BrowserGym
+  - local: environments/helium_browser
+    title: Helium Browser
   - local: environments/repl
     title: REPL
   - local: environments/calendar
@@ -139,6 +139,8 @@
     title: QED Math
   - local: environments/reasoning_gym
     title: Reasoning Gym
+  - local: environments/tau2
+    title: τ²-bench
   - local: environments/tbench2
     title: TBench2
   - local: environments/thinkingbox
@@ -149,12 +151,8 @@
     title: Wildfire
   - local: environments/agent_world_model
     title: Agent World Model
-  - local: environments/opencode
-    title: OpenCode
   - local: environments/pelican_svg
     title: Pelican SVG
-  - local: environments/pi
-    title: Pi
   - local: environments/sophistry_bench_sprint
     title: Sophistry Bench Sprint
   title: Environments
@@ -170,7 +168,7 @@
 - isExpanded: false
   sections:
   - local: contributing
-    title: Contributing To OpenEnv
+    title: Contributing to OpenEnv
   - local: getting_started/contributing-envs
     title: Contributing Environments
   title: Project

@@ -237,6 +237,8 @@ def _create_template_replacements(env_name: str) -> Dict[str, str]:
         "__ENV_CLASS_NAME__": env_prefix,  # Use prefix, not full PascalCase
         "__ENV_TITLE_NAME__": env_title,
         "__ENV_CAMEL_NAME__": env_camel,
+        # Default image tag of `openenv build`
+        "__ENV_IMAGE_NAME__": f"openenv-{env_name.removesuffix('_env')}",
         # Hugging Face Space config placeholders
         "__HF_EMOJI__": hf_config["emoji"],
         "__HF_COLOR_FROM__": hf_config["colorFrom"],
@@ -489,12 +491,10 @@ def init(
         console.print("  # Edit your models in models.py")
         console.print("  # Install dependencies: uv sync")
         console.print("\n  # To integrate into OpenEnv repo:")
-        console.print(f"  # 1. Copy this directory to <repo_root>/envs/{env_name}_env")
+        console.print(f"  # 1. Copy this directory to <repo_root>/envs/{env_name}")
+        console.print(f"  # 2. Build from repo root: openenv build envs/{env_name}")
         console.print(
-            f"  # 2. Build from repo root: docker build -t {env_name}_env:latest -f envs/{env_name}_env/server/Dockerfile ."
-        )
-        console.print(
-            f"  # 3. Run your image: docker run -p 8000:8000 {env_name}_env:latest"
+            f"  # 3. Run your image: docker run -p 8000:8000 {replacements['__ENV_IMAGE_NAME__']}:latest"
         )
 
     except Exception as e:

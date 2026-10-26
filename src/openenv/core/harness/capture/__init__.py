@@ -13,7 +13,12 @@ generateContent) because coding agents did not agree on one. Validated across 16
 cross-checked against the harness's own trace.
 """
 
-from .contract import measure_retokenization_skew, to_trace_entries, to_turn_records
+from .contract import (
+    measure_retokenization_skew,
+    to_trace_entries,
+    to_training_trace,
+    to_turn_records,
+)
 from .detection import APIType, detect
 from .graph import RolloutGraph, TurnNode
 from .runner import CaptureServer
@@ -24,6 +29,7 @@ __all__ = [
     "CaptureServer",
     "to_turn_records",
     "to_trace_entries",
+    "to_training_trace",
     "measure_retokenization_skew",
     "APIType",
     "detect",

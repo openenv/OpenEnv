@@ -10,6 +10,7 @@ pytest.importorskip("moonfish", reason="moonfish is not installed")
 
 from envs.chess_env import ChessAction, ChessObservation, ChessState
 from envs.chess_env.server.chess_environment import ChessEnvironment
+from moonfish.psqt import BOARD_EVALUATION_CACHE
 
 
 class TestChessModels:
@@ -149,6 +150,20 @@ class TestChessEnvironmentWithOpponent:
         assert env.state.current_player == "white"
         assert env.state.step_count == 2
 
+    def test_reset_clears_moonfish_evaluation_cache(self):
+        """Test reset empties moonfish's position cache so it can't grow across episodes."""
+        env = ChessEnvironment(
+            opponent="moonfish", opponent_depth=1, agent_color="white"
+        )
+        env.reset()
+        env.step(ChessAction(move="e2e4"))
+        assert len(BOARD_EVALUATION_CACHE) > 1
+
+        env.reset()
+
+        # Only the starting position, evaluated for the reset observation
+        assert len(BOARD_EVALUATION_CACHE) == 1
+
     def test_opponent_checkmate_gives_negative_reward(self):
         """Test agent gets -1.0 reward when opponent checkmates."""
         env = ChessEnvironment(
@@ -252,3 +267,20 @@ class TestTemporalDiscounting:
 
         assert env1._gamma == 0.99
         assert env2._gamma == 0.5
+
+
+def test_chess_web_playground():
+    env = ChessEnvironment(opponent=None)
+    obs = env.reset().model_dump()
+    actions = env.web_actions(obs)
+    assert len(actions) == 20
+    assert ("e2e4", {"move": "e2e4"}) in actions
+    board = env.render_web(obs)
+    assert 'aria-label="Chess board"' in board
+    assert "♔" in board and "♚" in board
+    assert "var(--color-accent)" not in board
+    assert "#" not in board  # theme colours only, so it reads in dark mode
+
+    check = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
+    assert "var(--color-accent)" in env.render_web(env.reset(fen=check).model_dump())
+    assert env.render_web({}) is None

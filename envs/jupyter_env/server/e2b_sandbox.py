@@ -100,6 +100,8 @@ del _patched_show
             f"_result = subprocess.run({command!r}, shell=True, capture_output=True, text=True, timeout={float(timeout_s)!r})\n"
             "print(_result.stdout, end='')\n"
             "if _result.stderr: print(_result.stderr, end='', file=sys.stderr)\n"
+            "if _result.returncode != 0:\n"
+            "    raise SystemExit(_result.returncode)\n"
         )
         return self.run_code(shell_code)
 

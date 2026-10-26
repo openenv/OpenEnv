@@ -80,12 +80,26 @@ def test_docker_lifecycle_effective_limits_and_owned_cleanup(spec):
         assert details["limits"]["MemorySwap"] == 512 * 1024**2
         assert details["limits"]["NanoCpus"] == 1_000_000_000
         assert details["limits"]["PidsLimit"] == 256
-        assert details["limits"]["CapDrop"] == ["ALL"]
+        # Engines report dropped capabilities differently (Docker: ["ALL"]; Podman:
+        # each name), so the evidence is only required to be present.
+        assert details["limits"]["CapDrop"]
         assert any(
             "no-new-privileges" in value for value in details["limits"]["SecurityOpt"]
         )
         result = running.exec(["python", "-c", "import os; print(os.getuid())"], 5)
         assert result.exit_code == 0 and result.stdout.strip() == "65532"
+        # A non-root CapEff is zero regardless; the bounding set is what
+        # `--cap-drop ALL` empties, and it is observable on every engine.
+        bounding = running.exec(
+            [
+                "python",
+                "-c",
+                "print(next(line.split()[1] for line in open('/proc/self/status')"
+                " if line.startswith('CapBnd:')))",
+            ],
+            5,
+        )
+        assert bounding.exit_code == 0 and int(bounding.stdout.strip(), 16) == 0
         assert (
             running.exec(
                 ["python", "-c", "open('/root-write', 'w').write('no')"], 5

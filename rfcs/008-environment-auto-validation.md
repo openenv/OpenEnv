@@ -482,6 +482,7 @@ validation:
     dockerfile: Dockerfile
     context: .
     agent_boundary: api
+    requires_credentials: false
 ```
 
 The other manifest sections remain authoritative for capabilities, resources,
@@ -518,12 +519,31 @@ privileged oracle inputs nor host callbacks may be substituted for public action
 One collector owns reset, ordered actions until termination, and state reads on
 **one** WebSocket session. It records immutable raw request/response strings before
 client defaults or Pydantic coercion can hide malformed responses. Graders consume
-that evidence and cannot mutate the measured episode. The advertised observation
-schema is recorded alongside the transcript; reconstruct observation plus the
-separate reward/done envelope before validating it. Reset reward may be null; every
-step reward must be a finite JSON number, excluding booleans, within the declared
-range. State must retain the requested episode identity, reset its step count to
-zero and advance it coherently for successful steps.
+that evidence and cannot mutate the measured episode. `/schema.observation`
+describes step observations. The additive `/schema.reset_observation` field
+describes reset observations; core servers publish it from an explicit optional
+`reset_observation_cls`, defaulting to `observation_cls`. Environments whose reset
+returns a distinct model must declare it. For legacy servers that omit the field,
+the validator applies the step schema to reset as well. An explicitly malformed
+reset schema is a failure, never a reason to fall back. Both schemas are recorded
+alongside the transcript; reconstruct observation plus the separate reward/done
+envelope before validating against the operation's schema. Neither schema may
+retrieve non-local references.
+
+Reset validation is required even when reset and step return different models.
+An explicit reset output schema describes that difference; the validator never
+silently substitutes the base `Observation` schema or skips reset. Reset input
+declarations are a separate contract from these observation output schemas.
+
+Reset reward may be null. Every step, including a nonterminal step, must emit a
+finite JSON number within the declared range. Every numeric reset reward is also
+checked against that range; booleans are invalid. These are Level Two validation
+requirements, stricter than the core API: the core `Observation.reward` type
+continues to accept `bool | int | float | None` for compatibility. A valid core
+environment can therefore fail Level Two validation. Authors should emit numeric
+zero when a step's intended reward is zero; the validator never converts an absent
+or null reward to zero. State must retain the requested episode identity, reset
+its step count to zero and advance it coherently for successful steps.
 
 ### Startup, policy and provider supervision
 
@@ -541,6 +561,20 @@ explicit environment variables. It inherits no host environment or credentials.
 The provider owns build, readiness, bounded exec/logs, inspected settings and
 idempotent cleanup on success, failure, timeout and cancellation. Cleanup evidence
 must establish that no run-owned subject remains. Core provider ABCs are unchanged.
+
+Credential delivery is deferred for this release. An environment that needs an
+externally supplied credential declares `validation.execution.requires_credentials:
+true` (a strict boolean, default `false`). This records a prerequisite only; no
+credential names, values, sources or injection mechanism are accepted. After
+validating the public plan, the runner reports `runtime.startup` as SKIP with the
+missing `credential_delivery` capability named, before building or launching the
+subject. Dependent checks remain SKIP and the report cannot establish complete
+Level Two conformance. Missing credentials are never inferred from exception text
+or from `llm_judged`: a self-contained judge may run without external credentials.
+An undeclared startup or reset failure remains FAIL. Host tokens are never a
+fallback, and credentials must not be embedded in manifests, plans or images.
+Supporting external judge credentials requires a later explicit contract for
+delivery, access isolation, lifetime, network access and evidence redaction.
 
 Launches use no privilege, host namespaces, host-directory mounts, Docker socket
 or forwarded credentials. They drop Linux capabilities, enable no-new-privileges,

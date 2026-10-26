@@ -138,6 +138,7 @@ def get_scenario(
                     description=f"Trolley micro-benchmark: {benchmark_id}",
                     benchmark_id=benchmark_id,
                     deadzone=deadzone,
+                    max_steps=20,
                 )
             )
         )

@@ -3,6 +3,10 @@
 
 A generic OpenEnv environment for [dm_control.suite](https://github.com/google-deepmind/dm_control), providing access to all MuJoCo-based continuous control tasks.
 
+![dm_control web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/dm_control.png)
+
+*The `/web` playground on cartpole balance after a few steps: the rendered camera frame.*
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/huggingface/OpenEnv/main/envs/dm_control_env/assets/cartpole.png" width="45%" alt="Cartpole Balance"/>
   <img src="https://raw.githubusercontent.com/huggingface/OpenEnv/main/envs/dm_control_env/assets/quadruped.png" width="45%" alt="Quadruped Walk"/>
@@ -153,3 +157,4 @@ python examples/quadruped_control.py --task run
 | `DMCONTROL_TASK` | balance | Default task |
 | `DMCONTROL_RENDER_HEIGHT` | 480 | Render height |
 | `DMCONTROL_RENDER_WIDTH` | 640 | Render width |
+| `MAX_CONCURRENT_ENVS` | 8 | Maximum concurrent WebSocket sessions |

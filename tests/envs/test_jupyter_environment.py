@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+from types import SimpleNamespace
+
+import pytest
 from jupyter_env.models import JupyterState
-from jupyter_env.server.e2b_sandbox import CellResult
+from jupyter_env.server.e2b_sandbox import CellResult, E2BSandbox
 from jupyter_env.server.jupyter_environment import JupyterEnvironment
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
 
@@ -197,3 +202,141 @@ def test_final_answer_runs_verify_commands():
         "test -f answer.py",
         "exit 1",
     ]
+
+
+REWARD_FILE = "/home/user/logs/verifier/reward.txt"
+
+
+def _cell(stdout: str = "", success: bool = True) -> CellResult:
+    return CellResult(
+        stdout=stdout,
+        stderr="",
+        error=None if success else "SystemExit: 1",
+        error_name=None if success else "SystemExit",
+        text_results=[],
+        images=[],
+        execution_count=1,
+        success=success,
+    )
+
+
+class RewardFileSandbox(FakeSandbox):
+    """FakeSandbox whose reward file any shell command can write, as in E2B."""
+
+    def __init__(self, *, removable: bool = True) -> None:
+        super().__init__()
+        self.reward_file: str | None = None
+        self.removable = removable
+
+    def run_shell(self, command: str) -> CellResult:
+        if command.startswith("echo ") and command.endswith(f" > {REWARD_FILE}"):
+            self.shell_commands.append(command)
+            self.reward_file = command[len("echo ") : -len(f" > {REWARD_FILE}")]
+            return _cell()
+        if command.startswith(f"rm -f {REWARD_FILE}"):
+            self.shell_commands.append(command)
+            if self.removable:
+                self.reward_file = None
+            return _cell(success=self.reward_file is None)
+        if command.startswith(f"cat {REWARD_FILE}"):
+            self.shell_commands.append(command)
+            return _cell(stdout=self.reward_file or "")
+        return super().run_shell(command)
+
+
+def _submit(sandbox, verify_commands, agent_commands=()) -> JupyterState:
+    env = JupyterEnvironment()
+    env._sandbox = sandbox
+    env._state = JupyterState(
+        episode_id="episode-1",
+        sandbox_id="fake-sandbox",
+        verify_commands=verify_commands,
+    )
+    for command in agent_commands:
+        env.step(
+            CallToolAction(
+                tool_name="execute_shell_command", arguments={"command": command}
+            )
+        )
+    env.step(CallToolAction(tool_name="final_answer", arguments={"answer": "done"}))
+    return env.state
+
+
+def test_reward_file_written_by_the_agent_is_ignored():
+    state = _submit(
+        RewardFileSandbox(),
+        ["true", "exit 1"],
+        agent_commands=[f"echo 1.0 > {REWARD_FILE}"],
+    )
+
+    assert state.last_reward == 0.5
+    assert state.reward_override_ignored is None
+
+
+def test_reward_file_written_by_a_verify_command_overrides_the_pass_rate():
+    state = _submit(RewardFileSandbox(), [f"echo 0.8 > {REWARD_FILE}", "exit 1"])
+
+    assert state.last_reward == 0.8
+    assert state.reward_override_ignored is None
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "passed"])
+def test_invalid_reward_file_falls_back_to_the_pass_rate(value):
+    state = _submit(RewardFileSandbox(), [f"echo {value} > {REWARD_FILE}", "exit 1"])
+
+    assert state.last_reward == 0.5
+    assert repr(value) in state.reward_override_ignored
+
+
+@pytest.mark.parametrize("value", ["-0.5", "1.5"])
+def test_reward_file_outside_the_unit_interval_is_kept(value):
+    state = _submit(RewardFileSandbox(), [f"echo {value} > {REWARD_FILE}", "exit 1"])
+
+    assert state.last_reward == float(value)
+    assert state.reward_override_ignored is None
+
+
+def test_reward_file_that_cannot_be_removed_is_ignored():
+    state = _submit(
+        RewardFileSandbox(removable=False),
+        ["true", "exit 1"],
+        agent_commands=[f"echo 1.0 > {REWARD_FILE}"],
+    )
+
+    assert state.last_reward == 0.5
+    assert "could not be removed" in state.reward_override_ignored
+
+
+class _LocalKernel:
+    """Runs E2B cell code in-process; an exception becomes execution.error."""
+
+    def run_code(self, code: str):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        error = None
+        try:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exec(code, {})
+        except BaseException as exc:  # SystemExit is reported, not raised, by E2B
+            error = SimpleNamespace(
+                name=type(exc).__name__, value=str(exc), traceback=""
+            )
+        return SimpleNamespace(
+            error=error,
+            logs=SimpleNamespace(
+                stdout=[stdout.getvalue()] if stdout.getvalue() else [],
+                stderr=[stderr.getvalue()] if stderr.getvalue() else [],
+            ),
+            results=[],
+            execution_count=1,
+        )
+
+
+@pytest.mark.parametrize(
+    ("command", "success"),
+    [("true", True), ("exit 3", False), ("test -e /nonexistent/reward.txt", False)],
+)
+def test_run_shell_reports_the_exit_code(command, success):
+    sandbox = E2BSandbox.__new__(E2BSandbox)
+    sandbox._sbx = _LocalKernel()
+
+    assert sandbox.run_shell(command).success is success

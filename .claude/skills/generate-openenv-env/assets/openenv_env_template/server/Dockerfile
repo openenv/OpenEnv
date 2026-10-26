@@ -54,16 +54,27 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         uv sync --no-editable; \
     fi
 
+# Move the venv out of /app/env so it isn't nested inside the directory we
+# copy wholesale below. Copying /app/env/.venv separately AND /app/env would
+# otherwise ship the venv twice (once at /app/.venv, once at
+# /app/env/.venv), roughly doubling the image size.
+RUN mv /app/env/.venv /app/.venv
+
 # Final runtime stage
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
 # Copy the virtual environment from builder
-COPY --from=builder /app/env/.venv /app/.venv
+COPY --from=builder /app/.venv /app/.venv
 
-# Copy the environment code
+# Copy the environment code (no longer contains .venv, see builder stage)
 COPY --from=builder /app/env /app/env
+
+# Recreate a .venv symlink inside the env directory for tools (e.g. `uv run`,
+# editors) that expect the virtual environment alongside the project, without
+# storing a second physical copy of it.
+RUN ln -s /app/.venv /app/env/.venv
 
 # Set PATH to use the virtual environment
 ENV PATH="/app/.venv/bin:$PATH"

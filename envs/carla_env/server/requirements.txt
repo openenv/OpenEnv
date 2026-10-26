@@ -1,8 +1,4 @@
-# Core dependencies for CARLA environment server
-fastapi==0.115.0
-uvicorn==0.30.6
-pydantic==2.9.2
-websockets==13.1
+# Server deps (fastapi, uvicorn, pydantic, websockets) come from openenv itself
 
 # Navigation agents dependencies
 numpy==1.26.4

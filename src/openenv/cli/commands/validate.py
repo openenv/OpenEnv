@@ -3,6 +3,9 @@
 """OpenEnv validate command."""
 
 import json
+import signal
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -25,6 +28,24 @@ EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_UNSUPPORTED = 2
 EXIT_INTERNAL = 3
+
+
+@contextmanager
+def _sigterm_as_interrupt():
+    """Treat SIGTERM like Ctrl-C so the runner cleans up its subject."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, interrupt)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
 
 _LEVELS = {
     "static": Level.STATIC,
@@ -118,10 +139,19 @@ def validate(
             help="Skip the image build; build-dependent checks are SKIPped with a reason",
         ),
     ] = False,
+    local: Annotated[
+        bool,
+        typer.Option(
+            "--local",
+            help="Explicitly select the default local-package mode (incompatible with --url)",
+        ),
+    ] = False,
     policy_version: Annotated[
-        str,
-        typer.Option("--policy", help="Severity policy version to apply"),
-    ] = "v1",
+        str | None,
+        typer.Option(
+            "--policy", help="Severity policy version (static: v1; runtime: v2)"
+        ),
+    ] = None,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Print the validation report as JSON"),
@@ -148,7 +178,7 @@ def validate(
     applies the severity policy, and emits a report.
 
     Exit codes: 0 pass/warn · 1 fail · 2 unrecognized/unsupported package · 3
-    internal error.
+    internal or policy error.
 
     Examples:
 
@@ -188,6 +218,9 @@ def validate(
         runtime_target = target
 
     if runtime_target is not None:
+        if local:
+            typer.echo("Error: --local cannot be combined with a running URL", err=True)
+            raise typer.Exit(EXIT_FAIL)
         try:
             report = validate_running_environment(runtime_target, timeout_s=timeout)
         except ValueError as exc:
@@ -221,12 +254,18 @@ def validate(
         raise typer.Exit(EXIT_UNSUPPORTED)
 
     try:
-        validation_report = run_validation(
-            package_root,
-            max_level=_LEVELS[level],
-            skip_build=skip_build,
-            policy=load_policy(policy_version),
-        )
+        if output is not None and not output.parent.is_dir():
+            raise OSError("report output directory does not exist")
+        with _sigterm_as_interrupt():
+            validation_report = run_validation(
+                package_root,
+                max_level=_LEVELS[level],
+                skip_build=skip_build,
+                policy=load_policy(policy_version) if policy_version else None,
+                artifacts_dir=(
+                    output.parent / (output.stem + ".artifacts") if output else None
+                ),
+            )
         report_json = write_report(validation_report, output)
     except (SignatureError, UnsupportedPackageError) as exc:
         typer.echo(f"Error: {exc}", err=True)

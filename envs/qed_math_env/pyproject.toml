@@ -15,9 +15,7 @@ description = "Qed Math Env environment for OpenEnv"
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
-    # install from github
-    "openenv-core[core] @ git+https://github.com/huggingface/OpenEnv.git",
-    # "openenv-core[core]>=0.2.1",
+    "openenv>=0.2.2",
     # Environment-specific dependencies
     "datasets>=4.7.0",
     "math-verify[antlr4_13_2]>=0.9.0",

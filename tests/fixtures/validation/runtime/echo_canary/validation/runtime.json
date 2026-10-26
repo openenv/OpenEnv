@@ -1,0 +1,16 @@
+{
+  "plan_schema_version": "1",
+  "reset": {"episode_id": "echo-canary", "seed": 42, "options": {}},
+  "actions": [
+    {
+      "type": "call_tool",
+      "tool_name": "echo_message",
+      "arguments": {"message": "echo canary first"}
+    },
+    {
+      "type": "call_tool",
+      "tool_name": "echo_with_length",
+      "arguments": {"message": "echo canary second"}
+    }
+  ]
+}

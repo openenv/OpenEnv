@@ -28,7 +28,7 @@ HOST_SIDE_AGENTS = frozenset({"terminus-2", "computer-1", "oracle", "nop", "dspy
 
 # Backends worth advertising. Harbor registers 23; these are the ones with a credential story we
 # check and have exercised. Others still work via `--sandbox <name>`, just unadvertised.
-KNOWN_SANDBOXES = ("docker", "e2b", "modal", "daytona")
+KNOWN_SANDBOXES = ("docker", "e2b", "modal", "daytona", "hf-sandbox")
 
 
 @dataclass

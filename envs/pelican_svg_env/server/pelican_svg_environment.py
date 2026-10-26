@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html
 import os
 from typing import Any, Optional
 
@@ -115,6 +116,7 @@ class PelicanSvgEnvironment(
         self._return_image = return_image
         self._state = PelicanSvgState()
         self._task: Task | None = None
+        self._svg = ""
 
     @property
     def state(self) -> PelicanSvgState:
@@ -198,6 +200,7 @@ class PelicanSvgEnvironment(
             task_id=kwargs.get("task_id"),
         )
         self._task = task
+        self._svg = ""
         self._state = PelicanSvgState(
             episode_id=episode_id, step_count=0, task_id=task.task_id, submitted=False
         )
@@ -250,12 +253,59 @@ class PelicanSvgEnvironment(
         evaluation = await evaluate_submission(action.response, self._task, self._judge)
         self._state.step_count += 1
         self._state.submitted = True
+        self._svg = evaluation.svg
         observation = self._to_observation(evaluation)
         # The rubric containers hand back a coroutine whenever they are called
         # from inside a running loop, even with entirely synchronous children,
         # so the reward has to be awaited through the async helper here.
         observation.reward = await self._apply_rubric_async(action, observation)
         return self._apply_transform(observation)
+
+    def render_web(self, observation: dict[str, Any]) -> Optional[str]:
+        """Draw the task on reset, then the submitted SVG next to its scores."""
+        if "prompt" not in observation:
+            return None
+        breakdown = observation["breakdown"]
+        if not breakdown:
+            return (
+                '<div style="max-width:500px;padding:10px;'
+                "border:1px solid var(--border-color-primary);border-radius:10px;"
+                'background:var(--background-fill-secondary);color:var(--body-text-color)">'
+                f"{html.escape(observation['prompt'])}</div>"
+            )
+        # An <img> renders the SVG without running any script it carries.
+        picture = (
+            f'<img alt="Pelican SVG drawing" src="data:image/svg+xml;base64,'
+            f'{base64.b64encode(self._svg.encode()).decode()}" style="width:200px;height:200px;'
+            'object-fit:contain;background:white;border:1px solid var(--border-color-primary);border-radius:6px">'
+            if self._svg
+            else '<div style="width:200px;text-align:center">No SVG found</div>'
+        )
+        lines = [
+            f"<b>reward {breakdown['reward']:.2f}</b>",
+            f"gate: {'passed' if observation['gate_passed'] else 'rejected'}",
+            f"structure: {observation['structure_score']:.2f}",
+            f"judge: {observation['semantic_score']:.2f}"
+            if observation["judged"]
+            else "judge: off",
+        ]
+        if breakdown["judge"]:
+            lines += [
+                f"{'✓' if ok else '✗'} {html.escape(item)}"
+                for item, ok in breakdown["judge"]["checklist"].items()
+            ]
+        lines.append(
+            f'<span style="opacity:.75">{html.escape(observation["feedback"])}</span>'
+        )
+        return (
+            '<div style="display:flex;'
+            "flex-wrap:wrap;gap:12px;max-width:500px;padding:10px;border:1px solid var(--border-color-primary);"
+            'border-radius:10px;background:var(--background-fill-secondary);color:var(--body-text-color)">'
+            + picture
+            + '<div style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:4px">'
+            + "".join(f"<div>{line}</div>" for line in lines)
+            + "</div></div>"
+        )
 
     def _to_observation(self, evaluation: Evaluation) -> PelicanSvgObservation:
         task = evaluation.task

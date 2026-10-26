@@ -11,6 +11,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def test_prepare_hf_deployment_repo_id_override(tmp_path: Path) -> None:
     """An exact repo override should target the canonical repo and README URLs."""
@@ -218,3 +220,139 @@ def test_prepare_hf_deployment_all_honors_opt_out_but_manual_selection_works(
     assert explicit.returncode == 0, explicit.stderr
     assert "Would create/update space: test/external" in explicit.stdout
     assert (explicit_staging / "test" / "external").is_dir()
+
+
+def test_prepare_hf_deployment_defaults_to_latest_release_tag(tmp_path: Path) -> None:
+    """Without --openenv-version, use the latest stable release tag, not a dev or rc version."""
+    repo_root = tmp_path / "openenv"
+    scripts_dir = repo_root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    source_script = Path(__file__).resolve().parents[2] / "scripts"
+    script_path = scripts_dir / "prepare_hf_deployment.sh"
+    shutil.copy2(source_script / script_path.name, script_path)
+    (repo_root / "pyproject.toml").write_text(
+        '[project]\nversion = "0.4.3.dev0"\n',
+        encoding="utf-8",
+    )
+    (repo_root / "src").mkdir()
+    (repo_root / "src" / "placeholder.txt").write_text("source\n", encoding="utf-8")
+    env_dir = repo_root / "envs" / "ordinary_env"
+    env_dir.mkdir(parents=True)
+    (env_dir / "Dockerfile").write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    (env_dir / "README.md").write_text("# ordinary_env\n", encoding="utf-8")
+
+    git = ["git", "-c", "user.name=test", "-c", "user.email=test@example.com"]
+    subprocess.run(["git", "init", "-q"], cwd=repo_root, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "release"], cwd=repo_root, check=True)
+    subprocess.run([*git, "tag", "v0.4.2"], cwd=repo_root, check=True)
+    subprocess.run(
+        [*git, "commit", "-q", "--allow-empty", "-m", "rc"], cwd=repo_root, check=True
+    )
+    subprocess.run([*git, "tag", "v0.4.3rc1"], cwd=repo_root, check=True)
+
+    env = os.environ.copy()
+    env.pop("OPENENV_VERSION", None)
+    env["HF_NAMESPACE"] = "test"
+    staging_dir = tmp_path / "hf-staging"
+    result = subprocess.run(
+        [
+            "bash",
+            str(script_path),
+            "--env",
+            "ordinary_env",
+            "--dry-run",
+            "--skip-collection",
+            "--staging-dir",
+            str(staging_dir),
+        ],
+        cwd=repo_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Would create/update space: test/ordinary_env-0.4.2" in result.stdout
+    readme_text = (
+        staging_dir / "test" / "ordinary_env-0.4.2" / "README.md"
+    ).read_text()
+    assert "  - openenv-0.4.2\n" in readme_text
+
+
+@pytest.mark.network
+def test_prepare_hf_deployment_pins_release_tag_not_matching_branch(
+    tmp_path: Path,
+) -> None:
+    """A bare release version should pin the vX.Y.Z tag, not a testpypi/X.Y.Z branch."""
+    repo_root = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "prepare_hf_deployment.sh"
+    staging_dir = tmp_path / "hf-staging"
+
+    env = os.environ.copy()
+    env["HF_NAMESPACE"] = "test"
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(script_path),
+            "--env",
+            "echo_env",
+            "--openenv-version",
+            "0.8.0",
+            "--dry-run",
+            "--skip-collection",
+            "--staging-dir",
+            str(staging_dir),
+        ],
+        cwd=repo_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    pyproject_text = (
+        staging_dir / "test" / "echo_env-0.8.0" / "pyproject.toml"
+    ).read_text()
+    assert '"openenv @ git+https://github.com/huggingface/OpenEnv.git@v0.8.0"' in (
+        pyproject_text
+    )
+
+
+def test_prepare_hf_deployment_keeps_the_env_description_first(tmp_path: Path) -> None:
+    """The web interface describes the env with the README's first paragraph."""
+    from openenv.core.env_server.gradio_ui import _description
+    from openenv.core.env_server.types import EnvironmentMetadata
+
+    repo_root = Path(__file__).resolve().parents[2]
+    staging_dir = tmp_path / "hf-staging"
+    result = subprocess.run(
+        [
+            "bash",
+            str(repo_root / "scripts" / "prepare_hf_deployment.sh"),
+            "--env",
+            "chess_env",
+            "--repo-id",
+            "openenv/chess",
+            "--dry-run",
+            "--skip-collection",
+            "--staging-dir",
+            str(staging_dir),
+        ],
+        cwd=repo_root,
+        env={**os.environ, "OPENENV_VERSION": "main"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    readme = (staging_dir / "openenv" / "chess" / "README.md").read_text()
+    meta = EnvironmentMetadata(
+        name="chess_env", description="chess_env environment", readme_content=readme
+    )
+    assert _description(meta).startswith("A chess reinforcement learning environment")
+    assert "This Space is built from OpenEnv environment `chess_env`" in readme

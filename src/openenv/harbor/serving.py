@@ -86,6 +86,7 @@ class HarborService:
         self.llm_url = llm_url
         self.model = model
         self.datasets = datasets
+        self.provider = provider
         self.capture_level = "text" if provider == "anthropic" else capture_level
         self.capture = CaptureServer(
             llm_url=llm_url,
@@ -281,6 +282,7 @@ def build_app(
     )
 
     from .environment import HarborEnvironment
+    from .models import HarborState
     from .ui import harbor_gradio_builder
 
     HarborEnvironment.configure(
@@ -297,15 +299,18 @@ def build_app(
     ) -> Any:
         """OpenEnv calls this positionally with six web-interface arguments.
 
-        Only the title is useful here: the Harbor UI drives rollouts through its own handlers rather
-        than the generic action-field form, because a rollout is one long tool call, not a step.
+        None of them is used: the Harbor UI drives rollouts through its own handlers rather than the
+        generic action-field form, because a rollout is one long tool call, not a step. Even the
+        title is its own, since OpenEnv's ("OpenEnv Agentic Environment: harbor_env") names the
+        env class rather than what the page is.
         """
-        return harbor_gradio_builder(datasets=datasets, title=display_title or "Harbor")
+        return harbor_gradio_builder(datasets=datasets, title="OpenEnv × Harbor")
 
     app = create_app(
         HarborEnvironment,
         CallToolAction,
         CallToolObservation,
+        state_cls=HarborState,
         env_name="harbor_env",
         max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "4")),
         gradio_builder=gradio_builder,
@@ -321,4 +326,99 @@ def build_app(
     if service is not None and service.mounted:
         app.mount(CAPTURE_MOUNT, service.capture.app)
 
+    _attach_hf_login(app)
+    # Every UI handler that changes something (a rollout, an added dataset) is a POST under /web,
+    # and Gradio accepts those from any origin. Without this, any page a visitor opens could make
+    # their browser start rollouts on this server's endpoint, or reach a server on their own machine
+    # that the page itself cannot. Nothing a real visitor does is cross-site.
+    app.add_middleware(SameOrigin)
     return app
+
+
+def _attach_hf_login(app: Any) -> bool:
+    """ "Sign in with Hugging Face", where the Hub has set it up for the Space (`hf_oauth: true`).
+
+    Attached to this app rather than to the Gradio UI mounted at `/web`: Gradio's OAuth routes and
+    the callback URL it registers assume the site root. Gradio then hands the signed-in visitor's
+    token to any UI handler that asks for a `gr.OAuthToken`, through the session cookie set here.
+
+    A cookie that identifies the visitor makes another website's request count as theirs; the
+    same-origin check `build_app` installs for the UI covers that too.
+    """
+    from .ui_settings import load
+
+    if not load().hf_login:
+        return False
+    # Gradio tells a Space from a laptop by `SYSTEM=spaces`, which Docker Spaces do not set. Without
+    # it, `attach_oauth` installs its local stand-in, which signs every visitor in as the account of
+    # the token the server holds (the operator's), with a token that calls nothing. `hf_login` is
+    # only true on a Space that has an OAuth app, so this is that Space. It stays process-wide on
+    # purpose: `attach_oauth` reads it once (its routes then use `SPACE_HOST`), and whatever else in
+    # Gradio asks `gradio.utils.get_space()` afterwards should get the answer the login got.
+    os.environ.setdefault("SYSTEM", "spaces")
+    try:
+        from gradio.oauth import attach_oauth
+        from gradio.utils import get_space
+
+        if get_space() is None:
+            print("hf login  off: Gradio does not see a Space here")
+            return False
+        attach_oauth(app)
+    except (ImportError, ValueError) as exc:
+        print(f"hf login  off: {exc}")
+        return False
+    print("hf login  on (Inference Providers with the visitor's own account)")
+    return True
+
+
+class SameOrigin:
+    """Refuse a state-changing request to the UI that a browser made from another site.
+
+    Browsers label every request they make (`Sec-Fetch-Site`, `Origin`); servers calling this app,
+    such as a sandbox reaching the capture proxy or a trainer on the Task API, send neither and pass.
+    Only the UI (`/web`) is guarded: the Task API and MCP carry no visitor state, and browser tools
+    such as the MCP Inspector call them from another origin on purpose.
+    """
+
+    def __init__(self, app: Any, prefix: str = "/web") -> None:
+        self.app = app
+        self.prefix = prefix
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        path = scope.get("path") or ""
+        if (
+            scope.get("type") == "http"
+            and scope.get("method") not in ("GET", "HEAD", "OPTIONS")
+            and (path == self.prefix or path.startswith(self.prefix + "/"))
+        ):
+            headers = {
+                k.decode().lower(): v.decode() for k, v in scope.get("headers") or []
+            }
+            site = headers.get("sec-fetch-site", "")
+            origin = headers.get("origin", "")
+            if site == "cross-site" or (
+                origin and not _same_host(origin, headers.get("host", ""))
+            ):
+                from starlette.responses import PlainTextResponse
+
+                await PlainTextResponse("cross-site request refused", status_code=403)(
+                    scope, receive, send
+                )
+                return
+        await self.app(scope, receive, send)
+
+
+def _same_host(origin: str, host: str) -> bool:
+    """Whether a page at `origin` is this server's own.
+
+    Its own hosts are the `Host` it was reached at, a Space's `SPACE_HOST`, and any listed in
+    `OPENENV_HARBOR_UI_HOSTS` (for a proxy that rewrites `Host`). Never `X-Forwarded-Host`: a
+    client sets that itself, so it would let any origin vouch for itself.
+    """
+    from urllib.parse import urlparse
+
+    listed = ",".join(
+        os.environ.get(k, "") for k in ("SPACE_HOST", "OPENENV_HARBOR_UI_HOSTS")
+    )
+    allowed = {host, *[h.strip() for h in listed.split(",") if h.strip()]}
+    return urlparse(origin).netloc in allowed

@@ -7,10 +7,13 @@ Gitea service, optimized for task-based isolation where multiple environment
 instances share the same Gitea server but have isolated workspaces.
 """
 
+import atexit
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,8 +91,23 @@ class GitServerClient:
         self._configure_git()
 
     def _configure_git(self):
-        """Configure git credentials for automatic authentication."""
-        home_dir = Path.home()
+        """
+        Configure git identity and credentials for automatic authentication.
+
+        The config lives in a client-owned temp directory and is passed to git via
+        `GIT_CONFIG_GLOBAL`, so the user's `~/.gitconfig` and `~/.git-credentials`
+        are never touched.
+        """
+        config_dir = Path(tempfile.mkdtemp(prefix="openenv-git-"))
+        atexit.register(shutil.rmtree, config_dir, ignore_errors=True)
+
+        # Git credentials
+        git_credentials = (
+            f"http://{self.username}:{self.password}@{self.domain}:{self.port}\n"
+        )
+        gitcreds_path = config_dir / "git-credentials"
+        gitcreds_path.write_text(git_credentials)
+        gitcreds_path.chmod(0o600)
 
         # Git config
         git_config = f"""[user]
@@ -98,18 +116,12 @@ class GitServerClient:
 [init]
     defaultBranch = main
 [credential]
-    helper = store
+    helper = store --file {gitcreds_path}
 """
-        gitconfig_path = home_dir / ".gitconfig"
+        gitconfig_path = config_dir / "gitconfig"
         gitconfig_path.write_text(git_config)
 
-        # Git credentials
-        git_credentials = (
-            f"http://{self.username}:{self.password}@{self.domain}:{self.port}\n"
-        )
-        gitcreds_path = home_dir / ".git-credentials"
-        gitcreds_path.write_text(git_credentials)
-        gitcreds_path.chmod(0o600)
+        self._git_env = {**os.environ, "GIT_CONFIG_GLOBAL": str(gitconfig_path)}
 
     def wait_for_ready(self, timeout: int = 30) -> bool:
         """
@@ -218,6 +230,7 @@ class GitServerClient:
         # Clone repository
         result = subprocess.run(
             ["git", "clone", clone_url, str(target_path)],
+            env=self._git_env,
             capture_output=True,
             text=True,
         )
@@ -230,6 +243,7 @@ class GitServerClient:
             result = subprocess.run(
                 ["git", "checkout", commit],
                 cwd=str(target_path),
+                env=self._git_env,
                 capture_output=True,
                 text=True,
             )
@@ -269,6 +283,7 @@ class GitServerClient:
         subprocess.run(
             ["git", "fetch", "--all"],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
         )
 
@@ -276,6 +291,7 @@ class GitServerClient:
         result = subprocess.run(
             ["git", "checkout", commit],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
             text=True,
         )
@@ -291,6 +307,7 @@ class GitServerClient:
                 f"origin/{commit}" if commit != "main" else commit,
             ],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
             text=True,
         )
@@ -300,6 +317,7 @@ class GitServerClient:
             result = subprocess.run(
                 ["git", "reset", "--hard", commit],
                 cwd=str(repo_path),
+                env=self._git_env,
                 capture_output=True,
                 text=True,
             )
@@ -310,6 +328,7 @@ class GitServerClient:
         subprocess.run(
             ["git", "clean", "-fdx"],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
         )
 
@@ -337,12 +356,12 @@ class GitServerClient:
         if not work_path.exists():
             return (1, "", f"Working directory does not exist: {work_path}")
 
-        # Split command safely
-        cmd_parts = ["git"] + command.split()
+        cmd_parts = ["git"] + shlex.split(command)
 
         result = subprocess.run(
             cmd_parts,
             cwd=str(work_path),
+            env=self._git_env,
             capture_output=True,
             text=True,
         )
@@ -368,6 +387,7 @@ class GitServerClient:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
             text=True,
         )

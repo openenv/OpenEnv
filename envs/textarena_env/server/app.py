@@ -16,12 +16,16 @@ from openenv.core.env_server.http_server import create_app
 
 try:
     # When running as installed package
-    from textarena_env.models import TextArenaAction, TextArenaObservation
+    from textarena_env.models import (
+        TextArenaAction,
+        TextArenaObservation,
+        TextArenaState,
+    )
     from textarena_env.server.environment import TextArenaEnvironment
     from textarena_env.server.gradio_ui import build_textarena_gradio_app
 except ImportError:
     # When running uvicorn directly from textarena_env/
-    from models import TextArenaAction, TextArenaObservation
+    from models import TextArenaAction, TextArenaObservation, TextArenaState
 
     from .environment import TextArenaEnvironment
     from .gradio_ui import build_textarena_gradio_app
@@ -67,13 +71,20 @@ def create_textarena_environment():
 _logger = logging.getLogger(__name__)
 _sig = inspect.signature(create_app)
 if "gradio_builder" in _sig.parameters:
+    # Each kwarg is guarded by inspect.signature so older openenv
+    # releases that predate the param still boot this env.
+    create_app_kwargs: dict = {
+        "env_name": "textarena_env",
+        "max_concurrent_envs": max_concurrent,
+        "gradio_builder": build_textarena_gradio_app,
+    }
+    if "state_cls" in _sig.parameters:
+        create_app_kwargs["state_cls"] = TextArenaState
     app = create_app(
         create_textarena_environment,
         TextArenaAction,
         TextArenaObservation,
-        env_name="textarena_env",
-        max_concurrent_envs=max_concurrent,
-        gradio_builder=build_textarena_gradio_app,
+        **create_app_kwargs,
     )
 else:
     _logger.warning(
@@ -89,7 +100,7 @@ else:
     )
 
 
-def main(host: str = "0.0.0.0", port: int = 8000):
+def main():
     """
     Entry point for direct execution via uv run or python -m.
 
@@ -98,17 +109,19 @@ def main(host: str = "0.0.0.0", port: int = 8000):
         uv run --project . server --port 8001
         python -m textarena_env.server.app
 
-    Args:
-        host: Host address to bind to (default: "0.0.0.0")
-        port: Port number to listen on (default: 8000)
-
     For production deployments, consider using uvicorn directly with
     multiple workers:
         uvicorn textarena_env.server.app:app --workers 4
     """
+    import argparse
+
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

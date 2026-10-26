@@ -34,8 +34,8 @@ from kernrl import KernelAction, kernrl_env
 env = kernrl_env(base_url="http://localhost:8000")
 
 # Start episode
-obs = env.reset(problem_id="L1_23_Softmax")
-print(obs.problem_description)
+result = env.reset(problem_id="L1_23_Softmax")
+print(result.observation.problem_description)
 
 # Submit a kernel
 action = KernelAction(code='''

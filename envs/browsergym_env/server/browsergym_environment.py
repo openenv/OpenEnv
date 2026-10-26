@@ -8,20 +8,36 @@ with OpenEnv's Environment ABC. BrowserGym includes multiple benchmarks:
 - WorkArena: Enterprise task automation
 """
 
+import base64
+import html
 import importlib
+import io
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
 import gymnasium as gym
+import numpy as np
 from browsergym_env.models import (
     BrowserGymAction,
     BrowserGymObservation,
     BrowserGymState,
 )
 from openenv.core.env_server.interfaces import Environment
+from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+# browsergym.core keeps one process-wide Playwright instance (sync API), which only
+# works on the thread that started it. Every BrowserGym call runs on this single thread
+# so the HTTP API, WebSocket sessions and the /web playground can share one process.
+_PLAYWRIGHT_THREAD = ThreadPoolExecutor(max_workers=1, thread_name_prefix="browsergym")
+
+
+def _on_playwright_thread(fn, *args, **kwargs):
+    """Run `fn` on the thread that owns the BrowserGym Playwright instance."""
+    return _PLAYWRIGHT_THREAD.submit(fn, *args, **kwargs).result()
 
 
 def _to_jsonable(value: Any) -> Any:
@@ -230,7 +246,7 @@ class BrowserGymEnvironment(Environment):
 
         if previous_gym_env is not None:
             try:
-                previous_gym_env.close()
+                _on_playwright_thread(previous_gym_env.close)
             except Exception as exc:  # noqa: BLE001 - browsergym/playwright cleanup
                 logger.warning("BrowserGym cleanup failed during task switch: %s", exc)
 
@@ -238,11 +254,13 @@ class BrowserGymEnvironment(Environment):
         self,
         seed: Optional[int] = None,
         task_name: Optional[str] = None,
+        episode_id: Optional[str] = None,
     ) -> BrowserGymObservation:
         """Reset the environment with a specific task.
 
         Args:
             seed: Random seed for reproducibility
+            episode_id: Optional episode ID to use
             task_name: Override task name for this episode
 
         Returns:
@@ -253,7 +271,7 @@ class BrowserGymEnvironment(Environment):
         self._switch_task_if_needed(resolved_task_name)
 
         self._state = BrowserGymState(
-            episode_id=str(uuid4()),
+            episode_id=episode_id if episode_id is not None else str(uuid4()),
             step_count=0,
             benchmark=self.benchmark,
             task_name=resolved_task_name,
@@ -266,13 +284,13 @@ class BrowserGymEnvironment(Environment):
 
         # Reset the gym environment
         try:
-            obs, info = self.gym_env.reset(**reset_options)
+            obs, info = _on_playwright_thread(self.gym_env.reset, **reset_options)
         except AttributeError as err:
             if "context" in str(err) and hasattr(self.gym_env, "close"):
                 # BrowserGym can leave partially initialized state after a
                 # failed reset. Close the hanging resources and try once more.
-                self.gym_env.close()
-                obs, info = self.gym_env.reset(**reset_options)
+                _on_playwright_thread(self.gym_env.close)
+                obs, info = _on_playwright_thread(self.gym_env.reset, **reset_options)
             else:
                 raise
         except Exception as err:  # noqa: BLE001 - browsergym
@@ -300,8 +318,8 @@ class BrowserGymEnvironment(Environment):
 
         # Execute action in gym environment
         try:
-            obs, reward, terminated, truncated, info = self.gym_env.step(
-                action.action_str
+            obs, reward, terminated, truncated, info = _on_playwright_thread(
+                self.gym_env.step, action.action_str
             )
 
             self._last_obs = obs
@@ -429,6 +447,47 @@ class BrowserGymEnvironment(Environment):
             metadata=browsergym_metadata,
         )
 
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the page screenshot with the goal, the URL and the last action error."""
+        if "screenshot" not in observation:
+            return None
+        screenshot = observation["screenshot"]
+        goal = observation["goal"]
+        if not screenshot and not goal:
+            return None
+        parts = []
+        if goal:
+            parts.append(f"<div><b>Goal:</b> {html.escape(goal)}</div>")
+        if observation["url"]:
+            parts.append(
+                '<div style="font-size:12px;opacity:0.7;word-break:break-all">'
+                f"{html.escape(observation['url'])}</div>"
+            )
+        if screenshot:
+            image = Image.fromarray(np.asarray(screenshot, dtype=np.uint8))
+            image.thumbnail((800, 800))
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=80)
+            data = base64.b64encode(buffer.getvalue()).decode()
+            parts.append(
+                f'<img alt="BrowserGym page" src="data:image/jpeg;base64,{data}" '
+                'style="max-width:100%;border:1px solid var(--border-color-primary);border-radius:6px">'
+            )
+        error = observation["error"] or observation["metadata"].get(
+            "browsergym_obs", {}
+        ).get("last_action_error")
+        if error:
+            parts.append(
+                '<div style="color:var(--color-accent)"><b>Last action error:</b> '
+                f"{html.escape(str(error))}</div>"
+            )
+        return (
+            '<div style="display:flex;flex-direction:column;'
+            "gap:8px;max-width:500px;padding:10px;color:var(--body-text-color);"
+            "border:1px solid var(--border-color-primary);border-radius:10px;"
+            'background:var(--background-fill-secondary)">' + "".join(parts) + "</div>"
+        )
+
     @property
     def state(self) -> BrowserGymState:
         """Get the current environment state."""
@@ -438,6 +497,6 @@ class BrowserGymEnvironment(Environment):
         """Clean up environment resources."""
         if hasattr(self, "gym_env"):
             try:
-                self.gym_env.close()
+                _on_playwright_thread(self.gym_env.close)
             except Exception as exc:  # noqa: BLE001 - browsergym/playwright cleanup
                 logger.warning("BrowserGym cleanup failed: %s", exc)

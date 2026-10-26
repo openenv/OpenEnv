@@ -80,6 +80,28 @@ These invariants must NEVER be violated. If a change would violate them, stop an
   - MINOR: New features, backward compatible
   - PATCH: Bug fixes only
 
+### Deprecations
+
+Before removing an API, CLI flag, or environment, deprecate it first: keep it working until a stated release and warn whoever uses it.
+
+The warning must say:
+
+- **When it goes away**: the OpenEnv release that removes it.
+- **What to use instead**: concrete enough to copy (the new import, call, or command), plus a docs link when the replacement is more than a one-line change.
+
+```python
+warnings.warn(
+    "`foo_env` is deprecated and will be removed in OpenEnv 0.8.0. "
+    "Use `bar_env` instead: `BarFactory(server_url)`. See https://...",
+    FutureWarning,
+    stacklevel=2,
+)
+```
+
+- Use `FutureWarning`, not `DeprecationWarning`. Python hides `DeprecationWarning` unless it is raised from `__main__`, so users importing from a module or a notebook would never see it.
+- Say the same in the docs (README, doc page, tutorials), with the same version.
+- Pre-1.0, leave at least two minor releases between the first release that warns and the removal, more for widely used pieces. Remove in the announced release, and list the removal in its release notes.
+
 ## Violation Response
 
 If you identify a potential invariant violation:

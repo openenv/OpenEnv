@@ -311,17 +311,25 @@ class RolloutGraph:
         if not node.prompt_ids:
             return self._find_parent_by_messages(node)
 
-        best_id, best_len = None, 0
+        prompt = node.prompt_ids
+        candidates = []
         for candidate_id in self._order:
             candidate = self._nodes[candidate_id]
-            end = candidate.end_ids
-            if len(candidate.prompt_ids) >= len(node.prompt_ids):
-                continue
-            if len(end) > len(node.prompt_ids) or len(end) <= best_len:
-                continue
-            if common_prefix_len(end, node.prompt_ids) == len(end):
-                best_id, best_len = candidate_id, len(end)
-        return best_id
+            n_prompt = len(candidate.prompt_ids)
+            n_end = n_prompt + len(candidate.sampled_ids)
+            if 0 < n_end <= len(prompt) and n_prompt < len(prompt):
+                candidates.append((-n_end, candidate.index, candidate))
+        # Longest end first (earliest arrival on ties, as before), so the first exact prefix wins and
+        # usually only one full comparison is made.
+        for _, _, candidate in sorted(candidates, key=lambda c: (c[0], c[1])):
+            n_prompt = len(candidate.prompt_ids)
+            if (
+                prompt[:n_prompt] == candidate.prompt_ids
+                and prompt[n_prompt : n_prompt + len(candidate.sampled_ids)]
+                == candidate.sampled_ids
+            ):
+                return candidate.node_id
+        return None
 
     def _find_parent_by_messages(self, node: TurnNode) -> str | None:
         """Same longest-exact-prefix rule, keyed on the message list instead of token ids.
@@ -429,6 +437,9 @@ class RolloutGraph:
 
         by_prompt: dict[tuple[int, ...], list[str]] = {}
         for node in self.roots():
+            # Missing token IDs do not establish that two prompts are identical.
+            if not node.prompt_ids:
+                continue
             by_prompt.setdefault(tuple(node.prompt_ids), []).append(node.node_id)
         sibling_groups.extend(group for group in by_prompt.values() if len(group) > 1)
 

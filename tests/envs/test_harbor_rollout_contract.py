@@ -391,3 +391,19 @@ def test_verifier_exclusions_survive_capture_export(monkeypatch, tmp_path):
     assert any(
         "verifier keys dropped" in item and "aux" in item for item in result.findings
     )
+
+
+@pytest.mark.parametrize("name", ["my trials", "a+b", "user@host", "c:d"])
+def test_trial_uri_with_escaped_characters_still_finds_the_trace(tmp_path, name):
+    """Harbor sets `trial_uri` with `Path.as_uri()`, which percent-encodes these characters."""
+    import json
+    from types import SimpleNamespace
+
+    trial_dir = tmp_path / name / "trial"
+    (trial_dir / "agent").mkdir(parents=True)
+    (trial_dir / "agent" / "trajectory.json").write_text(json.dumps({"steps": []}))
+    trial_result = SimpleNamespace(trial_uri=trial_dir.resolve().as_uri())
+
+    found = rollout._trial_dir(trial_result, tmp_path / name, "trial")
+    assert found == trial_dir.resolve()
+    assert rollout.load_trace(found)[1] == "atif"

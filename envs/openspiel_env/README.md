@@ -15,9 +15,17 @@ tags:
 
 Integration of OpenSpiel games with the OpenEnv framework. [OpenSpiel](https://github.com/google-deepmind/open_spiel) is DeepMind's collection of 70+ game environments for RL research.
 
+![OpenSpiel web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/openspiel.png)
+
+*The `/web` playground on 2048 after some moves: the board and one button per legal move.*
+
 ## Supported Games
 
 This environment supports 6 games across different categories:
+
+![OpenSpiel games in the web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/openspiel-games.png)
+
+*The `/web` playground drawing for the OpenSpiel games, each after a few moves.*
 
 ### Single-Player Games (No Opponent)
 1. **Catch** - Move horizontally to catch a falling ball
@@ -38,7 +46,7 @@ from openspiel_env import OpenSpielEnv, OpenSpielAction
 
 try:
     # Create environment from Docker image
-    env = OpenSpielEnv.from_docker_image("openspiel-env:latest")
+    env = OpenSpielEnv.from_docker_image("openspiel-env:latest").sync()
 
     # Reset to start a new episode
     result = env.reset()
@@ -91,106 +99,32 @@ docker build -t openspiel-env:latest \
   -f server/Dockerfile .
 ```
 
-## Deploying to Hugging Face Spaces
-
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
-
-```bash
-# From the environment directory (envs/openspiel_env/)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-- `--env-var`, `-e`: Public Space variable as `KEY=VALUE` (repeatable). Overrides matching keys from `variables:` in openenv.yaml.
-- `--secret`: Private Space secret as `KEY=VALUE` (repeatable). Value is never logged.
-
-Space variables and secrets are only applied on direct Hugging Face Space
-pushes. They are not supported with `--registry`, and they cannot be staged via
-`--create-pr`.
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/openspiel-env
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/openspiel-env --private
-
-# Select a game at push time (overrides variables: in openenv.yaml)
-openenv push -e OPENSPIEL_GAME=tic_tac_toe
-
-# Push with a private secret (not logged, stored encrypted in the Space)
-openenv push --secret OPENAI_API_KEY=sk-...
-```
-
-### Declaring defaults in `openenv.yaml`
-
-Public variables that your server reads (e.g. `OPENSPIEL_GAME`) can be declared
-in `openenv.yaml` and will be set automatically on each `openenv push`:
-
-```yaml
-variables:
-  OPENSPIEL_GAME: catch
-```
-
-CLI `-e` overrides any matching key from the yaml. Secrets are **never** put in
-`openenv.yaml` — only on the CLI via `--secret KEY=VALUE`.
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-
-> **Note**: The default Dockerfile uses a pre-built base image with OpenSpiel already compiled, so deployment is fast and works with standard CPU hardware. If you build your own base image, compilation requires more resources and time.
-
 ## Running Specific Games
 
+Pick the game and opponent with environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENSPIEL_GAME` | `catch` | `catch`, `tic_tac_toe`, `kuhn_poker`, `2048`, `blackjack` or `cliff_walking` |
+| `OPENSPIEL_AGENT_PLAYER` | `0` | Player ID the agent plays as |
+| `OPENSPIEL_OPPONENT_POLICY` | `random` | Opponent in multi-player games: `random`, `first` (first legal action) or `last` (last legal action) |
+
 ```bash
-# Catch (default)
-docker run -p 8000:8000 openspiel-env:latest
-
-# Tic-Tac-Toe with random opponent
-docker run -p 8000:8000 -e OPENSPIEL_GAME=tic_tac_toe openspiel-env:latest
-
-# Kuhn Poker
-docker run -p 8000:8000 -e OPENSPIEL_GAME=kuhn_poker openspiel-env:latest
-
-# 2048
-docker run -p 8000:8000 -e OPENSPIEL_GAME=2048 openspiel-env:latest
-
-# Blackjack
-docker run -p 8000:8000 -e OPENSPIEL_GAME=blackjack openspiel-env:latest
-
-# Cliff Walking
-docker run -p 8000:8000 -e OPENSPIEL_GAME=cliff_walking openspiel-env:latest
+docker run -p 8000:8000 \
+  -e OPENSPIEL_GAME=tic_tac_toe \
+  -e OPENSPIEL_OPPONENT_POLICY=first \
+  openspiel-env:latest
 ```
+
+## Deploying to Hugging Face Spaces
+
+From `envs/openspiel_env/`:
+
+```bash
+openenv push --repo-id my-org/openspiel-env -e OPENSPIEL_GAME=tic_tac_toe
+```
+
+`-e` sets the variables above on the Space. See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs` and a health check at `/health`. The default Dockerfile uses the pre-built OpenSpiel base image, so it runs on standard CPU hardware.
 
 ## Environment Details
 
@@ -218,26 +152,6 @@ docker run -p 8000:8000 -e OPENSPIEL_GAME=cliff_walking openspiel-env:latest
 - `agent_player` (int) - Agent's player ID
 - `opponent_policy` (str) - Opponent policy name
 - `num_players` (int) - Total players
-
-## Configuration
-
-### Environment Variables
-
-- `OPENSPIEL_GAME`: Game name (default: "catch")
-- `OPENSPIEL_AGENT_PLAYER`: Player ID for agent (default: 0)
-- `OPENSPIEL_OPPONENT_POLICY`: Opponent policy for multi-player games
-  - `random`: Uniform random (default)
-  - `first`: Always picks first legal action
-  - `last`: Always picks last legal action
-
-### Example: Tic-Tac-Toe with Fixed Opponent
-
-```bash
-docker run -p 8000:8000 \
-  -e OPENSPIEL_GAME=tic_tac_toe \
-  -e OPENSPIEL_OPPONENT_POLICY=first \
-  openspiel-env:latest
-```
 
 ## Advanced Usage
 
@@ -371,26 +285,6 @@ uv run --project . server --port 8000
 ```
 
 This script will build and test all 6 supported games in Docker.
-
-## Project Structure
-
-```
-openspiel_env/
-├── __init__.py                    # Module exports
-├── README.md                      # This file
-├── openenv.yaml                   # OpenEnv manifest
-├── pyproject.toml                 # Project metadata and dependencies
-├── client.py                      # OpenSpielEnv client implementation
-├── models.py                      # Action, Observation, and State models
-├── test_docker_all_games.sh       # Automated test script
-└── server/
-    ├── __init__.py                # Server module exports
-    ├── openspiel_environment.py   # Core OpenSpielEnvironment implementation
-    ├── opponent_policies.py       # Opponent policies (random, fixed)
-    ├── app.py                     # FastAPI application
-    ├── Dockerfile                 # Environment container (uses pre-built base)
-    └── Dockerfile.openspiel-base  # Base image with compiled OpenSpiel
-```
 
 ## Limitations
 

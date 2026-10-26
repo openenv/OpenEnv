@@ -104,5 +104,7 @@ jobs:
       - name: Build summary
         run: |
           echo "✅ OpenSpiel base image built and pushed successfully!"
-          echo "📦 Image: ${{ steps.meta-openspiel-base.outputs.tags }}"
+          echo "📦 Image: ${STEPS_META_OPENSPIEL_BASE_OUTPUTS_TAGS}"
           echo "🚀 Next regular build will use this new base image"
+        env:
+          STEPS_META_OPENSPIEL_BASE_OUTPUTS_TAGS: ${{ steps.meta-openspiel-base.outputs.tags }}

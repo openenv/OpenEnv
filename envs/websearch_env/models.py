@@ -12,13 +12,8 @@ The WebSearch Env environment is an environment that searches the web with Googl
 
 from __future__ import annotations
 
+from openenv.core.env_server.types import Action, Observation
 from pydantic import BaseModel, Field
-
-# Support both in-repo and standalone imports
-try:
-    from openenv.core.env_server.types import Action, Observation
-except ImportError:
-    from openenv_core.env_server.types import Action, Observation
 
 
 class WebSearchAction(Action):

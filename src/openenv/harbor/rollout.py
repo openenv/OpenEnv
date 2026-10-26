@@ -29,6 +29,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from openenv.core.harness.capture.export import export_session
 
@@ -286,6 +288,7 @@ async def run_rollout(
     trials_dir: Path | str,
     dataset: str = "",
     reward_key: str = "",
+    require_reward: bool = True,
     keep_sandbox: bool = False,
     agent_timeout_sec: float | None = None,
     agent_step_limit: int | None = None,
@@ -319,6 +322,9 @@ async def run_rollout(
             Where Harbor writes trial artifacts.
         reward_key (`str`, *optional*):
             Which reward key is the training signal, for multi-reward tasks.
+        require_reward (`bool`, *optional*, defaults to `True`):
+            Fail the rollout when the verifier's rewards leave no headline one. `False` keeps it,
+            with every reward in `rewards` and a warning in `findings`: for a rollout to look at.
         keep_sandbox (`bool`, *optional*, defaults to `False`):
             Leave the sandbox alive after the run, for debugging.
         capture_level (`str`, *optional*, defaults to `"tokens"`):
@@ -543,8 +549,12 @@ async def run_rollout(
                     result.rewards, reward_key
                 )
             except ValueError as exc:
-                result.ok = False
-                result.error = str(exc)
+                if require_reward:
+                    result.ok = False
+                    result.error = str(exc)
+                else:
+                    # A rollout to look at, not to train on: every reward stays in `rewards`.
+                    result.findings.append(f"[WARN] no headline reward: {exc}")
             for step in getattr(trial_result, "step_results", None) or []:
                 step_rewards = dict(
                     getattr(getattr(step, "verifier_result", None), "rewards", None)
@@ -715,7 +725,12 @@ async def run_rollout(
 
         # A rollout that produced no reward is not a zero: the verifier never ran. Keeping the two
         # distinct is what stops a dead sandbox being scored as a wrong answer.
-        if result.ok and result.reward is None and trial_result is not None:
+        if (
+            result.ok
+            and result.reward is None
+            and not result.rewards  # several, none the headline, is a warning of its own above
+            and trial_result is not None
+        ):
             result.findings.append(
                 "[WARN] ungraded: the verifier produced no reward for this trial"
             )
@@ -769,7 +784,8 @@ def _trial_dir(
     """Where Harbor wrote this trial's artifacts, including its trajectory."""
     uri = getattr(trial_result, "trial_uri", None) if trial_result is not None else None
     if uri:
-        return Path(str(uri).replace("file://", ""))
+        # `as_uri()` percent-encodes, so a space or `+` in the path has to be decoded back.
+        return Path(url2pathname(urlparse(str(uri)).path))
     candidate = Path(str(trials_dir)) / trial_name
     return candidate if candidate.is_dir() else None
 

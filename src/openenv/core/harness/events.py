@@ -84,6 +84,23 @@ class HarnessClientMessage(BaseModel):
     content: str
 
 
+class HarnessProtocolError(BaseModel):
+    """
+    A recoverable rejection of a client frame on `/harness`.
+
+    No turn was started. The client can correct its message and retry on the
+    same connection. The distinct `protocol_error` discriminator keeps this
+    response separate from terminal harness `error` events.
+
+    Args:
+        data (`dict[str, Any]`):
+            Error details including `message` and `code`.
+    """
+
+    type: Literal["protocol_error"] = "protocol_error"
+    data: dict[str, Any]
+
+
 def events_to_metadata(events: list[HarnessEvent]) -> list[dict[str, Any]]:
     """
     Convert harness events to JSON-serializable dicts for observation metadata.
@@ -107,5 +124,6 @@ __all__ = [
     "HarnessEvent",
     "HarnessEventType",
     "HarnessResponse",
+    "HarnessProtocolError",
     "events_to_metadata",
 ]

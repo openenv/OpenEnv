@@ -19,7 +19,7 @@ import requests
 from openenv.core.containers.runtime import LocalDockerProvider
 
 
-# TODO: Remove this test or make it a functional test sicne this will be tested in e2e test for echo env
+# TODO: Remove this test or make it a functional test since this will be tested in e2e test for echo env
 def test_local_docker_provider():
     """Test LocalDockerProvider end-to-end."""
     print("=" * 60)

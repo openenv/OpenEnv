@@ -92,7 +92,7 @@ Each RFC should include the following sections:
 
 ### Agentic Harnesses
 - [005-agentic-harnesses.md](./005-agentic-harnesses.md) - Agentic Harness Integration (OpenClaw, Claude Code, etc.)
-
+- [006-agentic-rl-harness-interception.md](./006-agentic-rl-harness-interception.md) - Agentic RL through Harness Interception: the token capture contract
 - [012-harbor-capture-providers.md](./012-harbor-capture-providers.md) - Harbor evaluation/training purpose, provider fidelity, exact export and live-session ownership
 
 ### Validation

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from coding_tools_env.models import CodingToolsState
 from coding_tools_env.server.coding_tools_env_environment import CodingToolsEnvironment
 from coding_tools_env.server.e2b_sandbox import ToolResult
@@ -206,3 +207,101 @@ def test_todo_write_rejects_multiple_in_progress(monkeypatch):
     )
     assert "only one todo item can be in_progress" in _extract_text(obs.result)
     env._state = CodingToolsState(episode_id="x")
+
+
+REWARD_FILE = "/home/user/logs/verifier/reward.txt"
+
+
+class RewardFileSandbox(FakeSandbox):
+    """FakeSandbox whose reward file shell commands and file tools can write."""
+
+    def __init__(self, *, removable: bool = True) -> None:
+        super().__init__()
+        self.removable = removable
+
+    def run_shell(self, command: str, timeout_s: float = 30) -> ToolResult:
+        if command.startswith("echo ") and command.endswith(f" > {REWARD_FILE}"):
+            self.files[REWARD_FILE] = command[len("echo ") : -len(f" > {REWARD_FILE}")]
+            return ToolResult(ok=True, output="", error=None, metadata={"exit_code": 0})
+        if command.startswith(f"rm -f {REWARD_FILE}"):
+            if self.removable:
+                self.files.pop(REWARD_FILE, None)
+            gone = REWARD_FILE not in self.files
+            return ToolResult(
+                ok=gone,
+                output="",
+                error=None if gone else "exit_code=1",
+                metadata={"exit_code": 0 if gone else 1},
+            )
+        return super().run_shell(command, timeout_s)
+
+
+def _submit(monkeypatch, sandbox, verify_commands, agent_actions=()):
+    monkeypatch.setenv("E2B_API_KEY", "fake")
+    monkeypatch.setattr(
+        "coding_tools_env.server.coding_tools_env_environment.E2BSandbox",
+        lambda api_key: sandbox,
+    )
+    env = CodingToolsEnvironment()
+    env.reset(verify=verify_commands)
+    for tool_name, arguments in agent_actions:
+        env.step(CallToolAction(tool_name=tool_name, arguments=arguments))
+    env.step(CallToolAction(tool_name="submit_solution", arguments={}))
+    return env.state
+
+
+@pytest.mark.parametrize(
+    "agent_action",
+    [
+        ("bash", {"command": f"echo 1.0 > {REWARD_FILE}"}),
+        ("write", {"file_path": REWARD_FILE, "content": "1.0"}),
+    ],
+)
+def test_reward_file_written_by_the_agent_is_ignored(monkeypatch, agent_action):
+    state = _submit(
+        monkeypatch, RewardFileSandbox(), ["true", "exit 1"], [agent_action]
+    )
+
+    assert state.last_reward == 0.5
+    assert state.reward_override_ignored is None
+
+
+def test_reward_file_written_by_a_verify_command_overrides_the_pass_rate(monkeypatch):
+    state = _submit(
+        monkeypatch, RewardFileSandbox(), [f"echo 0.8 > {REWARD_FILE}", "exit 1"]
+    )
+
+    assert state.last_reward == 0.8
+    assert state.reward_override_ignored is None
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "passed"])
+def test_invalid_reward_file_falls_back_to_the_pass_rate(monkeypatch, value):
+    state = _submit(
+        monkeypatch, RewardFileSandbox(), [f"echo {value} > {REWARD_FILE}", "exit 1"]
+    )
+
+    assert state.last_reward == 0.5
+    assert repr(value) in state.reward_override_ignored
+
+
+@pytest.mark.parametrize("value", ["-0.5", "1.5"])
+def test_reward_file_outside_the_unit_interval_is_kept(monkeypatch, value):
+    state = _submit(
+        monkeypatch, RewardFileSandbox(), [f"echo {value} > {REWARD_FILE}", "exit 1"]
+    )
+
+    assert state.last_reward == float(value)
+    assert state.reward_override_ignored is None
+
+
+def test_reward_file_that_cannot_be_removed_is_ignored(monkeypatch):
+    state = _submit(
+        monkeypatch,
+        RewardFileSandbox(removable=False),
+        ["true", "exit 1"],
+        [("write", {"file_path": REWARD_FILE, "content": "1.0"})],
+    )
+
+    assert state.last_reward == 0.5
+    assert "could not be removed" in state.reward_override_ignored

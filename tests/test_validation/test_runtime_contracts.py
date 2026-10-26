@@ -61,6 +61,29 @@ def test_execution_paths_reject_nonportable_or_escaped_locations(field, path):
         ExecutionDeclaration(**{field: path})
 
 
+def test_execution_defaults_to_no_credential_requirement():
+    assert ExecutionDeclaration().requires_credentials is False
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_execution_accepts_explicit_credential_requirement(required):
+    assert (
+        ExecutionDeclaration(requires_credentials=required).requires_credentials
+        is required
+    )
+
+
+@pytest.mark.parametrize("required", ["true", "false", 0, 1, None, [], {}])
+def test_execution_credential_requirement_requires_boolean(required):
+    with pytest.raises(ValidationError, match="valid boolean"):
+        ExecutionDeclaration(requires_credentials=required)
+
+
+@pytest.mark.parametrize("model", [NormalizedManifest, ValidationReport])
+def test_credential_declaration_does_not_change_schema_one(model):
+    assert "requires_credentials" not in json.dumps(model.model_json_schema())
+
+
 def test_plan_symlink_cannot_escape_package(tmp_path):
     package = tmp_path / "package"
     package.mkdir()
@@ -93,6 +116,76 @@ def test_duplicate_json_fields_are_not_ambiguous(tmp_path):
     write_plan(tmp_path, '{"plan_schema_version":"1","plan_schema_version":"2"}')
     with pytest.raises(RuntimePlanError, match="duplicate"):
         load_runtime_plan(tmp_path, ExecutionDeclaration())
+
+
+def test_plan_schema_errors_omit_inputs_and_unknown_field_names(tmp_path):
+    data = plan_data()
+    data["reset"]["seed"] = "private-input-value"
+    data["private-extra-field"] = "private-extra-value"
+    write_plan(tmp_path, json.dumps(data))
+
+    with pytest.raises(RuntimePlanError) as error:
+        load_runtime_plan(tmp_path, ExecutionDeclaration())
+
+    diagnostic = str(error.value)
+    assert "reset.seed: int_type" in diagnostic
+    assert "<field>: extra_forbidden" in diagnostic
+    assert "private-" not in diagnostic
+
+
+def test_plan_schema_error_diagnostics_are_bounded(tmp_path):
+    data = plan_data()
+    data["actions"] = ["private-input-value"] * 100
+    write_plan(tmp_path, json.dumps(data))
+
+    with pytest.raises(RuntimePlanError) as error:
+        load_runtime_plan(tmp_path, ExecutionDeclaration())
+
+    diagnostic = str(error.value)
+    assert diagnostic.count("dict_type") == 5
+    assert "100 errors total" in diagnostic
+    assert "private-input-value" not in diagnostic
+    assert len(diagnostic) < 1024
+
+
+def test_plan_schema_error_preserves_safe_validator_reason(tmp_path):
+    data = plan_data()
+    data["reset"]["options"] = {"seed": "private-input-value"}
+    write_plan(tmp_path, json.dumps(data))
+    with pytest.raises(RuntimePlanError) as error:
+        load_runtime_plan(tmp_path, ExecutionDeclaration())
+    assert "reset options cannot override episode_id or seed" in str(error.value)
+    assert "private-input-value" not in str(error.value)
+
+
+def test_duplicate_json_diagnostic_omits_key(tmp_path):
+    write_plan(tmp_path, '{"private-duplicate-key": 1, "private-duplicate-key": 2}')
+    with pytest.raises(RuntimePlanError, match="duplicate runtime JSON key") as error:
+        load_runtime_plan(tmp_path, ExecutionDeclaration())
+    assert "private-duplicate-key" not in str(error.value)
+
+
+def test_missing_plan_diagnostic_omits_filesystem_paths(tmp_path):
+    with pytest.raises(RuntimePlanError) as error:
+        load_runtime_plan(tmp_path, ExecutionDeclaration())
+    assert str(error.value) == "runtime plan could not be read (FileNotFoundError)"
+
+
+def test_invalid_plan_json_reports_location_without_input(tmp_path):
+    write_plan(tmp_path, '{"private-key": private-value}')
+    with pytest.raises(RuntimePlanError) as error:
+        load_runtime_plan(tmp_path, ExecutionDeclaration())
+    assert str(error.value) == (
+        "invalid runtime plan JSON at line 1, column 17: Expecting value"
+    )
+
+
+def test_invalid_plan_encoding_does_not_echo_bytes(tmp_path):
+    write_plan(tmp_path, "")
+    (tmp_path / "validation/runtime.json").write_bytes(b"\xffprivate-value")
+    with pytest.raises(RuntimePlanError) as error:
+        load_runtime_plan(tmp_path, ExecutionDeclaration())
+    assert str(error.value) == "runtime plan contains invalid text encoding"
 
 
 @pytest.mark.parametrize("override", ["episode_id", "seed"])

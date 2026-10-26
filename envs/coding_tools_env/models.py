@@ -44,6 +44,7 @@ class CodingToolsState(State):
     tool_history: list[CommandResult] = Field(default_factory=list)
     submitted: bool = False
     last_reward: float | None = None
+    reward_override_ignored: str | None = None
     last_error: str | None = None
 
 

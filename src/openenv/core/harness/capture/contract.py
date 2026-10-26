@@ -1,6 +1,6 @@
 """What a rollout hands a trainer.
 
-The mask-aware training contract is `to_trace_entries`: one engine prompt, sampled completion,
+The typed training contract is `to_training_trace`: one engine prompt, sampled completion,
 behavior logprobs, and a loss mask over prompt+completion per retained model call. Prompt ids and
 sampled ids are never reconstructed from text. Masks are authoritative after reconciliation.
 
@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ..training import TrainingTrace
 from .graph import RolloutGraph, TurnNode
 from .validate import check_turn, validate_training_turn
 
@@ -202,6 +203,16 @@ def _completion_masks(
                 )
             masks[node_id] = span
     return masks
+
+
+def to_training_trace(graph: RolloutGraph, document: dict[str, Any]) -> TrainingTrace:
+    """Return validated agent calls once each, including shared graph prefixes."""
+    if any("[FATAL" in finding for finding in document.get("validation", [])):
+        raise ValueError("cannot train a capture with fatal validation findings")
+    _require_trainable(document)
+    if any(not _usable(node) for node in _agent_nodes(graph, document)):
+        raise ValueError("agent capture has missing or invalid engine tokens/logprobs")
+    return TrainingTrace.from_entries(to_trace_entries(graph, document))
 
 
 def to_turn_records(

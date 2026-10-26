@@ -1,3 +1,16 @@
+---
+title: Git Environment Server
+emoji: 🔀
+colorFrom: red
+colorTo: yellow
+sdk: docker
+pinned: false
+app_port: 8000
+base_path: /web
+tags:
+  - openenv
+---
+
 # Git Environment
 
 A Git server environment using Gitea that provides isolated Git repository management optimized for task-based RL training. Perfect for training agents on Git operations with fast reset capabilities.

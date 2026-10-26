@@ -40,3 +40,4 @@ class JupyterState(State):
     verify_commands: List[str] = Field(default_factory=list)
     submitted_answer: Optional[str] = None
     last_reward: Optional[float] = None
+    reward_override_ignored: Optional[str] = None

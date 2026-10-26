@@ -804,3 +804,45 @@ def load_environment() -> vf.Environment:
     finally:
         sys.path.remove(str(output_dir))
         sys.modules.pop("verifiers", None)
+
+
+@pytest.mark.parametrize(
+    "write_source", [_write_single_fake_ors_env, _write_single_fake_verifiers_env]
+)
+def test_imported_server_main_parses_host_and_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_source
+) -> None:
+    """Test that the generated `server` entry point honors --host and --port."""
+    import uvicorn
+
+    source = tmp_path / "source"
+    source.mkdir()
+    write_source(source)
+    env_name = f"port_{write_source.__name__.strip('_')}"
+    output_dir = tmp_path / "out"
+
+    with patch("openenv.cli.commands.import_env._generate_uv_lock", return_value=True):
+        result = runner.invoke(
+            app,
+            [
+                "import",
+                str(source),
+                "--name",
+                env_name,
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+    assert result.exit_code == 0, result.output
+
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(
+        sys, "argv", ["server", "--host", "127.0.0.1", "--port", "8001"]
+    )
+    monkeypatch.delitem(sys.modules, "verifiers", raising=False)
+    monkeypatch.syspath_prepend(str(output_dir))
+
+    importlib.import_module(f"{env_name}.server.app").main()
+
+    assert calls == [{"host": "127.0.0.1", "port": 8001}]

@@ -17,9 +17,7 @@ from contextlib import suppress
 from typing import Any
 
 import requests
-import uvicorn
-from fastapi import FastAPI, Request, Response, WebSocket
-from starlette.websockets import WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed
 
@@ -101,7 +99,7 @@ class _LocalAuthProxy:
         self.target_url = target_url.rstrip("/")
         self.headers = headers
         self.port = _find_available_port()
-        self._server: uvicorn.Server | None = None
+        self._server: Any = None
         self._thread: threading.Thread | None = None
 
     @property
@@ -180,6 +178,8 @@ class _LocalAuthProxy:
                 with suppress(Exception):
                     await upstream.close()
 
+        import uvicorn
+
         config = uvicorn.Config(
             app,
             host="127.0.0.1",
@@ -236,7 +236,21 @@ class _LocalAuthProxy:
 
 
 class HFSandboxProvider(ContainerProvider):
-    """Run an OpenEnv server on Hugging Face infrastructure."""
+    """Run an OpenEnv server on Hugging Face infrastructure.
+
+    The server runs in a `huggingface_hub` sandbox pool, which bills its hosts as
+    Hugging Face Jobs. `start_container()` returns a local proxy URL that adds the
+    Hugging Face auth headers, so any `EnvClient` can connect to it unchanged.
+
+    Args:
+        image (`str`):
+            Image to run, for example `hf.co/spaces/openenv/coding_env`. It must
+            provide a `server` command that serves OpenEnv on port 8000.
+        env_vars (`dict[str, str]`, *optional*):
+            Environment variables for the server.
+        flavor (`str`, *optional*, defaults to `"cpu-basic"`):
+            Hugging Face hardware flavor of the sandbox hosts.
+    """
 
     def __init__(
         self,

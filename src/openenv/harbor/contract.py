@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from openenv.core.harness.capture.validate import validate_training_turn
+from openenv.core.harness.training import TrainingTrace, TrainingTurn
 
 from .models import HarborRolloutResult
 
@@ -129,6 +130,54 @@ def to_trace_entries(result: HarborRolloutResult) -> list[dict[str, Any]]:
             }
         )
     return entries
+
+
+def to_training_trace(result: HarborRolloutResult) -> TrainingTrace:
+    """Return the strict training API; legacy results need explicit producer masks."""
+    if result.rollout_type != "train":
+        raise ValueError("eval-only rollout has no exact-token training contract")
+    if any("[FATAL" in finding for finding in result.findings):
+        raise ValueError("cannot train a capture with fatal validation findings")
+    turns = []
+    for turn in result.turns:
+        if turn.role != "agent" or turn.discarded or not turn.completion_token_ids:
+            continue
+        if turn.loss_mask is None:
+            raise ValueError("training capture requires an explicit loss_mask")
+        if not turn.trainable and any(turn.loss_mask):
+            raise ValueError("ineligible capture contains supervised tokens")
+        turns.append(
+            TrainingTurn(
+                node_id=turn.node_id,
+                prompt_token_ids=turn.prompt_token_ids,
+                completion_token_ids=turn.completion_token_ids,
+                per_token_logps=turn.per_token_logps,
+                loss_mask=turn.loss_mask,
+                request={
+                    "messages": turn.request_messages,
+                    "tools": turn.request_tools,
+                },
+                response={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": turn.text,
+                                "tool_calls": _openai_tool_calls(turn.tool_calls)
+                                or None,
+                            },
+                            "finish_reason": turn.finish_reason,
+                        }
+                    ]
+                },
+                metadata={
+                    "turn": turn.turn,
+                    "sampling_params": turn.sampling_params,
+                    "requested_sampling_params": turn.requested_sampling_params,
+                },
+            )
+        )
+    return TrainingTrace(turns=turns)
 
 
 def export_training_contract(result: HarborRolloutResult) -> dict[str, Any]:

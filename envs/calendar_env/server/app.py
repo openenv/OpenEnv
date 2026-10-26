@@ -41,15 +41,18 @@ except ImportError:
 app = _main.app
 
 
-def main(host: str = "0.0.0.0", port: int | None = None):
+def main():
     """Run the Calendar environment server with uvicorn."""
+
+    import argparse
 
     import uvicorn
 
-    if port is None:
-        port = int(os.getenv("API_PORT", "8004"))
-
-    uvicorn.run(app, host=host, port=port)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=int(os.getenv("API_PORT", "8004")))
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

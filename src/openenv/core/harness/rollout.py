@@ -29,6 +29,7 @@ from ..client_types import StepResult
 from ..env_server.mcp_types import JsonRpcErrorCode, JsonRpcResponse, Tool
 from ..env_server.types import State
 from ..llm_client import LLMResponse
+from .training import TrainingTrace
 
 Message = dict[str, Any]
 RESERVED_TOOL_NAMES = frozenset({"reset", "step", "state", "close"})
@@ -208,6 +209,15 @@ class LoopOwningSession(Protocol):
     def wait_for_completion(self, timeout_s: float | None = ...) -> int: ...
 
     def fetch_proxy_trace(self) -> list[TraceEntry]: ...
+
+
+@runtime_checkable
+class TrainableSession(Protocol):
+    """A loop-owning session that supplies validated, masked engine captures."""
+
+    def wait_for_completion(self, timeout_s: float | None = ...) -> int: ...
+
+    def fetch_training_trace(self) -> TrainingTrace: ...
 
 
 class ResourceSession(ABC):
@@ -826,6 +836,7 @@ __all__ = [
     "ToolResult",
     "ToolTraceEntry",
     "TraceEntry",
+    "TrainableSession",
     "VerifyResult",
     "build_harness_rollout_func",
 ]

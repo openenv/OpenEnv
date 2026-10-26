@@ -592,6 +592,19 @@ class TestGenericEnvClientFromEnv:
             assert "registry.hf.space/user-my-env" in call_args[0][0]
 
     @pytest.mark.asyncio
+    async def test_from_env_with_docker_normalizes_image_name(self, mock_provider):
+        """Registry image names follow the Space subdomain (lowercase, '_' -> '-')."""
+        with patch.object(GenericEnvClient, "connect", new_callable=AsyncMock):
+            await GenericEnvClient.from_env(
+                "openenv/Echo_Env",
+                use_docker=True,
+                provider=mock_provider,
+            )
+
+            image = mock_provider.start_container.call_args[0][0]
+            assert image == "registry.hf.space/openenv-echo-env:latest"
+
+    @pytest.mark.asyncio
     async def test_from_env_uv_wait_uses_remaining_context_timeout(self):
         """A slow `start()` must consume part of the UV readiness budget."""
         provider = Mock()

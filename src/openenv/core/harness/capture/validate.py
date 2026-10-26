@@ -344,29 +344,13 @@ def check_rollout(
         report.add(FATAL, "root_count", f"expected 1 root, got {stats['n_roots']}")
 
     if stats["n_turns"] == 1 and budget_stop_count <= 0:
-        # A recorded proxy budget stop explains a one-turn rollout. In particular, a tool can
-        # return enough data after the first call to exhaust the next prompt's context budget.
-        # Its original verifier score and sampled tokens remain valid; rejecting it here would
-        # turn a legitimate bounded attempt into an unintended retry.
-        # ONE call for an entire agentic task. Capture is trivially self-consistent here (a single
-        # turn has nothing to stitch to and no prefix to disagree with), so every other check in this
-        # file passes and the rollout reads as clean. It is not: an agent that made one model call
-        # and stopped did not attempt the task.
-        #
-        # Found the hard way. swe-agent, trae-agent, nemo-agent and antigravity-sdk each passed 5/5
-        # while producing exactly one turn per task and solving 0/5, for four unrelated harness-side
-        # reasons (litellm cost registry, a null `prompt_tokens_details`, a tool-less prompt format,
-        # and an SDK loop that exits after the first tool call). The capture layer was right every
-        # time and the rollouts were still worthless.
-        #
-        # FATAL because the whole point of this layer is refusing to hand over data we cannot stand
-        # behind, and a one-turn agentic rollout is a harness failure wearing a clean capture.
+        # A single call can be a valid answer or a harness that stopped early.
+        # Keep the diagnostic, but let the verifier score the task outcome.
         report.add(
-            FATAL,
+            WARN,
             "degenerate_rollout",
-            "exactly 1 model call for the whole task: the agent stopped after its first "
-            "response. Capture is self-consistent because there is nothing to stitch, so the "
-            "other checks cannot see this. Read the trial's agent stdout for the real cause.",
+            "exactly 1 model call for the whole task; inspect the agent log if this "
+            "was unexpected. Valid captured tokens remain eligible for training.",
         )
 
     if stats["n_discarded"]:

@@ -100,3 +100,49 @@ class TestSophistryClient:
         assert result.done is True
         assert result.observation.reward == 0.75
         assert result.observation.done is True
+
+
+class TestGridWorldClient:
+    def test_step_result_carries_reward_and_done(self):
+        from grid_world_env.client import GridWorldEnv
+        from grid_world_env.models import GridWorldObservation
+
+        payload = serialize_observation(
+            GridWorldObservation(x=4, y=4, done=True, reward=1.0)
+        )
+        result = GridWorldEnv._parse_result(None, payload)
+
+        assert result.reward == 1.0
+        assert result.done is True
+        assert (result.observation.x, result.observation.y) == (4, 4)
+
+    def test_observation_and_metadata_agree_with_the_step_result(self):
+        from grid_world_env.client import GridWorldEnv
+        from grid_world_env.models import GridWorldObservation
+
+        payload = serialize_observation(
+            GridWorldObservation(
+                x=4, y=4, done=True, reward=1.0, metadata={"goal": True}
+            )
+        )
+        result = GridWorldEnv._parse_result(None, payload)
+
+        assert result.metadata == {"goal": True}
+        assert result.observation.reward == 1.0
+        assert result.observation.done is True
+
+
+class TestCalendarClient:
+    def test_step_result_keeps_metadata(self):
+        from calendar_env.client import CalendarEnv
+
+        payload = {
+            "observation": {"success": True, "tool_result": {"ok": True}},
+            "reward": 0.5,
+            "done": False,
+            "metadata": {"tool": "create_event"},
+        }
+        result = CalendarEnv._parse_step_result(None, payload)
+
+        assert result.reward == 0.5
+        assert result.metadata == {"tool": "create_event"}

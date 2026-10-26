@@ -31,4 +31,5 @@ class TerminusState(State):
     commands: list[CommandResult] = Field(default_factory=list)
     submitted_answer: str | None = None
     last_reward: float | None = None
+    reward_override_ignored: str | None = None
     last_error: str | None = None

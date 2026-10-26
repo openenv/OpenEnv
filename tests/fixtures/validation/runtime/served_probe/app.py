@@ -1,5 +1,6 @@
 """A deterministic subject, with deliberate faults confined to test assets."""
 
+import asyncio
 import json
 import os
 from typing import Any
@@ -54,6 +55,28 @@ class WireFault:
         self.mode = mode
 
     async def __call__(self, scope, receive, send):
+        steps = 0
+
+        async def fault_receive():
+            nonlocal steps
+            message = await receive()
+            if (
+                self.mode in {"hung_step", "slow_step"}
+                and message["type"] == "websocket.receive"
+                and message.get("text")
+                and json.loads(message["text"]).get("type") == "step"
+            ):
+                steps += 1
+                if steps == 2:
+                    # Tests signal the CLI only after the collector has completed
+                    # a real reset, first step and both corresponding state reads.
+                    os.write(1, b"OPENENV_VALIDATION_STEP_BLOCKED\n")
+                    if self.mode == "slow_step":
+                        await asyncio.sleep(5.2)
+                    else:
+                        await asyncio.Event().wait()
+            return message
+
         async def fault_send(message: dict[str, Any]):
             if message["type"] == "websocket.send" and message.get("text"):
                 data = json.loads(message["text"])
@@ -70,7 +93,7 @@ class WireFault:
                 message = {**message, "text": json.dumps(data)}
             await send(message)
 
-        await self.application(scope, receive, fault_send)
+        await self.application(scope, fault_receive, fault_send)
 
 
 def make_app(mode="good"):
@@ -84,6 +107,8 @@ def make_app(mode="good"):
         "bad_observation",
         "missing_done",
         "bad_state",
+        "hung_step",
+        "slow_step",
     }:
         raise ValueError(f"Unknown fixture mode: {mode}")
     return WireFault(

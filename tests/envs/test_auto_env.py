@@ -290,6 +290,18 @@ class TestAutoEnvHubDetection:
         url = AutoEnv._resolve_space_url("wukaixingxp/coding-env-test")
         assert url == "https://wukaixingxp-coding-env-test.hf.space"
 
+    @pytest.mark.parametrize(
+        "repo_id, expected",
+        [
+            ("openenv/echo_env", "https://openenv-echo-env.hf.space"),
+            ("openenv/repl_env-0.2.2", "https://openenv-repl-env-0-2-2.hf.space"),
+            ("User/My_Env", "https://user-my-env.hf.space"),
+        ],
+    )
+    def test_resolve_space_url_normalizes_subdomain(self, repo_id, expected):
+        """Space subdomains are lowercase with non-alphanumerics replaced by '-'."""
+        assert AutoEnv._resolve_space_url(repo_id) == expected
+
     def test_resolve_space_url_from_full_url(self):
         """Test resolving from full HuggingFace URL."""
         url = AutoEnv._resolve_space_url(
