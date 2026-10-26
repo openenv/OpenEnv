@@ -80,7 +80,7 @@ package-dir = {"" = "src"}
 include-package-data = true
 
 [tool.setuptools.package-data]
-"openenv.cli" = ["templates/**/*"]
+"openenv.cli" = ["templates/**/*", "templates/openenv_env/.dockerignore"]
 "openenv.cli.importers" = ["templates/**/*"]
 "openenv.validation" = ["policies/*.json", "schemas/*.json"]
 "openenv.discovery" = ["schemas/**/*.json"]
