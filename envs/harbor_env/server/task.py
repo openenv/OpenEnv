@@ -633,6 +633,8 @@ def _positive_int(value: Any, field: str) -> int | None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         raise TaskFormatError(f"[environment].{field} must be a positive integer")
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
     try:
         parsed = int(str(value).strip())
     except (TypeError, ValueError) as exc:

@@ -706,6 +706,7 @@ class DockerSandbox(Sandbox):
             # permissions. Base64 keeps arbitrary bytes off the command line.
             payload = base64.b64encode(content.encode("utf-8")).decode("ascii")
             result = self.exec(
+                f"mkdir -p {_quote(posixpath.dirname(path))} && "
                 f"printf %s {_quote(payload)} | base64 -d > {_quote(path)}",
                 timeout_s=120.0,
                 user=user,

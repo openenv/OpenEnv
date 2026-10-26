@@ -1273,3 +1273,38 @@ def test_local_mode_flags_a_declared_image_it_is_not_providing(
 
     assert "python:3.12-slim" in observation.info["toolchain_warning"]
     assert "HARBOR_MODE=docker" in observation.info["toolchain_warning"]
+
+
+@pytest.mark.parametrize("value", ["2.0", "2e0"])
+def test_whole_number_float_resource_limits(tmp_path: Path, value: str) -> None:
+    task = HarborTask.load(
+        write_task(
+            tmp_path, "float-resource", config=f"[environment]\ncpus = {value}\n"
+        )
+    )
+    assert task.resources.cpus == 2
+
+
+@pytest.mark.parametrize("value", ["2.5", "nan", "inf", "-inf", "true"])
+def test_invalid_numeric_resource_limits(tmp_path: Path, value: str) -> None:
+    task_dir = write_task(
+        tmp_path, "invalid-resource", config=f"[environment]\ncpus = {value}\n"
+    )
+    with pytest.raises(TaskFormatError, match="cpus"):
+        HarborTask.load(task_dir)
+
+
+def test_docker_user_write_creates_nested_parents(tmp_path: Path, monkeypatch) -> None:
+    sandbox = DockerSandbox()
+    local = LocalSandbox(root=tmp_path)
+    users = []
+
+    def exec_as_user(command, *, timeout_s, user):
+        users.append(user)
+        return local.exec(command, timeout_s=timeout_s)
+
+    monkeypatch.setattr(sandbox, "exec", exec_as_user)
+    target = tmp_path / "nested dir" / "it's a file.txt"
+    sandbox.write_text(str(target), "hello 'world'\n", user="nobody")
+    assert target.read_text() == "hello 'world'\n"
+    assert users == ["nobody"]
