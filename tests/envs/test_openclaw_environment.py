@@ -447,3 +447,70 @@ class TestOpenClawBoundaries:
         )
         assert obs.error is not None
         assert sentinel.read_text() == "sentinel"
+
+    @pytest.mark.asyncio
+    async def test_async_step_count_and_reset(self, env):
+        from openenv.core.env_server.types import Action
+
+        actions = [
+            ListToolsAction(),
+            CallToolAction(
+                tool_name="write", arguments={"path": "test.txt", "content": "ok"}
+            ),
+            CallToolAction(tool_name="missing_tool", arguments={}),
+            Action(),
+        ]
+        for count, action in enumerate(actions, 1):
+            await env.step_async(action)
+            assert env.state.step_count == count
+        env.reset()
+        assert env.state.step_count == 0
+
+    @pytest.mark.parametrize("explicit", [False, True])
+    def test_configured_workspace_preserves_episode_confinement(
+        self, tmp_path, monkeypatch, explicit
+    ):
+        configured = tmp_path / "configured"
+        override = tmp_path / "override"
+        monkeypatch.setenv("OPENCLAW_WORKSPACE", str(configured))
+        env = OpenClawEnvironment(workspace_dir=str(override) if explicit else None)
+        other = OpenClawEnvironment(workspace_dir=str(override) if explicit else None)
+        base = override if explicit else configured
+        try:
+            env.reset(episode_id="../../same-id")
+            first = env._workspace
+            (first / "MEMORY.md").write_text("previous episode")
+            other.reset(episode_id="../../same-id")
+            env.reset(episode_id="../../same-id")
+            assert len({first, other._workspace, env._workspace}) == 3
+            for workspace in [first, other._workspace, env._workspace]:
+                assert workspace.parent == base.resolve()
+            assert not (env._workspace / "MEMORY.md").exists()
+            for path in [str(first / "MEMORY.md"), "../outside.txt"]:
+                with pytest.raises(ValueError, match="outside workspace"):
+                    env._resolve_path(path)
+        finally:
+            env.close()
+            other.close()
+
+    def test_workspace_defaults_to_system_temp(self, monkeypatch):
+        monkeypatch.delenv("OPENCLAW_WORKSPACE", raising=False)
+        env = OpenClawEnvironment()
+        try:
+            assert Path(env._workspace_base) == Path(tempfile.gettempdir())
+        finally:
+            env.close()
+
+    @pytest.mark.parametrize("limit", [0, 2, 10])
+    def test_memory_search_total_before_limit(self, env, limit):
+        (env._workspace / "MEMORY.md").write_text("match one\nmatch two\nmatch three\n")
+        obs = env.step(
+            CallToolAction(
+                tool_name="memory_search",
+                arguments={"query": "match", "max_results": limit},
+            )
+        )
+        assert obs.error is None
+        result = obs.result.structured_content.get("result", obs.result.data)
+        assert result["total_found"] == 3
+        assert len(result["results"]) == min(limit, 3)

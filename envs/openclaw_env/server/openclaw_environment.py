@@ -35,6 +35,7 @@ Example:
     >>> print(obs.result)
 """
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -89,14 +90,16 @@ class OpenClawEnvironment(MCPEnvironment):
 
         Args:
             workspace_dir: Optional base directory for workspaces.
-                If not provided, uses system temp directory.
+                If not provided, uses OPENCLAW_WORKSPACE or the system temp directory.
         """
         # Create MCP server and define tools inline
         mcp = FastMCP("openclaw_env")
 
         # Store reference to self for tool closures
         env = self
-        self._workspace_base = workspace_dir or WORKSPACE_BASE
+        self._workspace_base = (
+            workspace_dir or os.environ.get("OPENCLAW_WORKSPACE") or WORKSPACE_BASE
+        )
         self._workspace: Optional[Path] = None
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
@@ -413,12 +416,13 @@ class OpenClawEnvironment(MCPEnvironment):
 
             # Sort by score and limit
             results.sort(key=lambda x: x["score"], reverse=True)
+            total_found = len(results)
             results = results[:max_results]
 
             return {
                 "query": query,
                 "results": results,
-                "total_found": len(results),
+                "total_found": total_found,
             }
 
         @mcp.tool
@@ -597,6 +601,16 @@ class OpenClawEnvironment(MCPEnvironment):
         """
         self._state.step_count += 1
         return super().step(action, timeout_s=timeout_s, **kwargs)
+
+    async def step_async(
+        self,
+        action: Action,
+        timeout_s: Optional[float] = None,
+        **kwargs: Any,
+    ) -> Observation:
+        """Execute an async step and increment the episode step count."""
+        self._state.step_count += 1
+        return await super().step_async(action, timeout_s=timeout_s, **kwargs)
 
     @property
     def state(self) -> State:
