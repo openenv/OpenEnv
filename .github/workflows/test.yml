@@ -176,6 +176,42 @@ jobs:
           PYTHONPATH: src:envs:examples/claude_code_harness_eval
           TAU2_DATA_DIR: ${{ runner.temp }}/tau2-bench/data
 
+  test-tau-emotion-env:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      # τ-Emotion-Bench requires Python 3.12+.
+      - name: Install τ-Emotion-Bench environment dependencies
+        working-directory: envs/tau_emotion_env
+        run: uv sync --python 3.12 --frozen --all-extras
+
+      # The tasks and databases live in τ-Emotion-Bench's repository, at the commit
+      # pinned in envs/tau_emotion_env/pyproject.toml.
+      - name: Fetch τ-Emotion-Bench data
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/sahsaeedi/tau-emotion-bench "$RUNNER_TEMP/tau-emotion-bench"
+          cd "$RUNNER_TEMP/tau-emotion-bench"
+          git sparse-checkout set --no-cone data/tau_emotion/domains
+          git checkout 287ebfce6181b4e141f778661b3455c2c3f03859
+
+      - name: Run τ-Emotion-Bench environment tests
+        run: |
+          uv run --python 3.12 --frozen --project envs/tau_emotion_env --all-extras \
+            pytest tests/envs/test_tau_emotion_env.py -v --tb=short
+        env:
+          PYTHONPATH: src:envs
+          TAU_EMOTION_DATA_DIR: ${{ runner.temp }}/tau-emotion-bench/data
+
   check-env-docs:
     permissions:
       contents: read
