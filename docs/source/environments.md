@@ -335,5 +335,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
         <a href="https://huggingface.co/FineEnvs" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">SECOND STRIKE</div>
+      <p class="text-sm">A world war against 42 AI nations with a nuclear doomsday clock: escalation, betrayal and surrender terms, played in lockstep on fixed seeds and scored by the game server with no LLM judge.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="https://github.com/KyleClouthier/secondstrike-openenv/blob/main/README.md" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://github.com/KyleClouthier/secondstrike-openenv" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">💻 Code</a>
+      </div>
+    </div>
   </div>
 </div>

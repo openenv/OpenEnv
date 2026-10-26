@@ -26,6 +26,7 @@ from openenv.core.env_server.http_server import create_app
 from openenv.core.env_server.mcp_types import CallToolAction, CallToolObservation
 from pydantic import field_validator
 
+from ..models import Tau2State
 from .gradio_ui import build_ui
 from .tau2_environment import Tau2Environment
 
@@ -62,6 +63,7 @@ app = create_app(
     Tau2CallToolAction,
     CallToolObservation,
     env_name="tau2_env",
+    state_cls=Tau2State,
     max_concurrent_envs=int(os.environ.get("MAX_CONCURRENT_ENVS", "8")),
     gradio_builder=build_ui(_env_factory),
     custom_tab_name="τ²-bench",

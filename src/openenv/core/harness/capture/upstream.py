@@ -43,6 +43,7 @@ import asyncio
 import json
 import logging
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -114,13 +115,24 @@ class UpstreamTransportError(UpstreamError):
 def normalise_engine_base(url: str) -> str:
     """The engine root, with any trailing `/v1` removed.
 
-    Every route this module builds is already `/v1/...`, so a caller who passes the OpenAI-style
-    base (`http://host:8000/v1`, which is what most SDKs and most people hand you) would otherwise
-    get `/v1/v1/chat/completions` and see a healthy engine reported as unreachable. Accept both
-    forms and normalise here rather than making every call site remember which one it holds.
+    Anthropic's convention: the base excludes `/v1` and routes are `/v1/...`, so a caller who
+    passes `https://api.anthropic.com/v1` would otherwise get `/v1/v1/messages`. OpenAI-compatible
+    routes use `openai_api_base` instead.
     """
     base = url.rstrip("/")
     return base[: -len("/v1")] if base.endswith("/v1") else base
+
+
+def openai_api_base(url: str) -> str:
+    """The OpenAI-compatible API root that `/chat/completions` and `/models` are built on.
+
+    The OpenAI SDK rule, as `OpenAIClient` applies it (#1237): a base with no path gets `/v1`, and
+    a base with a path is already the API root. Stripping `/v1` and re-adding it broke every
+    provider whose root is not `/v1`: Gemini's `.../v1beta/openai` became
+    `.../v1beta/openai/v1/chat/completions`.
+    """
+    base = url.rstrip("/")
+    return base if urlsplit(base).path else f"{base}/v1"
 
 
 # Sampling knobs that make a *processed* logprob incomparable to a full-vocab recompute, mapped to the
@@ -427,7 +439,11 @@ class InferenceClient:
         if provider == "anthropic":
             capture_level = "text"
             auth_header = "x-api-key"
-        self.base_url = normalise_engine_base(base_url)
+        self.base_url = (
+            f"{normalise_engine_base(base_url)}/v1"
+            if provider == "anthropic"
+            else openai_api_base(base_url)
+        )
         self.served_model = served_model
         self.api_key = api_key or None
         self.auth_header = auth_header or "Authorization"
@@ -476,7 +492,7 @@ class InferenceClient:
                 if key in {"anthropic-beta", "anthropic-version"}
             }
             payload = await self._post_with_retries(
-                "/v1/messages", body, headers=native_headers
+                "/messages", body, headers=native_headers
             )
             response = anthropic_response(
                 payload,
@@ -491,7 +507,7 @@ class InferenceClient:
             served_model=self.served_model,
             capture_level=self.capture_level,
         )
-        payload = await self._post("/v1/chat/completions", body)
+        payload = await self._post("/chat/completions", body)
         # The body now includes any compatibility edits made by `_post`. Keep the actual
         # submitted policy separate from the harness's request; the server removes this marker.
         payload["_openenv_sampling"] = {
@@ -504,7 +520,7 @@ class InferenceClient:
     async def list_models(self) -> dict[str, Any]:
         client = await self._get_client()
         try:
-            response = await client.get("/v1/models")
+            response = await client.get("/models")
         except httpx.RequestError as exc:
             raise self._transport_error(exc) from exc
         await self._raise_for_status(response)
