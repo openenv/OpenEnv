@@ -80,7 +80,10 @@ def main():
     parser.add_argument("--transcript", help="write the messages and outcome as JSON")
     args = parser.parse_args()
 
-    llm = OpenAI(base_url=args.endpoint, api_key=os.environ["OPENAI_API_KEY"])
+    # Episodes run for an hour or more, so ride out provider rate limits.
+    llm = OpenAI(
+        base_url=args.endpoint, api_key=os.environ["OPENAI_API_KEY"], max_retries=10
+    )
     usage = {"prompt_tokens": 0, "completion_tokens": 0}
 
     # `submit` blocks while the score job runs, so the client waits for the
