@@ -14,6 +14,7 @@ from .graders.runtime import (
     HostContainmentGrader,
     NetworkPolicyGrader,
     ObservationSchemaGrader,
+    ResourceBoundsGrader,
     RewardWellFormedGrader,
     StateContractGrader,
 )
@@ -96,6 +97,7 @@ def default_grader_registry(policy: SeverityPolicy) -> GraderRegistry:
     registry.register(StateContractGrader())
     registry.register(NetworkPolicyGrader())
     registry.register(HostContainmentGrader())
+    registry.register(ResourceBoundsGrader())
     return registry
 
 
@@ -220,6 +222,17 @@ def _runtime(subject, graders, *, skip_build, provider):
                 inspection = {**inspection, "containment": containment}
             except ProviderError as exc:
                 inspection = {**inspection, "containment_error": str(exc)[:1024]}
+        resource_json = None
+        if (
+            result.status is CheckStatus.PASS
+            and ProviderCapability.RESOURCE_ENFORCEMENT in provider.capabilities
+        ):
+            try:
+                resources = running.measure_resources()
+                resource_json = json.dumps(resources, allow_nan=False)
+                inspection = {**inspection, "resources": resources}
+            except ProviderError as exc:
+                inspection = {**inspection, "resources_error": str(exc)[:1024]}
         subject = replace(
             subject,
             image_ref=image_ref,
@@ -227,6 +240,7 @@ def _runtime(subject, graders, *, skip_build, provider):
             runtime_evidence=evidence,
             network_evidence_json=network_json,
             containment_evidence_json=containment_json,
+            resource_evidence_json=resource_json,
         )
         checks = execute_graders(
             graders,

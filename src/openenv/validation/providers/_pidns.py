@@ -161,3 +161,83 @@ print(json.dumps({
     "device_storage": device_storage,
 }))
 """
+
+# Reads the subject's cgroup v2 limits and writable-root sizes. argv: writable roots.
+LIMITS_SCRIPT = """
+import json, os, sys
+root = "/proc/1/root"
+def read(name):
+    with open(root + "/sys/fs/cgroup/" + name) as f:
+        return f.read().split()
+def limit(value):
+    return None if value == "max" else int(value)
+try:
+    quota, period = read("cpu.max")
+    cgroup = {
+        "memory_max": limit(read("memory.max")[0]),
+        "swap_max": limit(read("memory.swap.max")[0]),
+        "cpu_quota": limit(quota),
+        "cpu_period": int(period),
+        "pids_max": limit(read("pids.max")[0]),
+    }
+except (OSError, ValueError):
+    cgroup = None
+writable = []
+for path in sys.argv[1:]:
+    try:
+        info = os.statvfs(root + path)
+    except OSError:
+        continue
+    writable.append({"path": path, "size_bytes": info.f_blocks * info.f_frsize})
+print(json.dumps({"cgroup": cgroup, "writable": writable}))
+"""
+
+# Runs inside a disposable subject. argv: kind, budget. Prints the outcome; a
+# kill by the kernel (exit 137) also means the limit held.
+QUALIFY_SCRIPT = """
+import errno, os, sys, time
+kind, budget = sys.argv[1], int(sys.argv[2])
+mib = 1 << 20
+if kind == "memory":
+    # Make the probe the OOM killer's first choice so the server survives.
+    with open("/proc/self/oom_score_adj", "w") as f:
+        f.write("1000")
+    held = []
+    try:
+        while len(held) * 16 * mib < budget + 64 * mib:
+            held.append(b"\\x01" * (16 * mib))
+        print("escaped")
+    except MemoryError:
+        print("contained")
+elif kind == "pids":
+    children = []
+    try:
+        for _ in range(budget + 16):
+            pid = os.fork()
+            if pid == 0:
+                time.sleep(30)
+                os._exit(0)
+            children.append(pid)
+        print("escaped")
+    except BlockingIOError:
+        print("contained")
+    finally:
+        for pid in children:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
+elif kind == "disk":
+    # Fill every writable root; together they must stay within the budget.
+    written = 0
+    for index, path in enumerate(sys.argv[3:]):
+        try:
+            with open(os.path.join(path, f"openenv-fill-{index}"), "wb") as f:
+                while written <= budget + 16 * mib:
+                    f.write(b"\\x01" * mib)
+                    f.flush()
+                    written += mib
+        except OSError as exc:
+            if exc.errno not in (errno.ENOSPC, errno.EDQUOT):
+                print("inconclusive")
+                sys.exit()
+    print("escaped" if written > budget else "contained")
+"""

@@ -49,7 +49,7 @@ opens one WebSocket session, measures reward values, observation schemas and
 state continuity, and removes the container even if a check fails.
 
 The runtime level implements startup, reward, observation, state, network
-policy and host containment checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
+policy, host containment and resource bounds checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
@@ -75,6 +75,12 @@ without following symlinks or entering separate mounts such as `/dev/shm`.
 An unreadable or exhausted inventory, a probe that cannot write an allotted root,
 or a mount table that cannot be read in full leaves containment unproven and
 reports `SKIP`.
+`runtime.resource_bounds` reads the subject's cgroup v2 limits and writable-root
+sizes and compares them with the declared `cpu`, `memory_mb` and `disk_mb`; swap
+must be disabled and the process count bounded. Bounded memory, process, disk and
+deadline probes then run in a disposable subject started from the same image, so
+the measured subject is never stressed. A probe that cannot run leaves enforcement
+unproven and reports `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,

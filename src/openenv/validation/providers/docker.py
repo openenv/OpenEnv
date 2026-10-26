@@ -22,7 +22,12 @@ import uuid
 from pathlib import Path
 
 from ..manifest import ExecutionDeclaration
-from ..runtime.contracts import ContainmentEvidence, LaunchSpec, NetworkEvidence
+from ..runtime.contracts import (
+    ContainmentEvidence,
+    LaunchSpec,
+    NetworkEvidence,
+    ResourceEvidence,
+)
 from ..types import ProviderCapability
 from . import ExecResult, ProviderError, StartupError, UnsupportedCapability
 from ._netns import (
@@ -33,7 +38,7 @@ from ._netns import (
     SINK_SCRIPT,
     WAIT_READY_SCRIPT,
 )
-from ._pidns import PROBE_SCRIPT as PIDNS_PROBE_SCRIPT
+from ._pidns import LIMITS_SCRIPT, PROBE_SCRIPT as PIDNS_PROBE_SCRIPT, QUALIFY_SCRIPT
 
 
 _LABEL = "org.openenv.validation.run"
@@ -256,6 +261,7 @@ class DockerValidationProvider:
             ProviderCapability.EXEC,
             ProviderCapability.NETWORK_POLICY,
             ProviderCapability.INSPECTED_ISOLATION,
+            ProviderCapability.RESOURCE_ENFORCEMENT,
         }
     )
     supported_network_modes = frozenset({"public", "no-network"})
@@ -458,6 +464,7 @@ class DockerRunningSubject:
         self.base_url = ""
         self._stopped = False
         self._secrets = tuple(spec.env_vars.values())
+        self._spec = spec
         self._mode = spec.network.mode
         self._helper_image = helper_image
         self._helper: str | None = None
@@ -589,6 +596,41 @@ class DockerRunningSubject:
             self._remove_owned(sink)
         return evidence.model_dump(mode="json")
 
+    def _pidns_probe(
+        self, suffix: str, script: str, args: list[str], user: str, timeout_s: float
+    ) -> str:
+        """Run a validator-image probe joined only to the subject's PID namespace."""
+        probe = f"{self.name}-{suffix}"
+        self._auxiliary.append(probe)
+        code, out, _ = _command(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                probe,
+                "--label",
+                f"{_LABEL}={self.run_id}",
+                "--pid",
+                f"container:{self.name}",
+                "--network",
+                "none",
+                *HARDENING,
+                # The last --user wins: probes act as the subject's own user.
+                "--user",
+                user,
+                self._helper_image,
+                "python3",
+                "-c",
+                script,
+                *args,
+            ],
+            timeout_s,
+        )
+        if code:
+            raise ProviderError(f"The {suffix} probe failed")
+        return out
+
     def measure_containment(self, timeout_s: float = 60) -> dict:
         """
         Measure the subject's isolation from its inspected launch and its processes.
@@ -607,35 +649,13 @@ class DockerRunningSubject:
         deadline = time.monotonic() + timeout_s
         details = self._raw_inspect(deadline - time.monotonic())
         host = details.get("HostConfig", {})
-        probe = f"{self.name}-pidns"
-        self._auxiliary.append(probe)
-        code, out, _ = _command(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--name",
-                probe,
-                "--label",
-                f"{_LABEL}={self.run_id}",
-                "--pid",
-                f"container:{self.name}",
-                "--network",
-                "none",
-                *HARDENING,
-                # The last --user wins: write probes run as the subject's own user.
-                "--user",
-                details["Config"].get("User") or "0",
-                self._helper_image,
-                "python3",
-                "-c",
-                PIDNS_PROBE_SCRIPT,
-                *_ALLOTTED,
-            ],
+        out = self._pidns_probe(
+            "containment",
+            PIDNS_PROBE_SCRIPT,
+            list(_ALLOTTED),
+            details["Config"].get("User") or "0",
             deadline - time.monotonic(),
         )
-        if code:
-            raise ProviderError("Containment probe failed")
         namespaces = {
             "pid": "PidMode",
             "ipc": "IpcMode",
@@ -676,6 +696,107 @@ class DockerRunningSubject:
             )
         except (ValueError, TypeError, AttributeError) as exc:
             raise ProviderError("Containment probe returned invalid evidence") from exc
+        return evidence.model_dump(mode="json")
+
+    def measure_resources(self, timeout_s: float = 180) -> dict:
+        """
+        Measure the subject's effective limits and qualify their enforcement.
+
+        Limits are read from the subject's own cgroup and writable roots. Stress
+        probes run in a disposable sibling launched from the same specification, so
+        the measured subject is never pushed past its budget.
+
+        Args:
+            timeout_s (`float`, *optional*, defaults to `180`):
+                Budget for the measurement, the sibling launch and all probes.
+
+        Returns:
+            `dict`: a validated [`~openenv.validation.runtime.contracts.ResourceEvidence`].
+        """
+        _ensure_image(self._helper_image)
+        deadline = time.monotonic() + timeout_s
+
+        def remaining():
+            return deadline - time.monotonic()
+
+        user = self._raw_inspect(remaining())["Config"].get("User") or "0"
+        try:
+            measured = json.loads(
+                self._pidns_probe(
+                    "limits", LIMITS_SCRIPT, list(_ALLOTTED), user, remaining()
+                )
+            )
+        except ValueError as exc:
+            raise ProviderError("Limits probe returned invalid evidence") from exc
+        resources = self._spec.resources
+        pids = (measured.get("cgroup") or {}).get("pids_max") or 0
+        # Memory runs last: an OOM kill is the probe most likely to end the sibling.
+        budgets = {
+            "pids": pids,
+            "disk": resources.disk_mb * 1024 * 1024,
+            "memory": resources.memory_mb * 1024 * 1024,
+        }
+        qualification = []
+        sibling = DockerValidationProvider(helper_image=self._helper_image).start(
+            self._spec
+        )
+        try:
+            python = next(
+                (
+                    name
+                    for name in ("python3", "python")
+                    if sibling.exec([name, "-c", "pass"], remaining()).exit_code == 0
+                ),
+                None,
+            )
+
+            def runnable():
+                return (
+                    python is not None
+                    and sibling._raw_inspect(remaining())["State"]["Running"]
+                )
+
+            for kind, budget in budgets.items():
+                outcome = "inconclusive"
+                # An unlimited pids budget (0) leaves nothing to probe.
+                if budget and runnable():
+                    result = sibling.exec(
+                        [python, "-c", QUALIFY_SCRIPT, kind, str(budget), *_ALLOTTED],
+                        remaining(),
+                    )
+                    if result.exit_code == 137:
+                        # The kernel killed the probe: the limit held.
+                        outcome = "contained"
+                    elif result.stdout.strip() in {"contained", "escaped"}:
+                        outcome = result.stdout.strip()
+                qualification.append({"kind": kind, "result": outcome})
+            # A command outliving its deadline must take its descendants with it.
+            deadline_result = "inconclusive"
+            if runnable():
+                try:
+                    # Returning on its own means the command never reached the
+                    # deadline, which proves nothing about enforcement.
+                    sibling.exec(
+                        [
+                            python,
+                            "-c",
+                            "import os, time\nos.fork()\ntime.sleep(300)",
+                        ],
+                        min(2.0, remaining()),
+                    )
+                except ProviderError:
+                    deadline_result = (
+                        "contained" if sibling._owner() is None else "escaped"
+                    )
+            qualification.append({"kind": "deadline", "result": deadline_result})
+        finally:
+            sibling.stop()
+        try:
+            evidence = ResourceEvidence.model_validate(
+                {**measured, "qualification": qualification}
+            )
+        except ValueError as exc:
+            raise ProviderError("Resource probes returned invalid evidence") from exc
         return evidence.model_dump(mode="json")
 
     def _run(self, argv: list[str], timeout_s: float, max_bytes: int = _MAX_OUTPUT):
