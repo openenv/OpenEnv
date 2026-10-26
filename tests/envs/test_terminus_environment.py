@@ -261,3 +261,46 @@ def test_reward_file_that_cannot_be_removed_is_ignored():
 
     assert state.last_reward == 0.5
     assert "could not be removed" in state.reward_override_ignored
+
+
+@pytest.mark.parametrize("operation", ["reset", "close"])
+def test_cleanup_failure_retains_ownership_and_can_be_retried(monkeypatch, operation):
+    class FailedKill(FakeSandbox):
+        failing = True
+
+        def kill(self):
+            if self.failing:
+                raise OSError("control API unavailable")
+            super().kill()
+
+    sandbox = FailedKill()
+    env = TerminusEnvironment()
+    env._sandbox = sandbox
+    monkeypatch.delenv("E2B_API_KEY", raising=False)
+    with pytest.raises(OSError):
+        getattr(env, operation)()
+    assert env._sandbox is sandbox
+    sandbox.failing = False
+    getattr(env, operation)()
+    assert env._sandbox is None
+    assert sandbox.killed
+
+
+def test_wrapper_propagates_kill_failure_and_accepts_already_absent():
+    from terminus_env.server.e2b_sandbox import E2BSandbox
+
+    class SDK:
+        failing = True
+
+        def kill(self):
+            if self.failing:
+                raise OSError("failed")
+            return False  # SDK reports already absent without an exception.
+
+    wrapper = E2BSandbox.__new__(E2BSandbox)
+    wrapper._sbx = SDK()
+    wrapper.sandbox_id = "owned"
+    with pytest.raises(OSError):
+        wrapper.kill()
+    wrapper._sbx.failing = False
+    wrapper.kill()

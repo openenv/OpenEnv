@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -18,7 +19,10 @@ def env_v3(tmp_path):
     """Provides a V3 (format-first) environment instance for testing."""
     dataset_path = tmp_path / "dataset.jsonl"
     dataset_path.touch()
+    return _make_env(dataset_path)
 
+
+def _make_env(dataset_path):
     # Parameters match the V3 format-first curriculum
     return DIPGEnvironment(
         dataset_path=str(dataset_path),
@@ -158,3 +162,59 @@ def test_step_returns_terminal_observation(env_v3):
     assert obs.done is True
     assert obs.reward == env_v3.format_mismatch_penalty
     assert obs.model_dump()["reward"] == env_v3.format_mismatch_penalty
+
+
+class TestResetSeed:
+    """reset(seed=...) must make the challenge order reproducible.
+
+    Self-contained (synthetic dataset, no server process) so it runs in CI.
+    """
+
+    @pytest.fixture
+    def dataset_path(self, tmp_path):
+        path = tmp_path / "dataset.jsonl"
+        rows = [
+            {
+                "messages": [
+                    {},
+                    {"content": f"Context {i}\n\nQuestion {i}"},
+                    {"content": f"Answer {i}"},
+                ]
+            }
+            for i in range(20)
+        ]
+        path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+        return path
+
+    @staticmethod
+    def _questions_after_seed(env, seed, n=25):
+        """One seeded reset followed by n - 1 unseeded ones."""
+        questions = [env.reset(seed=seed).question]
+        questions += [env.reset().question for _ in range(n - 1)]
+        return questions
+
+    def test_same_seed_same_sequence_across_instances(self, dataset_path):
+        first = self._questions_after_seed(_make_env(dataset_path), seed=1234)
+        second = self._questions_after_seed(_make_env(dataset_path), seed=1234)
+        assert first == second
+
+    def test_reseeding_restarts_the_sequence(self, dataset_path):
+        env = _make_env(dataset_path)
+        first = self._questions_after_seed(env, seed=1234)
+        second = self._questions_after_seed(env, seed=1234)
+        assert first == second
+
+    def test_different_seeds_give_different_sequences(self, dataset_path):
+        env = _make_env(dataset_path)
+        first = self._questions_after_seed(env, seed=1)
+        second = self._questions_after_seed(env, seed=2)
+        assert first != second
+
+    def test_episode_id_is_kept(self, dataset_path):
+        env = _make_env(dataset_path)
+        env.reset(episode_id="episode-1")
+        assert env.state.episode_id == "episode-1"
+        env.reset(episode_id="")
+        assert env.state.episode_id == ""
+        env.reset()
+        assert env.state.episode_id not in (None, "", "episode-1")

@@ -5,13 +5,14 @@ from contextlib import suppress
 
 from openenv.core.env_server import create_app
 
-from ..models import BrowserAction, BrowserObservation
+from ..models import BrowserAction, BrowserObservation, BrowserState
 from .helium_browser_environment import BrowserEnvironment
 
 app = create_app(
     BrowserEnvironment,
     BrowserAction,
     BrowserObservation,
+    state_cls=BrowserState,
     env_name="helium_browser_env",
     max_concurrent_envs=1,
 )

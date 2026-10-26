@@ -34,10 +34,10 @@ try:
     # In-repo imports (when running from OpenEnv repository)
     from openenv.core.env_server.http_server import create_app
 
-    from ..models import OpenSpielAction, OpenSpielObservation
+    from ..models import OpenSpielAction, OpenSpielObservation, OpenSpielState
     from .openspiel_environment import OpenSpielEnvironment
 except ImportError:
-    from models import OpenSpielAction, OpenSpielObservation
+    from models import OpenSpielAction, OpenSpielObservation, OpenSpielState
 
     # Standalone imports (when environment is standalone with openenv from pip)
     from openenv.core.env_server.http_server import create_app
@@ -68,6 +68,7 @@ app = create_app(
     OpenSpielObservation,
     env_name="openspiel_env",
     max_concurrent_envs=max_concurrent,
+    state_cls=OpenSpielState,
 )
 
 

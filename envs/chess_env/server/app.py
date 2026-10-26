@@ -10,7 +10,7 @@ import os
 
 from openenv.core.env_server import create_app
 
-from ..models import ChessAction, ChessObservation
+from ..models import ChessAction, ChessObservation, ChessState
 from .chess_environment import ChessEnvironment
 
 # Create the FastAPI app
@@ -20,6 +20,7 @@ app = create_app(
     ChessAction,
     ChessObservation,
     env_name="chess_env",
+    state_cls=ChessState,
     max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
 )
 

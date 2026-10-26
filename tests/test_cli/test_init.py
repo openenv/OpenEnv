@@ -2,7 +2,9 @@
 
 """Tests for the openenv init command."""
 
+import asyncio
 import importlib
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -524,3 +526,40 @@ def test_init_handles_file_path_collision(tmp_path: Path) -> None:
     ), (
         f"Expected BadParameter error about file collision. Exit code: {result.exit_code}, Output: {result.output}"
     )
+
+
+def test_init_environment_reset_accepts_seed_and_episode_id(tmp_path: Path) -> None:
+    """Generated reset() must accept the Environment.reset() arguments."""
+    env_name = "seeded_env"
+    result = runner.invoke(
+        app, ["init", env_name, "--output-dir", str(tmp_path)], input="\n"
+    )
+    assert result.exit_code == 0
+
+    env_dir = tmp_path / env_name
+    env_file = env_dir / "server" / f"{env_name}_environment.py"
+    sys.path.insert(0, str(env_dir))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"{env_name}_environment", env_file
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        env = module.SeededEnvironment()
+
+        env.reset(seed=1, episode_id="ep-123")
+        assert env.state.episode_id == "ep-123"
+
+        env.reset(episode_id="")
+        assert env.state.episode_id == ""
+
+        env.reset()
+        assert env.state.episode_id not in (None, "", "ep-123")
+
+        # Environment.reset_async() forwards seed and episode_id to reset().
+        asyncio.run(env.reset_async(seed=2, episode_id="ep-456"))
+        assert env.state.episode_id == "ep-456"
+    finally:
+        sys.path.remove(str(env_dir))
+        sys.modules.pop("models", None)

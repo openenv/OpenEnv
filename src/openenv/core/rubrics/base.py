@@ -73,24 +73,47 @@ class Rubric(ABC):
             for hook in self._forward_pre_hooks:
                 hook(self, action, observation)
             result = self.forward(action, observation)
+            if inspect.iscoroutine(result):
+                # forward() handed back an async child's call unawaited (e.g. a
+                # RubricDict dispatch): await it before recording the score
+                return self._finish_awaited(action, observation, result)
             return self._call_sync(action, observation, result)
 
     def _call_sync(self, action: Any, observation: Any, result: float) -> float:
         """Synchronous call path."""
         return self._finish_forward(action, observation, result)
 
-    def _run_forward_pre_hooks(self, action: Any, observation: Any) -> None:
-        """Run pre-forward hooks synchronously."""
-        for hook in self._forward_pre_hooks:
+    def _run_forward_pre_hooks(
+        self, action: Any, observation: Any, start: int = 0
+    ) -> None:
+        """Run pre-forward hooks synchronously, from index ``start`` on."""
+        for hook in self._forward_pre_hooks[start:]:
             hook(self, action, observation)
 
-    async def _run_forward_pre_hooks_async(self, action: Any, observation: Any) -> None:
-        """Run pre-forward hooks from an async call path."""
-        for hook in self._forward_pre_hooks:
+    async def _run_forward_pre_hooks_async(
+        self, action: Any, observation: Any, start: int = 0
+    ) -> None:
+        """Run pre-forward hooks from an async call path, from index ``start`` on."""
+        for hook in self._forward_pre_hooks[start:]:
             if inspect.iscoroutinefunction(hook):
                 await hook(self, action, observation)
             else:
                 hook(self, action, observation)
+
+    def _run_leading_sync_pre_hooks(self, action: Any, observation: Any) -> int:
+        """Run pre-forward hooks up to the first async one; return how many ran.
+
+        Containers call this before evaluating any child: they learn whether
+        they are on the async path only by calling a child, but pre-hooks must
+        run first. The rest are passed as ``start`` to the hook runners above.
+        """
+        ran = 0
+        for hook in self._forward_pre_hooks:
+            if inspect.iscoroutinefunction(hook):
+                break
+            hook(self, action, observation)
+            ran += 1
+        return ran
 
     def _finish_forward(self, action: Any, observation: Any, result: float) -> float:
         """Store the result and run post-forward hooks synchronously."""
@@ -116,6 +139,13 @@ class Rubric(ABC):
                 hook(self, action, observation, result)
 
         return result
+
+    async def _finish_awaited(
+        self, action: Any, observation: Any, result_coro
+    ) -> float:
+        """Await a coroutine returned by a sync forward(); pre-hooks already ran."""
+        result = await result_coro
+        return await self._finish_forward_async(action, observation, result)
 
     async def _call_async(self, action: Any, observation: Any, result_coro) -> float:
         """Asynchronous call path."""

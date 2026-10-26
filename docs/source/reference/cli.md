@@ -48,15 +48,20 @@ one reset and a sequence of actions. The validator builds an immutable image,
 opens one WebSocket session, measures reward values, observation schemas and
 state continuity, and removes the container even if a check fails.
 
-This first runtime slice implements startup, reward, observation and state
-checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
+The runtime level implements startup, reward, observation, state and network
+policy checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
 includes the available lower-level checks but does not claim semantic execution.
 `--skip-build` runs declaration checks and skips runtime execution entirely.
-The Docker provider currently supports CPU workloads and `public` network mode;
-unsupported network or GPU requirements skip runtime before building.
+The Docker provider supports CPU workloads in `public` and `no-network` modes;
+`allowlist` and GPU requirements skip runtime before building. A `no-network`
+subject has no network interface: the validator reaches it through a helper that
+shares only its network namespace, built from a digest-pinned validator image
+pulled on first use. `runtime.network_policy` probes a validator-owned sink from
+the subject's namespace and from a control container; a probe counts only when
+the control reaches the sink, and a denial that is not proven is a `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,
