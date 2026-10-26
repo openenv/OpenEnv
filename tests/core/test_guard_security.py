@@ -6,11 +6,13 @@
 
 """Tests for the optional fastapi-guard security middleware wiring."""
 
+import asyncio
 import itertools
 import json
 import os
 from contextlib import asynccontextmanager
 
+import anyio
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -294,3 +296,71 @@ async def test_invalid_boolean_env_raises(monkeypatch):
     monkeypatch.setenv("OPENENV_GUARD_SCAN_BODY", "sometimes")
     with pytest.raises(ValueError, match="OPENENV_GUARD_SCAN_BODY"):
         _build_security_config()
+
+
+@pytest.mark.parametrize("startup_fails", [False, True])
+def test_guard_lifespan_exit_preserves_task_and_unwinds(
+    monkeypatch, tmp_path, startup_fails
+):
+    import guard.lifespan
+
+    monkeypatch.setenv("OPENENV_GUARD_ENABLED", "1")
+    for name in list(os.environ):
+        if name.startswith("OPENENV_GUARD_") and name != "OPENENV_GUARD_ENABLED":
+            monkeypatch.delenv(name)
+    original_guard_lifespan = guard.lifespan.guard_lifespan
+    events = []
+    resource = None
+    owner = None
+
+    @asynccontextmanager
+    async def guard_context(app):
+        nonlocal resource, owner
+        owner = asyncio.current_task()
+        # A real task group detects exit in a different task/cancel scope.
+        async with anyio.create_task_group():
+            with (tmp_path / "resource").open("w") as resource:
+                async with original_guard_lifespan(app):
+                    events.append("guard startup")
+                    try:
+                        yield
+                    finally:
+                        assert asyncio.current_task() is owner
+                        events.append("guard shutdown")
+
+    @asynccontextmanager
+    async def app_context(app):
+        assert asyncio.current_task() is owner
+        assert not resource.closed
+        events.append("app startup")
+        if startup_fails:
+            raise RuntimeError("app startup failed")
+        try:
+            yield {"resource": resource}
+        finally:
+            assert asyncio.current_task() is owner
+            assert not resource.closed
+            events.append("app shutdown")
+
+    monkeypatch.setattr(guard.lifespan, "guard_lifespan", guard_context)
+    app = FastAPI(lifespan=app_context)
+    attach_guard(app)
+    if startup_fails:
+        with pytest.raises(Exception, match="unhandled errors") as caught:
+            with TestClient(app):
+                pytest.fail("startup should fail")
+        assert len(caught.value.exceptions) == 1
+        assert isinstance(caught.value.exceptions[0], RuntimeError)
+        assert str(caught.value.exceptions[0]) == "app startup failed"
+        assert events == ["guard startup", "app startup", "guard shutdown"]
+    else:
+        with TestClient(app) as client:
+            assert client.app_state["resource"] is resource
+            assert not resource.closed
+        assert events == [
+            "guard startup",
+            "app startup",
+            "app shutdown",
+            "guard shutdown",
+        ]
+    assert resource.closed

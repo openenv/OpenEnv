@@ -218,7 +218,7 @@ def attach_guard(app: Any) -> None:
         return
     try:
         from guard import SecurityMiddleware
-        from guard.lifespan import guard_startup
+        from guard.lifespan import guard_lifespan
     except ImportError as exc:
         raise ImportError(
             "OPENENV_GUARD_ENABLED requires fastapi-guard. "
@@ -234,9 +234,9 @@ def attach_guard(app: Any) -> None:
 
     @asynccontextmanager
     async def lifespan(app: Any):
-        await guard_startup(app)
-        async with existing_lifespan(app) as state:
-            yield state
+        async with guard_lifespan(app):
+            async with existing_lifespan(app) as state:
+                yield state
 
     app.router.lifespan_context = lifespan
     app.state.guard_attached = True
