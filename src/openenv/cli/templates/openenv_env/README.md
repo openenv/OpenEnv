@@ -25,7 +25,7 @@ from __ENV_NAME__ import __ENV_CLASS_NAME__Action, __ENV_CLASS_NAME__Env
 try:
     # Create environment from Docker image (.sync() for synchronous use)
     __ENV_NAME__env = __ENV_CLASS_NAME__Env.from_docker_image(
-        "__ENV_NAME__-env:latest"
+        "__ENV_IMAGE_NAME__:latest"
     ).sync()
 
     # Reset
@@ -59,7 +59,7 @@ Before using the environment, you need to build the Docker image:
 
 ```bash
 # From project root
-docker build -t __ENV_NAME__-env:latest -f server/Dockerfile .
+docker build -t __ENV_IMAGE_NAME__:latest -f server/Dockerfile .
 ```
 
 ## Deploying to Hugging Face Spaces
@@ -71,7 +71,7 @@ You can easily deploy your OpenEnv environment to Hugging Face Spaces using the 
 openenv push
 
 # Or specify options
-openenv push --namespace my-org --private
+openenv push --repo-id my-org/my-env --private
 ```
 
 The `openenv push` command will:
@@ -85,7 +85,7 @@ The `openenv push` command will:
 
 ### Options
 
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
+- `DIRECTORY` (positional): Directory containing the OpenEnv environment (defaults to current directory)
 - `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
 - `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
 - `--private`: Deploy the space as private (default: public)

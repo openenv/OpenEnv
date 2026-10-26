@@ -15,8 +15,14 @@ tags:
 
 An OpenEnv wrapper for [TextArena](https://github.com/textarena/textarena) game environments. Supports text-based games like Wordle, providing a standardized API for agent interaction.
 
+![TextArena web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/textarena.png)
+
+*The `/web` playground after three Wordle guesses: each tile shows whether the letter is correct, misplaced or absent.*
+
 > [!NOTE]
 > Generic wrapper for any [TextArena](https://www.textarena.ai/docs/overview) game inside OpenEnv. This module exposes the TextArena `Env` interface through the standard HTTP server/client APIs used by other OpenEnv environments, enabling quick experimentation with the full suite of word, reasoning, and multi-agent games.
+
+Try Wordle on the [`openenv/wordle`](https://huggingface.co/spaces/openenv/wordle) Space, or connect a client to `https://openenv-wordle.hf.space`.
 
 ## Quick Start
 
@@ -74,7 +80,7 @@ docker build -t textarena-env:latest -f server/Dockerfile .
 
 With the web interface enabled, the server serves a **Gradio UI** at `/web`. If your `openenv` supports `gradio_builder`, you get two tabs (see [Customizing the Web UI](https://huggingface.co/docs/openenv/guides/customizing-web-ui)):
 
-- **Playground** – default OpenEnv UI (Reset, Step, Get state, Quick Start, README).
+- **Playground** – default OpenEnv UI (Reset, Step, Episode, Quick Start, README).
 - **Custom** – Wordle-style HTML block (see `server/gradio_ui.py`; uses [Gradio 6 `gr.HTML`](https://gradio.app/docs/gradio/html) to render the block).
 
 **Option A – From the OpenEnv repo root (recommended for the Custom tab)**
@@ -103,58 +109,13 @@ Then open **http://localhost:8000/web**. Use the **Playground** tab to Reset and
 
 ## Deploying to Hugging Face Spaces
 
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+From `envs/textarena_env/`:
 
 ```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
+openenv push --repo-id my-org/textarena-env -e TEXTARENA_ENV_ID=Wordle-v0
 ```
 
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/huggingface/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
+`-e` sets the [configuration variables](#environment-configuration) on the Space. See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs` and a health check at `/health`.
 
 ## Environment Details
 

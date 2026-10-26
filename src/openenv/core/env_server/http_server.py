@@ -179,6 +179,8 @@ class HTTPEnvServer:
         concurrency_config: Optional[ConcurrencyConfig] = None,
         env_name: Optional[str] = None,
         state_cls: Type[State] = State,
+        *,
+        reset_observation_cls: Optional[Type[Observation]] = None,
     ):
         """
         Initialize HTTP server wrapper.
@@ -190,7 +192,10 @@ class HTTPEnvServer:
             action_cls (`Type[Action]`):
                 The `Action` subclass this environment expects.
             observation_cls (`Type[Observation]`):
-                The `Observation` subclass this environment returns.
+                The `Observation` subclass returned by step.
+            reset_observation_cls (`Type[Observation]`, *optional*):
+                The reset observation model published in `/schema`. Defaults to
+                `observation_cls`; declare a distinct model when reset differs.
             max_concurrent_envs (`int`, *optional*):
                 Maximum number of concurrent WebSocket sessions. Mutually exclusive with
                 `concurrency_config`.
@@ -246,6 +251,7 @@ class HTTPEnvServer:
 
         self.action_cls = action_cls
         self.observation_cls = observation_cls
+        self.reset_observation_cls = reset_observation_cls or observation_cls
         self.state_cls = state_cls
         self.env_name = env_name or self._default_env_name()
 
@@ -1659,7 +1665,8 @@ Get JSON schemas for actions, observations, and state in a single response.
 
 Returns a combined schema object containing:
 - **action**: JSON schema for actions accepted by this environment
-- **observation**: JSON schema for observations returned by this environment
+- **observation**: JSON schema for observations returned by step
+- **reset_observation**: JSON schema for observations returned by reset
 - **state**: JSON schema for environment state objects
 
 This is more efficient than calling individual schema endpoints and provides
@@ -1694,6 +1701,7 @@ all schema information needed to interact with the environment.
             return SchemaResponse(
                 action=self.action_cls.model_json_schema(),
                 observation=self.observation_cls.model_json_schema(),
+                reset_observation=self.reset_observation_cls.model_json_schema(),
                 state=self.state_cls.model_json_schema(),
             )
 
@@ -1994,6 +2002,7 @@ def create_app(
     state_cls: Type[State] = State,
     *,
     mode: Optional[ServerMode | str] = None,
+    reset_observation_cls: Optional[Type[Observation]] = None,
 ) -> FastAPI:
     """
     Create a FastAPI application with or without web interface.
@@ -2007,7 +2016,10 @@ def create_app(
         action_cls (`Type[Action]`):
             The Action subclass this environment expects.
         observation_cls (`Type[Observation]`):
-            The Observation subclass this environment returns.
+            The Observation subclass returned by step.
+        reset_observation_cls (`Type[Observation]`, *optional*):
+            The reset observation model published in `/schema`. Defaults to
+            `observation_cls`; declare a distinct model when reset differs.
         env_name (`str`, *optional*):
             Environment name for README loading.
         max_concurrent_envs (`int`, *optional*):
@@ -2062,6 +2074,7 @@ def create_app(
             max_concurrent_envs,
             concurrency_config,
             state_cls=state_cls,
+            reset_observation_cls=reset_observation_cls,
             gradio_builder=gradio_builder,
             custom_tab_name=custom_tab_name,
             custom_tab_primary=custom_tab_primary,
@@ -2079,6 +2092,7 @@ def create_app(
             concurrency_config,
             env_name=env_name,
             state_cls=state_cls,
+            reset_observation_cls=reset_observation_cls,
             mode=mode,
         )
 
@@ -2093,6 +2107,7 @@ def create_fastapi_app(
     state_cls: Type[State] = State,
     *,
     mode: Optional[ServerMode | str] = None,
+    reset_observation_cls: Optional[Type[Observation]] = None,
 ) -> FastAPI:
     """
     Create a FastAPI application with comprehensive documentation.
@@ -2103,7 +2118,10 @@ def create_fastapi_app(
         action_cls (`Type[Action]`):
             The Action subclass this environment expects.
         observation_cls (`Type[Observation]`):
-            The Observation subclass this environment returns.
+            The Observation subclass returned by step.
+        reset_observation_cls (`Type[Observation]`, *optional*):
+            The reset observation model published in `/schema`. Defaults to
+            `observation_cls`; declare a distinct model when reset differs.
         max_concurrent_envs (`int`, *optional*):
             Maximum concurrent WebSocket sessions. Mutually exclusive with
             `concurrency_config`.
@@ -2197,6 +2215,7 @@ HTTP API for interacting with OpenEnv environments through a standardized interf
         concurrency_config=concurrency_config,
         env_name=env_name,
         state_cls=state_cls,
+        reset_observation_cls=reset_observation_cls,
     )
     if mode is None:
         mode = os.environ.get("OPENENV_MODE", ServerMode.SIMULATION.value)

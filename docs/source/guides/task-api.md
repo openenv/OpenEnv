@@ -203,20 +203,24 @@ The core clients (`EnvClient`, `SyncEnvClient`) do not ship Task API methods, be
 
 ```python
 import requests
-from urllib.parse import urljoin
 
 ENV_NAME = "latex_ocr_env"
 
 
 class LatexOCREnv(EnvClient[LatexOCRAction, LatexOCRObservation, State]):
+    def _task_url(self, path: str) -> str:
+        # `base_url` may be ws(s)://, and the Task API is plain HTTP.
+        base = self.base_url.replace("ws://", "http://", 1).replace("wss://", "https://", 1)
+        return f"{base}/{ENV_NAME}/{path}"
+
     def list_splits(self) -> list[str]:
-        resp = requests.get(urljoin(self._http_base(), f"{ENV_NAME}/splits"), timeout=30)
+        resp = requests.get(self._task_url("splits"), timeout=30)
         resp.raise_for_status()
         return [s["name"] for s in resp.json()]
 
     def num_tasks(self, split: str) -> int:
         resp = requests.post(
-            urljoin(self._http_base(), f"{ENV_NAME}/num_tasks"),
+            self._task_url("num_tasks"),
             json={"split": split},
             timeout=60,
         )
@@ -268,6 +272,6 @@ Before shipping a dataset-backed environment:
 ## Related Reading
 
 - [Concepts](concepts.md)
-- [RL Training](rl-integration.md)
+- [Training with OpenEnv](training.md)
 - [Core API](../reference/core.md)
 - [CLI reference](../reference/cli.md)

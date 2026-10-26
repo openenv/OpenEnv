@@ -327,6 +327,10 @@ class ExecutionDeclaration(BaseModel):
             Build context relative to the package root.
         agent_boundary (`str`):
             The access granted to an agent; currently only API access is supported.
+        requires_credentials (`bool`, *optional*, defaults to `False`):
+            Whether runtime execution needs credentials. Credential delivery is
+            deferred for this release; declaring `True` skips runtime validation.
+            This declaration accepts no credential names or values.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -336,6 +340,7 @@ class ExecutionDeclaration(BaseModel):
     dockerfile: str = "Dockerfile"
     context: str = "."
     agent_boundary: Literal["api"] = "api"
+    requires_credentials: bool = Field(default=False, strict=True)
 
     @field_validator("probe_path", "dockerfile", "context")
     @classmethod

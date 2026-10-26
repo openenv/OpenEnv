@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Annotated, Any, Dict, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 # Type aliases
@@ -236,6 +236,16 @@ class SchemaResponse(BaseMessage):
     state: Dict[str, Any] = Field(
         description="JSON schema for environment state objects"
     )
+    reset_observation: Optional[Dict[str, Any]] = Field(
+        default=None, description="JSON schema for observations returned by reset"
+    )
+
+    @model_serializer(mode="wrap")
+    def _omit_undeclared_reset_schema(self, handler):
+        data = handler(self)
+        if self.reset_observation is None:
+            data.pop("reset_observation", None)
+        return data
 
 
 class HealthResponse(BaseMessage):

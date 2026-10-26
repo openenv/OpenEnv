@@ -134,7 +134,7 @@
     },
     "ExecutionDeclaration": {
       "additionalProperties": false,
-      "description": "Author-declared runtime binding, introduced by manifest schema 2.\n\nAll paths are portable package-relative paths. Resolving the probe or build\ncontext must additionally reject symlink escapes before reading source files.\nThe data-only probe supplies actions; it cannot change declared capabilities.\n\nAttributes:\n    kind (`str`):\n        The implemented transport binding, `\"openenv_ws\"`.\n    probe_path (`str`):\n        JSON file containing the versioned runtime plan.\n    dockerfile (`str`):\n        Dockerfile relative to the package root.\n    context (`str`):\n        Build context relative to the package root.\n    agent_boundary (`str`):\n        The access granted to an agent; currently only API access is supported.",
+      "description": "Author-declared runtime binding, introduced by manifest schema 2.\n\nAll paths are portable package-relative paths. Resolving the probe or build\ncontext must additionally reject symlink escapes before reading source files.\nThe data-only probe supplies actions; it cannot change declared capabilities.\n\nAttributes:\n    kind (`str`):\n        The implemented transport binding, `\"openenv_ws\"`.\n    probe_path (`str`):\n        JSON file containing the versioned runtime plan.\n    dockerfile (`str`):\n        Dockerfile relative to the package root.\n    context (`str`):\n        Build context relative to the package root.\n    agent_boundary (`str`):\n        The access granted to an agent; currently only API access is supported.\n    requires_credentials (`bool`, *optional*, defaults to `False`):\n        Whether runtime execution needs credentials. Credential delivery is\n        deferred for this release; declaring `True` skips runtime validation.\n        This declaration accepts no credential names or values.",
       "properties": {
         "agent_boundary": {
           "const": "api",
@@ -162,6 +162,11 @@
           "default": "validation/runtime.json",
           "title": "Probe Path",
           "type": "string"
+        },
+        "requires_credentials": {
+          "default": false,
+          "title": "Requires Credentials",
+          "type": "boolean"
         }
       },
       "title": "ExecutionDeclaration",

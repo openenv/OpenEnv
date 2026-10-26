@@ -24,6 +24,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Harbor</div>
+      <p class="text-sm">Serve Harbor tasks across agent harnesses and sandboxes, with captured traces for evaluation and exact-token training.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/harbor" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">Jupyter</div>
       <p class="text-sm">Notebook-style coding environment backed by E2B with setup/verify hooks and a web UI for interactive runs.</p>
       <div class="flex gap-2 mt-3">
@@ -130,6 +137,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Helium Browser</div>
+      <p class="text-sm">Chromium browser driven with Helium and Selenium: one typed action per step, a screenshot and the URL back. A small example of the OpenEnv pieces, with a sample agent loop.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/helium_browser" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">KernRL</div>
       <p class="text-sm">RL environment for GPU kernel optimization. Train LLM agents to write fast CUDA/Triton kernels that beat baseline implementations.</p>
       <div class="flex gap-2 mt-3">
@@ -223,6 +237,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">τ²-bench</div>
+      <p class="text-sm">Customer-service conversations with an LLM-simulated user: the agent solves airline, retail or telecom requests with tools while following the domain policy, scored from the final database state.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/tau2" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">TB2</div>
       <p class="text-sm">OpenEnv wrapper for Terminal-Bench 2 tasks with local and Docker execution modes for terminal-based agent evaluation.</p>
       <div class="flex gap-2 mt-3">
@@ -259,25 +280,11 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
-      <div class="font-bold mb-2">OpenCode (deprecated)</div>
-      <p class="text-sm"><code>opencode_env</code> runs the OpenCode coding agent inside an isolated E2B sandbox against any OpenAI-compatible LLM endpoint, optionally capturing per-token logprobs.</p>
-      <div class="flex gap-2 mt-3">
-        <a href="environments/opencode" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
-      </div>
-    </div>
-    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">Pelican SVG</div>
       <p class="text-sm"><code>pelican_svg_env</code> scores blind SVG drawings of an animal riding a vehicle in three layers: a source gate against cheats, deterministic geometry checks and a vision judge. 30 subject-vehicle tasks, with eval and GRPO training examples included.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/pelican_svg" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
         <a href="https://huggingface.co/spaces/sergiopaniego/pelican-svg-env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
-      </div>
-    </div>
-    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
-      <div class="font-bold mb-2">Pi (deprecated)</div>
-      <p class="text-sm"><code>pi_env</code> runs the Pi coding agent inside an isolated Hugging Face sandbox against any OpenAI-compatible LLM endpoint, optionally capturing per-token logprobs.</p>
-      <div class="flex gap-2 mt-3">
-        <a href="environments/pi" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -298,7 +305,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
 </div>
 
 > [!TIP]
-> Want to publish your own environment? Head over to the [Build Your Own Environment](getting_started/environment-builder.md) guide for a step-by-step walkthrough.
+> Want to publish your own environment? [Your First Environment](guides/first-environment) walks through building one, and [Deploying an Environment](getting_started/environment-builder) covers publishing it.
 
 ## Community Environments
 
@@ -321,10 +328,19 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
-      <div class="font-bold mb-2">Harbor</div>
-      <p class="text-sm">Serve Harbor tasks across agent harnesses and sandboxes, with captured traces for evaluation and exact-token training.</p>
+      <div class="font-bold mb-2">FineEnvs</div>
+      <p class="text-sm">End-to-end environment projects (LaTeX OCR, watercolour painting, GeoGuessr, multilingual, simulation) with their datasets, models and training runs.</p>
       <div class="flex gap-2 mt-3">
-        <a href="environments/harbor" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://github.com/adithya-s-k/FineEnvs" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/FineEnvs" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">SECOND STRIKE</div>
+      <p class="text-sm">A world war against 42 AI nations with a nuclear doomsday clock: escalation, betrayal and surrender terms, played in lockstep on fixed seeds and scored by the game server with no LLM judge.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="https://github.com/KyleClouthier/secondstrike-openenv/blob/main/README.md" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://github.com/KyleClouthier/secondstrike-openenv" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">💻 Code</a>
       </div>
     </div>
   </div>

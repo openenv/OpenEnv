@@ -1,7 +1,7 @@
 # ECHO on TRL
 
 [TRL](https://huggingface.co/docs/trl) is the framework OpenEnv recommends for RL
-training (see `docs/source/guides/rl-integration.md` and the Wordle-GRPO
+training (see `docs/source/guides/training.md` and the Wordle-GRPO
 tutorial), so it is the natural place to run ECHO from an OpenEnv rollout.
 
 A runnable CPU proof-of-concept ships here:

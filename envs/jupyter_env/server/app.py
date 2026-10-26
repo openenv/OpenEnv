@@ -8,16 +8,20 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from pathlib import Path
 
 from openenv.core.env_server.http_server import create_app
 from openenv.core.env_server.mcp_types import CallToolAction, CallToolObservation
+from openenv.core.env_server.types import Observation
 
 try:
+    from ..models import JupyterState
     from .gradio_ui import jupyter_ui_builder
     from .jupyter_environment import JupyterEnvironment
 except ImportError:  # pragma: no cover
+    from models import JupyterState  # type: ignore
     from server.gradio_ui import jupyter_ui_builder  # type: ignore
     from server.jupyter_environment import JupyterEnvironment  # type: ignore
 
@@ -42,11 +46,21 @@ def _load_env_file() -> None:
 _load_env_file()
 os.environ.setdefault("ENABLE_WEB_INTERFACE", "true")
 
+# Older openenv-core releases lack these model parameters.
+_create_app_kwargs = (
+    {"reset_observation_cls": Observation}
+    if "reset_observation_cls" in inspect.signature(create_app).parameters
+    else {}
+)
+if "state_cls" in inspect.signature(create_app).parameters:
+    _create_app_kwargs["state_cls"] = JupyterState
+
 app = create_app(
     JupyterEnvironment,
     CallToolAction,
     CallToolObservation,
     env_name="jupyter_env",
+    **_create_app_kwargs,
     max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "4")),
     gradio_builder=jupyter_ui_builder,
 )

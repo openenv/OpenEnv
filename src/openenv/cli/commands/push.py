@@ -20,7 +20,7 @@ from .._cli_utils import _extract_hf_username, console, validate_env_structure
 app = typer.Typer(help="Push an OpenEnv environment to Hugging Face Spaces")
 
 
-DEFAULT_PUSH_IGNORE_PATTERNS = [".*", "__pycache__", "*.pyc"]
+DEFAULT_PUSH_IGNORE_PATTERNS = [".*", "__pycache__", "*.pyc", "build/", "*.egg-info"]
 
 
 def _format_kv_entry_for_error(entry: str, *, flag: str) -> str:
@@ -475,6 +475,7 @@ def _upload_to_hf_space(
     private: bool = False,
     create_pr: bool = False,
     commit_message: str | None = None,
+    delete_patterns: list[str] | None = None,
 ) -> None:
     """Upload files to Hugging Face Space."""
     if create_pr:
@@ -490,6 +491,7 @@ def _upload_to_hf_space(
         "repo_type": "space",
         "create_pr": create_pr,
         "ignore_patterns": ignore_patterns,
+        "delete_patterns": delete_patterns,
     }
     if commit_message:
         upload_kwargs["commit_message"] = commit_message
@@ -571,6 +573,13 @@ def push(
         typer.Option(
             "--exclude",
             help="Optional additional ignore file with newline-separated glob patterns to exclude from Hugging Face uploads",
+        ),
+    ] = None,
+    delete: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--delete",
+            help="Glob pattern of remote Space files to delete in the same commit, as in `hf upload --delete` (repeatable). Use '*' to remove every file not uploaded again.",
         ),
     ] = None,
     hardware: Annotated[
@@ -846,6 +855,7 @@ def push(
                     private=private,
                     create_pr=False,
                     ignore_patterns=ignore_patterns,
+                    delete_patterns=delete,
                 )
                 _apply_space_variables_and_secrets(
                     instance_repo_id, merged_variables, cli_secrets, api
@@ -871,6 +881,7 @@ def push(
                 private=private,
                 create_pr=create_pr,
                 ignore_patterns=ignore_patterns,
+                delete_patterns=delete,
             )
 
             # Skip variable/secret configuration in PR mode since the target

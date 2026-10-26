@@ -34,10 +34,10 @@ try:
     # In-repo imports (when running from OpenEnv repository)
     from openenv.core.env_server.http_server import create_app
 
-    from ..models import OpenSpielAction, OpenSpielObservation
+    from ..models import OpenSpielAction, OpenSpielObservation, OpenSpielState
     from .openspiel_environment import OpenSpielEnvironment
 except ImportError:
-    from models import OpenSpielAction, OpenSpielObservation
+    from models import OpenSpielAction, OpenSpielObservation, OpenSpielState
 
     # Standalone imports (when environment is standalone with openenv from pip)
     from openenv.core.env_server.http_server import create_app
@@ -68,10 +68,11 @@ app = create_app(
     OpenSpielObservation,
     env_name="openspiel_env",
     max_concurrent_envs=max_concurrent,
+    state_cls=OpenSpielState,
 )
 
 
-def main(host: str = "0.0.0.0", port: int = 8000):
+def main():
     """
     Entry point for direct execution via uv run or python -m.
 
@@ -79,14 +80,16 @@ def main(host: str = "0.0.0.0", port: int = 8000):
         uv run --project . server
         uv run --project . server --port 8001
         python -m openspiel_env.server.app
-
-    Args:
-        host: Host address to bind to (default: "0.0.0.0")
-        port: Port number to listen on (default: 8000)
     """
+    import argparse
+
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

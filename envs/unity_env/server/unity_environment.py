@@ -16,9 +16,10 @@ import glob
 import hashlib
 import io
 import os
+import socket
 from pathlib import Path
 from sys import platform
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import numpy as np
@@ -28,7 +29,7 @@ try:
     # In-repo imports (when running from OpenEnv repository root)
     from openenv.core.env_server.interfaces import Environment
 
-    from ..models import UnityAction, UnityObservation, UnityState
+    from ..models import PUSHBLOCK_ACTIONS, UnityAction, UnityObservation, UnityState
 except ImportError:
     # openenv from pip
     from openenv.core.env_server.interfaces import Environment
@@ -42,14 +43,24 @@ except ImportError:
         _parent = str(Path(__file__).parent.parent)
         if _parent not in sys.path:
             sys.path.insert(0, _parent)
-        from models import UnityAction, UnityObservation, UnityState
+        from models import PUSHBLOCK_ACTIONS, UnityAction, UnityObservation, UnityState
     except ImportError:
         try:
             # Package installed as unity_env
-            from unity_env.models import UnityAction, UnityObservation, UnityState
+            from unity_env.models import (
+                PUSHBLOCK_ACTIONS,
+                UnityAction,
+                UnityObservation,
+                UnityState,
+            )
         except ImportError:
             # Running from OpenEnv root with envs prefix
-            from envs.unity_env.models import UnityAction, UnityObservation, UnityState
+            from envs.unity_env.models import (
+                PUSHBLOCK_ACTIONS,
+                UnityAction,
+                UnityObservation,
+                UnityState,
+            )
 
 
 # Persistent cache directory to avoid re-downloading environment binaries
@@ -146,6 +157,9 @@ class UnityMLAgentsEnvironment(Environment):
                 Env var: UNITY_QUALITY_LEVEL (default: 5)
             cache_dir: Directory to cache downloaded environment binaries.
                 Env var: UNITY_CACHE_DIR (default: ~/.mlagents-cache)
+
+        `reset()` includes visual observations by default when the env var
+        UNITY_INCLUDE_VISUAL is 1 (default: 0).
         """
         # Initialize cleanup-critical attributes first (for __del__ safety)
         self._unity_env = None
@@ -182,7 +196,13 @@ class UnityMLAgentsEnvironment(Environment):
         self._cache_dir = cache_dir or os.environ.get(
             "UNITY_CACHE_DIR", PERSISTENT_CACHE_DIR
         )
-        self._include_visual = False
+        env_include_visual = os.environ.get("UNITY_INCLUDE_VISUAL", "0")
+        self._default_include_visual = env_include_visual.lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self._include_visual = self._default_include_visual
 
         # State tracking
         self._state = UnityState(
@@ -241,8 +261,14 @@ class UnityMLAgentsEnvironment(Environment):
             tmp_dir=self._cache_dir,
         )
 
+        # Each instance needs its own communication port: ask the OS for a free one
+        with socket.socket() as sock:
+            sock.bind(("localhost", 0))
+            port = sock.getsockname()[1]
+
         # Create the environment
         self._unity_env = persistent_entry.make(
+            base_port=port,
             no_graphics=self._no_graphics,
             side_channels=[self._engine_channel],
         )
@@ -344,8 +370,8 @@ class UnityMLAgentsEnvironment(Environment):
                 # Vector observation (agents, features)
                 vector_obs.extend(obs[0].tolist())
             elif len(obs.shape) == 4 and self._include_visual:
-                # Visual observation (agents, height, width, channels)
-                img_array = (obs[0] * 255).astype(np.uint8)
+                # Visual observation (agents, channels, height, width)
+                img_array = (np.moveaxis(obs[0], 0, -1) * 255).astype(np.uint8)
                 # Encode as base64 PNG
                 try:
                     from PIL import Image
@@ -369,11 +395,39 @@ class UnityMLAgentsEnvironment(Environment):
             observation_spec_info=self._state.observation_spec,
         )
 
+    def web_actions(
+        self, observation: Dict[str, Any]
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """One button per option of a single discrete action branch (PushBlock moves are named)."""
+        branches = observation["action_spec_info"].get("discrete_branches", [])
+        if len(branches) != 1:
+            return []
+        pushblock = observation["behavior_name"].startswith("PushBlock")
+        return [
+            (
+                f"{i} · {PUSHBLOCK_ACTIONS[i]}" if pushblock else f"action {i}",
+                {"discrete_actions": [i]},
+            )
+            for i in range(branches[0])
+        ]
+
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the agent's camera image, when the observation carries one."""
+        images = observation.get("visual_observations")
+        if not images:
+            return None
+        return (
+            '<img alt="Unity camera" '
+            f'src="data:image/png;base64,{images[0]}" '
+            'style="width:336px;max-width:100%;image-rendering:pixelated;'
+            'border:1px solid var(--border-color-primary);border-radius:6px">'
+        )
+
     def reset(
         self,
         env_id: Optional[str] = None,
         seed: Optional[int] = None,
-        include_visual: bool = False,
+        include_visual: Optional[bool] = None,
         **kwargs,
     ) -> UnityObservation:
         """
@@ -383,12 +437,15 @@ class UnityMLAgentsEnvironment(Environment):
             env_id: Optionally switch to a different Unity environment.
             seed: Random seed (not fully supported by Unity ML-Agents).
             include_visual: If True, include visual observations in output.
+                Defaults to UNITY_INCLUDE_VISUAL.
             **kwargs: Additional arguments (ignored).
 
         Returns:
             UnityObservation with initial state.
         """
-        self._include_visual = include_visual
+        self._include_visual = (
+            self._default_include_visual if include_visual is None else include_visual
+        )
 
         # Load or switch environment if needed
         target_env = env_id or self._env_id
@@ -505,7 +562,7 @@ class UnityMLAgentsEnvironment(Environment):
         self,
         env_id: Optional[str] = None,
         seed: Optional[int] = None,
-        include_visual: bool = False,
+        include_visual: Optional[bool] = None,
         **kwargs,
     ) -> UnityObservation:
         """

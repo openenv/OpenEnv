@@ -1,5 +1,6 @@
 """The Helium browser environment that runs only inside the sandbox."""
 
+import html
 import os
 import tempfile
 import time
@@ -75,7 +76,8 @@ class BrowserEnvironment(Environment):
 
     def reset(self, seed=None, episode_id=None, start_url=None, **kwargs):
         self.close()
-        parsed = urlsplit(start_url or "")
+        start_url = start_url or os.getenv("BROWSER_START_URL", "https://huggingface.co")
+        parsed = urlsplit(start_url)
         if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("expected an HTTP(S) URL without credentials")
         self.profile = tempfile.TemporaryDirectory(prefix="browser-")
@@ -185,6 +187,22 @@ class BrowserEnvironment(Environment):
             done=self.done,
             reward=0,
         )
+
+    def render_web(self, observation):
+        """Draw the page screenshot with the URL and the last action error."""
+        if not observation.get("screenshot"):
+            return None
+        parts = [
+            '<div style="font-size:12px;opacity:0.7;word-break:break-all">'
+            f"{html.escape(observation['url'])}</div>",
+            f'<img alt="Helium Browser page" src="data:image/png;base64,{observation["screenshot"]}" '
+            'style="display:block;width:520px;max-width:100%;border:1px solid var(--border-color-primary);border-radius:6px">',
+        ]
+        if observation["error"]:
+            parts.append(
+                f'<div style="color:var(--error-text-color)">{html.escape(observation["error"])}</div>'
+            )
+        return '<div style="display:flex;flex-direction:column;gap:6px">' + "".join(parts) + "</div>"
 
     @property
     def state(self):

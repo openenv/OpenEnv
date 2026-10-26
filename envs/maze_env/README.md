@@ -15,6 +15,10 @@ tags:
 
 A gridworld maze where the agent must navigate from a start cell to an exit while avoiding walls.
 
+![Maze web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/maze.png)
+
+*The `/web` playground after a few steps: the maze, the agent, the exit and one button per legal move.*
+
 ## Maze Layout
 
 The default environment ships with a single 8x8 maze:
@@ -41,7 +45,7 @@ from maze_env import MazeAction, MazeEnv
 
 try:
     # Create environment from Docker image
-    env = MazeEnv.from_docker_image("maze_env-env:latest")
+    env = MazeEnv.from_docker_image("maze_env-env:latest").sync()
 
     # Reset to start a new episode
     result = env.reset()
@@ -76,53 +80,7 @@ docker build -t maze_env-env:latest -f server/Dockerfile .
 
 ## Deploying to Hugging Face Spaces
 
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
-
-```bash
-# From the environment directory (envs/maze_env/)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/maze-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/huggingface/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/maze-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
+From `envs/maze_env/`, run `openenv push` (or `openenv push --repo-id my-org/maze-env`). See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options.
 
 ## Running the Default Maze
 
@@ -166,11 +124,11 @@ The reward follows the underlying maze rules:
 - Penalty for invalid move (`-0.75`)
 - Reward for reaching the exit (`+10.0`)
 
+The episode ends with `lose` when the accumulated reward drops below `-0.5 * maze.size` (`-32` for the default maze).
+
 ## Configuration
 
-### Environment Variables
-
-This environment does not rely on environment variables. Customize the maze in code (see Development & Testing).
+`MAX_CONCURRENT_ENVS` sets the maximum number of concurrent WebSocket sessions (default: `8`). To use another layout, construct `MazeEnvironment(maze_array=..., start_cell=(col, row), exit_cell=(col, row))` in `server/app.py`. The exit defaults to the bottom-right cell.
 
 ## Advanced Usage
 
@@ -208,24 +166,6 @@ result = env.step(MazeAction(action=result.observation.legal_actions[0]))
 env.close()
 ```
 
-
-## Project Structure
-
-```
-maze_env/
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── client.py              # MazeEnv client implementation
-├── models.py              # Action, Observation, and State models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── maze.py            # Maze logic and rewards
-    ├── maze_env_environment.py  # Core environment implementation
-    ├── app.py             # FastAPI application
-    └── Dockerfile         # Environment container
-```
 
 ## References
 

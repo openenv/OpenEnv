@@ -4,7 +4,11 @@ emoji: ⚓
 colorFrom: blue
 colorTo: indigo
 sdk: docker
+pinned: false
 app_port: 8000
+base_path: /web
+tags:
+  - openenv
 ---
 
 # Harbor Environment
@@ -50,6 +54,80 @@ Which of the two you got is on the result as `rollout_type` (`"train"` or `"eval
 `capture_level`, decided by probing the endpoint before the server starts. Against a hosted provider
 the token fields are empty and `rollout_type == "eval"`; nothing pretends otherwise, and
 `to_turn_records` raises rather than handing a trainer empty lists.
+
+## Quick Start
+
+```bash
+pip install "openenv[harbor]"      # Harbor and every sandbox backend, needs Python 3.12 or newer
+```
+
+`$LLM` below is an OpenAI-compatible endpoint: vLLM or SGLang for trainable rollouts, or any hosted
+provider for evaluation rollouts (see [Prerequisites](#prerequisites)).
+
+### 1. See what this machine can do
+
+```bash
+openenv harbor info \
+  --llm-url $LLM \
+  --dataset AdithyaSK/data_agent_rl_environment_eval
+```
+
+```
+llm       Qwen/Qwen3.5-9B  [ok]
+sandboxes 2 of 4 usable
+  [ok]   e2b
+  [ok]   modal
+  [--]   docker     Docker daemon is not running.
+  [--]   daytona    SDK not installed (daytona).
+datasets  1 split(s), 366 tasks
+harnesses 16 validated of 30 known
+```
+
+Read-only, boots nothing. It tells you which sandboxes have working credentials **and** an
+importable SDK, so you find out here rather than 90 seconds into a rollout.
+
+### 2. Run one rollout, no server
+
+```bash
+openenv harbor rollout \
+  --llm-url $LLM \
+  --dataset AdithyaSK/data_agent_rl_environment_eval \
+  --task-index 0 --harness opencode --sandbox e2b \
+  --out rollout.json
+```
+
+```
+[opencode / e2b] task 0: 0000_369_369503_qa_1 ...
+   ok    reward=1.00  turns=9  roots=2  multi-turn  tokens=1043  atif=match  48s
+```
+
+This path involves no env server, which makes it the one to reach for when something breaks: if
+`rollout` works and `serve` does not, the fault is in the serving layer and nothing below it.
+
+### 3. Serve it
+
+```bash
+openenv harbor serve --llm-url $LLM --dataset org/train,org/eval
+```
+
+You get a Task API for discovery, one long-running `run_rollout` MCP tool, and a UI at `/web` for
+reading tasks, running agents on them and reading what they did (see [The web UI](#the-web-ui)).
+`--llm-url` is optional: without it, whoever uses the UI connects a model of their own.
+
+```python
+from harbor_env import HarborEnv
+
+with HarborEnv(base_url="http://localhost:8000") as env:
+    split = env.splits()[0]["name"]
+    result = env.run_rollout(split=split, task_index=0, harness="opencode", sandbox="e2b")
+
+    print(result.reward, result.n_turns)
+    for turn in result.turns:
+        print(len(turn.completion_token_ids), sum(turn.per_token_logps))
+```
+
+`harness` and `sandbox` are per call, so consecutive rollouts against the same server can use
+different agents and different backends.
 
 ## The intercept
 
@@ -194,78 +272,22 @@ eval backend — and `OPENENV_ALLOW_RAW_LOGPROBS=1` overrides that if you know b
 The gap is compared rather than the values themselves because a data-parallel engine answers
 consecutive calls from different replicas; comparing values directly misread one such engine.
 
-Install the extra, which brings Harbor and every sandbox backend:
+## Training with TRL
 
-```bash
-pip install "openenv[harbor]"      # needs Python 3.12 or newer
-```
+TRL trains a policy on these rollouts with `AsyncGRPOTrainer` (`trl.experimental`, TRL 1.15 or
+later): you pass a `HarborSessionFactory` (a `functools.partial` with the server URL), and a
+`HarnessRolloutWorker` calls it with its sampling policy, opens one session per rollout and trains on each session's validated `TrainingTrace`.
 
-## Quick Start
-
-### 1. See what this machine can do
-
-```bash
-openenv harbor info \
-  --llm-url $LLM \
-  --dataset AdithyaSK/data_agent_rl_environment_eval
-```
-
-```
-llm       Qwen/Qwen3.5-9B  [ok]
-sandboxes 2 of 4 usable
-  [ok]   e2b
-  [ok]   modal
-  [--]   docker     Docker daemon is not running.
-  [--]   daytona    SDK not installed (daytona).
-datasets  1 split(s), 366 tasks
-harnesses 16 validated of 30 known
-```
-
-Read-only, boots nothing. It tells you which sandboxes have working credentials **and** an
-importable SDK, so you find out here rather than 90 seconds into a rollout.
-
-### 2. Run one rollout, no server
-
-```bash
-openenv harbor rollout \
-  --llm-url $LLM \
-  --dataset AdithyaSK/data_agent_rl_environment_eval \
-  --task-index 0 --harness opencode --sandbox e2b \
-  --out rollout.json
-```
-
-```
-[opencode / e2b] task 0: 0000_369_369503_qa_1 ...
-   ok    reward=1.00  turns=9  roots=2  multi-turn  tokens=1043  atif=match  48s
-```
-
-This path involves no env server, which makes it the one to reach for when something breaks: if
-`rollout` works and `serve` does not, the fault is in the serving layer and nothing below it.
-
-### 3. Serve it
-
-```bash
-openenv harbor serve --llm-url $LLM --dataset org/train,org/eval
-```
-
-You get a Task API for discovery, one long-running `run_rollout` MCP tool, and a UI at `/web` for
-reading tasks, running agents on them and reading what they did (see [The web UI](#the-web-ui)).
-`--llm-url` is optional: without it, whoever uses the UI connects a model of their own.
-
-```python
-from harbor_env import HarborEnv
-
-with HarborEnv(base_url="http://localhost:8000") as env:
-    split = env.splits()[0]["name"]
-    result = env.run_rollout(split=split, task_index=0, harness="opencode", sandbox="e2b")
-
-    print(result.reward, result.n_turns)
-    for turn in result.turns:
-        print(len(turn.completion_token_ids), sum(turn.per_token_logps))
-```
-
-`harness` and `sandbox` are per call, so consecutive rollouts against the same server can use
-different agents and different backends.
+- [`examples/async_grpo_harbor`](https://github.com/huggingface/trl/tree/main/examples/async_grpo_harbor):
+  a complete training script, with local setup and a Hugging Face Jobs launcher.
+- [TRL's OpenEnv guide](https://huggingface.co/docs/trl/openenv): how the worker, the reward and the
+  capture fit together.
+- [The ultimate guide to multi-harness RL](https://huggingface.co/spaces/FineEnvs/multi-harness-rl):
+  one policy trained across OpenCode, Claude Code, Codex and Mini-SWE-Agent through this
+  environment. Its runnable code is the
+  [FineEnvs multi-harness tutorial](https://github.com/adithya-s-k/FineEnvs/tree/main/05-multi-harness-rl),
+  and its [models, datasets and environments](https://huggingface.co/collections/FineEnvs/smoldataenvs-multi-harness-rl-6abdfaaa8d74dacd481d5212)
+  are in one collection.
 
 ## The web UI
 

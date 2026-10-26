@@ -49,10 +49,12 @@ class GridWorldEnv(EnvClient[GridWorldAction, GridWorldObservation, State]):
     def _parse_result(self, data: dict) -> StepResult[GridWorldObservation]:
         """Convert the raw dictionary response into a typed StepResult."""
         return StepResult(
-            observation=GridWorldObservation(**data["observation"]),
+            observation=GridWorldObservation(
+                **data["observation"], reward=data["reward"], done=data["done"]
+            ),
             reward=data["reward"],
             done=data["done"],
-            info=data.get("info", {}),
+            metadata=data.get("metadata"),
         )
 
     def _parse_state(self, data: dict) -> State:

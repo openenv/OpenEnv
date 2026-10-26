@@ -1,10 +1,10 @@
-# Contributing to Hugging Face
+# Contributing Environments
 
 OpenEnv environments are designed to be shared. The `openenv` CLI provides first-class
 commands for publishing, forking, and contributing to environments hosted as
 [Hugging Face Spaces](https://huggingface.co/spaces).
 
-Envs are deployed as Hugging Face Spaces which are; Git repositories, Docker images, Python packages, and Gradio apps
+Envs are deployed as Hugging Face Spaces, which are Git repositories, Docker images, Python packages and Gradio apps at once.
 
 This guide covers three workflows:
 
@@ -30,10 +30,10 @@ The `openenv` CLI will also prompt you to log in automatically if you haven't al
 
 ## 1. Push a New Environment to the Hub
 
-Once you've [built an environment](environment-builder.md), publishing it to a Hugging Face Space is a single command.
+Once you've [built an environment](../guides/first-environment.md), publishing it to a Hugging Face Space is a single command.
 
 ```bash
-# Push the env at '.' to the hub with config in env.yaml
+# Push the env at '.' to the hub with config in openenv.yaml
 openenv push
 
 # Push the env to a specific repo
@@ -61,7 +61,7 @@ Forking creates a copy of a Hugging Face Space under your own account. This is
 the fastest way to start experimenting with an existing environment.
 
 ```bash
-# Fork the openenv/wordle-env environment to your account
+# Fork the openenv/wordle environment to your account
 openenv fork owner/space-name
 ```
 
@@ -69,15 +69,15 @@ This duplicates the Space to `<your-username>/space-name` using the same name an
 
 ```bash
 # Fork to a specific repo name
-openenv fork openenv/wordle-env --repo-id my-username/my-wordle
+openenv fork openenv/wordle --repo-id my-username/my-wordle
 
-# Fork the openenv/coding-env environment to your account with environment variables and secrets
-openenv fork openenv/coding-env \
+# Fork the openenv/coding_env environment to your account with environment variables and secrets
+openenv fork openenv/coding_env \
   --set-env MODEL_ID=meta-llama/Llama-3-8B \
   --set-secret HF_TOKEN=hf_xxxxxxxxxxxxx
 
-# Fork the openenv/coding-env environment to your account with a GPU
-openenv fork openenv/coding-env --hardware t4-medium
+# Fork the openenv/coding_env environment to your account with a GPU
+openenv fork openenv/coding_env --hardware t4-medium
 ```
 
 
@@ -167,7 +167,7 @@ submitting a PR.
 
 ```bash
 # Fork the echo environment
-openenv fork openenv/echo-env --repo-id my-username/echo-env-improved
+openenv fork openenv/echo_env --repo-id my-username/echo-env-improved
 
 # Clone your fork
 git clone https://huggingface.co/spaces/my-username/echo-env-improved
@@ -180,12 +180,12 @@ cd echo-env-improved
 openenv validate --level static --skip-build
 
 # Push your improvement as a PR to the original
-openenv push --repo-id openenv/echo-env --create-pr
+openenv push --repo-id openenv/echo_env --create-pr
 ```
 
 ## Next Steps
 
-- [Build your own environment from scratch](environment-builder.md)
+- [Build your own environment from scratch](../guides/first-environment.md)
 - [Customize the web UI](../guides/customizing-web-ui.md)
 - [Browse available environments](../environments.md)
-- [End-to-end tutorial](../tutorials/openenv-tutorial.md)
+- [Hello World](../tutorials/openenv-tutorial.md)

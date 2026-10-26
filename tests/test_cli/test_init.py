@@ -2,7 +2,11 @@
 
 """Tests for the openenv init command."""
 
+import asyncio
+import importlib
+import importlib.util
 import os
+import sys
 from pathlib import Path
 
 from openenv.cli.__main__ import app
@@ -349,6 +353,46 @@ def test_init_server_app_imports(tmp_path: Path) -> None:
     assert "__ENV_CLASS_NAME__" not in app_content
 
 
+def test_init_server_main_parses_host_and_port(tmp_path: Path, monkeypatch) -> None:
+    """Test that the generated `server` entry point honors --host and --port."""
+    import uvicorn
+
+    env_name = "demo_env"
+    result = runner.invoke(app, ["init", env_name, "--output-dir", str(tmp_path)])
+    assert result.exit_code == 0
+
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(
+        sys, "argv", ["server", "--host", "127.0.0.1", "--port", "8001"]
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    importlib.import_module(f"{env_name}.server.app").main()
+
+    assert calls == [{"host": "127.0.0.1", "port": 8001}]
+
+
+def test_init_next_steps_use_generated_names(tmp_path: Path) -> None:
+    """Test that the printed next steps and image tags match the generated env."""
+    env_name = "demo_env"
+    result = runner.invoke(app, ["init", env_name, "--output-dir", str(tmp_path)])
+    assert result.exit_code == 0
+
+    output = " ".join(result.output.split())
+    assert "envs/demo_env_env" not in output
+    assert "demo_env_env:latest" not in output
+    assert "Copy this directory to <repo_root>/envs/demo_env" in output
+    assert "openenv build envs/demo_env" in output
+    assert "docker run -p 8000:8000 openenv-demo:latest" in output
+
+    env_dir = tmp_path / env_name
+    for path in [env_dir / "README.md", env_dir / "client.py"]:
+        content = path.read_text()
+        assert "openenv-demo:latest" in content
+        assert "demo_env-env" not in content
+
+
 def test_init_dockerfile_uses_correct_base(tmp_path: Path) -> None:
     """Test that Dockerfile uses correct base image and paths."""
     env_name = "test_env"
@@ -482,3 +526,40 @@ def test_init_handles_file_path_collision(tmp_path: Path) -> None:
     ), (
         f"Expected BadParameter error about file collision. Exit code: {result.exit_code}, Output: {result.output}"
     )
+
+
+def test_init_environment_reset_accepts_seed_and_episode_id(tmp_path: Path) -> None:
+    """Generated reset() must accept the Environment.reset() arguments."""
+    env_name = "seeded_env"
+    result = runner.invoke(
+        app, ["init", env_name, "--output-dir", str(tmp_path)], input="\n"
+    )
+    assert result.exit_code == 0
+
+    env_dir = tmp_path / env_name
+    env_file = env_dir / "server" / f"{env_name}_environment.py"
+    sys.path.insert(0, str(env_dir))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"{env_name}_environment", env_file
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        env = module.SeededEnvironment()
+
+        env.reset(seed=1, episode_id="ep-123")
+        assert env.state.episode_id == "ep-123"
+
+        env.reset(episode_id="")
+        assert env.state.episode_id == ""
+
+        env.reset()
+        assert env.state.episode_id not in (None, "", "ep-123")
+
+        # Environment.reset_async() forwards seed and episode_id to reset().
+        asyncio.run(env.reset_async(seed=2, episode_id="ep-456"))
+        assert env.state.episode_id == "ep-456"
+    finally:
+        sys.path.remove(str(env_dir))
+        sys.modules.pop("models", None)

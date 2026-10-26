@@ -7,6 +7,10 @@ in its head and emit coordinates for it. This is the check Simon Willison
 popularised as "generate an SVG of a pelican riding a bicycle", turned into
 something you can run repeatedly, at scale, and train against.
 
+![Pelican SVG web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/pelican_svg.png)
+
+*The `/web` playground after submitting an SVG: the rendered drawing and its reward breakdown.*
+
 ## What this is, and what it is not
 
 **Not a model ranking.** Simon Willison, whose prompt this is, is explicit that
@@ -260,7 +264,8 @@ PYTHONPATH=src:envs uv run uvicorn pelican_svg_env.server.app:app --port 8000
 
 Environment variables: `HF_TOKEN` for the judge, `PELICAN_SVG_JUDGE_MODEL` to
 change it from `Qwen/Qwen2.5-VL-72B-Instruct`, `PELICAN_SVG_DISABLE_JUDGE=1` to
-force offline scoring.
+force offline scoring, `MAX_CONCURRENT_ENVS` for the maximum number of
+concurrent WebSocket sessions (default `8`).
 
 With no judge configured, structure carries the full weight. A judge that is
 configured but *fails* is treated differently: the semantic component stays at

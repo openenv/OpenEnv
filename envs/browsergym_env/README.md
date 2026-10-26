@@ -18,6 +18,10 @@ tags:
 
 BrowserGym is a unified framework for web-based agent tasks that provides access to multiple benchmarks under a single Gymnasium-compatible API. This integration brings the complete training-to-evaluation pipeline for web agents into OpenEnv.
 
+![BrowserGym web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/browsergym.png)
+
+*The `/web` playground on MiniWoB `click-test`: the goal, the page URL and the browser screenshot (screenshots on, 320×240 viewport).*
+
 ## Why BrowserGym?
 
 BrowserGym provides a complete pipeline for developing web agents: train on simple tasks, then evaluate on realistic websites.
@@ -47,7 +51,7 @@ from browsergym_env import BrowserGymEnv, BrowserGymAction
 
 # Create environment for MiniWoB training task
 env = BrowserGymEnv.from_docker_image(
-    "ghcr.io/openenv/browsergym-env:latest",
+    "ghcr.io/huggingface/openenv-browsergym-env:latest",
     environment={
         "BROWSERGYM_BENCHMARK": "miniwob",
         "BROWSERGYM_TASK_NAME": "click-test",  # or "click-button", "click-dialog", etc.
@@ -73,37 +77,11 @@ for episode in range(1000):
 env.close()
 ```
 
-## Harness Sessions for TRL
+## Training with TRL
 
-If you want BrowserGym to participate in a tool-driven harness instead of a
-hand-written `env.reset()` / `env.step()` loop, use the BrowserGym session
-factory:
+To train a model on BrowserGym, pass a small environment class to TRL's `GRPOTrainer` through `environment_factory`. Its methods (`click`, `fill`, `send_keys`, `scroll`, `noop`) become the model's tools, and TRL runs the multi-turn loop. The [BrowserGym tutorial](https://huggingface.co/docs/openenv/tutorials/browsergym-harness) walks through it, and TRL's [`examples/grpo_browsergym`](https://github.com/huggingface/trl/tree/main/examples/grpo_browsergym) is the full script, with screenshots for vision-language models.
 
-```python
-from browsergym_env import BrowserGymEnv
-from browsergym_env.harness import BrowserGymSessionFactory
-from openenv.core.harness import (
-    HarnessRunLimits,
-    MCPHarnessAdapter,
-    build_harness_rollout_func,
-)
-
-session_factory = BrowserGymSessionFactory(
-    client_factory=lambda: BrowserGymEnv(base_url="https://openenv-browsergym-env.hf.space"),
-)
-
-rollout_func = build_harness_rollout_func(
-    session_factory=session_factory,
-    harness_adapter=MCPHarnessAdapter(),
-    model_step_builder=...,  # trainer-owned model sampling
-    limits=HarnessRunLimits(max_turns=10),
-)
-```
-
-BrowserGym exposes `click`, `fill`, `send_keys`, `scroll`, and `noop` as MCP-style
-tools while still translating them back into the underlying `BrowserGymAction`
-strings. See [examples/browsergym_harness.py](https://github.com/huggingface/OpenEnv/blob/main/examples/browsergym_harness.py)
-for a full TRL-oriented example.
+`browsergym_env.harness.BrowserGymSessionFactory` exposes the same tools to OpenEnv's session runtime, which [`examples/browsergym_harness_eval.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/browsergym_harness_eval.py) uses to evaluate a chat model on BrowserGym.
 
 ### Available Tasks by Benchmark
 
@@ -276,7 +254,7 @@ from envs.browsergym_env import BrowserGymEnv, BrowserGymAction
 
 # Create environment for WebArena evaluation
 env = BrowserGymEnv.from_docker_image(
-    "ghcr.io/openenv/browsergym-env:latest",
+    "ghcr.io/huggingface/openenv-browsergym-env:latest",
     environment={
         "BROWSERGYM_BENCHMARK": "webarena",
         "BROWSERGYM_TASK_NAME": "0",  # Task ID
@@ -575,7 +553,7 @@ python app.py
 browsergym_env/
 ├── __init__.py              # Module exports
 ├── models.py                # Action, Observation, State dataclasses
-├── client.py                # HTTPEnvClient implementation
+├── client.py                # BrowserGymEnv client (EnvClient)
 ├── README.md                # This file
 └── server/
     ├── __init__.py

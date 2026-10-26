@@ -42,8 +42,8 @@ sys.path.insert(0, str(REPO_ROOT / "envs"))
 
 
 # Autouse fixture: patch openai.AsyncOpenAI so tests that instantiate
-# QEDMathEnvironment (which eagerly creates a MathProofRubric / AsyncOpenAI
-# client) work without a real OPENAI_API_KEY in the environment.
+# QEDMathEnvironment (whose MathProofRubric builds an AsyncOpenAI client on first
+# use) can grade without a real OPENAI_API_KEY in the environment.
 @pytest.fixture(autouse=True)
 def _patch_openai_client(monkeypatch):
     """Replace openai.AsyncOpenAI with a MagicMock for the duration of each test."""
@@ -249,6 +249,20 @@ class TestMathProofRubricNormalizeReward:
         )
         assert rubric.normalize_reward(6) == pytest.approx(6 / 7)
         assert rubric.normalize_reward(7) == pytest.approx(1.0)
+
+
+def test_grader_client_created_on_first_use(monkeypatch, _patch_openai_client):
+    """The environment starts without grader credentials, the client is built lazily."""
+
+    def missing_credentials(**kwargs):
+        raise RuntimeError("Missing credentials")
+
+    monkeypatch.setattr("openai.AsyncOpenAI", missing_credentials)
+    env = _make_env()
+    env.reset()
+
+    monkeypatch.setattr("openai.AsyncOpenAI", lambda **kwargs: _patch_openai_client)
+    assert env._rubric._client is _patch_openai_client
 
 
 class TestMathProofRubricParseResponse:

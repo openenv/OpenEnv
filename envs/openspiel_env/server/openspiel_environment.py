@@ -12,7 +12,7 @@ via the OpenEnv Environment interface.
 """
 
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 # Support both in-repo and standalone imports
 try:
@@ -50,7 +50,7 @@ class OpenSpielEnvironment(Environment):
 
     Supported games:
     - Single-player: catch, cliff_walking, 2048, blackjack
-    - Multi-player: tic_tac_toe, kuhn_poker
+    - Multi-player: tic_tac_toe, kuhn_poker, connect_four
 
     Args:
         game_name: Name of the OpenSpiel game (e.g., "catch", "tic_tac_toe").
@@ -115,6 +115,21 @@ class OpenSpielEnvironment(Environment):
 
         # Track last opponent action for learning
         self._last_opponent_action: int | None = None
+
+    def web_actions(
+        self, observation: Dict[str, Any]
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """The legal moves as buttons, named for the games this env draws."""
+        labels = _BUTTON_LABELS.get(self.game_name, [])
+        return [
+            (labels[a] if a < len(labels) else str(a), {"action_id": a})
+            for a in observation.get("legal_actions") or []
+        ]
+
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the board or hand of Catch, 2048, Tic-Tac-Toe, Connect Four, Blackjack, Kuhn Poker or Cliff Walking."""
+        draw = _DRAWINGS.get(self.game_name)
+        return draw(observation) if draw else None
 
     def reset(self) -> OpenSpielObservation:
         """
@@ -275,3 +290,245 @@ class OpenSpielEnvironment(Environment):
         )
 
         return obs
+
+
+_BUTTON_LABELS = {
+    "catch": ["0 · left", "1 · stay", "2 · right"],
+    "2048": ["0 · up", "1 · right", "2 · down", "3 · left"],
+    "tic_tac_toe": [
+        "0 · top left",
+        "1 · top centre",
+        "2 · top right",
+        "3 · middle left",
+        "4 · centre",
+        "5 · middle right",
+        "6 · bottom left",
+        "7 · bottom centre",
+        "8 · bottom right",
+    ],
+    "connect_four": [f"col {c}" for c in range(7)],  # same labels as connect4_env
+    "blackjack": ["0 · hit", "1 · stand"],
+    "kuhn_poker": ["0 · pass", "1 · bet"],
+    "cliff_walking": ["0 · right", "1 · up", "2 · left", "3 · down"],
+}
+
+
+def _grid(
+    label: str, columns: int, cells: List[str], size: int = 26, gap: int = 3
+) -> str:
+    """Lay out square cells in a bordered grid labelled for screen readers."""
+    return (
+        f'<div role="img" aria-label="{label}" style="display:inline-grid;'
+        f"grid-template-columns:repeat({columns},{size}px);grid-auto-rows:{size}px;gap:{gap}px;padding:10px;"
+        'border:1px solid var(--border-color-primary);border-radius:10px;background:var(--background-fill-secondary)">'
+        + "".join(cells)
+        + "</div>"
+    )
+
+
+def _cell(background: str, radius: str = "4px", text: str = "", style: str = "") -> str:
+    """One grid cell with a theme colour background and optional centred text."""
+    return (
+        f'<span style="background:{background};border-radius:{radius};display:flex;'
+        f'align-items:center;justify-content:center;{style}">{text}</span>'
+    )
+
+
+def _draw_catch(observation: Dict[str, Any]) -> Optional[str]:
+    """Catch: 10 rows x 5 columns, the ball falls towards the paddle on the bottom row."""
+    state = observation.get("info_state") or []
+    if len(state) != 50:
+        return None
+    cells = []
+    for i, value in enumerate(state):
+        if not value:
+            cells.append(_cell("var(--border-color-primary)"))
+        elif i >= 45:
+            cells.append(_cell("var(--body-text-color)"))
+        else:
+            cells.append(_cell("var(--color-accent)", "50%"))
+    return _grid("Catch board", 5, cells)
+
+
+def _draw_2048(observation: Dict[str, Any]) -> Optional[str]:
+    """2048: 4x4 tiles, the shade grows with the tile value."""
+    state = observation.get("info_state") or []
+    if len(state) != 16:
+        return None
+    cells = []
+    for value in state:
+        value = int(value)
+        if not value:
+            cells.append(_cell("var(--border-color-primary)", "6px"))
+            continue
+        shade = min(12 * (value.bit_length() - 1), 96)
+        text = (
+            "var(--body-text-color)"
+            if shade < 55
+            else "var(--button-primary-text-color)"
+        )
+        cells.append(
+            _cell(
+                f"color-mix(in srgb,var(--color-accent) {shade}%,var(--background-fill-primary))",
+                "6px",
+                str(value),
+                f"color:{text};font-weight:700;font-size:{18 if value < 1000 else 15}px",
+            )
+        )
+    return _grid("2048 board", 4, cells, 56)
+
+
+def _draw_tic_tac_toe(observation: Dict[str, Any]) -> Optional[str]:
+    """Tic-Tac-Toe: 3x3 board, x in the accent colour and o in the text colour."""
+    state = observation.get("info_state") or []
+    if len(state) != 27:  # one-hot planes: empty, o, x
+        return None
+    cells = []
+    for i in range(9):
+        mark, colour = (
+            ("x", "var(--color-accent)")
+            if state[18 + i]
+            else ("o", "var(--body-text-color)")
+        )
+        cells.append(
+            _cell(
+                "var(--border-color-primary)",
+                "6px",
+                mark if not state[i] else "",
+                f"color:{colour};font-weight:700;font-size:30px",
+            )
+        )
+    return _grid("Tic-Tac-Toe board", 3, cells, 52)
+
+
+def _draw_connect_four(observation: Dict[str, Any]) -> Optional[str]:
+    """Connect Four: 6x7 board, x in the accent colour and o in the text colour, columns numbered below."""
+    state = observation.get("info_state") or []
+    if len(state) != 126:  # one-hot planes: x, o, empty; row 0 is the bottom
+        return None
+    cells = []
+    for row in reversed(range(6)):
+        for col in range(7):
+            i = row * 7 + col
+            if state[i]:
+                cells.append(_cell("var(--color-accent)", "50%"))
+            elif state[42 + i]:
+                cells.append(_cell("var(--body-text-color)", "50%"))
+            else:
+                cells.append(_cell("var(--border-color-primary)", "50%"))
+    cells += [
+        _cell("transparent", text=str(col), style="font-size:12px") for col in range(7)
+    ]
+    return _grid("Connect Four board", 7, cells, gap=4)  # same gap as connect4_env
+
+
+def _card(text: str) -> str:
+    """A playing card face with its rank and suit, or ?? when hidden."""
+    colour = "var(--color-accent)" if text[-1] in "♥♦" else "var(--body-text-color)"
+    return (
+        '<span style="display:inline-flex;align-items:center;justify-content:center;width:38px;height:54px;'
+        "border:1px solid var(--border-color-primary);border-radius:6px;"
+        f'background:var(--background-fill-primary);color:{colour};font-weight:700;font-size:16px">{text}</span>'
+    )
+
+
+def _hand(label: str, title: str, rows: List[Tuple[str, List[str]]]) -> str:
+    """Rows of labelled cards in a bordered box labelled for screen readers."""
+    body = "".join(
+        f'<div style="display:flex;align-items:center;gap:6px;margin:4px 0">'
+        f'<span style="width:90px;font-size:13px">{name}</span>{"".join(_card(c) for c in cards)}</div>'
+        for name, cards in rows
+    )
+    return (
+        f'<div role="img" aria-label="{label}" style="display:inline-block;padding:10px 14px;'
+        "border:1px solid var(--border-color-primary);border-radius:10px;background:var(--background-fill-secondary);"
+        f'color:var(--body-text-color)"><div style="font-size:13px;margin-bottom:4px">{title}</div>{body}</div>'
+    )
+
+
+def _draw_blackjack(observation: Dict[str, Any]) -> Optional[str]:
+    """Blackjack: your cards with their total, and the dealer's visible cards."""
+    state = observation.get("info_state") or []
+    if (
+        len(state) != 189
+    ):  # cards one-hot from 85 (player) and 137 (dealer), suits C, D, H, S
+        return None
+    player = [c for c in range(52) if state[85 + c]]
+    dealer = [c for c in range(52) if state[137 + c]]
+    total = sum(min(c % 13 + 1, 10) for c in player)
+    if total <= 11 and any(c % 13 == 0 for c in player):
+        total += 10
+    ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+    dealer_cards = [ranks[c % 13] + "♣♦♥♠"[c // 13] for c in dealer]
+    if observation.get("game_phase") != "terminal":
+        dealer_cards.append("??")
+    return _hand(
+        "Blackjack board",
+        "Blackjack",
+        [
+            (f"You ({total})", [ranks[c % 13] + "♣♦♥♠"[c // 13] for c in player]),
+            ("Dealer", dealer_cards),
+        ],
+    )
+
+
+def _draw_kuhn_poker(observation: Dict[str, Any]) -> Optional[str]:
+    """Kuhn Poker: your card, the opponent's hidden card and the bets so far."""
+    state = observation.get("info_state") or []
+    if (
+        len(state) != 11
+    ):  # player one-hot, card one-hot (J, Q, K), then pass/bet for 3 rounds
+        return None
+    card = "JQK"[state[2:5].index(1)]
+    bets = [
+        ("pass", "bet")[int(state[6 + 2 * r])]
+        for r in range(3)
+        if state[5 + 2 * r] or state[6 + 2 * r]
+    ]
+    return _hand(
+        "Kuhn Poker board",
+        "Bets: " + (" → ".join(bets) or "none yet"),
+        [("You", [card]), ("Opponent", ["?"])],
+    )
+
+
+def _draw_cliff_walking(observation: Dict[str, Any]) -> Optional[str]:
+    """Cliff Walking: 4x8 grid, the walker starts bottom left, the cliff runs to the goal bottom right."""
+    # The info state is a one-hot action history over 100 steps: right, up, left, down.
+    state = observation.get("info_state") or []
+    if len(state) != 400:
+        return None
+    row, col = 3, 0
+    for i, value in enumerate(state):
+        if value:
+            d_row, d_col = ((0, 1), (-1, 0), (0, -1), (1, 0))[i % 4]
+            row, col = min(max(row + d_row, 0), 3), min(max(col + d_col, 0), 7)
+    cells = []
+    for r in range(4):
+        for c in range(8):
+            if (r, c) == (row, col):
+                cells.append(_cell("var(--color-accent)", "50%"))
+            elif r == 3 and c in (0, 7):
+                cells.append(
+                    _cell(
+                        "var(--border-color-primary)",
+                        text="S" if c == 0 else "G",
+                        style="font-weight:700",
+                    )
+                )
+            elif r == 3 and c > 0:
+                cells.append(_cell("var(--body-text-color)"))
+            else:
+                cells.append(_cell("var(--border-color-primary)"))
+    return _grid("Cliff Walking board", 8, cells)
+
+
+_DRAWINGS = {
+    "catch": _draw_catch,
+    "2048": _draw_2048,
+    "tic_tac_toe": _draw_tic_tac_toe,
+    "connect_four": _draw_connect_four,
+    "blackjack": _draw_blackjack,
+    "kuhn_poker": _draw_kuhn_poker,
+    "cliff_walking": _draw_cliff_walking,
+}

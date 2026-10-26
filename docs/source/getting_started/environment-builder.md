@@ -1,394 +1,142 @@
-# Packaging & Deploying
+# Deploying an Environment
 
-This guide walks you through creating a custom environment using the `OpenEnv` framework and the `openenv` CLI.
-
-The CLI handles scaffolding, builds, validation, and deployment so you can stay focused on environment logic.
-
-> [!NOTE]
-> **New to OpenEnv?** If you're just getting started, we recommend completing the [Getting Started tutorials](../tutorials/index) first. They provide a conceptual introduction to OpenEnv and reinforcement learning fundamentals. This guide is for developers ready to build production-quality environments.
-
-## Quick Reference Card
-
-Already familiar with OpenEnv? Here's the 8-step process at a glance:
-
-| Step | Command / Action | Description |
-|------|------------------|-------------|
-| 1 | `openenv init my_env` | Scaffold new environment |
-| 2 | Edit `models.py` | Define Action & Observation dataclasses |
-| 3 | Edit `server/my_environment.py` | Implement `reset()` and `step()` methods |
-| 4 | Edit `client.py` | Implement `_step_payload()`, `_parse_result()`, `_parse_state()` |
-| 5 | `uv run --project . server` | Start local dev server for testing |
-| 6 | `openenv validate --level static --skip-build` | Validate the declared manifest contract |
-| 7 | `openenv push` | Deploy to Hugging Face Hub |
-| 8 | Share it! | Others use via `MyEnv.from_env("you/my-env").sync()` |
-
-### CLI Quick Reference
+This page covers packaging and sharing an environment once it runs locally: dependencies and the Dockerfile, `openenv build`, `openenv validate`, `openenv push` and connecting to the deployed environment. To create the environment first, follow [Your First Environment](../guides/first-environment.md).
 
 | Command | Description |
 |---------|-------------|
-| `openenv init NAME` | Scaffold new environment |
-| `openenv import SOURCE --name NAME --output-dir DIR` | Wrap a supported third-party environment source tree |
-| `uv run --project . server` | Start local dev server |
-| `openenv build` | Build Docker image |
-| `openenv validate --level static --skip-build` | Validate the declared manifest contract |
-| `openenv push` | Deploy to Hugging Face Hub |
-| `openenv push --repo-id NAME` | Deploy to specific repo |
-| `openenv push --private` | Deploy as private environment |
-| `openenv push --registry ghcr.io/ORG` | Push to GitHub Container Registry |
+| `openenv build` | Build the Docker image locally |
+| `openenv validate --level static --skip-build` | Validate the manifest contract in `openenv.yaml` |
+| `openenv push` | Deploy to a Hugging Face Space |
+| `openenv push --repo-id NAME` | Deploy to a specific Space |
+| `openenv push --private` | Deploy as a private Space |
+| `openenv push --registry ghcr.io/ORG` | Push the image to a Docker registry instead |
 
-> [!TIP]
-> For a hands-on tutorial that builds a complete environment step-by-step, see [Building Environments](../tutorials/index) in the Getting Started series.
+See the [CLI reference](../reference/cli.md) for every command and flag.
 
----
+## Dependencies and Dockerfile
 
-## Overview
+Declare Python dependencies in the environment's `pyproject.toml` and regenerate `uv.lock` with `uv lock`. Install anything else (system packages, binaries) in `server/Dockerfile`, before the step that removes temporary files.
 
-A typical workflow looks like:
+The template's [`server/Dockerfile`](https://github.com/huggingface/OpenEnv/blob/main/src/openenv/cli/templates/openenv_env/server/Dockerfile) is a multi-stage build on `ghcr.io/huggingface/openenv-base` that installs your dependencies with `uv sync` and serves `server.app:app` on port 8000. Keep building from `openenv-base` so shared tooling stays available.
 
-1. Scaffold a new environment with `openenv init`.
-2. Customize your models, environment logic, and FastAPI server.
-3. Implement a typed `EnvClient` (WebSocket-based for persistent sessions).
-4. Configure dependencies and the Dockerfile once.
-5. Use the CLI (`openenv build`, `openenv validate`, `openenv push`) to package and share your work.
+## Build the image
 
-> [!NOTE]
-> These integrations are handled automatically by the `openenv` CLI when you run `openenv init`.
-
-### Prerequisites
-
-- Python 3.11+ and [`uv`](https://github.com/astral-sh/uv) for dependency locking
-- Docker Desktop / Docker Engine
-- The OpenEnv library installed: `pip install https://github.com/huggingface/OpenEnv.git`
-
-## Step-by-Step Guide
-
-Let's walk through the process of building a custom environment with OpenEnv.
-
-### 1. Scaffold with `openenv init`
+From the environment folder (needs Docker):
 
 ```bash
-# Run from anywhere – defaults to current directory
-openenv init my_env
-
-# Optionally choose an output directory
-openenv init my_env --output-dir /Users/you/envs
+openenv build
 ```
 
-The command creates a fully-typed template with `openenv.yaml`, `pyproject.toml`, `uv.lock`, Docker assets, and stub implementations. If you're working inside this repo, move the generated folder under `envs/`.
+`openenv build` works for standalone environments and for ones inside the OpenEnv repo, and sets the build arguments accordingly. Useful flags:
 
-Typical layout:
+- `--tag/-t`: override the default tag, `openenv-<env_name>` without its `_env` suffix (`openenv-my` for `my_env`)
+- `--build-arg KEY=VALUE`: pass Docker build arguments (repeatable)
+- `--dockerfile/-f` / `--context/-c`: custom locations when experimenting
+- `--no-cache`: force fresh dependency installs
 
-```
-my_env/
-├── __init__.py
-├── README.md
-├── client.py
-├── models.py
-├── openenv.yaml
-├── pyproject.toml
-├── uv.lock
-└── server/
-    ├── __init__.py
-    ├── app.py
-    ├── my_environment.py
-    ├── requirements.txt
-    └── Dockerfile
-```
-
-Python classes are generated for the action, observation, environment, and client. For example, you will find `MyEnvironment`, `MyAction`, `MyObservation`, and `MyEnv` (client) in the `my_env` directory based on the name you provided. The environment uses the core `State` class from `openenv.core.env_server.types`.
-
-If you already have an ORS/OpenReward or Prime Intellect Verifiers environment
-source tree, use `openenv import SOURCE --name my_env --output-dir /Users/you/envs`
-instead. The importer detects the source type from the code, vendors the source
-under the generated package, and emits an OpenEnv wrapper with task/split and
-MCP-style tool actions. Non-secret data files in the source tree are included as
-package data, and portable dependencies declared in source `pyproject.toml` or
-`requirements.txt` files are added to the generated environment.
-
-### 2. Define Models
-
-Edit `models.py` to describe your action and observation using Pydantic:
-
-```python
-# models.py
-from pydantic import Field
-from openenv.core.env_server.types import Action, Observation
-
-class MyAction(Action):
-    """Your custom action."""
-    command: str = Field(..., description="Command to execute")
-    parameters: dict = Field(default_factory=dict, description="Command parameters")
-
-class MyObservation(Observation):
-    """Your custom observation."""
-    result: str = Field(..., description="Result of the action")
-    success: bool = Field(..., description="Whether the action succeeded")
-```
-
-### 3. Implement Environment Logic
-
-Customize `server/my_environment.py` by extending `Environment`:
-
-```python
-# server/my_environment.py
-from uuid import uuid4
-from openenv.core.env_server.interfaces import Environment
-from openenv.core.env_server.types import State
-from models import MyAction, MyObservation
-
-class MyEnvironment(Environment):
-    def __init__(self):
-        self._state = State(episode_id=str(uuid4()), step_count=0)
-
-    def reset(self) -> MyObservation:
-        self._state = State(episode_id=str(uuid4()), step_count=0)
-        return MyObservation(result="Ready", success=True, done=False, reward=0.0)
-
-    def step(self, action: MyAction) -> MyObservation:
-        # Implement your logic here
-        self._state.step_count += 1
-        result = self._execute_command(action.command)
-        return MyObservation(result=result, success=True, done=False, reward=1.0)
-
-    @property
-    def state(self) -> State:
-        return self._state
-```
-
-### 4. Create the FastAPI Server
-
-`server/app.py` should expose the environment through `create_app`.
-
-**Important:** You must pass a class or factory function (not an instance) to enable WebSocket-based concurrent sessions:
-
-```python
-# server/app.py
-from openenv.core.env_server import create_app
-from ..models import MyAction, MyObservation
-from .my_environment import MyEnvironment
-
-# Pass the class (factory) - each WebSocket session gets its own instance
-app = create_app(MyEnvironment, MyAction, MyObservation, env_name="my_env")
-```
-
-For environments with constructor arguments, create a factory function:
-
-```python
-# server/app.py
-import os
-from openenv.core.env_server import create_app
-from ..models import MyAction, MyObservation
-from .my_environment import MyEnvironment
-
-# Read config from environment variables
-api_key = os.getenv("MY_API_KEY")
-timeout = int(os.getenv("MY_TIMEOUT", "30"))
-
-def create_my_environment():
-    """Factory function that creates MyEnvironment with config."""
-    return MyEnvironment(api_key=api_key, timeout=timeout)
-
-# Pass the factory function
-app = create_app(create_my_environment, MyAction, MyObservation, env_name="my_env")
-```
-
-### 5. Implement the Client
-
-`client.py` extends `EnvClient` so users can interact with your server via WebSocket for persistent sessions:
-
-```python
-# client.py
-from openenv.core.env_client import EnvClient
-from openenv.core.client_types import StepResult
-from openenv.core.env_server.types import State
-from .models import MyAction, MyObservation
-
-class MyEnv(EnvClient[MyAction, MyObservation, State]):
-    def _step_payload(self, action: MyAction) -> dict:
-        return {"command": action.command, "parameters": action.parameters}
-
-    def _parse_result(self, payload: dict) -> StepResult[MyObservation]:
-        obs_data = payload.get("observation", {})
-        obs = MyObservation(
-            result=obs_data.get("result", ""),
-            success=obs_data.get("success", False),
-            done=payload.get("done", False),
-            reward=payload.get("reward"),
-        )
-        return StepResult(
-            observation=obs,
-            reward=payload.get("reward"),
-            done=payload.get("done", False),
-        )
-
-    def _parse_state(self, payload: dict) -> State:
-        return State(
-            episode_id=payload.get("episode_id"),
-            step_count=payload.get("step_count", 0),
-        )
-```
-
-The `EnvClient` maintains a persistent WebSocket connection to the server, enabling efficient multi-step interactions with lower latency compared to HTTP. Each client instance gets its own dedicated environment session on the server.
-
-### 6. Configure Dependencies & Dockerfile
-
-The CLI template ships with `pyproject.toml` and `server/Dockerfile`. You should manage your python dependencies with `uv` or `pip` in the `pyproject.toml` file. Other dependencies should be installed in the Dockerfile.
-
-Keep building from the `openenv-base` image so shared tooling stays available:
-
-<details>
-<summary>Dockerfile</summary>
-
-```dockerfile
-# SPDX-License-Identifier: BSD-3-Clause
-
-# Multi-stage build using openenv-base
-# This Dockerfile is flexible and works for both:
-# - In-repo environments (with local src/core)
-# - Standalone environments (with openenv from pip)
-# The build script (openenv build) handles context detection and sets appropriate build args.
-
-ARG BASE_IMAGE=openenv-base:latest
-FROM ${BASE_IMAGE} AS builder
-
-WORKDIR /app
-
-# Build argument to control whether we're building standalone or in-repo
-ARG BUILD_MODE=in-repo
-ARG ENV_NAME=__ENV_NAME__
-
-# Copy environment code (always at root of build context)
-COPY . /app/env
-
-# For in-repo builds, openenv is already in the pyproject.toml dependencies
-# For standalone builds, openenv will be installed from pip via pyproject.toml
-WORKDIR /app/env
-
-# Install dependencies using uv sync
-# If uv.lock exists, use it; otherwise resolve on the fly
-RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -f uv.lock ]; then \
-        uv sync --frozen --no-install-project --no-editable; \
-    else \
-        uv sync --no-install-project --no-editable; \
-    fi
-
-RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -f uv.lock ]; then \
-        uv sync --frozen --no-editable; \
-    else \
-        uv sync --no-editable; \
-    fi
-
-# Final runtime stage
-FROM ${BASE_IMAGE}
-
-WORKDIR /app
-
-# Copy the virtual environment from builder
-COPY --from=builder /app/env/.venv /app/.venv
-
-# Copy the environment code
-COPY --from=builder /app/env /app/env
-
-# Set PATH to use the virtual environment
-ENV PATH="/app/.venv/bin:$PATH"
-
-# Set PYTHONPATH so imports work correctly
-ENV PYTHONPATH="/app/env:$PYTHONPATH"
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Run the FastAPI server
-# The module path is constructed to work with the /app/env structure
-CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000"]
-
-```
-
-</details>
-
-If you introduced extra dependencies in the Dockerfile, you should install them in the Dockerfile before removing temp files.
-
-### 7. Build & Validate with the CLI
-
-From the environment directory:
+## Validate
 
 ```bash
-cd envs/my_env
-openenv build          # Builds Docker image (auto-detects context)
 openenv validate --level static --skip-build
 ```
 
-`openenv build` understands both standalone environments and in-repo ones. Useful flags:
+`openenv validate` reads the `validation:` contract in `openenv.yaml`, checks the normalized manifest against the selected severity policy and exits non-zero when a required check fails. The report's `levels_run` field records which levels ran. To validate a running server, use `openenv validate --url http://localhost:8000`.
 
-- `--tag/-t`: override the default `openenv-<env_name>` tag
-- `--build-arg KEY=VALUE`: pass multiple Docker build arguments
-- `--dockerfile` / `--context`: custom locations when experimenting
-- `--no-cache`: force fresh dependency installs
-
-`openenv validate` reads the `validation:` contract in `openenv.yaml`, checks
-the normalized manifest against the selected severity policy, and exits
-non-zero when a required check fails. The current walking skeleton runs the
-static manifest check; the report's `levels_run` field records exactly which
-levels executed. Use `openenv validate --url http://localhost:8000` separately
-to validate a running endpoint.
-
-### 8. Push & Share with `openenv push`
-
-Once validation passes, the CLI can deploy directly to Hugging Face Spaces or any registry:
+## Push to Hugging Face Spaces
 
 ```bash
-# Push to HF Spaces (auto enables web UI and prompts for login if needed)
+# Push the environment in the current folder to <your-username>/<env_name>
 openenv push
 
 # Push to a specific repo or namespace
 openenv push --repo-id my-org/my-env
 
-# Push to Docker/ghcr (interface disabled by default)
-openenv push --registry ghcr.io/my-org --tag my-env:latest
+# Push to a Docker registry (web UI disabled by default)
+openenv push --registry ghcr.io/my-org
 
-# Customize image base or visibility
+# Override the base image and make the Space private
 openenv push --base-image ghcr.io/huggingface/openenv-base:latest --private
 
-# Configure Space variables and secrets at push time
+# Set Space variables and secrets at push time
 openenv push -e OPENSPIEL_GAME=tic_tac_toe --secret OPENAI_API_KEY=sk-...
 ```
 
-Key options:
+Options:
 
-- `--directory`: path to the environment (defaults to `cwd`)
-- `--repo-id`: explicit Hugging Face space name
-- `--registry`: push to Docker Hub, GHCR, etc.
-- `--interface/--no-interface`: toggle the optional web UI
-- `--base-image`: override the Dockerfile `FROM`
-- `--private`: mark the space as private
-- `--env-var/-e KEY=VALUE`: set a public Space variable (repeatable); overrides matching keys from `variables:` in `openenv.yaml`
-- `--secret KEY=VALUE`: set a private Space secret (repeatable); value is never logged
+- `DIRECTORY` (positional): path to the environment (defaults to the current directory)
+- `--repo-id/-r`: Space name, as `name` or `namespace/name`
+- `--registry`: push the image to Docker Hub, GHCR, etc.
+- `--interface/--no-interface`: toggle the web UI (on by default for Spaces)
+- `--base-image/-b`: override the Dockerfile `FROM`
+- `--private`: make the Space private
+- `--env-var/-e KEY=VALUE`: set a public Space variable (repeatable), overriding matching keys from `variables:` in `openenv.yaml`
+- `--secret KEY=VALUE`: set a private Space secret (repeatable). The value is never logged
+- `--hardware/-H`: Space hardware (for example `t4-medium`)
+- `--count/-n`: deploy several Space instances, each with a numeric suffix
+- `--create-pr`: open a Pull Request instead of pushing to the default branch
+- `--exclude`: an ignore file with globs to leave out of the upload
+- `--delete <pattern>`: delete matching remote Space files that are not uploaded again (repeatable), as in `hf upload --delete`
 
-The command validates your `openenv.yaml`, injects Hugging Face frontmatter when needed, and uploads the prepared bundle.
-Space variables and secrets are only applied on direct Hugging Face Space pushes;
-they are not available for `--registry`, and they cannot be staged through
-`--create-pr`.
+The command logs you in if needed, validates `openenv.yaml`, adds the Hugging Face frontmatter to the README when needed and uploads the bundle. Like `hf upload`, it never deletes remote files on its own. Pass `--delete <pattern>` (repeatable) to remove matching Space files that are not uploaded again, e.g. `--delete "*"` to make the Space match the bundle exactly. Local build artifacts (`build/`, `*.egg-info`, `__pycache__`, dotfiles) are never uploaded.
 
-#### Declaring public variables in `openenv.yaml`
+Space variables and secrets are only applied on direct Hugging Face Space pushes. They are not available with `--registry` and cannot be staged through `--create-pr`.
 
-For defaults that belong with the environment (game name, benchmark, max
-steps…), add a `variables:` block to `openenv.yaml`; `openenv push` will apply
-them to the Space automatically:
+### Declare public variables in `openenv.yaml`
+
+Defaults that belong with the environment (game name, benchmark, max steps) go in a `variables:` block in `openenv.yaml`. `openenv push` applies them to the Space:
 
 ```yaml
 variables:
   OPENSPIEL_GAME: catch
 ```
 
-CLI `-e` overrides matching keys. Put secrets (API keys, tokens) **only** on
-the CLI via `--secret KEY=VALUE` — never in the yaml.
+CLI `-e` overrides matching keys. Put secrets (API keys, tokens) only on the CLI with `--secret KEY=VALUE`, never in the yaml.
 
-### 9. Automate Builds (optional)
+To fork or update someone else's environment, see [Contributing Environments](contributing-envs.md).
 
-To trigger Docker builds on every push to `main`, add your environment to the matrix in `.github/workflows/docker-build.yml`:
+## Use the deployed environment
+
+```python
+from my_env import MyAction, MyEnv
+
+# Pull the Space's image and run it locally (needs Docker)
+client = MyEnv.from_env("my-org/my-env").sync()
+# Or start a container from a local image
+client = MyEnv.from_docker_image("openenv-my:latest").sync()
+# Or connect to a server that is already running
+client = MyEnv(base_url="http://localhost:8000").sync()
+
+with client:
+    result = client.reset()
+    result = client.step(MyAction(message="Hello!"))
+    state = client.state()
+```
+
+`from_docker_image()` and `from_env()` return a lazy bootstrap handle, not a connected client. Nothing starts until you resolve it: chain `.sync()` for a synchronous client, or `await` the handle from async code. Using the handle directly in a `with` block raises `TypeError: '_BootstrapResult' object does not support the context manager protocol`.
+
+The async version:
+
+```python
+import asyncio
+
+from my_env import MyAction, MyEnv
+
+
+async def main():
+    client = await MyEnv.from_docker_image("openenv-my:latest")
+    async with client:
+        result = await client.reset()
+        result = await client.step(MyAction(message="Hello!"))
+
+
+asyncio.run(main())
+```
+
+See [Async vs Sync](../guides/async-sync.md) for when to prefer each style and [Runtime Providers](../guides/runtime-providers.md) to run the image somewhere other than local Docker.
+
+## Build in CI (OpenEnv repo only)
+
+For an environment inside the OpenEnv repo, add it to the matrix in `.github/workflows/docker-build.yml` to build its image on every push to `main`:
 
 ```yaml
 strategy:
@@ -396,82 +144,8 @@ strategy:
     image:
       - name: echo-env
         dockerfile: envs/echo_env/server/Dockerfile
-      - name: chat-env
-        dockerfile: envs/chat_env/server/Dockerfile
-      - name: coding-env
-        dockerfile: envs/coding_env/server/Dockerfile
+        context: envs/echo_env
       - name: my-env  # Add your environment here
         dockerfile: envs/my_env/server/Dockerfile
+        context: envs/my_env
 ```
-
-### Use Your Environment
-
-Here is a simple example of using your environment:
-
-```python
-from envs.my_env import MyAction, MyEnv
-
-# Create environment from Docker image (starts a container)
-client = MyEnv.from_docker_image("my-env:latest").sync()
-# Or, run the image of a Hugging Face Space locally
-client = MyEnv.from_env("my-org/my-env").sync()
-# Or, connect to an already running server
-client = MyEnv(base_url="http://localhost:8000").sync()
-
-# Use context manager for automatic cleanup (recommended)
-with client:
-    # Reset
-    result = client.reset()
-    print(result.observation.result)  # "Ready"
-
-    # Execute actions
-    result = client.step(MyAction(command="test", parameters={}))
-    print(result.observation.result)
-    print(result.observation.success)
-
-    # Get state
-    state = client.state()
-    print(state.episode_id)
-    print(state.step_count)
-
-# Or manually manage the connection
-try:
-    client = MyEnv(base_url="http://localhost:8000").sync()
-    result = client.reset()
-    result = client.step(MyAction(command="test", parameters={}))
-finally:
-    client.close()
-```
-
-`from_docker_image()` and `from_env()` do not return a connected client. They
-return a lazy bootstrap handle, and nothing starts until you resolve it: chain
-`.sync()` for a synchronous client (as above), or `await` the handle from async
-code. Using the handle directly in a `with` block raises
-`TypeError: '_BootstrapResult' object does not support the context manager protocol`.
-
-The equivalent async usage is:
-
-```python
-import asyncio
-
-from envs.my_env import MyAction, MyEnv
-
-
-async def main():
-    client = await MyEnv.from_docker_image("my-env:latest")
-    async with client:
-        result = await client.reset()
-        result = await client.step(MyAction(command="test", parameters={}))
-        state = await client.state()
-
-
-asyncio.run(main())
-```
-
-See [Async vs Sync Usage](../guides/async-sync) for when to prefer each style.
-
-## Nice work! You've now built and used your own OpenEnv environment.
-
-Your next steps are to:
-
-- [Try out the end-to-end tutorial](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb)

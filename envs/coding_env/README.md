@@ -15,6 +15,8 @@ tags:
 
 A Python code execution environment that runs arbitrary Python code and returns results. Perfect for testing code execution infrastructure and demonstrating environment usage patterns.
 
+Try it on the [`openenv/coding_env`](https://huggingface.co/spaces/openenv/coding_env) Space, or connect a client to `https://openenv-coding-env.hf.space`.
+
 ## Quick Start
 
 The simplest way to use the Coding environment is through the `CodingEnv` class. The client is **async by default**:

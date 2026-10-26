@@ -26,28 +26,20 @@ This environment requires a Serper.dev API key to function.
    docker run -e SERPER_API_KEY="your-api-key-here" web_search-env:latest
    ```
 
-   **For Hugging Face Spaces (after deployment):**
-   - Navigate to your Space's settings page: `https://huggingface.co/spaces/USERNAME/SPACE_NAME/settings`
-   - Scroll to the "Repository secrets" section
-   - Click "New secret"
-   - Name: `SERPER_API_KEY`
-   - Value: Your Serper.dev API key
-   - Click "Add"
-   - The Space will automatically restart and use your API key
+   **For Hugging Face Spaces:** pass it as a secret when you push (see [Deploying to Hugging Face Spaces](#deploying-to-hugging-face-spaces)), or add a `SERPER_API_KEY` secret in the Space settings.
 
    > **Important:** Never commit your API key to code. Always use environment variables or secrets management.
 
 ## Quick Start
 
-The simplest way to use the Web Search environment is through the `WebSearchEnvironment` class:
+The simplest way to use the Web Search environment is through the `WebSearchEnv` client:
 
 ```python
-from envs.websearch_env.server.websearch_env_environment import WebSearchEnvironment
-from envs.websearch_env import WebSearchAction
+from envs.websearch_env import WebSearchAction, WebSearchEnv
 
 try:
     # Create environment from Docker image
-    web_search_env = WebSearchEnvironment.from_docker_image("web_search-env:latest")
+    web_search_env = WebSearchEnv.from_docker_image("web_search-env:latest").sync()
 
     # Reset
     result = web_search_env.reset()
@@ -65,7 +57,7 @@ finally:
     web_search_env.close()
 ```
 
-That's it! The `WebSearchEnvironment.from_docker_image()` method handles:
+That's it! The `WebSearchEnv.from_docker_image()` method handles:
 - Starting the Docker container
 - Waiting for the server to be ready
 - Connecting to the environment
@@ -83,79 +75,31 @@ docker build -t web_search-env:latest -f server/Dockerfile .
 
 ## Deploying to Hugging Face Spaces
 
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+From `envs/websearch_env/`:
 
 ```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
+openenv push --repo-id my-org/websearch-env --secret SERPER_API_KEY=your-api-key-here
 ```
 
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/huggingface/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-**⚠️ Important: Configure your API key!**
-After deployment, you must add your Serper.dev API key as a secret in the Space settings (see [API Key Setup](#api-key-setup) above). The environment will not work without it.
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
+The environment doesn't work without `SERPER_API_KEY`. `--secret` stores it as a Space secret and never logs it. See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs` and a health check at `/health`.
 
 ## Environment Details
 
 ### Action
 **WebSearchAction**: Contains a single field
 - `query` (str) - The query to search for
-- `temp_api_key` (str) - Temporary Serper.dev API key if not set in envrionment variables.
+- `temp_api_key` (str) - Temporary Serper.dev API key if not set in environment variables.
 
 ### Observation
 **WebSearchObservation**: Contains the echo response and metadata
 - `content` (str) - The formatted prompt that aggregates both query and web contents
 - `web_contents` (list) - List of web contents for top ranked web pages
-- `reward` (float) - Reward is not defined in this scenario
+- `reward` (float) - Not computed (see [Reward](#reward))
 - `done` (bool) - Always False for search environment
 - `metadata` (dict) - Additional info like step count
 
 ### Reward
-The reward is undefined here.
+The environment doesn't compute a reward. `reward` is `0.0` after `reset()` and `None` after each step.
 
 ## Advanced Usage
 
@@ -164,10 +108,10 @@ The reward is undefined here.
 If you already have a Web Search environment server running, you can connect directly:
 
 ```python
-from envs.websearch_env import WebSearchEnvironment
+from envs.websearch_env import WebSearchAction, WebSearchEnv
 
 # Connect to existing server
-web_search_env = WebSearchEnvironment(base_url="<ENV_HTTP_URL_HERE>")
+web_search_env = WebSearchEnv(base_url="<ENV_HTTP_URL_HERE>")
 
 # Use as normal
 result = web_search_env.reset()
@@ -176,26 +120,7 @@ result = web_search_env.step(WebSearchAction(query="What is the capital of China
 
 Note: When connecting to an existing server, `web_search_env.close()` will NOT stop the server.
 
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
-
-```bash
-# From the server directory
-python3 server/web_search_environment.py
-```
-
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
-
-### Running Locally
-
-Run the server locally for development:
+## Running Locally
 
 ```bash
 # Make sure to set your API key first
@@ -203,22 +128,4 @@ export SERPER_API_KEY="your-api-key-here"
 
 # Then run the server
 uvicorn server.app:app --reload
-```
-
-## Project Structure
-
-```
-web_search/
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # WebSearchEnv client implementation
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── websearch_env_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application
-    └── Dockerfile         # Container image definition
 ```

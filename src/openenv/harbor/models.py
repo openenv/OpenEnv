@@ -5,8 +5,8 @@ item. `HarborRolloutResult` is what one `run_rollout` returns: the reward, and e
 train on.
 
 Everything here is JSON-serialisable by construction — `run_rollout` returns
-`result.model_dump_json()` and the client re-validates, matching how `opencode_env` and `pi_env` do
-it. There is no shared memory between server and client.
+`result.model_dump_json()` and the client re-validates. There is no shared memory between server and
+client.
 """
 
 from __future__ import annotations

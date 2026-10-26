@@ -11,6 +11,13 @@ work, not evidence that a grader exists. During the first three slices, the
 exercise startup and the basic runtime contracts. `good` means those four checks
 pass; it does not mean all Level 2 checks have been implemented.
 
+The first-slice regression inventory additionally covers a missing `done` field,
+a blocked second step, controlled CLI interruption and the unchanged reference
+Echo environment. `tests/validation_runtime/acceptance.json` records the required
+protocol and Docker test identities; a filtered subset cannot establish suite
+completion. The Echo canary deliberately records its reward/schema compatibility
+findings instead of modifying the environment to make it pass.
+
 The `served_probe/` subject is shared by real-protocol, Docker and installed-wheel
 tests. Its fault modes are test-only and each introduces one intentional defect.
 The public `validation/runtime.json` file contains only reset inputs and actions.

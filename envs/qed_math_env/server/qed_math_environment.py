@@ -737,26 +737,15 @@ class QEDMathEnvironment(MCPEnvironment):
         """
         self._state.step_count += 1
 
-        try:
-            from openenv.core.env_server.mcp_types import (
-                CallToolAction,
-                CallToolObservation,
-                ListToolsAction,
-                ListToolsObservation,
-                Tool,
-                ToolError,
-                ToolErrorType,
-            )
-        except ImportError:
-            from openenv_core.env_server.mcp_types import (  # type: ignore[no-redef]
-                CallToolAction,
-                CallToolObservation,
-                ListToolsAction,
-                ListToolsObservation,
-                Tool,
-                ToolError,
-                ToolErrorType,
-            )
+        from openenv.core.env_server.mcp_types import (
+            CallToolAction,
+            CallToolObservation,
+            ListToolsAction,
+            ListToolsObservation,
+            Tool,
+            ToolError,
+            ToolErrorType,
+        )
 
         # LLM judge calls (submit_proof) can take several minutes; use a generous
         # ceiling that matches MathProofRubric.timeout_seconds.

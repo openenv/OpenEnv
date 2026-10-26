@@ -5,7 +5,7 @@
 from unittest.mock import patch
 
 import pytest
-from openenv.cli.__main__ import main
+from openenv.cli.__main__ import app, main
 from typer.testing import CliRunner
 
 
@@ -41,3 +41,11 @@ def test_main_entry_point() -> None:
     with patch("openenv.cli.__main__.app") as mock_app:
         main()
         mock_app.assert_called_once()
+
+
+def test_harbor_help_shows_install_extra() -> None:
+    """Rich markup must not swallow the `[harbor]` extra in the help text."""
+    for args in (["harbor", "--help"], ["--help"]):
+        result = runner.invoke(app, args, env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        assert "openenv[harbor]" in result.output

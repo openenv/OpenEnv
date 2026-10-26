@@ -1,4 +1,4 @@
-# OpenEnv Wordle with GRPO using TRL
+# Play Wordle with GRPO
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/trl/blob/main/examples/grpo_wordle/grpo_wordle.ipynb)
 
@@ -283,7 +283,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model_name = "sergiopaniego/wordle-grpo-Qwen3-1.7B"  # Replace with your HF username or organization
 
-fine_tuned_model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="float32", device_map="auto")
+fine_tuned_model = AutoModelForCausalLM.from_pretrained(model_name, dtype="float32", device_map="auto")
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 ```
 

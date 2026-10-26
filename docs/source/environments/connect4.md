@@ -3,6 +3,10 @@
 
 A classic Connect Four board game environment for training agents on turn-based strategy with a 6×7 grid. Players alternate dropping pieces into columns, aiming to connect four in a row horizontally, vertically, or diagonally.
 
+![Connect4 web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/connect4.png)
+
+*The `/web` playground after a few moves: the board and one button per column.*
+
 ## Quick Start
 
 ```python
@@ -11,9 +15,9 @@ from connect4_env import Connect4Action, Connect4Env
 
 async def main():
     async with Connect4Env(base_url="http://localhost:8000") as client:
-        obs = await client.reset()
-        print(f"Board: {obs.board}")
-        print(f"Legal moves: {obs.legal_actions}")
+        result = await client.reset()
+        print(f"Board: {result.observation.board}")
+        print(f"Legal moves: {result.observation.legal_actions}")
 
         # Drop a piece in column 3
         result = await client.step(Connect4Action(column=3))

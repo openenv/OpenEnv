@@ -71,21 +71,29 @@ class Healthy:
         return self
 
 
+def listing(argv, containers):
+    """Answer a `docker ps` name query the way the Docker CLI formats it."""
+    query = argv[argv.index("--filter") + 1].removeprefix("name=")
+    return "".join(
+        f"{name}\t{owner}\n" for name, owner in containers.items() if query in name
+    )
+
+
 @pytest.fixture
 def commands(monkeypatch):
     calls = []
-    removed = set()
+    containers = {}
 
     def run(argv, timeout_s, max_bytes=docker._MAX_OUTPUT):
         calls.append(argv)
+        if argv[1] == "create":
+            containers[argv[argv.index("--name") + 1]] = "test-run"
+        if argv[1] == "ps":
+            return 0, listing(argv, containers), ""
         if argv[1] == "inspect":
-            if argv[-1] in removed:
-                return 1, "", "No such container"
-            if "--format" in argv:
-                return 0, "test-run", ""
             return 0, json.dumps([details(argv[-1])]), ""
         if argv[1] == "rm":
-            removed.add(argv[-1])
+            containers.pop(argv[-1], None)
         return 0, "ok", ""
 
     monkeypatch.setattr(docker, "_command", run)
@@ -110,6 +118,7 @@ def test_start_is_hardened_and_does_not_forward_host_tokens(commands, monkeypatc
         "--pids-limit": "256",
         "--publish": "127.0.0.1::8000",
         "--network": "bridge",
+        "--stop-timeout": "0",
     }.items():
         assert create[create.index(flag) + 1] == value
     assert "--read-only" in create and "--init" in create
@@ -125,14 +134,8 @@ def test_start_is_hardened_and_does_not_forward_host_tokens(commands, monkeypatc
     assert all("prune" not in call for call in commands)
 
 
-@pytest.mark.parametrize(
-    "network",
-    [
-        NetworkPolicy(mode="no-network"),
-        NetworkPolicy(mode="allowlist", allowed_hosts=["example.org"]),
-    ],
-)
-def test_unsupported_network_is_rejected_without_docker(commands, network):
+def test_unsupported_network_is_rejected_without_docker(commands):
+    network = NetworkPolicy(mode="allowlist", allowed_hosts=["example.org"])
     with pytest.raises(UnsupportedCapability):
         docker.DockerValidationProvider().start(launch_spec(network=network))
     assert not commands
@@ -161,19 +164,18 @@ def test_startup_timeout_removes_container(commands, monkeypatch):
 
 
 def test_image_volumes_are_rejected_before_execution(commands, monkeypatch):
-    removed = False
+    containers = {}
 
     def run(argv, *args):
-        nonlocal removed
         commands.append(argv)
+        if argv[1] == "create":
+            containers[argv[argv.index("--name") + 1]] = "test-run"
+        if argv[1] == "ps":
+            return 0, listing(argv, containers), ""
         if argv[1] == "inspect":
-            if removed:
-                return 1, "", "No such container"
-            if "--format" in argv:
-                return 0, "test-run", ""
             return 0, json.dumps([details(mounts=[{"Type": "volume"}])]), ""
         if argv[1] == "rm":
-            removed = True
+            containers.pop(argv[-1], None)
         return 0, "ok", ""
 
     monkeypatch.setattr(docker, "_command", run)
@@ -184,28 +186,29 @@ def test_image_volumes_are_rejected_before_execution(commands, monkeypatch):
 
 
 def test_create_failure_still_attempts_owned_cleanup(commands, monkeypatch):
-    removed = False
+    containers = {}
 
     def run(argv, *args):
-        nonlocal removed
         commands.append(argv)
         if argv[1] == "create":
+            # The client timed out, but the engine had already created it.
+            containers[argv[argv.index("--name") + 1]] = "test-run"
             raise ProviderError("deadline")
+        if argv[1] == "ps":
+            return 0, listing(argv, containers), ""
         if argv[1] == "inspect":
-            if removed:
-                return 1, "", "No such container"
-            if "--format" in argv:
-                return 0, "test-run", ""
             return 0, json.dumps([details(argv[-1])]), ""
         if argv[1] == "rm":
-            removed = True
+            containers.pop(argv[-1], None)
         return 0, "", ""
 
     monkeypatch.setattr(docker, "_command", run)
     with pytest.raises(StartupError):
         docker.DockerValidationProvider().start(launch_spec())
     assert commands[-2][1] == "rm"
-    assert commands[0][commands[0].index("--name") + 1] == commands[-1][-1]
+    name = commands[0][commands[0].index("--name") + 1]
+    assert commands[-2][-1] == name
+    assert commands[-1][commands[-1].index("--filter") + 1] == f"name={name}"
 
 
 def test_inspection_reports_effective_settings_not_environment(commands):
@@ -242,12 +245,15 @@ def test_exec_timeout_is_preserved_when_cleanup_verification_fails(
     subject = docker.DockerValidationProvider().start(launch_spec())
     original = docker._command
     timeout = ProviderError("Docker operation exceeded its deadline")
+    removed = False
 
     def fail_exec_and_verification(argv, *args):
+        nonlocal removed
         if argv[1] == "exec":
             raise timeout
-        if argv[1:4] == ["inspect", "--format", "{{.Id}}"]:
+        if argv[1] == "ps" and removed:
             return 1, "", "Docker daemon unavailable"
+        removed = removed or argv[1] == "rm"
         return original(argv, *args)
 
     monkeypatch.setattr(docker, "_command", fail_exec_and_verification)
@@ -256,6 +262,83 @@ def test_exec_timeout_is_preserved_when_cleanup_verification_fails(
     assert error.value.__cause__ is timeout
     assert commands[-1][1:4] == ["rm", "--force", "--volumes"]
     assert not subject._stopped
+
+
+# Engines word a missing container differently; cleanup must not depend on it.
+MISSING_CONTAINER_ERRORS = [
+    "Error: No such container: openenv-validation-x",
+    'Error response from daemon: no container with name or ID "x" found: '
+    "no such container",
+]
+
+
+@pytest.mark.parametrize("missing_error", MISSING_CONTAINER_ERRORS)
+def test_cleanup_verifies_removal_by_listing_not_error_text(
+    commands, monkeypatch, missing_error
+):
+    subject = docker.DockerValidationProvider().start(launch_spec())
+    original = docker._command
+
+    def vanished_during_rm(argv, *args):
+        if argv[1] == "rm":
+            original(argv, *args)
+            return 1, "", missing_error
+        return original(argv, *args)
+
+    monkeypatch.setattr(docker, "_command", vanished_during_rm)
+    subject.stop()
+    assert subject._stopped
+    assert [call[1] for call in commands[-3:]] == ["ps", "rm", "ps"]
+    assert not any(call[1] == "inspect" for call in commands[-3:])
+
+
+@pytest.mark.parametrize("missing_error", MISSING_CONTAINER_ERRORS)
+def test_failed_removal_is_reported_whatever_the_engine_says(
+    commands, monkeypatch, missing_error
+):
+    subject = docker.DockerValidationProvider().start(launch_spec())
+    original = docker._command
+
+    def rm_fails_but_container_remains(argv, *args):
+        if argv[1] == "rm":
+            commands.append(argv)
+            return 1, "", missing_error
+        return original(argv, *args)
+
+    monkeypatch.setattr(docker, "_command", rm_fails_but_container_remains)
+    with pytest.raises(ProviderError, match="Could not remove validation container"):
+        subject.stop()
+    assert not subject._stopped
+
+
+def test_cleanup_skips_a_container_that_is_already_gone(commands, monkeypatch):
+    subject = docker.DockerValidationProvider().start(launch_spec())
+    original = docker._command
+
+    def already_gone(argv, *args):
+        if argv[1] == "ps":
+            commands.append(argv)
+            return 0, "", ""
+        return original(argv, *args)
+
+    monkeypatch.setattr(docker, "_command", already_gone)
+    subject.stop()
+    assert subject._stopped
+    assert not any(call[1] == "rm" for call in commands)
+
+
+def test_unreachable_engine_is_never_treated_as_removed(commands, monkeypatch):
+    subject = docker.DockerValidationProvider().start(launch_spec())
+
+    def unreachable(argv, *args):
+        commands.append(argv)
+        return 1, "", "Cannot connect to the Docker daemon"
+
+    monkeypatch.setattr(docker, "_command", unreachable)
+    with pytest.raises(ProviderError, match="ownership"):
+        subject.stop()
+    assert not subject._stopped
+    assert not any(call[1] == "rm" for call in commands)
 
 
 def test_exec_preserves_argv_and_redacts_credentials(commands, monkeypatch):
@@ -406,11 +489,13 @@ def test_readiness_never_follows_redirects():
 
 def test_cleanup_refuses_a_container_with_another_owner(commands, monkeypatch):
     subject = docker.DockerValidationProvider().start(launch_spec())
-    monkeypatch.setattr(
-        docker,
-        "_command",
-        lambda *a: (0, json.dumps([details(run_id="other-run")]), ""),
-    )
+
+    def foreign(argv, *args):
+        commands.append(argv)
+        # The name filter also matches a sibling whose name has ours as a prefix.
+        return 0, f"{subject.name}-2\ttest-run\n{subject.name}\tother-run\n", ""
+
+    monkeypatch.setattr(docker, "_command", foreign)
     with pytest.raises(ProviderError, match="another owner"):
         subject.stop()
     assert not any(call[1] == "rm" for call in commands)
@@ -432,24 +517,23 @@ def test_large_image_metadata_cannot_prevent_cleanup_after_inspection_failure(
     monkeypatch,
 ):
     calls = []
-    removed = False
+    containers = {}
 
     def run(argv, *args):
-        nonlocal removed
         calls.append(argv)
+        if argv[1] == "create":
+            containers[argv[argv.index("--name") + 1]] = "test-run"
+        if argv[1] == "ps":
+            return 0, listing(argv, containers), ""
         if argv[1] == "inspect":
-            if removed:
-                return 1, "", "No such container"
-            if "--format" in argv:
-                return 0, "test-run\n", ""
             # Simulate the retained tail after image metadata exceeds 64 KiB.
             return 0, "x" * docker._MAX_OUTPUT, ""
         if argv[1] == "rm":
-            removed = True
+            containers.pop(argv[-1], None)
         return 0, "created", ""
 
     monkeypatch.setattr(docker, "_command", run)
     with pytest.raises(StartupError, match="invalid inspection evidence"):
         docker.DockerValidationProvider().start(launch_spec())
-    assert removed
-    assert calls[-1][1:4] == ["inspect", "--format", "{{.Id}}"]
+    assert not containers
+    assert [call[1] for call in calls[-3:]] == ["ps", "rm", "ps"]

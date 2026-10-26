@@ -53,7 +53,7 @@ Documentation improvements are always welcome:
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
-4. Run tests: `pytest`
+4. Run tests: `PYTHONPATH=src:envs uv run pytest tests/`
 5. Submit a pull request
 
 ## Development Setup
@@ -63,14 +63,15 @@ Documentation improvements are always welcome:
 git clone https://github.com/YOUR_USERNAME/OpenEnv.git
 cd OpenEnv
 
-# Install in development mode
-pip install -e ".[dev]"
+# Install in development mode, with the dev tools
+uv sync
 
 # Run tests
-pytest
+PYTHONPATH=src:envs uv run pytest tests/
 
 # Run linting
-ruff check .
+uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
 ```
 
 ## Code Style
@@ -82,7 +83,7 @@ ruff check .
 
 ## Coordination
 
-OpenEnv is openly governed by a technical committee that includes Meta-PyTorch, Reflection, Unsloth, Modal, Prime Intellect, Nvidia, Mercor, Fleet AI, Microsoft, Hugging Face, RadixArk, and Nebius. The committee coordinates project direction, major technical decisions, RFCs, and release planning in public.
+OpenEnv is openly governed by a technical committee that coordinates project direction, major technical decisions, RFCs, and release planning in public. The [charter](https://github.com/huggingface/OpenEnv/blob/main/GOVERNANCE.md) explains how it works, and the [README](https://github.com/huggingface/OpenEnv#community-support--acknowledgments) lists the committee members and supporters.
 
 Use the [OpenEnv repository](https://github.com/huggingface/OpenEnv) to file
 issues, discuss substantial changes, and submit pull requests.
