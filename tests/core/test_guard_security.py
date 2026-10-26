@@ -166,6 +166,41 @@ def test_websocket_unguarded_when_disabled(monkeypatch):
     assert _ws_reset(app, "198.51.100.1") == "observation"
 
 
+def test_websocket_passive_mode_logs_and_accepts(monkeypatch, caplog):
+    blocked = _unique_ip()
+    app = _make_app(
+        monkeypatch,
+        OPENENV_GUARD_ENABLED="1",
+        OPENENV_GUARD_PASSIVE_MODE="1",
+        OPENENV_GUARD_BLOCKED_IPS=blocked,
+    )
+    assert _ws_reset(app, blocked) == "observation"
+    assert "would be refused" in caplog.text
+
+
+def test_guard_initializes_at_startup(monkeypatch, caplog):
+    app = _make_app(
+        monkeypatch,
+        OPENENV_GUARD_ENABLED="1",
+        OPENENV_GUARD_REDIS_URL="redis://127.0.0.1:1",
+    )
+    with TestClient(app):
+        assert "Redis unavailable during startup initialization" in caplog.text
+
+
+def test_websocket_refused_while_redis_unreachable(monkeypatch):
+    ip = _unique_ip()
+    app = _make_app(
+        monkeypatch,
+        OPENENV_GUARD_ENABLED="1",
+        OPENENV_GUARD_REDIS_URL="redis://127.0.0.1:1",
+    )
+    # A WebSocket as the first request must not fall back to in-memory state.
+    assert _ws_refusal_code(app, ip) == 1013
+    with TestClient(app, client=(ip, 50000)) as client:
+        assert client.get("/health").status_code == 503
+
+
 async def test_full_bundle_mapping(monkeypatch):
     for name in list(os.environ):
         if name.startswith("OPENENV_GUARD_"):

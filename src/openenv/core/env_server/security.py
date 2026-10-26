@@ -20,14 +20,19 @@ checks on the handshake: ban, IP lists, a separate rate-limit bucket and
 penetration detection on the path, query and headers. A refused handshake is
 closed before `accept()`, so the client gets HTTP 403 on the upgrade and no
 socket. Messages on an accepted connection are not screened, for the same
-reason request bodies are not by default.
+reason request bodies are not by default. In passive mode a handshake that
+would be refused is logged and accepted. With Redis configured, the guard
+initializes at startup; while Redis is unreachable a handshake is closed with
+1013, as an HTTP request gets 503.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
+from starlette import status
 from starlette.exceptions import WebSocketException
 from starlette.websockets import WebSocket
 
@@ -158,19 +163,47 @@ def _build_security_config() -> Any:
 class _WebSocketGuardMiddleware:
     # SecurityMiddleware is a BaseHTTPMiddleware, which never sees websocket
     # scopes, so every handshake goes through fastapi-guard's guard_websocket.
-    def __init__(self, app: Any, guard_websocket: Any) -> None:
+    def __init__(self, app: Any, config: Any) -> None:
+        from guard import guard_websocket
+        from guard.lifespan import _find_security_redis_handler, guard_startup
+
         self.app = app
+        self.config = config
         self.guard_websocket = guard_websocket
+        # guard_websocket reads Redis through this; None means not connected.
+        self.find_redis = _find_security_redis_handler
+        self.guard_startup = guard_startup
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "websocket":
             websocket = WebSocket(scope, receive, send)
+            if not await self._redis_ready(scope["app"]):
+                # The HTTP side answers 503 until Redis is reachable.
+                await websocket.close(
+                    code=status.WS_1013_TRY_AGAIN_LATER,
+                    reason="Service temporarily unavailable",
+                )
+                return
             try:
                 await self.guard_websocket(websocket)
             except WebSocketException as exc:
-                await websocket.close(code=exc.code, reason=exc.reason)
-                return
+                if not self.config.passive_mode:
+                    await websocket.close(code=exc.code, reason=exc.reason)
+                    return
+                logging.getLogger(__name__).warning(
+                    "Passive mode: WebSocket %s from %s would be refused: %s",
+                    websocket.url.path,
+                    getattr(websocket.state, "client_ip", None),
+                    exc.reason,
+                )
         await self.app(scope, receive, send)
+
+    async def _redis_ready(self, app: Any) -> bool:
+        if not self.config.enable_redis or self.find_redis(app) is not None:
+            return True
+        # Retry on each handshake, like the HTTP side's first request.
+        await self.guard_startup(app)
+        return self.find_redis(app) is not None
 
 
 def attach_guard(app: Any) -> None:
@@ -183,13 +216,18 @@ def attach_guard(app: Any) -> None:
     if getattr(app.state, "guard_attached", False):
         return
     try:
-        from guard import guard_websocket, SecurityMiddleware
+        from guard import SecurityMiddleware
+        from guard.lifespan import make_lifespan
     except ImportError as exc:
         raise ImportError(
             "OPENENV_GUARD_ENABLED requires fastapi-guard. "
             'Install it with: pip install "openenv[security]"'
         ) from exc
 
-    app.add_middleware(SecurityMiddleware, config=_build_security_config())
-    app.add_middleware(_WebSocketGuardMiddleware, guard_websocket=guard_websocket)
+    config = _build_security_config()
+    app.add_middleware(SecurityMiddleware, config=config)
+    app.add_middleware(_WebSocketGuardMiddleware, config=config)
+    # Initialize the guard (Redis included) at startup, so a WebSocket-only
+    # worker never runs on in-memory state.
+    app.router.lifespan_context = make_lifespan(app.router.lifespan_context)
     app.state.guard_attached = True
