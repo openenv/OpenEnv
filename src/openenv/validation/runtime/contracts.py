@@ -468,3 +468,89 @@ class ContainmentEvidence(BaseModel):
     allotted: list[str]
     allotted_writable: list[str]
     writable: list[str] = Field(max_length=1024)
+
+
+class CgroupLimits(BaseModel):
+    """
+    Effective cgroup v2 limits read from inside the subject.
+
+    `None` means the limit is `max`, i.e. not enforced.
+
+    Attributes:
+        memory_max (`int`, *optional*):
+            `memory.max` in bytes.
+        swap_max (`int`, *optional*):
+            `memory.swap.max` in bytes.
+        cpu_quota (`int`, *optional*):
+            CPU time allowed per period, in microseconds.
+        cpu_period (`int`):
+            CPU period in microseconds.
+        pids_max (`int`, *optional*):
+            `pids.max`.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    memory_max: int | None = Field(ge=0)
+    swap_max: int | None = Field(ge=0)
+    cpu_quota: int | None = Field(ge=0)
+    cpu_period: int = Field(gt=0)
+    pids_max: int | None = Field(ge=0)
+
+
+class WritableRoot(BaseModel):
+    """
+    Capacity of one writable root, from `statvfs` inside the subject.
+
+    Attributes:
+        path (`str`):
+            Path inside the subject.
+        size_bytes (`int`):
+            Total capacity of the filesystem mounted there.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    size_bytes: int = Field(ge=0)
+
+
+class QualificationProbe(BaseModel):
+    """
+    One bounded stress probe, run in a disposable subject from the same image.
+
+    Attributes:
+        kind (`str`):
+            `"memory"`, `"pids"`, `"disk"` or `"deadline"`.
+        result (`str`):
+            `"contained"` when the limit stopped the probe, `"escaped"` when it
+            exceeded its budget, `"inconclusive"` otherwise.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["memory", "pids", "disk", "deadline"]
+    result: Literal["contained", "escaped", "inconclusive"]
+
+
+class ResourceEvidence(BaseModel):
+    """
+    Provider-neutral evidence for `runtime.resource_bounds`.
+
+    Attributes:
+        schema_version (`int`):
+            Evidence format version.
+        cgroup ([`~openenv.validation.runtime.contracts.CgroupLimits`], *optional*):
+            Limits measured in the subject; `None` if they could not be read.
+        writable (`list[WritableRoot]`):
+            Capacity of every writable root.
+        qualification (`list[QualificationProbe]`):
+            Enforcement measured by stress probes.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    cgroup: CgroupLimits | None
+    writable: list[WritableRoot]
+    qualification: list[QualificationProbe]
