@@ -85,8 +85,7 @@ class Sequential(Rubric):
         else:
             # Continue with sync path
             if first_result == 0.0:
-                self._run_forward_pre_hooks(action, observation, start=ran)
-                return self._finish_forward(action, observation, 0.0)
+                return self._finish_sync(action, observation, 0.0, ran)
 
             final_result = first_result
             for i, rubric in enumerate(self._rubric_list[1:], start=1):
@@ -102,16 +101,21 @@ class Sequential(Rubric):
                         ran,
                     )
                 if score == 0.0:
-                    self._run_forward_pre_hooks(action, observation, start=ran)
-                    return self._finish_forward(action, observation, 0.0)
+                    return self._finish_sync(action, observation, 0.0, ran)
                 final_result = score
 
-            # All sync - check if in async context
-            if _in_async_context():
-                return self._wrap_sync_result(action, observation, final_result, ran)
-            else:
-                self._run_forward_pre_hooks(action, observation, start=ran)
-                return self._finish_forward(action, observation, final_result)
+            return self._finish_sync(action, observation, final_result, ran)
+
+    def _finish_sync(self, action, observation, result, ran=0):
+        """Finish a run where every evaluated child was sync.
+
+        In an async context, return an awaitable even when a child stopped
+        the chain, so callers can always ``await`` the result.
+        """
+        if _in_async_context():
+            return self._wrap_sync_result(action, observation, result, ran)
+        self._run_forward_pre_hooks(action, observation, start=ran)
+        return self._finish_forward(action, observation, result)
 
     async def _empty_async(self, action, observation):
         """Async path for empty sequential."""
