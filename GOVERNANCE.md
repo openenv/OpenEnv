@@ -15,13 +15,15 @@ The scope now spans the full agentic-RL loop, not environments alone (see below)
 
 ## Context
 
-OpenEnv launched in October 2025 as a joint project between Hugging Face and Meta (Meta-PyTorch), [introduced](https://www.youtube.com/watch?v=EflwqcbRYYs) at the PyTorch Conference as an open space for building, sharing, and running agentic environments, with an interface inspired by Gymnasium. In June 2026 the repository moved to huggingface/OpenEnv and stewardship broadened from the two founders to a multi-company Technical Committee: Meta-PyTorch, Reflection, Nvidia, Microsoft, Prime Intellect, Mercor, Fleet AI, Modal, Unsloth, and Hugging Face.
+OpenEnv launched in October 2025 as a joint project between Hugging Face and Meta (Meta-PyTorch), [introduced](https://www.youtube.com/watch?v=EflwqcbRYYs) at the PyTorch Conference as an open space for building, sharing, and running agentic environments, with an interface inspired by Gymnasium. In June 2026 the repository moved to huggingface/OpenEnv and stewardship broadened from the two founders to a multi-company Technical Committee: Meta-PyTorch, Reflection, Nvidia, Microsoft, Prime Intellect, Mercor, Fleet AI, Modal, Unsloth, BenchFlow, and Hugging Face.
 
 ### Community and adoption
 
 * **Hackathons:** an in-person [hackathon](https://cerebralvalley.ai/e/openenv-hackathon-sf/hackathon/gallery) with 200 participants in San Francisco (March 2026) brought together data and environment partners including Mercor, Fleet AI, Snorkel AI, Scale AI, Patronus AI, and Halluminate, followed by the world’s largest AI [hackathon](https://www.linkedin.com/posts/scaler-school-of-technology_we-just-wrapped-the-grand-finale-of-indias-activity-7454776681455697920-3pVc?utm_source=share&utm_medium=member_desktop&rcm=ACoAABNg2VgBFZcy-AYn3DBx34p5fz0S0bI-JWg) in India (April 2026) with Scaler AI Labs, where ~2,000 on-site attendees contributed hundreds of environments to the hub.
 
 * **AgentBeats challenge with UCB:** [workshop](https://www.youtube.com/watch?v=1jU05MlENOI&t=660s) with UCB on OpenEnv, sponsored by Meta-PyTorch, Hugging Face, and Unsloth.
+
+* **PostTrain Arena (OpenEnv Arena):** an open competition launched with Hugging Face, BenchFlow, and Nebius where the community submits RL training environments evaluated on a pinned open model against held-out benchmarks.
 
 * **Lectures and tutorials:** a GPU MODE [lecture](https://www.youtube.com/watch?v=jMSCJZAEYR8) (Reinforcement Learning, Agents & OpenEnv) and a [bootcamp](https://www.youtube.com/watch?v=kkCNMz0Ptd8) introduced the project to ML systems engineers and the wider community.
 
@@ -69,7 +71,7 @@ In short, “Built for OpenEnv” becomes the default expectation for new enviro
 | **Model authors / labs** *e.g. Meta, Reflection, and others* | Train and judge models on diverse, realistic tasks without bespoke integration per environment or harness. | •  Standardize on the interface •  Contribute realistic environments •  Report what the spec is missing |
 | **Trainer & RL-framework builders** *e.g. TitanRL, TRL, prime-rl, SkyRL, Unsloth* | A stable contract for environments and trajectories so they do not re-implement adapters per source. | •  Ship first-class OpenEnv support •  Co-design the interface via RFCs |
 | **Harness & agent builders** *e.g. OpenClaw, Hermes, Claude Code, Goose* | Wrap a harness once and have it work for training, evaluation, and production, with a standard trajectory format. | •  Adopt the harness wrapping pattern (RFC 005) •  Emit the standard trajectory and event schema •  Keep their control loop, gain portability |
-| **Reward & eval library authors** *e.g. verifiers, Archipelago, APEX, τ-bench* | Define rewards and rubrics once and have them inspectable and comparable across environments. | •  Keep reward logic in their libraries •  Expose reward components through the rubric tree (RFC 004) •  Build evals on top of OpenEnv |
+| **Reward & eval library authors** *e.g. verifiers, Archipelago, APEX, τ-bench, SkillsBench / BenchFlow* | Define rewards and rubrics once and have them inspectable and comparable across environments. | •  Keep reward logic in their libraries •  Expose reward components through the rubric tree (RFC 004) •  Build evals on top of OpenEnv |
 | **Infra & compute providers** *e.g. Modal, neoclouds* | A predictable, container-native deployment and serving target. | •  Support the packaging and transports •  Host environments and agents at scale |
 | **Researchers** *e.g. Stanford, UC Berkeley* | Low-friction access to many environments and reproducible baselines. | •  Use and cite OpenEnv •  Contribute environments and feedback |
 

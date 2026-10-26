@@ -913,7 +913,7 @@ wheels = [
 
 [[package]]
 name = "openenv"
-version = "0.9.1.dev0"
+version = "0.10.1.dev0"
 source = { directory = "../../" }
 dependencies = [
     { name = "fastapi" },
