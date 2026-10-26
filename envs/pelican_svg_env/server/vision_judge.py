@@ -28,6 +28,11 @@ DEFAULT_JUDGE_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 # Weight split between the blind caption and the feature checklist.
 BLIND_WEIGHT = 0.5
 
+# Sent as the bearer token to a `base_url` endpoint when none is configured.
+# Self-hosted servers rarely check it, and the ambient Hugging Face token must
+# not be forwarded to an endpoint the user pointed us at.
+_PLACEHOLDER_API_KEY = "EMPTY"
+
 _CAPTION_PROMPT = (
     "Describe this image in one short sentence. Name the things you can "
     "actually identify. If you cannot tell what it depicts, say so plainly. "
@@ -54,22 +59,36 @@ class VisionClient(Protocol):
 
 
 class HFVisionClient:
-    """Vision client backed by Hugging Face Inference Providers.
+    """Vision client backed by Hugging Face Inference Providers, or any
+    OpenAI-compatible endpoint given a `base_url`.
 
     Args:
         model (`str`, *optional*, defaults to `"Qwen/Qwen2.5-VL-72B-Instruct"`):
-            Repository id of the judge model.
+            Repository id of the judge model, or the model name the endpoint at
+            `base_url` serves.
         api_key (`str`, *optional*):
             Token to authenticate with. Falls back to the ambient Hugging Face
-            token when omitted.
+            token, except with a `base_url`: the endpoint is someone else's
+            server, so the Hugging Face token is never sent to it and a
+            placeholder is used when no key is given.
         timeout (`float`, *optional*, defaults to `120.0`):
             Per-request timeout in seconds.
+        base_url (`str`, *optional*):
+            Base URL of an OpenAI-compatible server to call instead of
+            Inference Providers, for example a local vLLM at
+            `http://localhost:8000/v1`. The model name still travels in the
+            request body, so it must match what that server serves.
 
     Examples:
 
     ```python
     client = HFVisionClient(model="Qwen/Qwen3-VL-30B-A3B-Instruct")
     reply = await client.complete_with_image("What is this?", png)
+
+    local = HFVisionClient(
+        model="Qwen/Qwen2.5-VL-7B-Instruct",
+        base_url="http://localhost:8000/v1",
+    )
     ```
     """
 
@@ -78,11 +97,16 @@ class HFVisionClient:
         model: str = DEFAULT_JUDGE_MODEL,
         api_key: str | None = None,
         timeout: float = 120.0,
+        base_url: str | None = None,
     ):
         from huggingface_hub import get_token
 
         self.model = model
-        self._api_key = api_key or get_token()
+        self.base_url = base_url
+        if base_url:
+            self._api_key = api_key or _PLACEHOLDER_API_KEY
+        else:
+            self._api_key = api_key or get_token()
         self._timeout = timeout
 
     async def complete_with_image(
@@ -108,9 +132,16 @@ class HFVisionClient:
         # synchronous `step()` path runs each call under its own short-lived
         # loop, so a cached client fails with "Event loop is closed" on every
         # request after the first.
-        async with AsyncInferenceClient(
-            api_key=self._api_key, timeout=self._timeout
-        ) as client:
+        client_kwargs: dict[str, Any] = {
+            "api_key": self._api_key,
+            "timeout": self._timeout,
+        }
+        if self.base_url:
+            # `base_url` is the client's alias for `model`, so the two cannot
+            # both be set here. `chat_completion(model=...)` below still names
+            # the model in the request body, which is what the endpoint reads.
+            client_kwargs["base_url"] = self.base_url
+        async with AsyncInferenceClient(**client_kwargs) as client:
             response = await client.chat_completion(
                 model=self.model,
                 messages=[
