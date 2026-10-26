@@ -4,6 +4,14 @@
 #
 # [tool.uv]
 # exclude-newer = "2026-10-10T00:00:00Z"
+#
+# [tool.uv.sources]
+# torch = { index = "pytorch-cpu" }
+#
+# [[tool.uv.index]]
+# name = "pytorch-cpu"
+# url = "https://download.pytorch.org/whl/cpu"
+# explicit = true
 # ///
 # SPDX-License-Identifier: BSD-3-Clause
 
@@ -16,6 +24,10 @@ Only the weights come from the checkpoint. The tokenizer, chat template, model
 config and generation settings are the base model's, at a pinned revision: a
 chat template is a program that sees the question, so the agent's own template
 could write the answer into the prompt.
+
+The job runs on CPU, so torch comes from the CPU-only index: the default wheel
+pulls several GB of CUDA libraries, and that download alone can exceed the
+job's timeout.
 """
 
 import json

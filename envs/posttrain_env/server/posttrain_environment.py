@@ -490,9 +490,12 @@ class PostTrainEnvironment(MCPEnvironment):
             "submitted", self._cancel_timeout_s, self._poll_s
         )
         self._done = True
-        self._reward = result["score"]
+        # A score job that did not run to the end is the grader's fault, not the
+        # agent's: the episode ends unscored, and a missing reward is not zero.
+        scored = score_job.state == "succeeded"
+        self._reward = result["score"] if scored else None
         self._end = {
-            "reason": "submitted",
+            "reason": "submitted" if scored else "score_failed",
             "job_id": score_job.source_job_id,
             "score_job_id": score_job.job_id,
             "score": result,

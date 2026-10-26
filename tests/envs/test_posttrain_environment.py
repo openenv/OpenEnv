@@ -420,13 +420,20 @@ class TestSubmitEpisode:
         assert data["error"]["type"] == "episode_over"
         assert obs.done is True
 
-    def test_failed_score_job_gives_zero_reward(self, env, api):
+    def test_failed_score_job_ends_the_episode_unscored(self, env, api):
         env.reset(task_id="t0_artifact")
         job = self._finished(env, api)
-        api.on_inspect["score"] = {"stage": "ERROR", "running_secs": 10, "logs": []}
+        # The evaluator printed a score, then the job hit its timeout.
+        api.on_inspect["score"] = {
+            "stage": "ERROR",
+            "running_secs": 10,
+            "logs": ['POSTTRAIN_SCORE {"score": 1.0}'],
+        }
         data, obs = call(env, "submit", job_id=job["job_id"])
         assert data["result"] == {"status": "failed", "score": 0.0}
-        assert obs.reward == 0.0
+        assert obs.done is True
+        assert obs.reward is None
+        assert obs.metadata["episode_end"]["reason"] == "score_failed"
 
     def test_max_steps_ends_the_episode_and_cancels_jobs(self, api):
         env = PostTrainEnvironment(

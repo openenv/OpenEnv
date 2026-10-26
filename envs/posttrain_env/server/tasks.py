@@ -111,7 +111,7 @@ TASKS = {
         max_dev_evals=3,
         eval_script="t0_arithmetic_format_eval.py",
         eval_flavor="cpu-upgrade",
-        eval_timeout_minutes=20,
+        eval_timeout_minutes=30,
         dev_seed=1234,
     ),
 }

@@ -78,8 +78,11 @@ while a job is still running or a cancellation was never confirmed.
 ## Episode end
 
 An episode ends when the agent calls `submit`, after `max_steps` tool calls
-(default 100) or after the task's time limit. The last two give reward 0.
-Ending the episode cancels every live job. `reset` cancels the previous
+(default 100) or after the task's time limit. The last two give reward 0. If
+the score job itself fails, times out or is cancelled, the episode ends
+unscored: `reward` is `None` and `episode_end.reason` is `score_failed`, since
+the fault is the grader's. Trainers should drop such a rollout, not count it as
+zero. Ending the episode cancels every live job. `reset` cancels the previous
 episode's jobs first and raises if HF Jobs does not confirm a cancellation,
 since that job may still be running and billing.
 
@@ -131,6 +134,11 @@ with PostTrainEnv(base_url="http://localhost:8000", message_timeout_s=3600).sync
     env.call_tool("jobs_wait", job_id=job["job_id"], timeout_s=300)
     print(env.call_tool("submit", job_id=job["job_id"]))
 ```
+
+[`examples/posttrain_env_agent.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/posttrain_env_agent.py)
+plays a whole episode with an LLM through any OpenAI-compatible endpoint,
+Hugging Face Inference Providers by default. The agent's API key is its own;
+it never needs the broker's token.
 
 ## Tests
 
