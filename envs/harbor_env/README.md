@@ -272,6 +272,23 @@ eval backend — and `OPENENV_ALLOW_RAW_LOGPROBS=1` overrides that if you know b
 The gap is compared rather than the values themselves because a data-parallel engine answers
 consecutive calls from different replicas; comparing values directly misread one such engine.
 
+## Training with TRL
+
+TRL trains a policy on these rollouts with `AsyncGRPOTrainer` (`trl.experimental`, TRL 1.15 or
+later): you pass a `HarborSessionFactory` (a `functools.partial` with the server URL), and a
+`HarnessRolloutWorker` calls it with its sampling policy, opens one session per rollout and trains on each session's validated `TrainingTrace`.
+
+- [`examples/async_grpo_harbor`](https://github.com/huggingface/trl/tree/main/examples/async_grpo_harbor):
+  a complete training script, with local setup and a Hugging Face Jobs launcher.
+- [TRL's OpenEnv guide](https://huggingface.co/docs/trl/openenv): how the worker, the reward and the
+  capture fit together.
+- [The ultimate guide to multi-harness RL](https://huggingface.co/spaces/FineEnvs/multi-harness-rl):
+  one policy trained across OpenCode, Claude Code, Codex and Mini-SWE-Agent through this
+  environment. Its runnable code is the
+  [FineEnvs multi-harness tutorial](https://github.com/adithya-s-k/FineEnvs/tree/main/05-multi-harness-rl),
+  and its [models, datasets and environments](https://huggingface.co/collections/FineEnvs/smoldataenvs-multi-harness-rl-6abdfaaa8d74dacd481d5212)
+  are in one collection.
+
 ## The web UI
 
 `serve` (and a Space made with `push`) serves a UI at `/web`, in four tabs.

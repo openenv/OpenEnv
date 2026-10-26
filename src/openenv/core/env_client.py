@@ -46,7 +46,7 @@ from urllib.parse import urlsplit
 
 from .client_types import StateT, StepResult
 from .containers.runtime import LocalDockerProvider, UVProvider
-from .utils import convert_to_ws_url
+from .utils import convert_to_ws_url, hf_space_subdomain
 
 if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from .sync_client import SyncEnvClient
 
 from websockets.asyncio.client import connect as ws_connect
+from websockets.exceptions import ConnectionClosed
 from websockets.protocol import State
 
 ActT = TypeVar("ActT")
@@ -146,7 +147,17 @@ class _BootstrapResult(Coroutine, Generic[EnvClientT]):
 
     async def _resolve_async(self) -> EnvClientT:
         client = self._consume()
-        await client.connect()
+        try:
+            await client.connect()
+        except asyncio.CancelledError:
+            # _connect_async releases the provider on ordinary failures, but
+            # cancellation bypasses its `except Exception`. No client reaches
+            # the caller, so release the provider here before propagating the
+            # original cancellation. A repeated cancellation or a stop failure
+            # during cleanup must not replace it.
+            with suppress(Exception, asyncio.CancelledError):
+                await client.close()
+            raise
         return client
 
     def _ensure_coro(self) -> "Coroutine[Any, Any, EnvClientT]":
@@ -315,6 +326,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
         websocket_ping_timeout_s: Optional[float] = 20.0,
         provider: Optional["ContainerProvider | RuntimeProvider"] = None,
         mode: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize environment client.
@@ -342,6 +354,9 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
                 `'production'` for MCP JSON-RPC protocol. Can also be set via the
                 `OPENENV_CLIENT_MODE` environment variable. Constructor parameter takes
                 precedence over environment variable. Case-insensitive.
+            headers (`dict[str, str]`, *optional*):
+                Extra HTTP headers sent when opening the connection, e.g.
+                `{"Authorization": f"Bearer {hf_token}"}` for a private Hugging Face Space.
         """
         if base_url is None and provider is None:
             raise ValueError("EnvClient requires either base_url or provider.")
@@ -358,6 +373,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
         )  # Convert MB to bytes
         self._websocket_ping_interval_s = websocket_ping_interval_s
         self._websocket_ping_timeout_s = websocket_ping_timeout_s
+        self._headers = headers
         self._provider = provider
         self._provider_stopped = False
         self._provider_cleanup_pending = False
@@ -450,6 +466,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
                 "websocket_ping_interval_s": self._websocket_ping_interval_s,
                 "websocket_ping_timeout_s": self._websocket_ping_timeout_s,
                 "mode": self._mode,
+                "headers": self._headers,
             }
             constructor_kwargs = {}
             for name, value in candidate_kwargs.items():
@@ -602,6 +619,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
                 max_size=self._max_message_size,
                 ping_interval=self._websocket_ping_interval_s,
                 ping_timeout=self._websocket_ping_timeout_s,
+                additional_headers=self._headers,
                 **connect_kwargs,
             )
             self._ws_loop = asyncio.get_running_loop()
@@ -715,7 +733,12 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
 
     async def _send_and_receive(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Send a message and wait for response."""
-        await self._send(message)
+        try:
+            await self._send(message)
+        except ConnectionClosed:
+            # A refused session (e.g. at capacity) sends an error frame then closes. If
+            # the close beats our send, read the queued frame (recv() re-raises if none).
+            pass
         response = await self._receive()
 
         # Check for error response
@@ -826,7 +849,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             # Docker mode: pull from HF registry
             docker_provider = provider or LocalDockerProvider()
             tag = provider_kwargs.pop("tag", "latest")
-            image = f"registry.hf.space/{repo_id.replace('/', '-')}:{tag}"
+            image = f"registry.hf.space/{hf_space_subdomain(repo_id)}:{tag}"
             try:
                 base_url = docker_provider.start_container(
                     image, **start_args, **provider_kwargs

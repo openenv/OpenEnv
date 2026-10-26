@@ -50,6 +50,7 @@ class StepResult(Generic[ObsT]):
     observation: ObsT
     reward: Optional[float] = None
     done: bool = False
+    metadata: Optional[Dict[str, Any]] = None
 
 
 logger = logging.getLogger(__name__)

@@ -4,20 +4,11 @@ An e2e framework for creating, deploying and using isolated execution environmen
 
 In addition to making it easier for researchers and RL framework writers, we also provide tools for environment creators making it easier for them to create richer environments and make them available over familiar protocols like HTTP and packaged using canonical technologies like docker. Environment creators can use the OpenEnv framework to create environments that are isolated, secure, and easy to deploy and use.
 
-OpenEnv is openly governed by a technical committee that includes Meta-PyTorch, Reflection, Unsloth, Modal, Prime Intellect, Nvidia, Mercor, Fleet AI, Microsoft, Hugging Face, RadixArk, and Nebius. The committee coordinates project direction, major technical decisions, RFCs, and release planning through the public issue tracker, pull requests, and RFC process.
-
+> [!NOTE]
+> OpenEnv is in early development, see the note in the [project README](../../../README.md) before contributing. The [README](../../../README.md#community-support--acknowledgments) lists the technical committee that governs the project, and the [charter](../../../GOVERNANCE.md) explains how it works.
 
 ## Overview
 `openenv.core` provides the foundational building blocks for creating and interacting with containerized environments over HTTP. It enables you to build agent environments that can be deployed as Docker containers and accessed via a simple HTTP API.
-
-> ⚠️ **Early Development Warning** OpenEnv is currently in an experimental
-> stage. You should expect bugs, incomplete features, and APIs that may change
-> in future versions. The project welcomes bugfixes, but significant changes
-> should be discussed before implementation so the technical committee and
-> community can coordinate scope, compatibility, and release timing. It's
-> recommended that you signal your intention to contribute in the issue tracker,
-> either by filing a new issue or by claiming an existing one.
-
 
 # OpenEnv Core
 

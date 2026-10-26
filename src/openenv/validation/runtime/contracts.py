@@ -274,3 +274,90 @@ class RuntimeEvidence:
     failure_phase: str | None = None
     failure_reason: str | None = None
     reset_observation_schema_json: str | None = None
+
+
+class ProbeOutcome(BaseModel):
+    """
+    One connection attempt, classified without trusting its error text.
+
+    Attributes:
+        result (`str`):
+            `"reachable"`, `"denied"` (a network-level refusal such as ENETUNREACH),
+            or `"inconclusive"` (timeouts, permission errors and anything else).
+        errno (`int`, *optional*):
+            The OS error number behind a denial or an inconclusive attempt.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    result: Literal["reachable", "denied", "inconclusive"]
+    errno: int | None = None
+
+
+class NetworkProbe(BaseModel):
+    """
+    The same probe run from a control namespace and from the subject's namespace.
+
+    Attributes:
+        kind (`str`):
+            `"tcp"`, `"udp"` or `"icmp"` towards a validator-owned sink.
+        control ([`~openenv.validation.runtime.contracts.ProbeOutcome`]):
+            Outcome from a validator-owned container with ordinary networking.
+        subject ([`~openenv.validation.runtime.contracts.ProbeOutcome`]):
+            Outcome from the subject's network namespace.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["tcp", "udp", "icmp"]
+    control: ProbeOutcome
+    subject: ProbeOutcome
+
+
+class NamespaceEvidence(BaseModel):
+    """
+    Effective interfaces and routes observed inside the subject's network namespace.
+
+    Attributes:
+        interfaces (`list[str]`):
+            Interface names in the namespace.
+        default_route (`bool`):
+            Whether an IPv4 default route exists.
+        ipv6_non_loopback (`int`):
+            IPv6 addresses on interfaces other than `lo`.
+        listening_ports (`list[int]`):
+            TCP ports listening in the namespace.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    interfaces: list[str]
+    default_route: bool
+    ipv6_non_loopback: int = Field(ge=0)
+    listening_ports: list[int] = Field(default_factory=list)
+
+
+class NetworkEvidence(BaseModel):
+    """
+    Provider-neutral evidence for `runtime.network_policy`.
+
+    Attributes:
+        schema_version (`int`):
+            Evidence format version.
+        requested_mode (`str`):
+            The declared mode the subject was launched under.
+        subject_network_mode (`str`):
+            The engine's inspected network mode for the subject.
+        namespace ([`~openenv.validation.runtime.contracts.NamespaceEvidence`]):
+            What the subject's namespace contains.
+        probes (`list[NetworkProbe]`):
+            Controlled reachability measurements.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    requested_mode: Literal["public", "no-network"]
+    subject_network_mode: str
+    namespace: NamespaceEvidence
+    probes: list[NetworkProbe]

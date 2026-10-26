@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import math
 import pathlib
+import threading
 
 import pytest
 
@@ -768,6 +769,53 @@ class TestEnvironment:
         assert observation.done
         assert observation.reward == pytest.approx(1.0)
         assert environment.state.submitted
+
+    def test_step_async_scores_off_the_event_loop(self, monkeypatch):
+        """Scoring is CPU-bound, so it must not stall other sessions sharing
+        the server's event loop."""
+        from envs.pelican_svg_env.server import scoring
+
+        loop_ran = threading.Event()
+        evaluate_deterministic = scoring.evaluate_deterministic
+
+        def evaluate_once_the_loop_ran(response, task):
+            assert loop_ran.wait(timeout=5), "scoring blocked the event loop"
+            return evaluate_deterministic(response, task)
+
+        monkeypatch.setattr(
+            scoring, "evaluate_deterministic", evaluate_once_the_loop_ran
+        )
+        environment = self.environment(subject="pelican", vehicle="bicycle")
+        environment.reset()
+
+        async def other_session():
+            loop_ran.set()
+
+        async def run():
+            action = PelicanSvgAction(response=fixture("good_pelican_bike"))
+            observation, _ = await asyncio.gather(
+                environment.step_async(action), other_session()
+            )
+            return observation
+
+        assert asyncio.run(run()).reward == pytest.approx(1.0)
+
+    def test_pelican_svg_web_playground(self):
+        environment = self.environment(subject="pelican", vehicle="bicycle")
+        task = environment.render_web(environment.reset().model_dump())
+        assert "pelican" in task
+        assert "#" not in task  # theme colours only, so it reads in dark mode
+        drawing = environment.render_web(
+            environment.step(
+                PelicanSvgAction(response=fixture("good_pelican_bike"))
+            ).model_dump()
+        )
+        assert (
+            '<img alt="Pelican SVG drawing" src="data:image/svg+xml;base64,' in drawing
+        )
+        assert "<svg" not in drawing  # never inlined, so its scripts can't run
+        assert "reward 1.00" in drawing
+        assert environment.render_web({}) is None
 
     def test_task_can_be_pinned_by_id(self):
         """A benchmark run must ask every model the same question."""

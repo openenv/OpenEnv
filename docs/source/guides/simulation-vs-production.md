@@ -1,149 +1,31 @@
-# Simulation vs Production Mode
+# Simulation vs Production
 
-OpenEnv has two related but different ideas of "mode":
+An OpenEnv server runs in one of two modes:
 
-- **Simulation mode** is for training, evaluation, and any workflow where the orchestrator controls episode boundaries.
-- **Production mode** is for exposing tools directly to clients over MCP without the training loop controlling `reset()`, `step()`, or `state()`.
+- **Simulation mode** (the default) is for training and evaluation. The caller owns the episode through `reset()`, `step()` and `state()`, and gets a reward and a `done` signal back.
+- **Production mode** serves the environment's MCP tools directly to an agent or another client, with no episode control.
 
-This guide explains when to use each mode and how they interact with MCP tools.
+The same environment class supports both. Simulation mode models trajectory time, production mode models service time.
 
-## The Short Version
+## Routes and Boundaries
 
-Use **simulation mode** when you need:
+OpenEnv keeps two boundaries apart:
 
-- `reset()`, `step()`, and `state()`
-- rewards and `done` signals
-- one action per step in a controlled trajectory
-- training or evaluation loops
+- **Infrastructure boundary**: `/ws`, `/reset`, `/step` and `/state`, used by the training or evaluation loop.
+- **Agent boundary**: MCP tools over `/mcp`.
 
-Use **production mode** when you need:
+| Route | Simulation | Production |
+|---|---|---|
+| `/mcp` | yes | yes |
+| `/ws` | yes | yes (infrastructure only) |
+| `/reset`, `/step`, `/state` | yes | no |
+| `/harness` | no | yes, when the environment is a `HarnessEnvironment` |
 
-- direct MCP tool access
-- no simulation control routes
-- an agent or client talking to tools as a live service
-- the environment to get out of the way and expose the tool interface directly
+Production mode still registers `/ws`, but agents should never reach it. If agents can reach the service directly, restrict `/ws` at the network, auth or gateway layer.
 
-## Why OpenEnv Has Two Modes
+## Setting the Mode
 
-This split follows the core OpenEnv design principles:
-
-- training and evaluation need a controlled step loop
-- production integrations need direct tool access
-- the same environment should support both without inventing separate environment implementations
-
-In practice, simulation mode models **trajectory time** and production mode models **service time**.
-
-## Simulation Mode
-
-Simulation mode is the default environment-control model.
-
-In simulation mode, the orchestrator owns the episode:
-
-1. Call `reset()` to start an episode.
-2. Call `step()` for each action.
-3. Read `reward`, `done`, and `state()` as part of the rollout.
-
-For environments with MCP tools, the canonical simulation-mode pattern is still `step()`.
-
-```python
-from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
-
-obs = env.step(ListToolsAction())
-
-obs = env.step(
-    CallToolAction(
-        tool_name="echo_message",
-        arguments={"message": "Hello from simulation mode"},
-    )
-)
-```
-
-That pattern matters because the training loop can then:
-
-- count tool usage as actions
-- assign rewards to tool interactions
-- record a full trajectory
-- preserve the same `reset`/`step` contract across environments
-
-### Simulation-Mode Routes
-
-When an `HTTPEnvServer` registers routes in simulation mode, it exposes the full control surface:
-
-- `/ws`
-- `/mcp`
-- `/reset`
-- `/step`
-- `/state`
-
-This is the right mode for RL training infrastructure and for most environment testing.
-
-## Production Mode
-
-Production mode is for exposing tools directly.
-
-In production mode, clients should interact with MCP tools as a service instead of driving the environment through `reset()` and `step()` as a trajectory loop.
-
-Production mode keeps the MCP surface and removes the HTTP simulation control routes.
-
-### Production-Mode Routes
-
-When an `HTTPEnvServer` registers routes in production mode, OpenEnv does **not** expose:
-
-- `/reset`
-- `/step`
-- `/state`
-
-It still registers `/ws`, because the WebSocket transport remains part of the infrastructure boundary.
-
-That does **not** mean `/ws` should be exposed to agents.
-
-- `/ws` is for orchestration and simulation control
-- `/mcp` is the agent-facing boundary
-- production deployments should restrict `/ws` at the network, auth, or gateway layer if agents can reach the service directly
-
-In other words, production mode removes the HTTP simulation endpoints, but operators must still treat `/ws` as infrastructure-only.
-
-This is the right mode when:
-
-- you are serving a tool-backed environment to external clients
-- you do not want callers controlling episode boundaries
-- the MCP interface is the product surface
-
-### Harness Environments: `WS /harness`
-
-When the environment factory produces a [`HarnessEnvironment`](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md) (RFC 005: an agent harness such as Claude Code running inside the environment), production mode also registers a `/harness` WebSocket, so clients talk to the harness itself:
-
-- each connection gets its own session, which starts the harness and injects the environment's tools, and the server answers with a `session_started` frame
-- each `{"type": "message", "content": "..."}` frame is one conversational turn, streamed back as harness events that end with `turn_complete`
-- a turn is bounded by the harness config's `session_timeout_s`, and a failure ends the session with an `error` event
-
-[Evaluate Claude Code in an Environment](../tutorials/claude-code-harness) serves a harness this way.
-
-## How MCP Fits Into Both Modes
-
-MCP is available in both modes, but the role is different.
-
-### In simulation mode
-
-MCP tools are part of the environment action space.
-
-- tool discovery can still happen
-- tool calls are modeled as actions
-- rewards and episode control remain in the OpenEnv loop
-
-This is why examples such as `examples/echo_mcp_demo.py` use `ListToolsAction` and `CallToolAction` through `step()`.
-
-### In production mode
-
-MCP is the primary interface.
-
-- clients call tools directly
-- OpenEnv does not present simulation-control endpoints
-- the service behaves like a live MCP endpoint, not an RL rollout loop
-
-## Server-Side Configuration
-
-Pass the mode to `create_app`, or set `OPENENV_MODE` (`simulation` or `production`) when the app is created without one. Simulation is the default.
+Pass the mode to `create_app`, or set `OPENENV_MODE` (`simulation` or `production`) when the app is created without one:
 
 ```python
 from openenv.core.env_server.http_server import create_app
@@ -155,7 +37,7 @@ app = create_app(MyEnv, MyAction, MyObservation, mode="production")
 OPENENV_MODE=production uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
-The switch happens when routes are registered, so with `HTTPEnvServer` directly:
+With `HTTPEnvServer` directly, the mode is chosen when routes are registered:
 
 ```python
 from fastapi import FastAPI
@@ -165,38 +47,45 @@ from openenv.core.env_server.types import ServerMode
 
 app = FastAPI()
 server = HTTPEnvServer(env=MyEnv, action_cls=MyAction, observation_cls=MyObservation)
-
-# Training / evaluation
-server.register_routes(app, mode=ServerMode.SIMULATION)
-
-# Direct MCP serving
-server.register_routes(app, mode=ServerMode.PRODUCTION)
+server.register_routes(app, mode=ServerMode.PRODUCTION)  # default: ServerMode.SIMULATION
 ```
 
-`ServerMode.SIMULATION` is the default route-registration mode.
+## MCP Tools in Each Mode
 
-## Client-Side Patterns
+An MCP environment is still an OpenEnv environment, and it can run in either mode.
 
-For simulation-style interaction, use a client that participates in the OpenEnv control loop.
+In **simulation mode**, tool calls are actions. Send them through `step()` so they count as steps, get rewards, can end the episode and land in the trajectory:
 
-Examples:
+```python
+from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
 
-- an environment-specific `EnvClient[...]` subclass
-- `GenericEnvClient(base_url=..., mode="simulation")`
-- `step(ListToolsAction())` and `step(CallToolAction(...))` for MCP-backed environments
+obs = env.step(ListToolsAction())
+obs = env.step(CallToolAction(tool_name="echo_message", arguments={"message": "Hello"}))
+```
 
-For direct MCP access, use an MCP-oriented client.
+`examples/echo_mcp_demo.py` runs this pattern end to end.
 
-Examples:
+In **production mode**, clients call the tools directly through `/mcp`, like any MCP server.
 
-- `MCPToolClient(base_url=...)`
-- environment-specific clients built on top of `MCPToolClient`
+### `step(CallToolAction(...))` or `call_tool()`
 
-`MCPToolClient` defaults to production mode and rejects `mode="simulation"`.
+Environment clients built on `MCPToolClient` (`EchoEnv`, `FinQAEnv`, …) also have `list_tools()` and `call_tool()`. These go to `/mcp`, not through `step()`, so they never produce a reward, a step count or `done`.
 
-## Mode-Aware Tools
+| | `step(CallToolAction(...))` | `await client.call_tool(name, **kwargs)` |
+|---|---|---|
+| Goes through | `step()` (simulation) | `/mcp` |
+| Returns | a `CallToolObservation` (`reward`, `done`, metadata, `obs.result`), wrapped in a `StepResult` over HTTP | the tool's unwrapped return value |
+| On a tool error | an observation you can inspect (`ToolError.error_type`) | raises `RuntimeError` |
 
-`MCPEnvironment` supports mode-aware tool registration, so you can expose different tools depending on how the environment is being used.
+Over HTTP, `step()` returns a `StepResult`: the observation is `result.observation` and the reward is `result.reward`. `obs.result` holds the tool's return value as the tool produced it, often a FastMCP `CallToolResult` (`.data`, `.content`, `.structured_content`), or a dict or plain value from other environments.
+
+Use `step()` for training and evaluation, and `call_tool()` when you only need a tool's output. `MCPToolClient` only supports `mode="production"` and raises `ValueError` otherwise. For simulation over HTTP use the environment's `EnvClient` or `GenericEnvClient(base_url=..., mode="simulation")`. `list_tools()` returns an empty list when the request fails.
+
+Tool calls sent through `step()` time out after 30 seconds by default (`MCP_TOOL_CALL_TIMEOUT`). `MCPEnvironment.step()` takes a `timeout_s`, so an environment whose tools wait on slow work, such as an LLM call, can pass a larger value from its own `step()`.
+
+### Mode-Aware Tools
+
+`MCPEnvironment` can expose different tools in each mode:
 
 ```python
 class MyEnv(MCPEnvironment):
@@ -210,41 +99,25 @@ class MyEnv(MCPEnvironment):
             return "Used by live MCP clients"
 ```
 
-This lets one environment preserve the training contract while still serving a cleaner production surface.
+## Harness Environments: `WS /harness`
 
-## Choosing the Right Mode
+When the environment factory produces a [`HarnessEnvironment`](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md) (an agent harness such as Claude Code running inside the environment), production mode also registers a `/harness` WebSocket, so clients talk to the harness itself:
 
-Choose **simulation mode** if the caller needs to control trajectories.
+- Each connection gets its own session, which starts the harness and injects the environment's tools. The server answers with a `session_started` frame.
+- Each `{"type": "message", "content": "..."}` frame is one conversational turn, streamed back as harness events that end with `turn_complete`.
+- A turn is bounded by the harness config's `session_timeout_s`, and a failure ends the session with an `error` event.
 
-Typical cases:
+[Evaluate Claude Code in an Environment](../tutorials/claude-code-harness) serves a harness this way.
 
-- RL training
-- policy evaluation
-- benchmarking with rewards
-- environments where tool calls should count as agent actions
+## Debugging: "`step()` Is Not Called"
 
-Choose **production mode** if the caller needs direct tool access.
+The WebSocket handler calls `step_async()` when the environment overrides it, and `step()` otherwise (the same for `reset()` and `reset_async()`). An async client can therefore run your action without ever hitting instrumentation you put only in `step()`. If an action seems to skip `step()`, check that:
 
-Typical cases:
-
-- agent runtimes that speak MCP directly
-- demos and hosted services
-- integrations where `reset()` and `step()` should not be public
-
-## Common Mistake
-
-The most common confusion is assuming that "MCP environment" automatically means "production mode only".
-
-That is not the model OpenEnv uses.
-
-- An MCP-backed environment can still run in **simulation mode**.
-- In simulation mode, MCP tool interactions are represented through the OpenEnv step loop.
-- Production mode changes the public control surface, not the underlying environment concept.
+1. You instrumented both `step()` and `step_async()`.
+2. You are not using `call_tool()`, which goes through `/mcp` and never reaches `step()`.
 
 ## Related Reading
 
-- [Core API](../reference/core.md)
-- [Getting Started Tutorials](../tutorials/index)
-- [RFC 002: Environment Spec](https://github.com/huggingface/OpenEnv/blob/main/rfcs/002-env-spec.md)
-- [RFC 005: Agentic Harnesses](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md)
-- [Evaluate Claude Code in an Environment](../tutorials/claude-code-harness): a harness served in both modes
+- [MCP Environments](../tutorials/mcp-environment), with [Echo](../environments/echo) and [FinQA](../environments/finqa) as examples
+- [Core API](../reference/core)
+- [RFC 002: Environment Spec](https://github.com/huggingface/OpenEnv/blob/main/rfcs/002-env-spec.md) and [RFC 005: Agentic Harnesses](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md)

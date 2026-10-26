@@ -1,4 +1,5 @@
 import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from openenv.core.env_server import Environment
@@ -17,6 +18,7 @@ except ImportError as e:
 class Connect4Environment(Environment):
     ROWS = 6
     COLUMNS = 7
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
     def __init__(self, opponent=None):
         super().__init__()
@@ -98,6 +100,40 @@ class Connect4Environment(Environment):
         if np.all(self.board != 0):
             return 0.0, True
         return 0.0, False
+
+    def web_actions(
+        self, observation: Dict[str, Any]
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """The legal columns as buttons."""
+        return [
+            (f"col {c}", {"column": c}) for c in observation.get("legal_actions") or []
+        ]
+
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the 6x7 board: player 1 in the accent colour, player -1 in the text colour."""
+        if "board" not in observation:
+            return None
+        colours = {
+            1: "var(--color-accent)",
+            -1: "var(--body-text-color)",
+            0: "var(--border-color-primary)",
+        }
+        cells = [
+            f'<span style="background:{colours[value]};border-radius:50%"></span>'
+            for row in observation["board"]
+            for value in row
+        ]
+        cells += [
+            f'<span style="text-align:center;font-size:12px;line-height:26px">{c}</span>'
+            for c in range(self.COLUMNS)
+        ]
+        return (
+            '<div role="img" aria-label="Connect4 board" style="display:inline-grid;'
+            "grid-template-columns:repeat(7,26px);grid-auto-rows:26px;gap:4px;padding:10px;"
+            'border:1px solid var(--border-color-primary);border-radius:10px;background:var(--background-fill-secondary)">'
+            + "".join(cells)
+            + "</div>"
+        )
 
     @property
     def state(self):

@@ -1,4 +1,4 @@
-# Reward Design
+# Rewards
 
 Good reward signals are the single biggest lever on RL training outcomes — and the hardest thing to get right. This page covers the design principles that apply in OpenEnv and points to the [Rubrics tutorial](../tutorials/rubrics.md) for the concrete implementation API.
 

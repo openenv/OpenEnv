@@ -10,6 +10,7 @@ numbers instead of paying for the same render again.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -240,7 +241,9 @@ async def evaluate_submission(
     print(evaluation.reward, evaluation.feedback)
     ```
     """
-    evaluation = evaluate_deterministic(response, task)
+    # Parsing and rasterising is CPU-bound, so it runs in a worker thread to
+    # keep the server's event loop free for other sessions.
+    evaluation = await asyncio.to_thread(evaluate_deterministic, response, task)
     enabled = judge is not None
     if judge is None or not evaluation.gate_passed or evaluation.gate.png is None:
         return replace(evaluation, judge_enabled=enabled)

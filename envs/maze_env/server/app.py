@@ -28,22 +28,16 @@ Usage:
     python -m server.app
 """
 
+import os
+
+from openenv.core.env_server.http_server import create_app
+
 # Support both in-repo and standalone imports
 try:
-    # In-repo imports (when running from OpenEnv repository)
-    from openenv.core.env_server.http_server import create_app
-
-    from ..models import MazeAction, MazeObservation
+    from ..models import MazeAction, MazeObservation, MazeState
     from .maze_env_environment import MazeEnvironment
 except ImportError:
-    from models import MazeAction, MazeObservation
-
-    try:
-        # Standalone imports with the current package namespace.
-        from openenv.core.env_server.http_server import create_app
-    except ImportError:
-        # Backward-compatible standalone imports with the legacy namespace.
-        from openenv_core.env_server.http_server import create_app
+    from models import MazeAction, MazeObservation, MazeState
     from server.maze_env_environment import MazeEnvironment
 
 
@@ -53,11 +47,12 @@ app = create_app(
     MazeAction,
     MazeObservation,
     env_name="maze_env",
-    max_concurrent_envs=1,  # increase this number to allow more concurrent WebSocket sessions
+    state_cls=MazeState,
+    max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
 )
 
 
-def main(host: str = "0.0.0.0", port: int = 8000):
+def main():
     """
     Entry point for direct execution via uv run or python -m.
 
@@ -66,17 +61,19 @@ def main(host: str = "0.0.0.0", port: int = 8000):
         uv run --project . server --port 8001
         python -m maze_env.server.app
 
-    Args:
-        host: Host address to bind to (default: "0.0.0.0")
-        port: Port number to listen on (default: 8000)
-
     For production deployments, consider using uvicorn directly with
     multiple workers:
         uvicorn maze_env.server.app:app --workers 4
     """
+    import argparse
+
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

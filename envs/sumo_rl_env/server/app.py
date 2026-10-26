@@ -18,13 +18,13 @@ from openenv.core.env_server import create_app
 # Support both in-repo and standalone imports
 try:
     # In-repo imports (when running from OpenEnv repository)
-    from ..models import SumoAction, SumoObservation
+    from ..models import SumoAction, SumoObservation, SumoState
     from .sumo_environment import SumoEnvironment
 except ImportError as e:
     if "relative import" not in str(e) and "no known parent package" not in str(e):
         raise
     # Standalone imports (when running via uvicorn server.app:app)
-    from models import SumoAction, SumoObservation
+    from models import SumoAction, SumoObservation, SumoState
     from server.sumo_environment import SumoEnvironment
 
 # Get configuration from environment variables
@@ -58,7 +58,11 @@ def create_sumo_environment():
 # Create FastAPI app
 # Pass the factory function instead of an instance for WebSocket session support
 app = create_app(
-    create_sumo_environment, SumoAction, SumoObservation, env_name="sumo_rl_env"
+    create_sumo_environment,
+    SumoAction,
+    SumoObservation,
+    env_name="sumo_rl_env",
+    state_cls=SumoState,
 )
 
 

@@ -1,4 +1,4 @@
-# Collecting rollouts with OpenEnv for supervised training
+# Collect Rollouts for SFT
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/sft_warmup.ipynb)
 

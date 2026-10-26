@@ -116,7 +116,7 @@ HF Dataset Viewer renders `results.jsonl` as `split=train`.
 ## Training captures
 
 A loop-owning session can implement `TrainableSession.fetch_training_trace()` to
-return a `TrainingTrace`. Harbor and native OpenCode implement this API. Raw
+return a `TrainingTrace`. Harbor implements this API. Raw
 `fetch_proxy_trace()` remains available for diagnostics and older consumers.
 
 ```python
@@ -152,13 +152,10 @@ loss weighting, packing and weight updates. Graph identity does not by itself
 normalize a rollout that expands into multiple training rows.
 
 For training, construct the session factory with the trainer's `sampling` policy.
-Harbor and native OpenCode apply it before inference. The trainer need not compare
-sampling metadata after generation. Native OpenCode requires `transparent_proxy`
-mode and an engine returning prompt IDs and sampled-token logprobs; its standalone
-proxy retains choice token IDs across streaming, with `token_id:N` as a fallback.
-Training export uses the same token/logprob pairing check as Harbor when logprob
-entries identify their tokens. A disagreement on an agent turn rejects the training
-trace; raw capture stays available for inspection. Plain token text is not
+Harbor applies it before inference, so the trainer need not compare sampling
+metadata after generation. When logprob entries identify their tokens
+(`token_id:N`), training export checks that each one pairs with its token. A disagreement on an agent turn rejects the training trace; raw
+capture stays available for inspection. Plain token text is not
 re-tokenized to infer an ID.
 
 Migration from TRL selection hooks: use `fetch_training_trace()` instead of a raw

@@ -315,8 +315,9 @@ class Tau2Environment(MCPEnvironment):
             # τ²-bench only logs why, e.g. the user's model failed.
             if not reward_info:
                 raise RuntimeError(
-                    f"The simulated user failed ({self.user_llm}), so the conversation "
-                    "ended without a score. See the server log."
+                    "The τ²-bench simulation failed (often the simulated user's model, "
+                    f"{self.user_llm}), so the conversation ended without a score. "
+                    "See the server log."
                 )
             self._state.reward = reward
             self._state.reward_info = reward_info

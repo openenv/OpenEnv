@@ -29,6 +29,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from openenv.core.harness.capture.export import export_session
 
@@ -782,7 +784,8 @@ def _trial_dir(
     """Where Harbor wrote this trial's artifacts, including its trajectory."""
     uri = getattr(trial_result, "trial_uri", None) if trial_result is not None else None
     if uri:
-        return Path(str(uri).replace("file://", ""))
+        # `as_uri()` percent-encodes, so a space or `+` in the path has to be decoded back.
+        return Path(url2pathname(urlparse(str(uri)).path))
     candidate = Path(str(trials_dir)) / trial_name
     return candidate if candidate.is_dir() else None
 

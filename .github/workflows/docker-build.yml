@@ -106,18 +106,6 @@ jobs:
           - name: unity-env
             dockerfile: envs/unity_env/server/Dockerfile
             context: envs/unity_env
-          - name: opencode-env
-            dockerfile: envs/opencode_env/server/Dockerfile
-            context: envs/opencode_env
-          - name: opencode-sandbox
-            dockerfile: envs/opencode_env/sandbox/hf_image/Dockerfile
-            context: envs/opencode_env
-          - name: pi-env
-            dockerfile: envs/pi_env/server/Dockerfile
-            context: envs/pi_env
-          - name: pi-sandbox
-            dockerfile: envs/pi_env/hf_image/Dockerfile
-            context: envs/pi_env
           - name: openapp-env
             dockerfile: envs/openapp_env/server/Dockerfile
             context: envs/openapp_env

@@ -1,3 +1,5 @@
+<img width="1920" height="1080" alt="OpenEnv-banner" src="https://github.com/user-attachments/assets/380f1b86-fc36-44f8-a77b-067773b5012d" />
+
 # OpenEnv: Agentic Execution Environments
 
 An end-to-end framework for creating, deploying and using isolated execution environments for agentic RL, with a simple Gymnasium-style API.
@@ -84,8 +86,8 @@ For a detailed quick start, check out the [docs page](https://huggingface.co/doc
 
 Any training framework that can call an environment can train on it. [Training with OpenEnv](https://huggingface.co/docs/openenv/guides/training) maps the ways to train and the frameworks that support each one.
 
-- **Environments as tools (white-box).** The trainer runs the multi-turn tool loop and the environment supplies the tools and the reward. In TRL, `GRPOTrainer` takes an `environment_factory`: start with the [Wordle GRPO tutorial](https://huggingface.co/docs/openenv/tutorials/wordle-grpo) or [TRL's OpenEnv guide](https://huggingface.co/docs/trl/openenv).
-- **Real agent harnesses (loop-owning).** The agent runs its own loop, and OpenEnv's [Harbor integration](https://huggingface.co/docs/openenv/environments/harbor) captures every model call as a framework-neutral `TrainingTrace`. TRL's `AsyncGRPOTrainer` trains on those captures today: see [`examples/async_grpo_harbor`](https://github.com/huggingface/trl/tree/main/examples/async_grpo_harbor) and [The ultimate guide to multi-harness RL](https://huggingface.co/spaces/AdithyaSK/multi-harness-rl).
+- **Environments as tools (white-box).** The trainer runs the multi-turn tool loop and the environment supplies the tools and the reward. Each framework under [Integrations](#integrations) has its own example. With TRL, `GRPOTrainer` takes an `environment_factory`: start with the [Wordle GRPO tutorial](https://huggingface.co/docs/openenv/tutorials/wordle-grpo) or [TRL's OpenEnv guide](https://huggingface.co/docs/trl/openenv).
+- **Real agent harnesses (loop-owning).** The agent runs its own loop, and OpenEnv's [Harbor integration](https://huggingface.co/docs/openenv/environments/harbor) captures every model call as a framework-neutral `TrainingTrace`. TRL's `AsyncGRPOTrainer` trains on those captures today: see [`examples/async_grpo_harbor`](https://github.com/huggingface/trl/tree/main/examples/async_grpo_harbor) and [The ultimate guide to multi-harness RL](https://huggingface.co/spaces/FineEnvs/multi-harness-rl).
 
 ## Build your own environment
 
@@ -95,7 +97,7 @@ openenv validate my_env --level static --skip-build   # quick check against the 
 openenv push my_env       # deploy it to Hugging Face Spaces
 ```
 
-See [Your First Environment](https://huggingface.co/docs/openenv/guides/first-environment) and [Packaging & Deploying](https://huggingface.co/docs/openenv/getting_started/environment-builder). `openenv import` wraps an existing environment from ORS/OpenReward or Verifiers.
+See [Your First Environment](https://huggingface.co/docs/openenv/guides/first-environment) and [Deploying an Environment](https://huggingface.co/docs/openenv/getting_started/environment-builder). `openenv import` wraps an existing environment from ORS/OpenReward or Verifiers.
 
 ## Environments
 
@@ -118,20 +120,22 @@ OpenEnv works with a growing ecosystem of RL frameworks and platforms. If your p
 
 | Framework | Example |
 |---|---|
+| ART | [ART integration](https://art.openpipe.ai/integrations/openenv-integration) |
+| Lightning AI | [Templates](https://lightning.ai/templates?section=featured&query=openenv) |
+| Miles | [Terminal-Bench-2 GRPO](https://github.com/radixark/miles/tree/main/examples/experimental/openenv) |
+| Oumi | [GRPO notebook](https://github.com/oumi-ai/oumi/blob/main/notebooks/Oumi%20-%20OpenEnv%20GRPO%20with%20trl.ipynb) |
+| SkyRL | [SkyRL example](https://skyrl.readthedocs.io/en/latest/examples/openenv.html) |
+| torchforge | [GRPO BlackJack](https://github.com/huggingface/OpenEnv/tree/main/examples/grpo_blackjack) |
+| TorchTitan-RL (TitanRL) | [OpenEnv bridge and Muse Glimmer 30B chess recipe](examples/titanrl_openenv/) for GRPO/DAPO, with a CPU demo and tests |
 | TRL | [OpenEnv guide](https://huggingface.co/docs/trl/openenv) (GRPO with `environment_factory`, and harness training) |
 | Unsloth | [2048 with gpt-oss](https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/OpenEnv_gpt_oss_(20B)_Reinforcement_Learning_2048_Game.ipynb) |
-| SkyRL | [SkyRL example](https://skyrl.readthedocs.io/en/latest/examples/openenv.html) |
-| ART | [ART integration](https://art.openpipe.ai/integrations/openenv-integration) |
-| Oumi | [GRPO notebook](https://github.com/oumi-ai/oumi/blob/main/notebooks/Oumi%20-%20OpenEnv%20GRPO%20with%20trl.ipynb) |
-| torchforge | [GRPO BlackJack](https://github.com/huggingface/OpenEnv/tree/main/examples/grpo_blackjack) |
-| Miles | [Terminal-Bench-2 GRPO](https://github.com/radixark/miles/tree/main/examples/experimental/openenv) |
-| Lightning AI | [Templates](https://lightning.ai/templates?section=featured&query=openenv) |
 
 ## Learn more
 
 - [Documentation](https://huggingface.co/docs/openenv): concepts, guides and tutorials
 - [Core Concepts](https://huggingface.co/docs/openenv/guides/concepts) and the [CLI reference](https://huggingface.co/docs/openenv/reference/cli)
 - [Tutorials](https://huggingface.co/docs/openenv/tutorials/index), and the [Zero to Hero tutorial](https://github.com/huggingface/OpenEnv/tree/main/tutorial) from our GPU Mode lecture
+- [FineEnvs](https://github.com/adithya-s-k/FineEnvs): end-to-end projects that build, deploy and train against OpenEnv environments
 - [RFCs](https://github.com/huggingface/OpenEnv/tree/main/rfcs), the proposals behind major changes
 - [Contributing](https://github.com/huggingface/OpenEnv/blob/main/CONTRIBUTING.md): development setup, tests and the PR process
 

@@ -18,6 +18,10 @@ tags:
 
 BrowserGym is a unified framework for web-based agent tasks that provides access to multiple benchmarks under a single Gymnasium-compatible API. This integration brings the complete training-to-evaluation pipeline for web agents into OpenEnv.
 
+![BrowserGym web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/browsergym.png)
+
+*The `/web` playground on MiniWoB `click-test`: the goal, the page URL and the browser screenshot (screenshots on, 320×240 viewport).*
+
 ## Why BrowserGym?
 
 BrowserGym provides a complete pipeline for developing web agents: train on simple tasks, then evaluate on realistic websites.

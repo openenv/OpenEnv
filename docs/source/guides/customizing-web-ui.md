@@ -1,6 +1,25 @@
-# Custom Web UI
+# Customizing the Web UI
 
-The web UI is off by default. When `ENABLE_WEB_INTERFACE=true` (which `openenv push` sets for Spaces), the server serves a default Gradio app at `/web` with Reset/Step/Get state, Quick Start, and README. Environment authors can **add** a custom tab by providing a custom Gradio builder.
+The web UI is off by default. When `ENABLE_WEB_INTERFACE=true` (which `openenv push` sets for Spaces), the server serves a default Gradio app at `/web` that follows the loop an agent runs: reset, take an action (for MCP environments, pick a tool and fill its arguments), read the result, the episode so far, and the same call in Python. Environment authors can draw the environment's state and offer one-click actions with two optional methods, or **add** a whole custom tab with a Gradio builder.
+
+## Draw the state and offer one-click actions
+
+Override these `Environment` methods to make the default playground visual. Both receive the serialized observation, as `reset()` and `step()` return it, and both are optional:
+
+- `render_web(observation)` returns HTML that draws it (a board, a page, a plot), shown next to the action controls. The default returns `None` and the playground lists the observation's fields.
+- `web_actions(observation)` returns `(label, action)` pairs shown as buttons, where each action is the dict `step()` receives. Clicking one runs that step. The default returns `[]`.
+
+For example, `openspiel_env` draws the Catch board and offers the legal moves:
+
+```python
+class OpenSpielEnvironment(Environment):
+    def web_actions(self, observation):
+        names = {0: "left", 1: "stay", 2: "right"}
+        return [(f"{a} · {names[a]}", {"action_id": a}) for a in observation["legal_actions"]]
+
+    def render_web(self, observation):
+        ...  # a 10 x 5 grid built from observation["info_state"]
+```
 
 ## Extension point: `gradio_builder`
 
@@ -128,6 +147,8 @@ In the builder, add a `gr.LoginButton()` and take a `gr.OAuthToken | None` argum
 | Goal                         | Approach                                                                 |
 |-----------------------------|---------------------------------------------------------------------------|
 | Use default UI only         | Do not pass `gradio_builder`.                                            |
+| Draw the state in the playground | Override `render_web(observation)` to return HTML.                    |
+| One-click actions           | Override `web_actions(observation)` to return `(label, action)` pairs.   |
 | Add a custom tab            | Pass `gradio_builder=my_builder`; return your own `gr.Blocks` (shown in “Custom” tab). |
 | Custom tab + default inside | In your builder, call `build_gradio_app(...)` and embed or wrap it in your Blocks. |
 | Change Quick Start / README | Rely on metadata/README, or custom builder that builds custom markdown.  |

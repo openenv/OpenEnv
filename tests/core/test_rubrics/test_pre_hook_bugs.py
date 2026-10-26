@@ -344,3 +344,115 @@ class TestContainerPreHooksAsyncPath:
 
         assert pre_hook_called["called"], "Gate pre-hook not called in async path"
         assert result == 0.8
+
+
+def _tracked(log, name, score, is_async=False):
+    """A sync or async rubric that appends ``name`` to ``log`` when it runs."""
+    if is_async:
+
+        class _Async(Rubric):
+            async def forward(self, action, obs):
+                log.append(name)
+                return score
+
+        return _Async()
+
+    class _Sync(Rubric):
+        def forward(self, action, obs):
+            log.append(name)
+            return score
+
+    return _Sync()
+
+
+def _containers(log, is_async=False):
+    """One of each container, over children that record when they run."""
+    return {
+        "sequential": Sequential(
+            _tracked(log, "child", 1.0, is_async), _tracked(log, "child", 0.5)
+        ),
+        "gate": Gate(_tracked(log, "child", 0.8, is_async), threshold=0.5),
+        "weighted_sum": WeightedSum(
+            [_tracked(log, "child", 0.6, is_async), _tracked(log, "child", 0.8)],
+            [0.5, 0.5],
+        ),
+    }
+
+
+class TestContainerPreHookOrder:
+    """A container's pre-hooks run before its children, as Rubric.__call__ runs them
+    before forward(), and exactly once."""
+
+    @pytest.mark.parametrize("kind", ["sequential", "gate", "weighted_sum"])
+    def test_pre_hook_runs_before_children_sync(self, kind):
+        log = []
+        rubric = _containers(log)[kind]
+        rubric.register_forward_pre_hook(lambda r, a, o: log.append("pre_hook"))
+
+        rubric("action", "obs")
+
+        assert log[0] == "pre_hook", log
+        assert log.count("pre_hook") == 1, log
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["sequential", "gate", "weighted_sum"])
+    async def test_pre_hook_runs_before_children_async(self, kind):
+        """Mixed sync/async children: the sync ones must not run before the hook."""
+        log = []
+        rubric = _containers(log, is_async=True)[kind]
+        rubric.register_forward_pre_hook(lambda r, a, o: log.append("pre_hook"))
+
+        await rubric("action", "obs")
+
+        assert log[0] == "pre_hook", log
+        assert log.count("pre_hook") == 1, log
+
+    @pytest.mark.asyncio
+    async def test_sequential_async_switch_mid_way(self):
+        """Sync children before the first async one must also wait for the hook."""
+        log = []
+        rubric = Sequential(
+            _tracked(log, "sync1", 1.0),
+            _tracked(log, "sync2", 1.0),
+            _tracked(log, "async", 0.8, is_async=True),
+            _tracked(log, "sync3", 0.7),
+        )
+        rubric.register_forward_pre_hook(lambda r, a, o: log.append("pre_hook"))
+
+        assert await rubric("action", "obs") == 0.7
+        assert log == ["pre_hook", "sync1", "sync2", "async", "sync3"]
+
+    @pytest.mark.asyncio
+    async def test_sync_and_async_pre_hooks_keep_registration_order(self):
+        log = []
+        rubric = Sequential(
+            _tracked(log, "async1", 1.0, is_async=True),
+            _tracked(log, "async2", 0.8, is_async=True),
+        )
+
+        async def async_hook(r, a, o):
+            log.append("async_hook")
+
+        rubric.register_forward_pre_hook(lambda r, a, o: log.append("sync_hook"))
+        rubric.register_forward_pre_hook(async_hook)
+
+        assert await rubric("action", "obs") == 0.8
+        assert log == ["sync_hook", "async_hook", "async1", "async2"]
+
+    def test_timing_hooks_measure_the_children(self):
+        """The use case pre-hooks exist for: a timer around the whole evaluation."""
+        log = []
+        rubric = WeightedSum(
+            [_tracked(log, "child", 1.0), _tracked(log, "child", 1.0)], [0.5, 0.5]
+        )
+        seen = {}
+        rubric.register_forward_pre_hook(
+            lambda r, a, o: seen.setdefault("children_before", len(log))
+        )
+        rubric.register_forward_hook(
+            lambda r, a, o, res: seen.setdefault("children_after", len(log))
+        )
+
+        rubric("action", "obs")
+
+        assert seen == {"children_before": 0, "children_after": 2}

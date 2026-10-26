@@ -1,4 +1,4 @@
-# Async vs Sync Usage
+# Async vs Sync
 
 OpenEnv supports both asynchronous and synchronous usage patterns.
 

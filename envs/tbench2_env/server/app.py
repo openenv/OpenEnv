@@ -39,11 +39,11 @@ try:
     from openenv.core.env_server.http_server import create_app
 
     # In-repo imports
-    from tbench2_env.models import Tbench2Action, Tbench2Observation
+    from tbench2_env.models import Tbench2Action, Tbench2Observation, Tbench2State
 
     from .tbench2_env_environment import Tbench2DockerEnvironment, Tbench2Environment
 except Exception as e:  # pragma: no cover
-    from models import Tbench2Action, Tbench2Observation
+    from models import Tbench2Action, Tbench2Observation, Tbench2State
 
     # Standalone imports (when environment is standalone with openenv from pip)
     from openenv.core.env_server.http_server import create_app
@@ -81,10 +81,11 @@ app = create_app(
     Tbench2Observation,
     env_name="tbench2_env" + _ENV_SUFFIX,
     max_concurrent_envs=max_concurrent,
+    state_cls=Tbench2State,
 )
 
 
-def main(host: str = "0.0.0.0", port: int = 8000):
+def main():
     """
     Entry point for direct execution via uv run or python -m.
 
@@ -93,23 +94,20 @@ def main(host: str = "0.0.0.0", port: int = 8000):
         uv run --project . server --port 8001
         python -m tbench2_env.server.app
 
-    Args:
-        host: Host address to bind to (default: "0.0.0.0")
-        port: Port number to listen on (default: 8000)
-
     For production deployments, consider using uvicorn directly with
     multiple workers:
         uvicorn tbench2_env.server.app:app --workers 4
     """
+    import argparse
+
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
-    main(port=args.port)
+    main()

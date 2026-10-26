@@ -350,6 +350,25 @@ class DMControlEnvironment(Environment):
             time_step, include_pixels=render or self._include_pixels
         )
 
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the physics scene from the first camera (rendering does not step the simulation)."""
+        if "observations" not in observation:
+            return None
+        try:
+            frame = self._env.physics.render(height=240, width=320, camera_id=0)
+        except Exception:
+            return None
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.fromarray(frame).save(buffer, format="JPEG", quality=85)
+        return (
+            '<img alt="dm_control frame" '
+            f'src="data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}" '
+            'style="width:320px;max-width:100%;border-radius:10px;'
+            'border:1px solid var(--border-color-primary)">'
+        )
+
     async def reset_async(
         self,
         domain_name: Optional[str] = None,

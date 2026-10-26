@@ -341,6 +341,12 @@ class JuliaProcessPool:
         Raises:
             RuntimeError: If Julia executable is not found
         """
+        # Set before anything can fail, so shutdown() from __del__ works
+        self.workers: list[JuliaWorkerProcess] = []
+        self.available_workers: deque[JuliaWorkerProcess] = deque()
+        self.pool_lock = threading.Lock()
+        self.shutdown_flag = False
+
         self.size = size
         # Read timeout from env var if not explicitly provided
         if timeout is None:
@@ -362,12 +368,6 @@ class JuliaProcessPool:
 
         # Find worker script
         self.worker_script = self._find_worker_script()
-
-        # Initialize workers
-        self.workers: list[JuliaWorkerProcess] = []
-        self.available_workers: deque[JuliaWorkerProcess] = deque()
-        self.pool_lock = threading.Lock()
-        self.shutdown_flag = False
 
         # Create worker processes
         logger.info(f"Creating Julia process pool with {size} workers")

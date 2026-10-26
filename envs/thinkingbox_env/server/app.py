@@ -14,7 +14,11 @@ from openenv.core import Environment, HTTPEnvServer, ServerMode
 from thinkingbox.common.config_types import SessionProxyConfig
 
 from thinkingbox_env import benchmark_data
-from thinkingbox_env.models import ThinkingBoxAction, ThinkingBoxObservation
+from thinkingbox_env.models import (
+    ThinkingBoxAction,
+    ThinkingBoxObservation,
+    ThinkingBoxState,
+)
 from thinkingbox_env.server import config
 from thinkingbox_env.server.config import load_runtime_settings
 from thinkingbox_env.server.thinkingbox_environment import (
@@ -56,6 +60,7 @@ def create_thinkingbox_app(
         ThinkingBoxObservation,
         env_name="thinkingbox_env",
         max_concurrent_envs=max_concurrent_envs,
+        state_cls=ThinkingBoxState,
     )
     server.register_routes(app, mode=ServerMode.PRODUCTION)
     app.state.openenv_server = server

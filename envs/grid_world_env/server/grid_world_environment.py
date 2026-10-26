@@ -4,6 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree
 import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from openenv.core.env_server import Environment
@@ -20,6 +21,8 @@ class GridWorldEnvironment(Environment):
 
     The agent starts at [0, 0] and must navigate to [4, 4].
     """
+
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
     def __init__(self):
         super().__init__()
@@ -94,6 +97,44 @@ class GridWorldEnvironment(Environment):
 
         return GridWorldObservation(
             x=self.agent_x, y=self.agent_y, message=message, reward=reward, done=done
+        )
+
+    def web_actions(
+        self, observation: Dict[str, Any]
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """The four moves as buttons."""
+        arrows = {"UP": "↑", "DOWN": "↓", "LEFT": "←", "RIGHT": "→"}
+        return [
+            (f"{arrows[m.value]} {m.value.lower()}", {"action": m.value})
+            for m in MoveAction
+        ]
+
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the grid with the agent (a dot) and the goal (a star)."""
+        if "x" not in observation:
+            return None
+        cells = []
+        for row in range(self.grid_size):
+            for col in range(self.grid_size):
+                agent = [row, col] == [observation["x"], observation["y"]]
+                goal = [row, col] == self.goal_pos
+                border = "var(--color-accent)" if goal else "transparent"
+                dot = ""
+                if agent:
+                    dot = '<span style="width:60%;height:60%;border-radius:50%;background:var(--color-accent)"></span>'
+                elif goal:
+                    dot = "★"
+                cells.append(
+                    '<span style="display:flex;align-items:center;justify-content:center;'
+                    "background:var(--border-color-primary);border-radius:6px;"
+                    f'border:2px solid {border};color:var(--color-accent);font-size:20px">{dot}</span>'
+                )
+        return (
+            '<div role="img" aria-label="Grid World board" style="display:inline-grid;'
+            f"grid-template-columns:repeat({self.grid_size},40px);grid-auto-rows:40px;gap:4px;padding:10px;"
+            'border:1px solid var(--border-color-primary);border-radius:10px;background:var(--background-fill-secondary)">'
+            + "".join(cells)
+            + "</div>"
         )
 
     @property

@@ -15,6 +15,10 @@ tags:
 
 Integration of Atari 2600 games with the OpenEnv framework via the Arcade Learning Environment (ALE). ALE provides access to 100+ classic Atari games for RL research.
 
+![Atari web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/atari.png)
+
+*The `/web` playground mid-rally in Pong: the current frame and one button per action.*
+
 ## Supported Games
 
 ALE supports 100+ Atari 2600 games including:
@@ -227,6 +231,7 @@ docker run -p 8000:8000 -e ATARI_FULL_ACTION_SPACE=true atari-env:latest
 - `ATARI_DIFFICULTY`: Game difficulty (optional, game-specific)
 - `ATARI_REPEAT_ACTION_PROB`: Sticky action probability 0.0-1.0 (default: "0.0")
 - `ATARI_FRAMESKIP`: Frames to skip per action (default: "4")
+- `MAX_CONCURRENT_ENVS`: Maximum concurrent WebSocket sessions (default: "8")
 
 ### Example: Breakout with Custom Settings
 

@@ -206,7 +206,7 @@ def test_a_failed_user_ends_the_conversation_without_a_score(env, monkeypatch):
     episode = ui.Episode(env, "2")
     observation, result = episode.act("respond_to_user", {"message": "Hello."})
     assert observation.error is not None
-    assert "simulated user failed" in result
+    assert "simulation failed" in result
     assert env.state.done and env.state.reward_info == {}
     # The web UI says so instead of showing a score.
     assert "Ended without a score" in episode.side(observation)

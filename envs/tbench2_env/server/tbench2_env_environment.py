@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import os
 import re
 import shlex
@@ -153,6 +154,11 @@ def _workdir_is_server_tree(workdir: str) -> bool:
         return True  # unresolvable path: fail toward the task-dir fallback
 
 
+# Verifier budget when task.toml declares no [verifier].timeout_sec. Shared by
+# reset() (which reports it) and evaluation (which enforces it).
+_DEFAULT_VERIFIER_TIMEOUT_S = 900.0
+
+
 def _read_timeout(task_dir: Path, fallback: float) -> float:
     task_toml = task_dir / "task.toml"
     if not task_toml.exists():
@@ -162,7 +168,13 @@ def _read_timeout(task_dir: Path, fallback: float) -> float:
     except Exception:
         return fallback
     verifier = data.get("verifier", {})
-    return float(verifier.get("timeout_sec", fallback))
+    if not isinstance(verifier, dict):
+        return fallback
+    try:
+        timeout_s = float(verifier.get("timeout_sec", fallback))
+    except (TypeError, ValueError, OverflowError):
+        return fallback
+    return timeout_s if math.isfinite(timeout_s) and timeout_s > 0 else fallback
 
 
 # The scoring exec echoes its verdict on a marker line so the caller can parse
@@ -185,14 +197,14 @@ def _canonical_eval_cmd(workdir: str, timeout_s: float | None = None) -> str:
     then, and callers need the pytest diagnostics on failure; the reward
     marker line stays last for parsing.
 
-    ``timeout_s`` bounds test.sh with coreutils ``timeout`` when present in
-    the image. The local mode passes None: its terminal toolkit enforces the
+    ``timeout_s`` bounds test.sh with coreutils ``timeout`` (required in the
+    image). The local mode passes None: its terminal toolkit enforces the
     budget itself. Docker exec has no server-side timeout, so the task's own
     verifier budget is enforced in-shell.
     """
     run = f"bash {_VERIFY_TESTS_DIR}/test.sh"
     if timeout_s is not None:
-        run = f"if command -v timeout >/dev/null 2>&1; then timeout {int(timeout_s)} {run}; else {run}; fi"
+        run = f"timeout {timeout_s:g} {run}"
     return (
         f"cd {shlex.quote(workdir)} && "
         f"{run} > {_VERIFIER_LOG_DIR}/testsh.log 2>&1; "
@@ -233,20 +245,21 @@ def _require_canonical_verdict(reward: float | None, output: str) -> float:
     return reward
 
 
-def _fallback_eval_cmd(workdir: str) -> str:
+def _fallback_eval_cmd(workdir: str, timeout_s: float | None = None) -> str:
     """pytest against the staged tests copy, for task dirs without the
     canonical harness (none of the 89 official TB2 tasks — they all ship
     test.sh — but custom task dirs may only have bare pytest tests). Prefer
     uvx so pytest comes with its own toolchain like the canonical harness
     does. Verify from the same directory the agent worked in.
     """
-    return (
-        f"cd {shlex.quote(workdir)} && "
+    run = (
         "if command -v uvx >/dev/null 2>&1; "
         f"then uvx --with pytest==8.4.1 pytest -q {_VERIFY_TESTS_DIR} -rA; "
-        f"else python -m pytest -q {_VERIFY_TESTS_DIR} -rA; fi; "
-        f"echo {_EXIT_CODE_MARKER}$?"
+        f"else python -m pytest -q {_VERIFY_TESTS_DIR} -rA; fi"
     )
+    if timeout_s is not None:
+        run = f"timeout {timeout_s:g} bash -c {shlex.quote(run)}"
+    return f"cd {shlex.quote(workdir)} && {run}; echo {_EXIT_CODE_MARKER}$?"
 
 
 def _parse_exit_code_marker(output: str) -> int:
@@ -298,6 +311,7 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
 
         self._state = Tbench2State()
         self._task_dir: Path | None = None
+        self._verifier_timeout_s = _DEFAULT_VERIFIER_TIMEOUT_S
         self._terminal_toolkit = None
         self._instruction = ""
         self._workdir = ""
@@ -356,6 +370,9 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
             session_logs_dir=session_logs_dir,
             safe_mode=self.safe_mode,
         )
+        self._verifier_timeout_s = _read_timeout(
+            task_dir, fallback=_DEFAULT_VERIFIER_TIMEOUT_S
+        )
 
         self._state = Tbench2State(
             episode_id=episode_id or str(uuid4()),
@@ -374,7 +391,10 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
             task_path=str(task_dir),
             session_id=None,
             action_type="reset",
-            info={},
+            info={
+                "verifier_timeout_sec": self._verifier_timeout_s,
+                "command_timeout_s": self.command_timeout_s,
+            },
             reward=0.0,
             done=False,
         )
@@ -479,6 +499,7 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
     def close(self) -> None:
         self._terminal_toolkit = None
         self._task_dir = None
+        self._verifier_timeout_s = _DEFAULT_VERIFIER_TIMEOUT_S
         self._instruction = ""
 
     def _resolve_task_path(self, task_id: str | None, task_path: str | None) -> Path:
@@ -583,9 +604,8 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
         if self._terminal_toolkit is None:
             raise RuntimeError("Terminal toolkit not initialized.")
 
-        # The task's own verifier budget (task.toml [verifier].timeout_sec) —
-        # heavy tests legitimately run minutes (circuit-fibsqrt declares 3600s).
-        verifier_timeout_s = _read_timeout(self._task_dir, fallback=900.0)
+        # Honor the reset-time budget even if the agent edits task.toml.
+        verifier_timeout_s = self._verifier_timeout_s
 
         with self._CANONICAL_EVAL_LOCK:
             try:
@@ -708,6 +728,7 @@ class Tbench2DockerEnvironment(
 
         self._state = Tbench2State()
         self._task_dir: Path | None = None
+        self._verifier_timeout_s = _DEFAULT_VERIFIER_TIMEOUT_S
         self._docker_client = None
         self._container = None
         self._instruction = ""
@@ -789,6 +810,9 @@ class Tbench2DockerEnvironment(
         except Exception:
             self.close()
             raise
+        self._verifier_timeout_s = _read_timeout(
+            task_dir, fallback=_DEFAULT_VERIFIER_TIMEOUT_S
+        )
 
         return Tbench2Observation(
             instruction=self._instruction,
@@ -799,7 +823,10 @@ class Tbench2DockerEnvironment(
             task_path=str(task_dir),
             session_id=None,
             action_type="reset",
-            info={"docker_image": self._task_image},
+            info={
+                "docker_image": self._task_image,
+                "verifier_timeout_sec": self._verifier_timeout_s,
+            },
             reward=0.0,
             done=False,
         )
@@ -1027,9 +1054,7 @@ class Tbench2DockerEnvironment(
                 {"tests_passed": False, "error": "missing tests"},
             )
 
-        # The task's own verifier budget (task.toml [verifier].timeout_sec) —
-        # heavy tests legitimately run minutes (circuit-fibsqrt declares 3600s).
-        verifier_timeout_s = _read_timeout(self._task_dir, fallback=900.0)
+        verifier_timeout_s = self._verifier_timeout_s
         workdir = self._workdir or "/task"
 
         wipe_ec, wipe_out = self._exec_in_container(
@@ -1054,7 +1079,9 @@ class Tbench2DockerEnvironment(
                 )
                 info = {"tests_passed": reward == 1.0, "harness": "tests/test.sh"}
             else:
-                _, output = self._exec_in_container(_fallback_eval_cmd(workdir))
+                _, output = self._exec_in_container(
+                    _fallback_eval_cmd(workdir, timeout_s=verifier_timeout_s)
+                )
                 exit_code = _parse_exit_code_marker(output)
                 reward = 1.0 if exit_code == 0 else 0.0
                 info = {"tests_passed": exit_code == 0, "exit_code": exit_code}
@@ -1097,6 +1124,7 @@ class Tbench2DockerEnvironment(
                 pass
             self._container = None
         self._task_dir = None
+        self._verifier_timeout_s = _DEFAULT_VERIFIER_TIMEOUT_S
         self._instruction = ""
         self._workdir = ""
 

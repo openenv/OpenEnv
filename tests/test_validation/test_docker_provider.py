@@ -134,14 +134,8 @@ def test_start_is_hardened_and_does_not_forward_host_tokens(commands, monkeypatc
     assert all("prune" not in call for call in commands)
 
 
-@pytest.mark.parametrize(
-    "network",
-    [
-        NetworkPolicy(mode="no-network"),
-        NetworkPolicy(mode="allowlist", allowed_hosts=["example.org"]),
-    ],
-)
-def test_unsupported_network_is_rejected_without_docker(commands, network):
+def test_unsupported_network_is_rejected_without_docker(commands):
+    network = NetworkPolicy(mode="allowlist", allowed_hosts=["example.org"])
     with pytest.raises(UnsupportedCapability):
         docker.DockerValidationProvider().start(launch_spec(network=network))
     assert not commands

@@ -155,11 +155,11 @@ with EchoEnv(base_url="http://localhost:8000").sync() as client:
     result = client.reset()
 ```
 
-The same client also runs environments on cloud sandboxes (Daytona, Modal, Novita, Azure Container Apps, Hugging Face) through runtime providers. See the [Runtime Providers guide](guides/runtime-providers) to pick one.
+The same client also runs environments on cloud sandboxes (Daytona, Modal, Novita, Azure Container Apps, Hugging Face) through runtime providers. `HFSandboxProvider` ships with core OpenEnv and needs a Hugging Face token for an account that can run Jobs (the sandboxes are billed as Jobs): it runs an environment's Space image in a Hugging Face sandbox ([example](guides/runtime-providers#hfsandboxprovider)). See the [Runtime Providers guide](guides/runtime-providers) to pick one.
 
 ## Next Steps
 
-- [Train an agent](guides/training) with your framework, for example [TRL](tutorials/wordle-grpo), or a coding agent through [Harbor](environments/harbor)
+- [Train an agent](guides/training) with your training framework, or train a coding agent through [Harbor](environments/harbor)
 - [Explore environments](environments)
 - [Build your first environment](guides/first-environment)
 - [Concepts](guides/concepts)

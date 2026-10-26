@@ -4,7 +4,11 @@ import os
 from contextlib import suppress
 from functools import partial
 
-from browsergym_env.models import BrowserGymAction, BrowserGymObservation
+from browsergym_env.models import (
+    BrowserGymAction,
+    BrowserGymObservation,
+    BrowserGymState,
+)
 from browsergym_env.server.browsergym_environment import BrowserGymEnvironment
 from openenv.core.env_server.http_server import create_app
 
@@ -39,6 +43,7 @@ app = create_app(
     BrowserGymObservation,
     env_name="browsergym_env",
     max_concurrent_envs=max_concurrent,
+    state_cls=BrowserGymState,
 )
 
 

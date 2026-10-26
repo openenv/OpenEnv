@@ -1,11 +1,55 @@
 # Runtime Providers
 
+A client connects to an environment server that is already running, or starts
+one through a runtime provider.
+
+## Connecting to a server
+
+`AutoEnv.from_env` covers the common cases:
+
+```python
+from openenv import AutoEnv
+
+# A Hugging Face Space (installs the environment's client package after asking)
+env = AutoEnv.from_env("openenv/echo_env")
+
+# A server you already run
+env = AutoEnv.from_env("echo", base_url="http://your-server:8000")
+
+# A local Docker container, started for you
+env = AutoEnv.from_env("coding", docker_image="coding-env:latest", wait_timeout=60.0)
+```
+
+Pass `trust_remote_code=True` (or set `OPENENV_TRUST_REMOTE_CODE`) to install a
+Hub environment's client without the prompt, or `skip_install=True` to connect
+with a `GenericEnvClient` and install nothing. [Auto-Discovery](auto-discovery)
+lists every option, and [Async vs Sync](async-sync) covers the client modes.
+A sleeping Space wakes up on the first request, so the first call can take a
+while. To keep your own copy running, duplicate the Space.
+
+A private Space needs your Hugging Face token. Construct the client directly and
+pass it in `headers`, which every client sends on each connection:
+
+```python
+from echo_env import EchoEnv
+from huggingface_hub import get_token
+
+env = EchoEnv(
+    base_url="https://your-name-echo-env.hf.space",
+    headers={"Authorization": f"Bearer {get_token()}"},
+)
+```
+
+To run the server somewhere else, such as a cloud sandbox, pick a provider below.
+
+## Providers
+
 A runtime provider starts an environment server and returns a `base_url` that an
 `EnvClient` connects to. Container providers implement the same
 `ContainerProvider` contract, so switching from local Docker to a cloud sandbox
 is a one-line change.
 
-## Available providers
+### Available providers
 
 | Provider | Backend | Install | Status |
 |----------|---------|---------|--------|
@@ -33,7 +77,7 @@ from openenv.core.containers.runtime.daytona_provider import DaytonaProvider  # 
 See the [Core API reference](../reference/core.md#container-providers) for each
 provider's full API.
 
-## Lifecycle
+### Lifecycle
 
 Container providers that store their source image on the provider can be owned
 by the client. In this form, the client starts the provider on first connect,

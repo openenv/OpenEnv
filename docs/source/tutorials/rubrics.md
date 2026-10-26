@@ -1,4 +1,4 @@
-# Rubrics: Composable Reward Computation
+# Rubrics
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/rubrics.ipynb)
 
@@ -378,5 +378,5 @@ The same rubric object used to compute training rewards doubles as the eval metr
 
 - **Real-world trajectory example** — walk through `envs/chess_env/server/rubrics.py` and `chess_environment.py` to see `ExponentialDiscountingTrajectoryRubric` wired into a game environment.
 - **Design details** — [RFC 004](https://github.com/huggingface/OpenEnv/blob/main/rfcs/004-rubrics.md) covers the rationale for the composable API and the "rewards inside the environment" invariant.
-- **Reward design basics** — the [Reward Design](../guides/rewards.md) guide covers sparse-vs-dense signals and common pitfalls that still apply on top of any rubric composition.
+- **Reward design basics** — the [Rewards](../guides/rewards.md) guide covers sparse-vs-dense signals and common pitfalls that still apply on top of any rubric composition.
 - **Training loop integration** — see [Training with OpenEnv](../guides/training.md) and the [TRL OpenEnv integration guide](https://huggingface.co/docs/trl/main/en/openenv) for the recommended `environment_factory` pattern.

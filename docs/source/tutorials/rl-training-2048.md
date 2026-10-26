@@ -1,4 +1,4 @@
-# RL Training with OpenEnv: 2048 Game
+# Play 2048 with GRPO
 
 Train a language model to play 2048 with GRPO. The game runs in the OpenSpiel environment, and TRL's `GRPOTrainer` drives it through `environment_factory`: the model plays by calling a `move` tool, and the game score is the reward.
 

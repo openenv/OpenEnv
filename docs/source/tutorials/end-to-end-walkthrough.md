@@ -1,4 +1,4 @@
-# End-to-end OpenEnv walkthrough: train a reasoning agent with GRPO
+# Train a Reasoning Model
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/end_to_end_walkthrough.ipynb)
 
