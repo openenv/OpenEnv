@@ -119,7 +119,26 @@ class WildfireEnvironment(Environment):
 
     # --- Core API ---
 
-    def reset(self) -> WildfireObservation:
+    def reset(
+        self,
+        seed: int | None = None,
+        episode_id: str | None = None,
+        **kwargs: Any,
+    ) -> WildfireObservation:
+        """
+        Start a new episode: a grid of fuel with new fires, wind and humidity.
+
+        Args:
+            seed (`int`, *optional*):
+                Reseeds the wind, humidity, starting fires and fire spread. The same
+                seed and actions give the same episode, and the same episodes on the
+                unseeded resets that follow.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
+        """
+        if seed is not None:
+            self.rng = random.Random(seed)
+
         # Ensure w and h are integers (defensive type conversion)
         w, h = int(self.w), int(self.h)
 
@@ -151,7 +170,7 @@ class WildfireEnvironment(Environment):
 
         # Use model_construct to bypass Pydantic validation for dataclass/Pydantic compatibility
         self._state = WildfireState.model_construct(
-            episode_id=str(uuid.uuid4()),
+            episode_id=episode_id if episode_id is not None else str(uuid.uuid4()),
             step_count=0,
             total_burned=0,
             total_extinguished=0,

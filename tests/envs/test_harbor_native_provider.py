@@ -113,7 +113,7 @@ async def test_native_wire_uses_messages_and_native_headers():
     http_client = await client._get_client()
     await http_client.aclose()
     client._client = httpx.AsyncClient(
-        base_url="https://test",
+        base_url=client.base_url,
         transport=httpx.MockTransport(respond),
         headers={"x-api-key": "test-secret", "anthropic-version": "2023-06-01"},
     )

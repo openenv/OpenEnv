@@ -1,3 +1,5 @@
+<img width="1920" height="1080" alt="OpenEnv-banner" src="https://github.com/user-attachments/assets/380f1b86-fc36-44f8-a77b-067773b5012d" />
+
 # OpenEnv: Agentic Execution Environments
 
 An end-to-end framework for creating, deploying and using isolated execution environments for agentic RL, with a simple Gymnasium-style API.
@@ -133,6 +135,7 @@ OpenEnv works with a growing ecosystem of RL frameworks and platforms. If your p
 - [Documentation](https://huggingface.co/docs/openenv): concepts, guides and tutorials
 - [Core Concepts](https://huggingface.co/docs/openenv/guides/concepts) and the [CLI reference](https://huggingface.co/docs/openenv/reference/cli)
 - [Tutorials](https://huggingface.co/docs/openenv/tutorials/index), and the [Zero to Hero tutorial](https://github.com/huggingface/OpenEnv/tree/main/tutorial) from our GPU Mode lecture
+- [FineEnvs](https://github.com/adithya-s-k/FineEnvs): end-to-end projects that build, deploy and train against OpenEnv environments
 - [RFCs](https://github.com/huggingface/OpenEnv/tree/main/rfcs), the proposals behind major changes
 - [Contributing](https://github.com/huggingface/OpenEnv/blob/main/CONTRIBUTING.md): development setup, tests and the PR process
 

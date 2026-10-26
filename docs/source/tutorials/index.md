@@ -9,6 +9,8 @@ Choose a learning path from the sidebar:
 
 For [MCP environments](mcp-environment) and [rubrics](rubrics), see Concepts in the sidebar.
 
+For end-to-end projects built on OpenEnv environments, from designing an environment to training against it at scale, see [FineEnvs](https://github.com/adithya-s-k/FineEnvs) and its environments, datasets and models on [the Hub](https://huggingface.co/FineEnvs).
+
 ## New to OpenEnv? Start Here
 
 The Getting Started Series walks you from zero to deploying your own environment in five short parts. No GPU required.

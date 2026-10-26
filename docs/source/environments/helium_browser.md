@@ -1,3 +1,4 @@
+<!-- openenv-source: helium_browser_env -->
 # Helium Browser Environment
 
 This example shows the main pieces of an OpenEnv environment by wrapping a
@@ -14,7 +15,7 @@ focus.
 
 ## How to run the browser agent
 
-The actual browser loop is [browser.py](OpenEnv/envs/helium_browser_env/browser.py). You can run it with following steps. First publish the environment. Make sure to authenticate yourself with a write token.
+The actual browser loop is [browser.py](https://github.com/huggingface/OpenEnv/blob/main/envs/helium_browser_env/browser.py). You can run it with following steps. First publish the environment. Make sure to authenticate yourself with a write token.
 
 ```bash
 hf auth login
@@ -178,7 +179,8 @@ same roles they would have in a game, simulator, or other environment:
 
 - `reset(...)` starts a new episode and returns its first observation. Here it
   creates a temporary browser profile, opens `start_url`, and takes a
-  screenshot.
+  screenshot. Without `start_url` it opens `BROWSER_START_URL`
+  (default `https://huggingface.co`), so the `/web` playground's Reset works.
 - `step(action)` applies exactly one validated action and returns the next
   observation.
 - `state` exposes the current `BrowserState`, including OpenEnv's episode ID

@@ -31,8 +31,12 @@ The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
 switches and wire corruption remain inside test assets. They share one fixture
 and one public runtime plan, so a defect changes one property at a time.
 
-The Docker suite contains 14 required cases: three provider lifecycle tests,
-ten CLI fault/control cases, and one real `echo_env` canary. The slow-step case completes a tool call taking more than five seconds within
+The Docker suite contains 19 required cases: three provider lifecycle tests,
+five network-policy tests, ten CLI fault/control cases, and one real `echo_env`
+canary. The network tests run `public` and `no-network` subjects against a
+validator-owned sink, detect a subject launched on the bridge while declared
+`no-network`, and confirm the no-network helper serves `/health` and `/ws` without
+giving the subject a route out. The slow-step case completes a tool call taking more than five seconds within
 the declared episode budget. The hung-step case
 checks the episode deadline; the interruption case sends SIGINT only after a
 container log confirms the second step has begun. Both must retain the completed

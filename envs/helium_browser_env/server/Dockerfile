@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     chromium-driver \
     fonts-liberation \
+    git \
     xdotool \
     xvfb \
     && rm -rf /var/lib/apt/lists/*

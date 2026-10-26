@@ -37,7 +37,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from urllib.parse import urlparse
 
 import requests
-from openenv.core.utils import run_async_safely
+from openenv.core.utils import hf_space_subdomain, run_async_safely
 
 from ._discovery import _is_hub_url, get_discovery
 
@@ -174,9 +174,8 @@ class AutoEnv:
             if len(parts) >= 2:
                 repo_id = f"{parts[-2]}/{parts[-1]}"
 
-        # Convert user/space-name to user-space-name.hf.space
-        space_slug = repo_id.replace("/", "-")
-        return f"https://{space_slug}.hf.space"
+        # Convert user/space_name to user-space-name.hf.space
+        return f"https://{hf_space_subdomain(repo_id)}.hf.space"
 
     @classmethod
     def _is_local_url(cls, url: str) -> bool:

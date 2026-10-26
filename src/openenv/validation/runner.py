@@ -1,6 +1,7 @@
 """Validation orchestration: parse → grade → apply policy → report."""
 
 import hashlib
+import json
 import os
 import stat
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from .graders import GraderRegistry, Subject
 from .graders.runtime import (
+    NetworkPolicyGrader,
     ObservationSchemaGrader,
     RewardWellFormedGrader,
     StateContractGrader,
@@ -91,6 +93,7 @@ def default_grader_registry(policy: SeverityPolicy) -> GraderRegistry:
     registry.register(RewardWellFormedGrader())
     registry.register(ObservationSchemaGrader())
     registry.register(StateContractGrader())
+    registry.register(NetworkPolicyGrader())
     return registry
 
 
@@ -191,8 +194,25 @@ def _runtime(subject, graders, *, skip_build, provider):
                 evidence.failure_reason,
                 started=started,
             )
+        network_json = None
+        if (
+            result.status is CheckStatus.PASS
+            and ProviderCapability.NETWORK_POLICY in provider.capabilities
+            and hasattr(running, "measure_network")
+        ):
+            # Measured from outside the subject; a failure leaves the check unproven.
+            try:
+                network = running.measure_network()
+                network_json = json.dumps(network, allow_nan=False)
+                inspection = {**inspection, "network": network}
+            except ProviderError as exc:
+                inspection = {**inspection, "network_error": str(exc)[:1024]}
         subject = replace(
-            subject, image_ref=image_ref, running=running, runtime_evidence=evidence
+            subject,
+            image_ref=image_ref,
+            running=running,
+            runtime_evidence=evidence,
+            network_evidence_json=network_json,
         )
         checks = execute_graders(
             graders,

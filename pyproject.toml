@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openenv"
-version = "0.9.1.dev0"
+version = "0.10.1.dev0"
 description = "A unified framework for reinforcement learning environments"
 readme = "README.md"
 license = "BSD-3-Clause"

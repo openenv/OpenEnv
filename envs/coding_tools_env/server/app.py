@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from pathlib import Path
 
@@ -16,9 +17,11 @@ from openenv.core.env_server.mcp_types import CallToolAction, CallToolObservatio
 from openenv.core.env_server.types import Observation
 
 try:
+    from ..models import CodingToolsState
     from .coding_tools_env_environment import CodingToolsEnvironment
     from .gradio_ui import coding_tools_ui_builder
 except ImportError:  # pragma: no cover
+    from models import CodingToolsState  # type: ignore
     from server.coding_tools_env_environment import (  # type: ignore
         CodingToolsEnvironment,
     )
@@ -43,11 +46,20 @@ def _load_env_file() -> None:
 _load_env_file()
 os.environ.setdefault("ENABLE_WEB_INTERFACE", "true")
 
+# Older openenv-core releases lack these model parameters.
+_create_app_kwargs = (
+    {"reset_observation_cls": Observation}
+    if "reset_observation_cls" in inspect.signature(create_app).parameters
+    else {}
+)
+if "state_cls" in inspect.signature(create_app).parameters:
+    _create_app_kwargs["state_cls"] = CodingToolsState
+
 app = create_app(
     CodingToolsEnvironment,
     CallToolAction,
     CallToolObservation,
-    reset_observation_cls=Observation,
+    **_create_app_kwargs,
     env_name="coding_tools_env",
     max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "4")),
     gradio_builder=coding_tools_ui_builder,
