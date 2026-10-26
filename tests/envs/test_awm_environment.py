@@ -483,11 +483,10 @@ class TestVerifier:
         }
         with tempfile.TemporaryDirectory() as td:
             initial, final = self._setup_db(td)
-            # an answer is passed, so the no-change guard does not apply
             reward_type, result = run_verifier(
                 verifier_entry, "code", initial, final, final_answer="done"
             )
-            assert reward_type == "complete"
+            assert reward_type == "others"
 
     def test_run_verifier_code_mode_2arg(self):
         """Bug #8: run_verifier in code mode with 2-arg function name."""
@@ -504,7 +503,7 @@ class TestVerifier:
             reward_type, result = run_verifier(
                 verifier_entry, "code", initial, final, final_answer="done"
             )
-            assert reward_type == "complete"
+            assert reward_type == "others"
 
     def test_run_verifier_code_mode_no_db_change_is_not_complete(self):
         """A pass that was already true at reset should not pay out (#1475).
@@ -578,6 +577,34 @@ class TestVerifier:
                 verifier_entry, "code", initial, final, final_answer="Widget"
             )
             assert reward_type == "complete"
+
+    def test_run_verifier_corrupt_db_fails_closed(self):
+        entry = {
+            "verification": {
+                "code": "def verify_task(a, b, answer):\n    return {'result': 'complete'}\n"
+            }
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            with open(final, "wb") as db:
+                db.write(b"not a database")
+            reward, result = run_verifier(entry, "code", initial, final)
+            assert reward == "judge_error"
+            assert result["execution_status"] == "error"
+
+    def test_database_comparison_reads_wal(self):
+        from envs.agent_world_model_env.server.verifier import _database_contents_equal
+
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            conn = sqlite3.connect(final)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("UPDATE products SET price = 99")
+                conn.commit()
+                assert not _database_contents_equal(initial, final)
+            finally:
+                conn.close()
 
     def test_run_verifier_no_code(self):
         verifier_entry = {"verification": {"code": ""}}

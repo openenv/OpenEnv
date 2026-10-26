@@ -6,7 +6,6 @@ Two verification modes:
 - "code": Verifier deterministically returns {"result": "complete"|"others"}.
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -15,6 +14,7 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -187,31 +187,15 @@ def execute_code_verifier(
 
 
 def _database_contents_equal(initial_db_path: str, final_db_path: str) -> bool:
-    """True when both databases hold the same schema and rows.
-
-    Compares the logical contents (a sqlite dump) rather than the raw
-    files, since two files with the same contents can still differ in
-    their headers. If anything goes wrong while comparing, it returns
-    False so a real result is never blocked by the check itself.
-    """
-    try:
-        if os.path.getsize(initial_db_path) == os.path.getsize(final_db_path):
-            with open(initial_db_path, "rb") as a, open(final_db_path, "rb") as b:
-                if (
-                    hashlib.sha256(a.read()).digest()
-                    == hashlib.sha256(b.read()).digest()
-                ):
-                    return True
-        dumps = []
-        for path in (initial_db_path, final_db_path):
-            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-            try:
-                dumps.append("\n".join(conn.iterdump()))
-            finally:
-                conn.close()
-        return dumps[0] == dumps[1]
-    except Exception:
-        return False
+    """Compare SQLite contents, including committed WAL changes."""
+    dumps = []
+    for path in (initial_db_path, final_db_path):
+        conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            dumps.append("\n".join(conn.iterdump()))
+        finally:
+            conn.close()
+    return dumps[0] == dumps[1]
 
 
 def run_verifier(
@@ -250,22 +234,26 @@ def run_verifier(
         if result.get("execution_status") == "error":
             return "judge_error", result
         reward_type = result.get("result", "others")
-        if (
-            reward_type == "complete"
-            and not (final_answer and final_answer.strip())
-            and _database_contents_equal(initial_db_path, final_db_path)
-        ):
-            # Some code verifiers only look at the final db, so they say
-            # "complete" when the seeded data already has the row the task
-            # asks for - the agent gets full reward for doing nothing
-            # (see #1475). If the db did not change and there is no answer
-            # to grade, that pass was already there at reset.
-            logger.info(
-                "code verifier returned complete but the database is "
-                "unchanged from reset, reporting others instead"
-            )
-            result = {**result, "result": "others", "no_db_change": True}
-            return "others", result
+        if reward_type == "complete":
+            try:
+                unchanged = _database_contents_equal(initial_db_path, final_db_path)
+            except (OSError, sqlite3.Error) as exc:
+                return "judge_error", {
+                    "execution_status": "error",
+                    "error_message": f"Database comparison failed: {exc}",
+                }
+            if unchanged:
+                if final_answer and final_answer.strip():
+                    # Only exempt answers that actually change the verifier outcome.
+                    baseline = execute_code_verifier(
+                        code, func_name, initial_db_path, final_db_path, None
+                    )
+                    if baseline.get("execution_status") == "error":
+                        return "judge_error", baseline
+                    if baseline.get("result") == "others":
+                        return reward_type, result
+                result = {**result, "result": "others", "no_db_change": True}
+                return "others", result
         return reward_type, result
 
     result = execute_sql_verifier(code, func_name, initial_db_path, final_db_path)
