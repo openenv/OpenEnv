@@ -52,6 +52,8 @@ def test_registered_runtime_graders_use_metadata_throughout_run(
         Probe("runtime.host_containment", "runtime.resource_bounds"),
     ]
     for probe in probes:
+        # Replace any shipped implementation of these IDs with the test probe.
+        registry._graders.pop(probe.check_id, None)
         registry.register(probe)
     monkeypatch.setattr(runner, "default_grader_registry", lambda policy: registry)
 

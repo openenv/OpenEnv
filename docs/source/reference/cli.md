@@ -48,8 +48,8 @@ one reset and a sequence of actions. The validator builds an immutable image,
 opens one WebSocket session, measures reward values, observation schemas and
 state continuity, and removes the container even if a check fails.
 
-The runtime level implements startup, reward, observation, state and network
-policy checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
+The runtime level implements startup, reward, observation, state, network
+policy and host containment checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
@@ -62,6 +62,12 @@ shares only its network namespace, built from a digest-pinned validator image
 pulled on first use. `runtime.network_policy` probes a validator-owned sink from
 the subject's namespace and from a control container; a probe counts only when
 the control reaches the sink, and a denial that is not proven is a `SKIP`.
+`runtime.host_containment` inspects the launch from outside the subject and runs a
+probe from the validator image that joins only the subject's PID namespace, as the
+subject's own user. It fails when the subject runs privileged, shares a host
+namespace, holds capabilities, runs as root, has an unexpected mount, or can write
+outside `/tmp` and `/dev/shm`. A probe that cannot write an allotted root leaves
+write denial unproven and reports `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,

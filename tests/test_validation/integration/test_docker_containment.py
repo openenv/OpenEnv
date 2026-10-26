@@ -1,0 +1,103 @@
+"""Docker-local host containment, measured against the pinned fixture image."""
+
+import json
+import os
+import subprocess
+import time
+import uuid
+from pathlib import Path
+
+import pytest
+from openenv.validation.graders import Subject
+from openenv.validation.graders.runtime.containment import HostContainmentGrader
+from openenv.validation.manifest import NetworkPolicy, ResourceDeclaration
+from openenv.validation.providers import docker
+from openenv.validation.providers.docker import DockerValidationProvider
+from openenv.validation.runtime.contracts import LaunchSpec
+from openenv.validation.types import CheckStatus
+
+pytestmark = pytest.mark.docker
+
+
+@pytest.fixture
+def image():
+    image = os.environ.get("OPENENV_VALIDATION_IMAGE")
+    if not image:
+        if os.environ.get("OPENENV_REQUIRE_DOCKER") == "1":
+            pytest.fail("Required Docker acceptance needs OPENENV_VALIDATION_IMAGE")
+        pytest.skip("Run the validation lab to supply its pinned fixture image")
+    return image
+
+
+def launch(image, mode="public"):
+    return LaunchSpec(
+        image_ref=image,
+        resources=ResourceDeclaration(
+            cpu=1, memory_mb=512, disk_mb=64, episode_timeout_s=10
+        ),
+        network=NetworkPolicy(mode=mode),
+        run_id="containment-" + uuid.uuid4().hex[:12],
+        startup_timeout_s=60,
+    )
+
+
+def owned(run_id):
+    listing = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", f"label={docker._LABEL}={run_id}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    return listing.stdout.split()
+
+
+def grade(measured):
+    subject = Subject(
+        root=Path("."),
+        manifest=None,
+        image_ref=None,
+        running=None,
+        outputs_dir=Path("."),
+        containment_evidence_json=json.dumps(measured),
+    )
+    return HostContainmentGrader().run(subject)
+
+
+@pytest.mark.parametrize("mode", ["public", "no-network"])
+def test_good_host_containment(image, mode):
+    spec = launch(image, mode)
+    running = DockerValidationProvider().start(spec)
+    try:
+        measured = running.measure_containment()
+    finally:
+        running.stop()
+    assert owned(spec.run_id) == []
+    result = grade(measured)
+    assert result.status is CheckStatus.PASS, result.evidence
+    assert sorted(measured["allotted_writable"]) == ["/dev/shm", "/tmp"]
+    assert {p["name"] for p in measured["processes"]} >= {"docker-init"}
+
+
+def test_root_process_in_the_subject_is_detected(image):
+    spec = launch(image)
+    running = DockerValidationProvider().start(spec)
+    intruder = subprocess.Popen(
+        ["docker", "exec", "--user", "0", running.name, "sleep", "60"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            measured = running.measure_containment()
+            if any(0 in p["uids"] for p in measured["processes"]):
+                break
+            time.sleep(0.5)
+    finally:
+        intruder.kill()
+        running.stop()
+    assert owned(spec.run_id) == []
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    assert any("runs as root" in line for line in result.evidence)

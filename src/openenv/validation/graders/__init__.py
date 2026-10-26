@@ -38,6 +38,8 @@ class Subject:
             Where trajectory records and replay artifacts are written.
         network_evidence_json (`str`, *optional*):
             Provider-measured [`~openenv.validation.runtime.contracts.NetworkEvidence`].
+        containment_evidence_json (`str`, *optional*):
+            Provider-measured [`~openenv.validation.runtime.contracts.ContainmentEvidence`].
     """
 
     root: Path
@@ -47,6 +49,7 @@ class Subject:
     outputs_dir: Path
     runtime_evidence: RuntimeEvidence | None = None
     network_evidence_json: str | None = None
+    containment_evidence_json: str | None = None
 
 
 @runtime_checkable
