@@ -176,10 +176,9 @@ class _WebSocketGuardMiddleware:
 def attach_guard(app: Any) -> None:
     """Add the fastapi-guard middleware to `app` when enabled via env.
 
-    No-op unless OPENENV_GUARD_ENABLED is set to 1/true/yes.
+    No-op unless OPENENV_GUARD_ENABLED is set to 1/true/yes/on.
     """
-    enabled = os.environ.get("OPENENV_GUARD_ENABLED", "").strip().lower()
-    if enabled not in ("1", "true", "yes"):
+    if not _env_bool("OPENENV_GUARD_ENABLED"):
         return
     if getattr(app.state, "guard_attached", False):
         return

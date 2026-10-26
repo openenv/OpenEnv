@@ -24,6 +24,22 @@ from starlette.websockets import WebSocketDisconnect
 _IP = itertools.count(1)
 
 
+@pytest.fixture(autouse=True)
+def _optional_security_dependency(request):
+    if request.node.originalname in (
+        "test_disabled_by_default",
+        "test_websocket_unguarded_when_disabled",
+        "test_invalid_enabled_flag_raises",
+    ):
+        return
+    pytest.importorskip("guard", reason="requires the optional security extra")
+
+
+def test_invalid_enabled_flag_raises(monkeypatch):
+    with pytest.raises(ValueError, match="OPENENV_GUARD_ENABLED"):
+        _make_app(monkeypatch, OPENENV_GUARD_ENABLED="sometimes")
+
+
 def _unique_ip() -> str:
     n = next(_IP)
     return f"198.51.{n // 250}.{(n % 250) + 1}"
@@ -73,8 +89,9 @@ async def test_disabled_by_default(monkeypatch):
     assert response.status_code == 200
 
 
-async def test_enabled_adds_middleware(monkeypatch):
-    app = _make_app(monkeypatch, OPENENV_GUARD_ENABLED="1")
+@pytest.mark.parametrize("enabled", ["1", "true", "yes", "on"])
+async def test_enabled_adds_middleware(monkeypatch, enabled):
+    app = _make_app(monkeypatch, OPENENV_GUARD_ENABLED=enabled)
     # SecurityMiddleware for HTTP plus the websocket handshake guard.
     assert len(app.user_middleware) == 2
     response = await _request(app, "/health")
