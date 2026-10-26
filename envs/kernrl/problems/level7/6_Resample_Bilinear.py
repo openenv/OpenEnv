@@ -20,6 +20,7 @@ class Model(nn.Module):
     """
     Bilinear image resampling.
     """
+
     def __init__(self, output_height: int = 1080, output_width: int = 1920):
         super(Model, self).__init__()
         self.output_height = output_height
@@ -46,8 +47,8 @@ class Model(nn.Module):
         resampled = F.interpolate(
             image,
             size=(self.output_height, self.output_width),
-            mode='bilinear',
-            align_corners=False
+            mode="bilinear",
+            align_corners=False,
         )
 
         # Restore dimensions
@@ -63,10 +64,12 @@ class Model(nn.Module):
 input_height = 3840
 input_width = 2160
 
+
 def get_inputs():
     # 4K image
     image = torch.rand(input_height, input_width)
     return [image]
+
 
 def get_init_inputs():
     return [1080, 1920]  # output_height, output_width (1080p)

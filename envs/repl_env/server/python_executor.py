@@ -108,9 +108,7 @@ class PythonExecutor:
         """Register helper functions with the executor."""
         helpers = {
             "format_exc": traceback.format_exc,
-            "safe_json_dumps": lambda obj: json.dumps(
-                obj, default=lambda o: repr(o)
-            ),
+            "safe_json_dumps": lambda obj: json.dumps(obj, default=lambda o: repr(o)),
         }
         # Register helpers as callable tools
         for name, func in helpers.items():
@@ -144,16 +142,7 @@ class PythonExecutor:
             name: Variable name
             value: Variable value
         """
-        # Access the executor's internal state to set variables
-        if hasattr(self._executor, "state"):
-            self._executor.state[name] = value
-        else:
-            # Fallback: store in injected vars for later retrieval
-            self._executor._injected_vars = getattr(
-                self._executor, "_injected_vars", {}
-            )
-            self._executor._injected_vars[name] = value
-
+        self._executor.send_variables({name: value})
         self._user_variables.add(name)
 
     def get_variable(self, name: str) -> Optional[Any]:
@@ -165,15 +154,7 @@ class PythonExecutor:
         Returns:
             The variable value or None if not found
         """
-        # Try to get from executor's state
-        if hasattr(self._executor, "state"):
-            return self._executor.state.get(name)
-
-        # Fallback to injected vars
-        if hasattr(self._executor, "_injected_vars"):
-            return self._executor._injected_vars.get(name)
-
-        return None
+        return self._executor.state.get(name)
 
     def list_variables(self) -> List[str]:
         """List non-private variables in namespace.
@@ -181,17 +162,8 @@ class PythonExecutor:
         Returns:
             List of variable names (excluding private and builtins)
         """
-        variables = set()
-
-        # Get from executor's state
-        if hasattr(self._executor, "state"):
-            for key in self._executor.state:
-                if not key.startswith("_"):
-                    variables.add(key)
-
-        # Include tracked user variables
+        variables = {key for key in self._executor.state if not key.startswith("_")}
         variables.update(self._user_variables)
-
         return list(variables)
 
     def execute(self, code: str) -> Dict[str, Any]:
@@ -220,84 +192,35 @@ class PythonExecutor:
         try:
             exec_result = self._executor(code)
 
-            # Extract logs/prints
-            try:
-                logs = getattr(exec_result, "logs", None)
-                if logs:
-                    stdout_parts.append(str(logs))
-            except Exception:
-                logger.debug("Failed to read exec_result.logs", exc_info=True)
+            # CodeOutput has: logs (str), output (Any), is_final_answer (bool)
+            if exec_result.logs:
+                stdout_parts.append(str(exec_result.logs))
 
-            # Extract the result / output value
-            try:
-                if hasattr(exec_result, "output"):
-                    out_val = exec_result.output
-                    if out_val is not None:
-                        try:
-                            stdout_parts.append(json.dumps(out_val))
-                        except Exception:
-                            stdout_parts.append(repr(out_val))
-            except Exception:
-                logger.debug("Failed to read exec_result.output", exc_info=True)
-
-            # Check for errors
-            try:
-                err = getattr(exec_result, "error", None)
-                if err:
-                    stderr_parts.append(str(err))
-                    success = False
-                    exception_msg = str(err)
-            except Exception:
-                logger.debug("Failed to read exec_result.error", exc_info=True)
-
-            try:
-                ex = getattr(exec_result, "exception", None)
-                if ex:
-                    stderr_parts.append(str(ex))
-                    success = False
-                    exception_msg = str(ex)
-            except Exception:
-                logger.debug(
-                    "Failed to read exec_result.exception", exc_info=True
-                )
-
-            # Determine success from exit_code if available
-            try:
-                if hasattr(exec_result, "exit_code"):
-                    if (
-                        exec_result.exit_code is not None
-                        and exec_result.exit_code != 0
-                    ):
-                        success = False
-                elif hasattr(exec_result, "success"):
-                    success = bool(exec_result.success)
-            except Exception:
-                logger.debug(
-                    "Failed to determine exec_result exit code", exc_info=True
-                )
+            if exec_result.output is not None:
+                try:
+                    stdout_parts.append(json.dumps(exec_result.output))
+                except Exception:
+                    stdout_parts.append(repr(exec_result.output))
 
         except Exception as e:
             success = False
-            exception_msg = (
-                f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            )
+            exception_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
             stderr_parts.append(exception_msg)
 
         execution_time = time.time() - start_time
 
         # Capture new/modified variables
-        if hasattr(self._executor, "state"):
-            for key in self._executor.state:
-                if key not in pre_state_keys and not key.startswith("_"):
-                    try:
-                        val = self._executor.state[key]
-                        val_repr = repr(val)
-                        if len(val_repr) > 500:
-                            val_repr = val_repr[:500] + "..."
-                        new_locals[key] = val_repr
-                        self._user_variables.add(key)
-                    except Exception:
-                        new_locals[key] = "<unrepresentable>"
+        for key in self._executor.state:
+            if key not in pre_state_keys and not key.startswith("_"):
+                try:
+                    val = self._executor.state[key]
+                    val_repr = repr(val)
+                    if len(val_repr) > 500:
+                        val_repr = val_repr[:500] + "..."
+                    new_locals[key] = val_repr
+                    self._user_variables.add(key)
+                except Exception:
+                    new_locals[key] = "<unrepresentable>"
 
         # Compose stdout/stderr
         stdout = "\n".join(part for part in stdout_parts if part)
@@ -338,13 +261,10 @@ class PythonExecutor:
     def inject_function(self, name: str, func: Callable[..., Any]) -> None:
         """Inject a callable function into the namespace.
 
-        Used for adding llm_query, llm_query_batched, FINAL, etc.
-
         Args:
             name: Function name in namespace
             func: The callable to inject
         """
-        # Add to callable tools and sync with executor
         self._callable_tools[name] = func
         self._user_variables.add(name)
         self._sync_callable_tools()

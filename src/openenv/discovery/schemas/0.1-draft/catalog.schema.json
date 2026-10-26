@@ -1,0 +1,715 @@
+{
+  "$defs": {
+    "AgentToolsInterface": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "role": {
+          "const": "agent-tools",
+          "title": "Role",
+          "type": "string"
+        },
+        "source_revision": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "title": "Source Revision",
+          "type": "string"
+        },
+        "status": {
+          "const": "declared",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "protocol",
+        "status",
+        "source_revision"
+      ],
+      "title": "AgentToolsInterface",
+      "type": "object"
+    },
+    "CatalogIssue": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Message",
+          "type": "string"
+        },
+        "path": {
+          "allOf": [
+            {
+              "pattern": "^(?:\\.|(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*(?:/(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*)*)$"
+            },
+            {
+              "not": {
+                "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]"
+              }
+            }
+          ],
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Path",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "code",
+        "message",
+        "severity"
+      ],
+      "title": "CatalogIssue",
+      "type": "object"
+    },
+    "DiscoveryEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "@context": {
+          "const": "https://agenticresourcediscovery.org/context/v1",
+          "default": "https://agenticresourcediscovery.org/context/v1",
+          "title": "@Context",
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "data": {
+          "$ref": "#/$defs/EnvironmentCard"
+        },
+        "description": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Description",
+          "type": "string"
+        },
+        "displayName": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Displayname",
+          "type": "string"
+        },
+        "identifier": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Identifier",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "representativeQueries": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "maxItems": 0,
+              "type": "array"
+            },
+            {
+              "items": {
+                "maxLength": 8192,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "maxItems": 5,
+              "minItems": 2,
+              "type": "array"
+            }
+          ],
+          "title": "Representativequeries"
+        },
+        "tags": {
+          "items": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "type": {
+          "const": "application/vnd.openenv.environment-card+json",
+          "default": "application/vnd.openenv.environment-card+json",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier",
+        "displayName",
+        "data",
+        "description"
+      ],
+      "title": "DiscoveryEntry",
+      "type": "object"
+    },
+    "EnvironmentCard": {
+      "$comment": "JSON Schema covers structure, relative paths and conditional presence/cardinality. Full profile validation also requires URI, SPDX and requirement parsing, source/artifact equality and agent-tool revision/protocol checks. See docs/source/guides/catalog-discovery.md#consumer-validation.",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "artifacts": {
+                "maxItems": 0
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "artifact_availability": {
+                "const": "resolvable"
+              }
+            },
+            "required": [
+              "artifact_availability"
+            ]
+          },
+          "then": {
+            "properties": {
+              "artifacts": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "artifacts"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "license": {
+                "const": "other"
+              }
+            },
+            "required": [
+              "license"
+            ]
+          },
+          "then": {
+            "properties": {
+              "license_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "license_url"
+            ]
+          }
+        }
+      ],
+      "description": "A revision-bound source declaration under the experimental 0.1 profile.",
+      "properties": {
+        "artifact_availability": {
+          "enum": [
+            "resolvable",
+            "external",
+            "unknown"
+          ],
+          "title": "Artifact Availability",
+          "type": "string"
+        },
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/GitArtifact"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "description": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Description",
+          "type": "string"
+        },
+        "framework_requirement": {
+          "anyOf": [
+            {
+              "maxLength": 8192,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Framework Requirement"
+        },
+        "interfaces": {
+          "contains": {
+            "properties": {
+              "role": {
+                "const": "orchestration"
+              }
+            },
+            "required": [
+              "role"
+            ],
+            "type": "object"
+          },
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "agent-tools": "#/$defs/AgentToolsInterface",
+                "orchestration": "#/$defs/OrchestrationInterface"
+              },
+              "propertyName": "role"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/OrchestrationInterface"
+              },
+              {
+                "$ref": "#/$defs/AgentToolsInterface"
+              }
+            ]
+          },
+          "maxContains": 1,
+          "minContains": 1,
+          "title": "Interfaces",
+          "type": "array"
+        },
+        "license": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "License",
+          "type": "string"
+        },
+        "license_url": {
+          "anyOf": [
+            {
+              "maxLength": 8192,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "License Url"
+        },
+        "manifest_spec_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifest Spec Version"
+        },
+        "name": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Owner"
+            },
+            {
+              "const": "unknown",
+              "type": "string"
+            }
+          ],
+          "title": "Owner"
+        },
+        "schema_version": {
+          "const": "0.1-draft",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/EnvironmentSource"
+        }
+      },
+      "required": [
+        "schema_version",
+        "name",
+        "description",
+        "owner",
+        "source",
+        "artifact_availability",
+        "license",
+        "interfaces"
+      ],
+      "title": "EnvironmentCard",
+      "type": "object"
+    },
+    "EnvironmentSource": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Id",
+          "type": "string"
+        },
+        "path": {
+          "allOf": [
+            {
+              "pattern": "^(?:\\.|(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*(?:/(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*)*)$"
+            },
+            {
+              "not": {
+                "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]"
+              }
+            }
+          ],
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Path",
+          "type": "string"
+        },
+        "provider": {
+          "const": "github",
+          "title": "Provider",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "uri": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "id",
+        "uri",
+        "revision",
+        "path"
+      ],
+      "title": "EnvironmentSource",
+      "type": "object"
+    },
+    "Generator": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "openenv-git-catalog",
+          "default": "openenv-git-catalog",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "const": "1",
+          "default": "1",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "title": "Generator",
+      "type": "object"
+    },
+    "GitArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "git",
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "allOf": [
+            {
+              "pattern": "^(?:\\.|(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*(?:/(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*)*)$"
+            },
+            {
+              "not": {
+                "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]"
+              }
+            }
+          ],
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "uri": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "uri",
+        "path",
+        "revision"
+      ],
+      "title": "GitArtifact",
+      "type": "object"
+    },
+    "Inventory": {
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "items": {
+            "allOf": [
+              {
+                "pattern": "^(?:\\.|(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*(?:/(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*)*)$"
+              },
+              {
+                "not": {
+                  "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]"
+                }
+              }
+            ],
+            "maxLength": 8192,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "root": {
+          "allOf": [
+            {
+              "pattern": "^(?:\\.|(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*(?:/(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*)*)$"
+            },
+            {
+              "not": {
+                "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]"
+              }
+            }
+          ],
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Root",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "paths"
+      ],
+      "title": "Inventory",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "OrchestrationInterface": {
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "const": "openenv",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "role": {
+          "const": "orchestration",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "protocol"
+      ],
+      "title": "OrchestrationInterface",
+      "type": "object"
+    },
+    "Owner": {
+      "additionalProperties": false,
+      "description": "A source-owner declaration, not verification or copyright attribution.",
+      "properties": {
+        "authority": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Authority",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "authority",
+        "id"
+      ],
+      "title": "Owner",
+      "type": "object"
+    },
+    "RepositorySource": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Id",
+          "type": "string"
+        },
+        "provider": {
+          "const": "github",
+          "title": "Provider",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "uri": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "id",
+        "uri",
+        "revision"
+      ],
+      "title": "RepositorySource",
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/huggingface/OpenEnv/main/src/openenv/discovery/schemas/0.1-draft/catalog.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Digest",
+      "type": "string"
+    },
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/DiscoveryEntry"
+      },
+      "title": "Entries",
+      "type": "array"
+    },
+    "generator": {
+      "$ref": "#/$defs/Generator"
+    },
+    "inventory": {
+      "$ref": "#/$defs/Inventory"
+    },
+    "issues": {
+      "items": {
+        "$ref": "#/$defs/CatalogIssue"
+      },
+      "title": "Issues",
+      "type": "array"
+    },
+    "publisher": {
+      "maxLength": 253,
+      "minLength": 3,
+      "pattern": "^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,63}$",
+      "title": "Publisher",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1-draft",
+      "default": "0.1-draft",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/RepositorySource"
+    }
+  },
+  "required": [
+    "publisher",
+    "source",
+    "inventory",
+    "entries",
+    "complete",
+    "digest"
+  ],
+  "title": "CatalogSnapshot",
+  "type": "object"
+}

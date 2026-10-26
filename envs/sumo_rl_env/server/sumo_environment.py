@@ -20,16 +20,49 @@ os.environ.setdefault("SUMO_HOME", "/usr/share/sumo")
 
 from openenv.core.env_server import Action, Environment, Observation
 
-from ..models import SumoAction, SumoObservation, SumoState
+# Support both in-repo and standalone imports
+try:
+    # In-repo imports (when running from OpenEnv repository)
+    from ..models import SumoAction, SumoObservation, SumoState
+except ImportError as e:
+    if "relative import" not in str(e) and "no known parent package" not in str(e):
+        raise
+    # Standalone imports (when running via uvicorn server.app:app)
+    from models import SumoAction, SumoObservation, SumoState
 
 # Import SUMO-RL
 try:
     from sumo_rl import SumoEnvironment as BaseSumoEnv
 except ImportError as e:
     raise ImportError(
-        "sumo-rl is not installed. "
-        "Please install it with: pip install sumo-rl"
+        "sumo-rl is not installed. Please install it with: pip install sumo-rl"
     ) from e
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert library-specific values into JSON-serializable Python types."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        try:
+            return tolist()
+        except Exception:
+            pass
+
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except Exception:
+            pass
+
+    return str(value)
 
 
 class SumoEnvironment(Environment):
@@ -214,13 +247,11 @@ class SumoEnvironment(Environment):
             obs_list = list(obs)
 
         # Get action mask (all actions valid in SUMO-RL)
-        num_phases = self.env.action_space.n
+        num_phases = int(self.env.action_space.n)
         action_mask = list(range(num_phases))
 
         # Extract system metrics for metadata
-        system_info = {
-            k: v for k, v in info.items() if k.startswith("system_")
-        }
+        system_info = {k: v for k, v in info.items() if k.startswith("system_")}
 
         # Create observation
         return SumoObservation(
@@ -232,6 +263,6 @@ class SumoEnvironment(Environment):
             reward=reward,
             metadata={
                 "num_green_phases": num_phases,
-                "system_info": system_info,
+                "system_info": _json_safe(system_info),
             },
         )

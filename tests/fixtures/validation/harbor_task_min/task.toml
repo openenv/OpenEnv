@@ -1,0 +1,18 @@
+schema_version = "1.1"
+
+[task]
+name = "harbor-task-min"
+version = "0.1.0"
+tags = ["terminal"]
+
+[solution]
+path = "solution/solve.sh"
+
+[tests]
+path = "tests/test.sh"
+
+[resources]
+cpu = 1.0
+memory_mb = 1024
+disk_mb = 512
+episode_timeout_s = 60.0

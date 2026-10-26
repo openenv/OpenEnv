@@ -65,21 +65,27 @@ class ChessEnv(EnvClient[ChessAction, ChessObservation, ChessState]):
             StepResult with ChessObservation.
         """
         obs_data = payload.get("observation", {})
+        # `serialize_observation` keeps reward and done on the envelope, not in
+        # the observation dict. Reading them from obs_data left every step
+        # reporting reward 0.0 and done False.
+        reward = payload.get("reward", 0.0)
+        done = payload.get("done", False)
 
         observation = ChessObservation(
             fen=obs_data.get("fen", ""),
             legal_moves=obs_data.get("legal_moves", []),
             is_check=obs_data.get("is_check", False),
-            done=obs_data.get("done", False),
-            reward=obs_data.get("reward", 0.0),
+            done=bool(done),
+            reward=reward,
             result=obs_data.get("result"),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
 
         return StepResult(
             observation=observation,
             reward=observation.reward,
             done=observation.done,
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict[str, Any]) -> ChessState:

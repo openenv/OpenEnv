@@ -1,0 +1,14 @@
+{
+  "description": "Perform scheduling tasks against a simulated calendar using MCP event tools. Scenarios provide seeded data and SQL checks for task outcomes.",
+  "tags": ["openenv", "rl-environment", "calendar", "scheduling", "mcp", "tool-use"],
+  "representative_queries": [
+    "find a calendar simulation for scheduling workflows",
+    "evaluate an agent that creates and updates calendar events",
+    "find MCP calendar tools with scenario-based outcome checks"
+  ],
+  "agent_tools": {
+    "protocol": "mcp",
+    "names": ["list_events", "get_event", "create_event", "update_event", "delete_event"],
+    "source": "envs/calendar_env/server/calendar_mcp/tools/events.py"
+  }
+}

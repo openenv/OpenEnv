@@ -9,7 +9,7 @@ description = "FinQA Environment for OpenEnv - financial question-answering on S
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv dependencies (required for server functionality)
-    "openenv-core[core]>=0.2.1",
+    "openenv>=0.2.3",
     "fastapi>=0.115.0",
     "fastmcp>=2.0.0",
     "pydantic>=2.0.0",
@@ -31,4 +31,3 @@ server = "finqa_env.server.app:main"
 [tool.setuptools]
 packages = ["finqa_env", "finqa_env.server"]
 package-dir = { "finqa_env" = ".", "finqa_env.server" = "server" }
-

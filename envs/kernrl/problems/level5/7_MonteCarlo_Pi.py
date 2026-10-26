@@ -27,6 +27,7 @@ class Model(nn.Module):
     Points (x, y) in [0, 1]^2 that satisfy x^2 + y^2 <= 1 fall inside
     the quarter circle. Ratio of hits to total * 4 estimates Pi.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -58,10 +59,12 @@ class Model(nn.Module):
 # Problem configuration - many samples for accuracy
 num_samples = 10_000_000
 
+
 def get_inputs():
     # Pre-generate random points
     random_points = torch.rand(num_samples, 2)
     return [random_points]
+
 
 def get_init_inputs():
     return []

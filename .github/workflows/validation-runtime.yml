@@ -1,0 +1,52 @@
+name: Validation runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+
+permissions: {}
+
+jobs:
+  runtime:
+    permissions:
+      contents: read
+    name: Runtime validation / Linux Docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.13"
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.3"
+          enable-cache: true
+          cache-dependency-glob: tests/validation_runtime/uv.lock
+      - name: Install locked runtime
+        run: uv sync --project tests/validation_runtime --frozen
+      - name: Fast and real protocol tests
+        run: |
+          uv run --project tests/validation_runtime --frozen python scripts/validation/reproduce.py --suite fast --require-complete
+          uv run --project tests/validation_runtime --frozen python scripts/validation/reproduce.py --suite protocol --require-complete
+      - name: Exact-wheel Docker acceptance
+        run: uv run --project tests/validation_runtime --frozen python scripts/validation/reproduce.py --suite docker --require-complete
+      - name: Verify evidence inventory
+        run: |
+          for bundle in outputs/validation-runtime/*; do
+            python scripts/validation/verify_artifacts.py "$bundle"
+          done
+      - name: Retain evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: validation-runtime-${{ github.event.pull_request.head.sha || github.sha }}
+          path: outputs/validation-runtime/
+          if-no-files-found: warn
+          retention-days: 14

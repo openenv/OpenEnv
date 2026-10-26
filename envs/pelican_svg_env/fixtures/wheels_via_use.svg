@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+  <!-- The same scene, with the wheel written once in <defs> and placed twice
+       with <use>, which is what a model does when it factors its output.
+       Nothing inside <defs> is painted and every <use> is, so a correct scorer
+       finds two wheels here, at the positions the <use> elements give them, and
+       none at the origin. -->
+  <defs>
+    <g id="wheel">
+      <circle cx="0" cy="0" r="42" fill="none" stroke="black" stroke-width="4"/>
+      <circle cx="0" cy="0" r="6" fill="black"/>
+    </g>
+  </defs>
+  <use href="#wheel" x="130" y="220"/>
+  <use href="#wheel" x="270" y="220"/>
+  <line x1="130" y1="220" x2="270" y2="220" stroke="black" stroke-width="4"/>
+  <line x1="130" y1="220" x2="200" y2="170" stroke="black" stroke-width="4"/>
+  <line x1="270" y1="220" x2="200" y2="170" stroke="black" stroke-width="4"/>
+  <ellipse cx="195" cy="135" rx="40" ry="28" fill="white" stroke="black" stroke-width="3"/>
+  <circle cx="235" cy="105" r="16" fill="white" stroke="black" stroke-width="3"/>
+  <path d="M 250 103 L 285 110 L 250 115 Z" fill="orange" stroke="black" stroke-width="1"/>
+  <circle cx="240" cy="100" r="2" fill="black"/>
+</svg>

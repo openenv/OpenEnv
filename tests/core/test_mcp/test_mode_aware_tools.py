@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Tests for mode-aware tool registration (Task #5 of Issue #359).
@@ -28,15 +24,15 @@ References:
 """
 
 import asyncio
+
 import pytest
 from fastmcp import FastMCP
-
 from openenv.core.env_server.mcp_environment import MCPEnvironment
 from openenv.core.env_server.mcp_types import (
-    ListToolsAction,
     CallToolAction,
-    ListToolsObservation,
     CallToolObservation,
+    ListToolsAction,
+    ListToolsObservation,
 )
 from openenv.core.env_server.types import Observation
 

@@ -22,6 +22,7 @@ class Model(nn.Module):
     """
     Scene change detection using multiple metrics.
     """
+
     def __init__(self, sad_threshold: float = 0.3, hist_threshold: float = 0.5):
         super(Model, self).__init__()
         self.sad_threshold = sad_threshold
@@ -64,7 +65,11 @@ class Model(nn.Module):
 
         # Metric 3: Edge difference (structural change)
         # Simple gradient magnitude comparison
-        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32, device=frame1.device)
+        sobel_x = torch.tensor(
+            [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+            dtype=torch.float32,
+            device=frame1.device,
+        )
         sobel_x = sobel_x.unsqueeze(0).unsqueeze(0)
 
         f1 = frame1.unsqueeze(0).unsqueeze(0)
@@ -75,7 +80,9 @@ class Model(nn.Module):
         edge_diff = (edge1 - edge2).abs() / (edge1 + edge2 + 1e-10)
 
         # Combine metrics for final decision
-        is_scene_change = (sad_score > self.sad_threshold) | (chi_sq > self.hist_threshold)
+        is_scene_change = (sad_score > self.sad_threshold) | (
+            chi_sq > self.hist_threshold
+        )
 
         return is_scene_change, sad_score, chi_sq
 
@@ -84,10 +91,12 @@ class Model(nn.Module):
 frame_height = 480
 frame_width = 640
 
+
 def get_inputs():
     frame1 = torch.rand(frame_height, frame_width)
     frame2 = torch.rand(frame_height, frame_width)
     return [frame1, frame2]
+
 
 def get_init_inputs():
     return [0.3, 0.5]  # sad_threshold, hist_threshold

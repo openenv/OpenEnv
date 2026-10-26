@@ -1,0 +1,10 @@
+spec_version: 1
+name: broken-manifest
+type: env
+runtime: python
+app: server.app:app
+port: 8000
+validation:
+  reward:
+    range: [1.0, 0.0]
+    floor_margin: 0.5

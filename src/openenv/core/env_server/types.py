@@ -1,12 +1,9 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 from enum import Enum
-from typing import Any, Dict, Optional, Union, Literal, Annotated
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from typing import Annotated, Any, Dict, Literal, Optional, Union
+
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 # Type aliases
@@ -120,6 +117,9 @@ class ResetResponse(BaseModel):
     done: bool = Field(
         default=False, description="Whether episode is already done (typically False)"
     )
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, description="Additional metadata from the environment"
+    )
 
 
 class StepRequest(BaseModel):
@@ -163,6 +163,9 @@ class StepResponse(BaseModel):
         default=None, description="Reward signal from the action"
     )
     done: bool = Field(default=False, description="Whether the episode has terminated")
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None, description="Additional metadata from the environment"
+    )
 
 
 class BaseMessage(BaseModel):
@@ -233,6 +236,16 @@ class SchemaResponse(BaseMessage):
     state: Dict[str, Any] = Field(
         description="JSON schema for environment state objects"
     )
+    reset_observation: Optional[Dict[str, Any]] = Field(
+        default=None, description="JSON schema for observations returned by reset"
+    )
+
+    @model_serializer(mode="wrap")
+    def _omit_undeclared_reset_schema(self, handler):
+        data = handler(self)
+        if self.reset_observation is None:
+            data.pop("reset_observation", None)
+        return data
 
 
 class HealthResponse(BaseMessage):
@@ -242,6 +255,33 @@ class HealthResponse(BaseMessage):
         default=HealthStatus.HEALTHY,
         description="Health status of the environment server",
     )
+
+
+class ListTasksRequest(BaseMessage):
+    """Request model for ORS-compatible task listing."""
+
+    split: str = Field(description="Task split name")
+
+
+class NumTasksRequest(BaseMessage):
+    """Request model for ORS-compatible task counts."""
+
+    split: str = Field(description="Task split name")
+
+
+class GetTaskRequest(BaseMessage):
+    """Request model for ORS-compatible task lookup."""
+
+    split: str = Field(description="Task split name")
+    index: int = Field(description="Task index within the split")
+
+
+class GetTaskRangeRequest(BaseMessage):
+    """Request model for ORS-compatible task range lookup."""
+
+    split: str = Field(description="Task split name")
+    start: Optional[int] = Field(default=None, description="Inclusive start index")
+    stop: Optional[int] = Field(default=None, description="Exclusive stop index")
 
 
 class WSResetMessage(BaseMessage):

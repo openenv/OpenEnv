@@ -1,0 +1,32 @@
+[project]
+name = "openenv-harbor-env"
+version = "0.1.0"
+description = "Run Harbor tasks with a coding agent and capture token-level training data"
+requires-python = ">=3.12"
+dependencies = [
+    "openenv",
+    # Every sandbox backend, listed individually rather than via `harbor[cloud]`.
+    # `harbor[cloud]` cannot be installed at all: it pulls both `langsmith[sandbox]`, which
+    # requires `websockets>=15`, and `tensorlake`, which requires `websockets>=13,<14`. uv
+    # reports the pair as unsatisfiable and the image build fails. Neither is a sandbox backend
+    # we offer, so both are dropped and everything else kept. Re-check on a Harbor upgrade.
+    "harbor[e2b,modal,daytona,gke,ec2,runloop,novita,blaxel,beam,islo,opensandbox,cwsandbox,use-computer,cua]>=0.22.0",
+    "huggingface_hub>=1.29.0",
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    "httpx>=0.27",
+    "gradio>=5",
+    # "Sign in with Hugging Face" on a Space (Gradio's OAuth: the `gradio[oauth]` extra's two).
+    "authlib>=1.3",
+    "itsdangerous>=2.1",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["server"]

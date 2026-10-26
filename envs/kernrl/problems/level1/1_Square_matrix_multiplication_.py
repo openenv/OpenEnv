@@ -1,13 +1,15 @@
 import torch
 import torch.nn as nn
 
+
 class Model(nn.Module):
     """
     Simple model that performs a single square matrix multiplication (C = A * B)
     """
+
     def __init__(self):
         super(Model, self).__init__()
-    
+
     def forward(self, A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
         """
         Performs the matrix multiplication.
@@ -21,12 +23,15 @@ class Model(nn.Module):
         """
         return torch.matmul(A, B)
 
+
 N = 2048
+
 
 def get_inputs():
     A = torch.randn(N, N)
     B = torch.randn(N, N)
     return [A, B]
+
 
 def get_init_inputs():
     return []  # No special initialization inputs needed

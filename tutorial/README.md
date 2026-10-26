@@ -2,7 +2,7 @@
 
 ![OpenEnv Walkthrough](./images/banner.png)
 
-A hands-on guide to building, deploying, and scaling RL environments with [OpenEnv](https://github.com/meta-pytorch/OpenEnv).
+A hands-on guide to building, deploying, and scaling RL environments with [OpenEnv](https://github.com/huggingface/OpenEnv).
 
 ## Guide Structure
 
@@ -33,7 +33,7 @@ tutorial/
 
 | Resource | Link |
 |----------|------|
-| OpenEnv Repository | [github.com/meta-pytorch/OpenEnv](https://github.com/meta-pytorch/OpenEnv) |
+| OpenEnv Repository | [github.com/huggingface/OpenEnv](https://github.com/huggingface/OpenEnv) |
 | Environment Hub | [huggingface.co/collections/openenv](https://huggingface.co/collections/openenv/environment-hub) |
 | TRL Integration Docs | [huggingface.co/docs/trl/openenv](https://huggingface.co/docs/trl/openenv) |
 | Scaling Experiments | [github.com/burtenshaw/openenv-scaling](https://github.com/burtenshaw/openenv-scaling) |

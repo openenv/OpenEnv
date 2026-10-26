@@ -2,11 +2,13 @@
 
 **Status**: In Review
 **Created**: 10/14/2025
-**Amended**: November 12, 2025
+**Amended**: November 12, 2025 _(a "Cloud Sandbox Providers" amendment is proposed below, pending author sign-off — see Amendment History)_
 **Authors**: @Darktex, @pankit-eng, @jspisak, @zkwentz
 **RFC ID:** 002
 
 ## Amendment History
+
+**June 14, 2026** (proposed by @thegovind — pending review/sign-off by the RFC 002 authors): Added the "Cloud Sandbox Providers" subsection — a provider-neutral capability mapping, protocol invariants, and security invariants for adapting hosted sandbox runtimes onto the existing `ContainerProvider` contract without changing the client/server protocol.
 
 **November 12, 2025**: Added tool duality (sim vs prod), Docker Compose patterns, positioning framework (OpenEnv vs systems built on top), and graceful degradation principles.
 
@@ -140,6 +142,114 @@ class ContainerProvider(ABC):
 - Provider abstraction decouples client from deployment details and management with easy integration with existing orchestration solutions
 - Consistent interface across all providers
 - Higher level RL frameworks can implement their own container providers to integrate with their existing orchestration solutions.
+
+#### Cloud Sandbox Providers
+
+> **Status:** proposed amendment, pending review/sign-off by the RFC 002 authors.
+> The normative invariants below (protocol + security) are not finalized until
+> the original authors approve.
+
+Cloud sandbox platforms expose the same small set of capabilities under
+different names. A cloud sandbox provider is an adapter that maps those
+capabilities onto the existing `ContainerProvider` contract **without** changing
+the `EnvClient` protocol or blurring the agent/orchestration boundary.
+
+The shared capability surface — and how it maps to OpenEnv:
+
+| Capability (named differently per platform) | Maps to |
+|---------------------------------------------|---------|
+| Create from a source artifact (image, disk image, snapshot, template) | `start_container(image=...)` |
+| Expose a port as a URL (signed URL, tunnel, sandbox port) | `base_url` return value |
+| Run a process inside the sandbox | provider-internal start command |
+| Inject environment variables | `env_vars` arg |
+| Network egress policy | provider-local config |
+
+Cloud sandbox providers generally expose these, so OpenEnv does **not** need a vendor-specific
+concept in the core protocol — only a set of invariants that hold for all of
+them:
+
+1. **Direct base URL.** `start_container()` returns a `base_url` that an
+   `EnvClient` connects to directly, including the WebSocket upgrade on `/ws`.
+   Requiring the caller to attach credentials, headers, or SDK objects to
+   connect is a core client-auth change and needs a separate RFC. Public or
+   self-authenticating ingress is an explicit provider decision, never an
+   accidental default.
+2. **WebSocket transport is the conformance test.** A `200` on `/health` does
+   **not** prove conformance. Providers verify the exposed URL proxies a
+   WebSocket upgrade (HTTP/1.1 ingress, not a buffered HTTP/2-only proxy) before
+   claiming support, because `EnvClient` speaks WebSocket only.
+3. **base_url lifetime and reconnect.** Providers document how long a `base_url`
+   stays valid and which operations rotate it; any operation that changes the
+   URL or drops the transport requires the orchestrator to reconnect with the
+   new `base_url`.
+4. **Provider-specific source mapping.** Mapping an OpenEnv environment to a
+   runnable sandbox is provider-specific: a registry image that "just runs" on
+   one provider may need a build step (disk image, template) on another.
+   Providers document their accepted source forms and never imply a Docker
+   registry image is universally runnable.
+5. **Provider-local control plane, explicit cleanup.** Cloud credentials, signed
+   URLs, tunnels, sandbox groups, projects, and regions stay inside the
+   provider; core users still see only `ContainerProvider`. Providers clean up
+   resources they create — including on failed-start paths — and never delete
+   caller-owned disks, snapshots, or shared groups.
+6. **Lifecycle is orchestration-only.** Suspend, resume, snapshots, port
+   refresh, and egress changes are orchestration operations, never MCP tools
+   exposed to the agent. **Automatic** transitions (auto-suspend, scale-to-zero,
+   idle timeouts) can drop a live transport mid-episode, so providers choose
+   conservative defaults for RL rollouts and document the failure mode. Such
+   helpers stay provider-local until multiple providers demonstrate the same
+   semantics — OpenEnv does not standardize a cloud-only operation prematurely.
+7. **Implementation hygiene.** Network posture (ingress/egress) is documented
+   with default-deny egress recommended for untrusted code; provider SDKs are
+   optional extras imported lazily, so installing core OpenEnv pulls in no cloud
+   SDK; and preview SDKs are wrapped behind a private adapter tested with a fake
+   that asserts the real SDK's method names and kwargs, so API churn does not
+   leak through OpenEnv.
+
+##### Security invariants
+
+Cloud sandboxes run **untrusted** workloads: the environment server executes
+arbitrary RL/agent code, and a compromised environment will try to exfiltrate
+data, steal credentials, or reach the orchestrator. Treat the workload as
+hostile — no provider feature may rely on in-sandbox code being well-behaved —
+and enforce:
+
+S1. **Encrypted transport only.** The returned `base_url` is `https`/`wss`;
+   plaintext (`http`/`ws`) is rejected so episode traffic is never sent in the
+   clear.
+S2. **Ingress URLs are bearer capabilities.** An anonymous or self-authenticating
+   URL grants full control of the environment to whoever holds it: never logged,
+   scoped and time-boxed, and network-restricted where possible. Authenticated
+   ingress is preferred once the client supports it.
+S3. **Default-deny egress, block cloud metadata.** For untrusted code the
+   recommended posture is default-deny egress with an explicit allowlist, and
+   the cloud metadata / IMDS endpoint (`169.254.169.254` and link-local ranges)
+   is blocked so the workload cannot steal the sandbox's managed-identity token.
+   Providers never silently disable egress filtering.
+S4. **Least privilege and secret hygiene.** Control-plane credentials never
+   enter the sandbox, and any attached identity has minimum scope. Providers do
+   not put secrets, tokens, or ingress URLs in logs or exceptions; captured
+   command/server output is withheld by default, and any debug surfacing is an
+   explicit opt-in that is bounded and best-effort redacted.
+S5. **No command injection.** Commands the provider runs inside the sandbox are
+   safely quoted and sourced only from the trusted orchestrator — never
+   interpolated from agent- or environment-controlled input.
+S6. **Bounded blast radius.** Providers set CPU, memory, disk, and idle-timeout
+   limits so a runaway or malicious workload cannot exhaust resources or run up
+   unbounded cost; disk images and snapshots are treated as sensitive artifacts
+   with scoped access and explicit lifetimes.
+
+All security controls (egress, identity, ports, limits) stay orchestration-only,
+behind the same boundary as `reset`/`step`, and are never reachable by the agent
+over MCP. These invariants keep cloud sandboxes generalizable without adding
+vendor-specific concepts to the core client/server protocol.
+
+**Adding a provider.** Because these are invariants on the *existing*
+`ContainerProvider` contract — not new core concepts — a new hosted runtime
+becomes an OpenEnv cloud provider by subclassing `ContainerProvider` and
+satisfying the invariants above. No change to the `EnvClient`/server protocol is
+required, and multiple unrelated provider SDKs can sit behind the same contract
+— which is what keeps it genuinely provider-neutral.
 
 ### Key Design Decisions
 
@@ -435,4 +545,3 @@ This isn't about being exclusive—it's about maintaining a quality bar that mak
 - **Both benefit**: OpenEnv gets community contributions, systems get ecosystem reach
 
 **Analogy**: OpenEnv is like Linux (flexible kernel), systems built on it are like Ubuntu or Red Hat (opinionated distributions).
-

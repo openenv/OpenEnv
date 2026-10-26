@@ -14,9 +14,8 @@ an answer, and receives a score.
 
 from typing import Any, Dict, Optional
 
-from pydantic import Field
-
 from openenv.core.env_server.types import Action, Observation
+from pydantic import Field
 
 
 class ReasoningGymAction(Action):

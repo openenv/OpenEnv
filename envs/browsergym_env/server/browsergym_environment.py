@@ -8,21 +8,57 @@ with OpenEnv's Environment ABC. BrowserGym includes multiple benchmarks:
 - WorkArena: Enterprise task automation
 """
 
+import base64
+import html
 import importlib
+import io
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
 import gymnasium as gym
-
-from openenv.core.env_server.interfaces import Environment
+import numpy as np
 from browsergym_env.models import (
     BrowserGymAction,
     BrowserGymObservation,
     BrowserGymState,
 )
+from openenv.core.env_server.interfaces import Environment
+from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+# browsergym.core keeps one process-wide Playwright instance (sync API), which only
+# works on the thread that started it. Every BrowserGym call runs on this single thread
+# so the HTTP API, WebSocket sessions and the /web playground can share one process.
+_PLAYWRIGHT_THREAD = ThreadPoolExecutor(max_workers=1, thread_name_prefix="browsergym")
+
+
+def _on_playwright_thread(fn, *args, **kwargs):
+    """Run `fn` on the thread that owns the BrowserGym Playwright instance."""
+    return _PLAYWRIGHT_THREAD.submit(fn, *args, **kwargs).result()
+
+
+def _to_jsonable(value: Any) -> Any:
+    """Convert BrowserGym payload values into JSON-safe Python objects."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(item) for item in value]
+    if hasattr(value, "tolist"):
+        try:
+            return _to_jsonable(value.tolist())
+        except Exception:  # noqa: BLE001 - third-party array-likes
+            pass
+    if hasattr(value, "item"):
+        try:
+            return _to_jsonable(value.item())
+        except Exception:  # noqa: BLE001 - third-party scalar-likes
+            pass
+    return str(value)
 
 
 def _get_axtree_txt(obs: Dict[str, Any]) -> str:
@@ -42,7 +78,9 @@ def _get_axtree_txt(obs: Dict[str, Any]) -> str:
 
             return flatten_axtree_to_str(obs["axtree_object"])
         except ImportError:
-            logger.warning("browsergym.utils.obs not available, cannot convert axtree_object to text")
+            logger.warning(
+                "browsergym.utils.obs not available, cannot convert axtree_object to text"
+            )
         except Exception as e:
             logger.warning(f"Failed to convert axtree_object to text: {e}")
 
@@ -67,7 +105,9 @@ def _get_pruned_html(obs: Dict[str, Any]) -> str:
             dom_str = flatten_dom_to_str(obs["dom_object"])
             return prune_html(dom_str)
         except ImportError:
-            logger.warning("browsergym.utils.obs not available, cannot convert dom_object to pruned_html")
+            logger.warning(
+                "browsergym.utils.obs not available, cannot convert dom_object to pruned_html"
+            )
         except Exception as e:
             logger.warning(f"Failed to convert dom_object to pruned_html: {e}")
 
@@ -92,6 +132,9 @@ class BrowserGymEnvironment(Environment):
     provide unified access to multiple web navigation benchmarks.
     """
 
+    SUPPORTS_CONCURRENT_SESSIONS = True
+    REQUIRES_SINGLE_THREAD_EXECUTOR = True
+
     def __init__(
         self,
         benchmark: str = "miniwob",
@@ -100,6 +143,7 @@ class BrowserGymEnvironment(Environment):
         viewport_width: int = 1280,
         viewport_height: int = 720,
         timeout: float = 10000.0,
+        include_screenshot: bool = False,
         **gym_kwargs: Any,
     ):
         """Initialize the BrowserGym environment.
@@ -122,13 +166,8 @@ class BrowserGymEnvironment(Environment):
         self.viewport_width = viewport_width
         self.viewport_height = viewport_height
         self.timeout = timeout
+        self.include_screenshot = include_screenshot
         self.gym_kwargs = dict(gym_kwargs)
-
-        # Build environment ID
-        if task_name:
-            self.env_id = f"browsergym/{benchmark}.{task_name}"
-        else:
-            self.env_id = f"browsergym/{benchmark}"
 
         # force import the benchmark module
         benchmark_modules = {
@@ -152,23 +191,8 @@ class BrowserGymEnvironment(Environment):
             )
             raise ValueError(message) from import_error
 
-        # Create the BrowserGym environment
-        try:
-            self.gym_env = gym.make(
-                self.env_id,
-                headless=headless,
-                viewport={"width": viewport_width, "height": viewport_height},
-                timeout=timeout,
-                **self.gym_kwargs,
-            )
-        except Exception as e:  # noqa: BLE001 - gym.make
-            message = (
-                "Failed to create BrowserGym environment "
-                f"'{self.env_id}': {e}\n"
-                "Make sure the benchmark package is installed "
-                f"(e.g., pip install browsergym-{benchmark})."
-            )
-            raise ValueError(message) from e
+        self.env_id = self._build_env_id(task_name)
+        self.gym_env = self._create_gym_env(self.env_id)
 
         # State tracking
         self._state = BrowserGymState(
@@ -181,26 +205,76 @@ class BrowserGymEnvironment(Environment):
         self._last_obs: Optional[Dict[str, Any]] = None
         self._last_info: Optional[Dict[str, Any]] = None
 
+    def _build_env_id(self, task_name: Optional[str]) -> str:
+        if task_name:
+            return f"browsergym/{self.benchmark}.{task_name}"
+        return f"browsergym/{self.benchmark}"
+
+    def _create_gym_env(self, env_id: str):
+        try:
+            return gym.make(
+                env_id,
+                headless=self.headless,
+                viewport={
+                    "width": self.viewport_width,
+                    "height": self.viewport_height,
+                },
+                timeout=self.timeout,
+                **self.gym_kwargs,
+            )
+        except Exception as e:  # noqa: BLE001 - gym.make
+            message = (
+                "Failed to create BrowserGym environment "
+                f"'{env_id}': {e}\n"
+                "Make sure the benchmark package is installed "
+                f"(e.g., pip install browsergym-{self.benchmark})."
+            )
+            raise ValueError(message) from e
+
+    def _switch_task_if_needed(self, requested_task: str) -> None:
+        if requested_task == (self.task_name or ""):
+            return
+
+        next_task_name = requested_task or None
+        next_env_id = self._build_env_id(next_task_name)
+        next_gym_env = self._create_gym_env(next_env_id)
+
+        previous_gym_env = getattr(self, "gym_env", None)
+        self.task_name = next_task_name
+        self.env_id = next_env_id
+        self.gym_env = next_gym_env
+
+        if previous_gym_env is not None:
+            try:
+                _on_playwright_thread(previous_gym_env.close)
+            except Exception as exc:  # noqa: BLE001 - browsergym/playwright cleanup
+                logger.warning("BrowserGym cleanup failed during task switch: %s", exc)
+
     def reset(
         self,
         seed: Optional[int] = None,
         task_name: Optional[str] = None,
+        episode_id: Optional[str] = None,
     ) -> BrowserGymObservation:
         """Reset the environment with a specific task.
 
         Args:
             seed: Random seed for reproducibility
+            episode_id: Optional episode ID to use
             task_name: Override task name for this episode
 
         Returns:
             Initial observation for the task
         """
         # Generate new episode ID
+        resolved_task_name = task_name or self.task_name or ""
+        self._switch_task_if_needed(resolved_task_name)
+
         self._state = BrowserGymState(
-            episode_id=str(uuid4()),
+            episode_id=episode_id if episode_id is not None else str(uuid4()),
             step_count=0,
             benchmark=self.benchmark,
-            task_name=task_name or self.task_name or "",
+            task_name=resolved_task_name,
         )
 
         # Reset options
@@ -210,13 +284,13 @@ class BrowserGymEnvironment(Environment):
 
         # Reset the gym environment
         try:
-            obs, info = self.gym_env.reset(**reset_options)
+            obs, info = _on_playwright_thread(self.gym_env.reset, **reset_options)
         except AttributeError as err:
             if "context" in str(err) and hasattr(self.gym_env, "close"):
                 # BrowserGym can leave partially initialized state after a
                 # failed reset. Close the hanging resources and try once more.
-                self.gym_env.close()
-                obs, info = self.gym_env.reset(**reset_options)
+                _on_playwright_thread(self.gym_env.close)
+                obs, info = _on_playwright_thread(self.gym_env.reset, **reset_options)
             else:
                 raise
         except Exception as err:  # noqa: BLE001 - browsergym
@@ -244,7 +318,9 @@ class BrowserGymEnvironment(Environment):
 
         # Execute action in gym environment
         try:
-            obs, reward, terminated, truncated, info = self.gym_env.step(action.action_str)
+            obs, reward, terminated, truncated, info = _on_playwright_thread(
+                self.gym_env.step, action.action_str
+            )
 
             self._last_obs = obs
             self._last_info = info
@@ -320,7 +396,10 @@ class BrowserGymEnvironment(Environment):
                             goal_texts.append(content)
                         elif isinstance(content, list):
                             for item in content:
-                                if isinstance(item, dict) and item.get("type") == "text":
+                                if (
+                                    isinstance(item, dict)
+                                    and item.get("type") == "text"
+                                ):
                                     goal_texts.append(item.get("text", ""))
                 goal = " ".join(goal_texts)
             # Fallback to legacy goal field
@@ -332,7 +411,9 @@ class BrowserGymEnvironment(Environment):
         self._state.goal = goal
 
         # Extract additional observation modalities
-        screenshot = obs.get("screenshot") if isinstance(obs, dict) else None
+        screenshot = None
+        if self.include_screenshot and isinstance(obs, dict):
+            screenshot = _to_jsonable(obs.get("screenshot"))
 
         # Extract last_action_error from obs (BrowserGym includes this)
         last_action_error = False
@@ -346,9 +427,11 @@ class BrowserGymEnvironment(Environment):
         if isinstance(obs, dict):
             # Include useful fields but exclude large raw objects
             browsergym_metadata["browsergym_obs"] = {
-                k: v for k, v in obs.items() if k not in ("dom_object", "axtree_object", "screenshot")
+                k: _to_jsonable(v)
+                for k, v in obs.items()
+                if k not in ("dom_object", "axtree_object", "screenshot")
             }
-        browsergym_metadata["browsergym_info"] = info
+        browsergym_metadata["browsergym_info"] = _to_jsonable(info)
 
         return BrowserGymObservation(
             text=text,
@@ -364,6 +447,47 @@ class BrowserGymEnvironment(Environment):
             metadata=browsergym_metadata,
         )
 
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the page screenshot with the goal, the URL and the last action error."""
+        if "screenshot" not in observation:
+            return None
+        screenshot = observation["screenshot"]
+        goal = observation["goal"]
+        if not screenshot and not goal:
+            return None
+        parts = []
+        if goal:
+            parts.append(f"<div><b>Goal:</b> {html.escape(goal)}</div>")
+        if observation["url"]:
+            parts.append(
+                '<div style="font-size:12px;opacity:0.7;word-break:break-all">'
+                f"{html.escape(observation['url'])}</div>"
+            )
+        if screenshot:
+            image = Image.fromarray(np.asarray(screenshot, dtype=np.uint8))
+            image.thumbnail((800, 800))
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=80)
+            data = base64.b64encode(buffer.getvalue()).decode()
+            parts.append(
+                f'<img alt="BrowserGym page" src="data:image/jpeg;base64,{data}" '
+                'style="max-width:100%;border:1px solid var(--border-color-primary);border-radius:6px">'
+            )
+        error = observation["error"] or observation["metadata"].get(
+            "browsergym_obs", {}
+        ).get("last_action_error")
+        if error:
+            parts.append(
+                '<div style="color:var(--color-accent)"><b>Last action error:</b> '
+                f"{html.escape(str(error))}</div>"
+            )
+        return (
+            '<div style="display:flex;flex-direction:column;'
+            "gap:8px;max-width:500px;padding:10px;color:var(--body-text-color);"
+            "border:1px solid var(--border-color-primary);border-radius:10px;"
+            'background:var(--background-fill-secondary)">' + "".join(parts) + "</div>"
+        )
+
     @property
     def state(self) -> BrowserGymState:
         """Get the current environment state."""
@@ -372,4 +496,7 @@ class BrowserGymEnvironment(Environment):
     def close(self) -> None:
         """Clean up environment resources."""
         if hasattr(self, "gym_env"):
-            self.gym_env.close()
+            try:
+                _on_playwright_thread(self.gym_env.close)
+            except Exception as exc:  # noqa: BLE001 - browsergym/playwright cleanup
+                logger.warning("BrowserGym cleanup failed: %s", exc)

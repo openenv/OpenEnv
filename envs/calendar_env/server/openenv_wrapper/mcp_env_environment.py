@@ -28,19 +28,15 @@ from uuid import uuid4
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
-from .data_models import MCPAction, ListToolsAction, ToolCallAction, MCPObservation
-from .config import (
-    MCP_NAME,
-    get_tool_handlers,
-    get_user_manager_class
-)
+from .config import get_tool_handlers, get_user_manager_class, MCP_NAME
+from .data_models import ListToolsAction, MCPAction, MCPObservation, ToolCallAction
 
 logger = logging.getLogger(__name__)
 
 # Load tool handlers dynamically from config
 _tool_handlers = get_tool_handlers()
-MCP_TOOLS_LIST = _tool_handlers['MCP_TOOLS_LIST']
-TOOL_HANDLERS = _tool_handlers['TOOL_HANDLERS']
+MCP_TOOLS_LIST = _tool_handlers["MCP_TOOLS_LIST"]
+TOOL_HANDLERS = _tool_handlers["TOOL_HANDLERS"]
 
 
 class MCPEnvironment(Environment):
@@ -91,7 +87,9 @@ class MCPEnvironment(Environment):
         self._current_database_id = database_id
         self._current_access_token = auth_token
 
-        logger.info(f"{MCP_NAME} environment initialized with database_id: {database_id}")
+        logger.info(
+            f"{MCP_NAME} environment initialized with database_id: {database_id}"
+        )
 
     def set_request_context(self, database_id: str = None, access_token: str = None):
         """
@@ -165,7 +163,9 @@ class MCPEnvironment(Environment):
                         reward=-1.0,
                         metadata={"step": self._state.step_count},
                     )
-                internal_action = ToolCallAction(tool_name=action.tool_name, arguments=action.arguments or {})
+                internal_action = ToolCallAction(
+                    tool_name=action.tool_name, arguments=action.arguments or {}
+                )
                 return self._handle_tool_call(internal_action)
             else:
                 logger.error(f"Unknown action_type: {action.action_type}")
@@ -184,7 +184,10 @@ class MCPEnvironment(Environment):
                 error_message=f"Internal error: {str(e)}",
                 done=False,
                 reward=-1.0,
-                metadata={"step": self._state.step_count, "error_type": type(e).__name__},
+                metadata={
+                    "step": self._state.step_count,
+                    "error_type": type(e).__name__,
+                },
             )
 
     def _handle_list_tools(self, action: ListToolsAction) -> MCPObservation:
@@ -259,7 +262,9 @@ class MCPEnvironment(Environment):
             user_manager = UserManager(database_id)
 
             # If no access token provided, get first user's token
-            if not access_token or (isinstance(access_token, str) and access_token.strip() == ""):
+            if not access_token or (
+                isinstance(access_token, str) and access_token.strip() == ""
+            ):
                 fallback_token = user_manager.get_first_user_token(db_id=database_id)
                 if not fallback_token:
                     return MCPObservation(
@@ -267,7 +272,10 @@ class MCPEnvironment(Environment):
                         error_message="Access token is required and no users are available for fallback",
                         done=False,
                         reward=-1.0,
-                        metadata={"step": self._state.step_count, "tool_name": tool_name},
+                        metadata={
+                            "step": self._state.step_count,
+                            "tool_name": tool_name,
+                        },
                     )
                 access_token = fallback_token
 
@@ -309,7 +317,10 @@ class MCPEnvironment(Environment):
                         error_message=f"Invalid user object structure: expected dict with 'id' field, got {type(user)}",
                         done=False,
                         reward=-1.0,
-                        metadata={"step": self._state.step_count, "tool_name": tool_name},
+                        metadata={
+                            "step": self._state.step_count,
+                            "tool_name": tool_name,
+                        },
                     )
             except (KeyError, TypeError) as e:
                 return MCPObservation(
@@ -323,9 +334,10 @@ class MCPEnvironment(Environment):
             # Execute the tool asynchronously
             # Check if handler accepts access_token parameter (some MCPs don't need it)
             import inspect
+
             handler_signature = inspect.signature(handler)
             handler_params = handler_signature.parameters
-            
+
             # Build kwargs based on what the handler accepts
             handler_kwargs = {
                 "tool_name": tool_name,
@@ -333,11 +345,11 @@ class MCPEnvironment(Environment):
                 "database_id": database_id,
                 "user_id": user_id,
             }
-            
+
             # Only add access_token if the handler accepts it
             if "access_token" in handler_params:
                 handler_kwargs["access_token"] = access_token
-            
+
             result = asyncio.run(handler(**handler_kwargs))
 
             self._successful_tool_calls += 1
@@ -428,7 +440,9 @@ class MCPEnvironment(Environment):
             Dictionary with execution statistics
         """
         total_calls = self._successful_tool_calls + self._failed_tool_calls
-        success_rate = self._successful_tool_calls / total_calls if total_calls > 0 else 0.0
+        success_rate = (
+            self._successful_tool_calls / total_calls if total_calls > 0 else 0.0
+        )
 
         return {
             "episode_id": self._state.episode_id,

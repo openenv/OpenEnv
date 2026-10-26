@@ -60,15 +60,13 @@ class Model(nn.Module):
         # Shape: (N, K//2) - each byte holds 2 INT4 values
         # Packing: byte = (high_nibble << 4) | low_nibble
         self.register_buffer(
-            "weight_packed",
-            torch.randint(0, 256, (N, K // 2), dtype=torch.uint8)
+            "weight_packed", torch.randint(0, 256, (N, K // 2), dtype=torch.uint8)
         )
 
         # Per-group scales: (N, num_groups) in FP16
         # Scale maps the INT4 range to the original weight range
         self.register_buffer(
-            "scales",
-            torch.randn(N, self.num_groups, dtype=torch.float16).abs() * 0.1
+            "scales", torch.randn(N, self.num_groups, dtype=torch.float16).abs() * 0.1
         )
 
     def unpack_int4(self, packed: torch.Tensor) -> torch.Tensor:
@@ -145,9 +143,9 @@ class Model(nn.Module):
 # Configuration sized for LLM inference workloads
 batch_size = 4
 seq_len = 2048
-K = 4096         # Input features (hidden dim)
-N = 11008        # Output features (MLP intermediate, typical for 7B models)
-group_size = 128 # Standard group size for GPTQ
+K = 4096  # Input features (hidden dim)
+N = 11008  # Output features (MLP intermediate, typical for 7B models)
+group_size = 128  # Standard group size for GPTQ
 
 
 def get_inputs():

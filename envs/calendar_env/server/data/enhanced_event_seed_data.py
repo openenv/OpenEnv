@@ -2,9 +2,9 @@
 Enhanced Event Seed Data with all new fields and related tables
 """
 
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any
 import json
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List
 
 
 def get_enhanced_event_seed_data() -> Dict[str, Any]:
@@ -15,10 +15,12 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
     - Attachments (file URLs)
     - Working location properties for different work modes
     """
-    
+
     # Base datetime for consistent relative dates
-    base_date = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)
-    
+    base_date = datetime.now(timezone.utc).replace(
+        hour=9, minute=0, second=0, microsecond=0
+    )
+
     # Office locations - required for working location properties
     office_locations_data = [
         {
@@ -27,7 +29,7 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "deskId": None,
             "floorId": None,
             "floorSectionId": None,
-            "label": "TechCorp Main Campus - Building 1"
+            "label": "TechCorp Main Campus - Building 1",
         },
         {
             "id": "office-building-2-floor-3",
@@ -35,7 +37,7 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "deskId": "desk-W3-45",
             "floorId": "floor-3",
             "floorSectionId": "west-wing",
-            "label": "TechCorp Main Campus - Building 2, Floor 3, West Wing, Desk W3-45"
+            "label": "TechCorp Main Campus - Building 2, Floor 3, West Wing, Desk W3-45",
         },
         {
             "id": "office-meeting-room-a",
@@ -43,10 +45,10 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "deskId": None,
             "floorId": "floor-1",
             "floorSectionId": "conference-area",
-            "label": "Conference Room A - Building 1"
-        }
+            "label": "Conference Room A - Building 1",
+        },
     ]
-    
+
     # Events data -  to match model exactly
     events_data = [
         {
@@ -78,11 +80,11 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "guestsCanSeeOtherGuests": True,
             "outOfOfficeProperties": None,
             "sequence": 1,
-            "iCalUID":"event-corrected-001@gmail.com",
+            "iCalUID": "event-corrected-001@gmail.com",
             "source": {
                 "title": "Sprint Planning Board",
-                "url": "https://jira.techcorp.com/sprint-planning-q4"
-            }
+                "url": "https://jira.techcorp.com/sprint-planning-q4",
+            },
         },
         {
             "event_id": "event-corrected-002",
@@ -110,7 +112,7 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "focusTimeProperties": {
                 "autoDeclineMode": "declineNone",
                 "declineMessage": "I'm in focus time. Please reschedule or reach out via Slack for urgent matters.",
-                "chatStatus": "doNotDisturb"
+                "chatStatus": "doNotDisturb",
             },
             "guestsCanInviteOthers": False,
             "guestsCanModify": False,
@@ -118,7 +120,7 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "outOfOfficeProperties": None,
             "sequence": 0,
             "source": None,
-            "iCalUID":"event-corrected-002@gmail.com"
+            "iCalUID": "event-corrected-002@gmail.com",
         },
         {
             "event_id": "event-corrected-003",
@@ -150,15 +152,11 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "outOfOfficeProperties": {
                 "autoDeclineMode": "declineAllConflictingInvitations",
                 "declineMessage": "I'm currently on vacation and won't be available. For urgent design matters, please contact Sarah (sarah@techcorp.com). I'll respond to messages when I return.",
-                "autoDeclineEventTypes": [
-                    "default",
-                    "focusTime",
-                    "workingLocation"
-                ]
+                "autoDeclineEventTypes": ["default", "focusTime", "workingLocation"],
             },
             "sequence": 0,
             "source": None,
-            "iCalUID":"event-corrected-003@gmail.com"
+            "iCalUID": "event-corrected-003@gmail.com",
         },
         {
             "event_id": "event-corrected-004",
@@ -190,7 +188,7 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "outOfOfficeProperties": None,
             "sequence": 0,
             "source": None,
-            "iCalUID":"event-corrected-004@gmail.com"
+            "iCalUID": "event-corrected-004@gmail.com",
         },
         {
             "event_id": "event-corrected-005",
@@ -222,7 +220,7 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "outOfOfficeProperties": None,
             "sequence": 0,
             "source": None,
-            "iCalUID":"event-corrected-005@gmail.com"
+            "iCalUID": "event-corrected-005@gmail.com",
         },
         {
             "event_id": "event-corrected-006",
@@ -256,9 +254,9 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "sequence": 2,
             "source": {
                 "title": "CRM System - MegaCorp Deal",
-                "url": "https://crm.techcorp.com/deals/megacorp-2024"
+                "url": "https://crm.techcorp.com/deals/megacorp-2024",
             },
-            "iCalUID":"event-icalid-001@gmail.com"
+            "iCalUID": "event-icalid-001@gmail.com",
         },
         {
             "event_id": "event-corrected-007",
@@ -292,9 +290,9 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "sequence": 2,
             "source": {
                 "title": "CRM System - MegaCorp Deal",
-                "url": "https://crm.techcorp.com/deals/megacorp-2024"
+                "url": "https://crm.techcorp.com/deals/megacorp-2024",
             },
-            "iCalUID":"event-icalid-001@gmail.com"
+            "iCalUID": "event-icalid-001@gmail.com",
         },
         {
             "event_id": "event-corrected-008",
@@ -328,19 +326,19 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "sequence": 2,
             "source": {
                 "title": "CRM System - MegaCorp Deal",
-                "url": "https://crm.techcorp.com/deals/megacorp-2024"
+                "url": "https://crm.techcorp.com/deals/megacorp-2024",
             },
-            "iCalUID":"event-icalid-001@gmail.com"
-        }
+            "iCalUID": "event-icalid-001@gmail.com",
+        },
     ]
 
     recurring_event_data = [
         {
-            "recurring_event_id":"rec-event-001",
-            "original_recurrence":["RRULE:COUNT=2"]
+            "recurring_event_id": "rec-event-001",
+            "original_recurrence": ["RRULE:COUNT=2"],
         }
     ]
-    
+
     # ConferenceData - separate table (correct relationship name)
     conference_data = [
         {
@@ -350,28 +348,28 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "solution_type": "hangoutsMeet",
             "status_code": "success",
             "meeting_uri": "https://meet.google.com/abc-defg-hij",
-            "label": "Sprint Planning Meet"
+            "label": "Sprint Planning Meet",
         },
         {
-            "id": "conf-corrected-002", 
+            "id": "conf-corrected-002",
             "event_id": "event-corrected-006",
             "request_id": "req-client-demo-001",
             "solution_type": "hangoutsMeet",
             "status_code": "success",
             "meeting_uri": "https://meet.google.com/enterprise-demo-xyz",
-            "label": "Client Demo Backup"
-        }
+            "label": "Client Demo Backup",
+        },
     ]
-    
+
     # BirthdayProperties - separate table (correct relationship name)
     birthday_properties = [
         {
             "id": "birthday-corrected-001",
             "event_id": "event-corrected-005",
-            "type": "birthday"
+            "type": "birthday",
         }
     ]
-    
+
     # ExtendedProperties - separate table with scope enum (correct relationship name)
     extended_properties = [
         {
@@ -380,26 +378,20 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "scope": "private",
             "properties": {
                 "departmentBudget": "engineering",
-                "projectCode": "PROJ-2024-Q4"
-            }
+                "projectCode": "PROJ-2024-Q4",
+            },
         },
         {
             "id": "ext-corrected-002",
-            "event_id": "event-corrected-001", 
+            "event_id": "event-corrected-001",
             "scope": "shared",
-            "properties": {
-                "meetingType": "sprint_planning",
-                "priority": "high"
-            }
+            "properties": {"meetingType": "sprint_planning", "priority": "high"},
         },
         {
             "id": "ext-corrected-003",
             "event_id": "event-corrected-002",
-            "scope": "private", 
-            "properties": {
-                "taskType": "development",
-                "estimatedComplexity": "high"
-            }
+            "scope": "private",
+            "properties": {"taskType": "development", "estimatedComplexity": "high"},
         },
         {
             "id": "ext-corrected-004",
@@ -407,16 +399,14 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "scope": "shared",
             "properties": {
                 "backupContact": "sarah@techcorp.com",
-                "vacationType": "personal"
-            }
+                "vacationType": "personal",
+            },
         },
         {
             "id": "ext-corrected-005",
             "event_id": "event-corrected-004",
             "scope": "private",
-            "properties": {
-                "commute_reminder": "Leave by 8:00 AM to avoid traffic"
-            }
+            "properties": {"commute_reminder": "Leave by 8:00 AM to avoid traffic"},
         },
         {
             "id": "ext-corrected-006",
@@ -425,20 +415,17 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "properties": {
                 "dealValue": "$250000",
                 "clientPriority": "high",
-                "preparationTime": "2 hours"
-            }
+                "preparationTime": "2 hours",
+            },
         },
         {
             "id": "ext-corrected-007",
             "event_id": "event-corrected-006",
             "scope": "shared",
-            "properties": {
-                "meetingType": "client_demo",
-                "department": "sales"
-            }
-        }
+            "properties": {"meetingType": "client_demo", "department": "sales"},
+        },
     ]
-     
+
     # Reminders - separate table with method enum (correct relationship name)
     reminders_data = [
         {
@@ -446,59 +433,59 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "event_id": "event-corrected-001",
             "method": "email",
             "minutes": 1440,  # 1 day before
-            "use_default": False
+            "use_default": False,
         },
         {
             "id": "rem-corrected-002",
             "event_id": "event-corrected-001",
             "method": "popup",
             "minutes": 30,  # 30 minutes before
-            "use_default": False
+            "use_default": False,
         },
         {
             "id": "rem-corrected-003",
             "event_id": "event-corrected-002",
             "method": "popup",
             "minutes": 15,  # 15 minutes before
-            "use_default": False
+            "use_default": False,
         },
         {
             "id": "rem-corrected-004",
             "event_id": "event-corrected-003",
             "method": "email",
             "minutes": 10080,  # 1 week before
-            "use_default": False
+            "use_default": False,
         },
         {
             "id": "rem-corrected-005",
             "event_id": "event-corrected-005",
             "method": "popup",
             "minutes": 10,  # Day of reminder
-            "use_default": False
+            "use_default": False,
         },
         {
             "id": "rem-corrected-006",
             "event_id": "event-corrected-006",
             "method": "email",
             "minutes": 2880,  # 2 days before
-            "use_default": False
+            "use_default": False,
         },
         {
             "id": "rem-corrected-007",
             "event_id": "event-corrected-006",
             "method": "popup",
             "minutes": 60,  # 1 hour before
-            "use_default": False
+            "use_default": False,
         },
         {
             "id": "rem-corrected-008",
             "event_id": "event-corrected-006",
             "method": "popup",
             "minutes": 15,  # 15 minutes before
-            "use_default": False
-        }
+            "use_default": False,
+        },
     ]
-    
+
     # Attendees data -  to match model exactly
     attendees_data = [
         # Sprint Planning attendees
@@ -507,134 +494,133 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
             "event_id": "event-corrected-001",
             "user_id": "alice_manager",
             "comment": "Looking forward to planning Q4!",
-            "displayName": "Alice Johnson",   
-            "additionalGuests": 0,   
+            "displayName": "Alice Johnson",
+            "additionalGuests": 0,
             "optional": False,
             "resource": False,
-            "responseStatus": "accepted"   
+            "responseStatus": "accepted",
         },
         {
-            "attendees_id": "att-corrected-002", 
+            "attendees_id": "att-corrected-002",
             "event_id": "event-corrected-001",
             "user_id": "bob_developer",
             "comment": None,
-            "displayName": "Bob Smith",   
-            "additionalGuests": 0,   
+            "displayName": "Bob Smith",
+            "additionalGuests": 0,
             "optional": False,
             "resource": False,
-            "responseStatus": "accepted"   
+            "responseStatus": "accepted",
         },
         {
             "attendees_id": "att-corrected-003",
-            "event_id": "event-corrected-001", 
+            "event_id": "event-corrected-001",
             "user_id": "carol_designer",
             "comment": "Will join if no conflicts with user research session",
-            "displayName": "Carol White",   
-            "additionalGuests": 0,   
+            "displayName": "Carol White",
+            "additionalGuests": 0,
             "optional": True,
             "resource": False,
-            "responseStatus": "tentative"   
+            "responseStatus": "tentative",
         },
         {
             "attendees_id": "att-corrected-004",
             "event_id": "event-corrected-001",
             "user_id": None,  # Resource doesn't have user_id
             "comment": None,
-            "displayName": "Conference Room A",   
-            "additionalGuests": 0,   
+            "displayName": "Conference Room A",
+            "additionalGuests": 0,
             "optional": False,
             "resource": True,
-            "responseStatus": "accepted"   
+            "responseStatus": "accepted",
         },
-        
         # Client Demo attendees
         {
             "attendees_id": "att-corrected-005",
             "event_id": "event-corrected-006",
-            "user_id": "dave_sales", 
+            "user_id": "dave_sales",
             "comment": "Prepared demo materials and pricing",
-            "displayName": "Dave Brown",   
-            "additionalGuests": 0,   
+            "displayName": "Dave Brown",
+            "additionalGuests": 0,
             "optional": False,
             "resource": False,
-            "responseStatus": "accepted"   
+            "responseStatus": "accepted",
         },
         {
             "attendees_id": "att-corrected-006",
             "event_id": "event-corrected-006",
             "user_id": None,  # External attendee
             "comment": "Bringing 2 technical team members",
-            "displayName": "John Doe",   
-            "additionalGuests": 2,   
+            "displayName": "John Doe",
+            "additionalGuests": 2,
             "optional": False,
             "resource": False,
-            "responseStatus": "accepted"   
+            "responseStatus": "accepted",
         },
         {
             "attendees_id": "att-corrected-007",
             "event_id": "event-corrected-006",
             "user_id": "sarah_tech",
             "comment": "Technical support for enterprise questions",
-            "displayName": "Sarah Chen",   
-            "additionalGuests": 0,   
+            "displayName": "Sarah Chen",
+            "additionalGuests": 0,
             "optional": True,
             "resource": False,
-            "responseStatus": "accepted"   
+            "responseStatus": "accepted",
         },
         {
-            "attendees_id": "att-corrected-008", 
+            "attendees_id": "att-corrected-008",
             "event_id": "event-corrected-006",
             "user_id": "alice_manager",
             "comment": None,
-            "displayName": "Alice Johnson",   
-            "additionalGuests": 0,   
+            "displayName": "Alice Johnson",
+            "additionalGuests": 0,
             "optional": True,
             "resource": False,
-            "responseStatus": "needsAction"   
-        }
+            "responseStatus": "needsAction",
+        },
     ]
-    
+
     # Attachments for events
     attachments_data = [
         {
             "attachment_id": "attach-corrected-001",
-            "event_id": "event-corrected-001", 
-            "file_url": "https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view"
+            "event_id": "event-corrected-001",
+            "file_url": "https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view",
         },
         {
             "attachment_id": "attach-corrected-002",
             "event_id": "event-corrected-001",
-            "file_url": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+            "file_url": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
         },
         {
-            "attachment_id": "attach-corrected-003", 
+            "attachment_id": "attach-corrected-003",
             "event_id": "event-corrected-006",
-            "file_url": "https://drive.google.com/file/d/enterprise-demo-deck-2024/view"
+            "file_url": "https://drive.google.com/file/d/enterprise-demo-deck-2024/view",
         },
         {
             "attachment_id": "attach-corrected-004",
-            "event_id": "event-corrected-006", 
-            "file_url": "https://drive.google.com/file/d/pricing-sheet-enterprise-2024/view"
+            "event_id": "event-corrected-006",
+            "file_url": "https://drive.google.com/file/d/pricing-sheet-enterprise-2024/view",
         },
         {
             "attachment_id": "attach-corrected-005",
             "event_id": "event-corrected-006",
-            "file_url": "https://docs.google.com/document/d/technical-specs-enterprise/edit"
-        }
+            "file_url": "https://docs.google.com/document/d/technical-specs-enterprise/edit",
+        },
     ]
-    
+
     # Working location properties - corrected structure with proper office location foreign key
     working_location_data = [
         {
             "working_location_id": "wl-corrected-001",
             "event_id": "event-corrected-004",
             "type": "officeLocation",
-            "homeOffice": False,   
-            "customLocationLabel": None,   
-            "officeLocationId": "office-building-2-floor-3"  #  - foreign key to office_locations
+            "homeOffice": False,
+            "customLocationLabel": None,
+            "officeLocationId": "office-building-2-floor-3",  #  - foreign key to office_locations
         }
     ]
-    
+
     return {
         "office_locations": office_locations_data,
         "events": events_data,
@@ -646,7 +632,7 @@ def get_enhanced_event_seed_data() -> Dict[str, Any]:
         "attendees": attendees_data,
         "attachments": attachments_data,
         "working_location_properties": working_location_data,
-        "description": "Event seed data that exactly matches the updated event.py model structure with proper field names and relationships"
+        "description": "Event seed data that exactly matches the updated event.py model structure with proper field names and relationships",
     }
 
 
@@ -655,24 +641,30 @@ def generate_enhanced_event_sql(sql_statements) -> str:
     Generate SQL INSERT statements for enhanced event seed data
     """
     data = get_enhanced_event_seed_data()
-    
+
     # Office Locations
     sql_statements.append("-- Office Locations")
     sql_statements.append("INSERT INTO office_locations (")
     sql_statements.append("    id, buildingId, deskId, floorId, floorSectionId, label")
     sql_statements.append(") VALUES")
-    
+
     office_values = []
     for office in data["office_locations"]:
-        building_id = "NULL" if not office.get("buildingId") else f"'{office['buildingId']}'"
+        building_id = (
+            "NULL" if not office.get("buildingId") else f"'{office['buildingId']}'"
+        )
         desk_id = "NULL" if not office.get("deskId") else f"'{office['deskId']}'"
         floor_id = "NULL" if not office.get("floorId") else f"'{office['floorId']}'"
-        floor_section_id = "NULL" if not office.get("floorSectionId") else f"'{office['floorSectionId']}'"
-        
+        floor_section_id = (
+            "NULL"
+            if not office.get("floorSectionId")
+            else f"'{office['floorSectionId']}'"
+        )
+
         office_values.append(
             f"('{office['id']}', {building_id}, {desk_id}, {floor_id}, {floor_section_id}, '{office['label']}')"
         )
-    
+
     sql_statements.append(",\n".join(office_values) + ";")
     sql_statements.append("")
 
@@ -684,79 +676,131 @@ def generate_enhanced_event_sql(sql_statements) -> str:
 
     recurring_events = []
     for rec_event in data["recurring_events"]:
-        recurring_event_id = "NULL" if not rec_event.get("recurring_event_id") else f"'{rec_event['recurring_event_id']}'"
-        original_recurrence = "NULL" if not rec_event.get("original_recurrence") else f"'{json.dumps(rec_event['original_recurrence']).replace(chr(39), chr(39)+chr(39))}'"
+        recurring_event_id = (
+            "NULL"
+            if not rec_event.get("recurring_event_id")
+            else f"'{rec_event['recurring_event_id']}'"
+        )
+        original_recurrence = (
+            "NULL"
+            if not rec_event.get("original_recurrence")
+            else f"'{json.dumps(rec_event['original_recurrence']).replace(chr(39), chr(39) + chr(39))}'"
+        )
 
         recurring_events.append(f"({recurring_event_id},{original_recurrence})")
-    
+
     sql_statements.append(",\n".join(recurring_events) + ";")
     sql_statements.append("")
-    
+
     # Events
     sql_statements.append("-- Events")
     sql_statements.append("INSERT INTO events (")
-    sql_statements.append("    event_id, calendar_id, user_id, organizer_id, organizer_email, organizer_display_name, organizer_self,")
+    sql_statements.append(
+        "    event_id, calendar_id, user_id, organizer_id, organizer_email, organizer_display_name, organizer_self,"
+    )
     sql_statements.append("    recurring_event_id, summary, description, location,")
-    sql_statements.append("    start_datetime, end_datetime, start_timezone, end_timezone, originalStartTime_date, originalStartTime_dateTime, originalStartTime_timeZone, recurrence,")
-    sql_statements.append("    status, visibility, color_id, iCalUID, eventType, focusTimeProperties,")
-    sql_statements.append("    guestsCanInviteOthers, guestsCanModify, guestsCanSeeOtherGuests,")
-    sql_statements.append("    outOfOfficeProperties, sequence, source, created_at, updated_at")
+    sql_statements.append(
+        "    start_datetime, end_datetime, start_timezone, end_timezone, originalStartTime_date, originalStartTime_dateTime, originalStartTime_timeZone, recurrence,"
+    )
+    sql_statements.append(
+        "    status, visibility, color_id, iCalUID, eventType, focusTimeProperties,"
+    )
+    sql_statements.append(
+        "    guestsCanInviteOthers, guestsCanModify, guestsCanSeeOtherGuests,"
+    )
+    sql_statements.append(
+        "    outOfOfficeProperties, sequence, source, created_at, updated_at"
+    )
     sql_statements.append(") VALUES")
-    
+
     event_values = []
     for event in data["events"]:
         # Handle optional fields
-        description = "NULL" if not event.get("description") else f"'{event['description'].replace(chr(39), chr(39)+chr(39))}'"
-        location = "NULL" if not event.get("location") else f"'{event['location'].replace(chr(39), chr(39)+chr(39))}'"
-        start_tz = "NULL" if not event.get("start_timezone") else f"'{event['start_timezone']}'"
-        end_tz = "NULL" if not event.get("end_timezone") else f"'{event['end_timezone']}'"
-        
+        description = (
+            "NULL"
+            if not event.get("description")
+            else f"'{event['description'].replace(chr(39), chr(39) + chr(39))}'"
+        )
+        location = (
+            "NULL"
+            if not event.get("location")
+            else f"'{event['location'].replace(chr(39), chr(39) + chr(39))}'"
+        )
+        start_tz = (
+            "NULL"
+            if not event.get("start_timezone")
+            else f"'{event['start_timezone']}'"
+        )
+        end_tz = (
+            "NULL" if not event.get("end_timezone") else f"'{event['end_timezone']}'"
+        )
+
         # Handle originalStartTime fields
         original_start_date = "NULL"
         original_start_datetime = "NULL"
         original_start_timezone = "NULL"
-        
+
         if event.get("originalStartTime_date"):
             original_start_date = f"'{event['originalStartTime_date'].isoformat()}'"
         if event.get("originalStartTime_dateTime"):
-            original_start_datetime = f"'{event['originalStartTime_dateTime'].isoformat()}'"
+            original_start_datetime = (
+                f"'{event['originalStartTime_dateTime'].isoformat()}'"
+            )
         if event.get("originalStartTime_timeZone"):
             original_start_timezone = f"'{event['originalStartTime_timeZone']}'"
-            
+
         # Handle recurrence field - it can be a list or None
-        recurring_event_id = "NULL" if not event.get("recurring_event_id") else event["recurring_event_id"]
+        recurring_event_id = (
+            "NULL"
+            if not event.get("recurring_event_id")
+            else event["recurring_event_id"]
+        )
 
         recurrence = "NULL"
         if event.get("recurrence"):
-            if isinstance(event['recurrence'], list):
-                recurrence = f"'{json.dumps(event['recurrence']).replace(chr(39), chr(39)+chr(39))}'"
+            if isinstance(event["recurrence"], list):
+                recurrence = f"'{json.dumps(event['recurrence']).replace(chr(39), chr(39) + chr(39))}'"
             else:
-                recurrence = f"'{event['recurrence'].replace(chr(39), chr(39)+chr(39))}'"
+                recurrence = (
+                    f"'{event['recurrence'].replace(chr(39), chr(39) + chr(39))}'"
+                )
 
         color_id = "NULL" if not event.get("color_id") else f"'{event['color_id']}'"
-        
-        # Handle JSON fields - using 
+
+        # Handle JSON fields - using
         focus_props = "NULL"
         if event.get("focusTimeProperties"):
-            focus_props = f"'{json.dumps(event['focusTimeProperties']).replace(chr(39), chr(39)+chr(39))}'"
-            
+            focus_props = f"'{json.dumps(event['focusTimeProperties']).replace(chr(39), chr(39) + chr(39))}'"
+
         ooo_props = "NULL"
         if event.get("outOfOfficeProperties"):
-            ooo_props = f"'{json.dumps(event['outOfOfficeProperties']).replace(chr(39), chr(39)+chr(39))}'"
-            
+            ooo_props = f"'{json.dumps(event['outOfOfficeProperties']).replace(chr(39), chr(39) + chr(39))}'"
+
         source = "NULL"
         if event.get("source"):
-            source = f"'{json.dumps(event['source']).replace(chr(39), chr(39)+chr(39))}'"
-        
+            source = (
+                f"'{json.dumps(event['source']).replace(chr(39), chr(39) + chr(39))}'"
+            )
+
         # Handle organizer fields
-        organizer_id = "NULL" if not event.get("organizer_id") else f"'{event['organizer_id']}'"
-        organizer_email = "NULL" if not event.get("organizer_email") else f"'{event['organizer_email']}'"
-        organizer_display_name = "NULL" if not event.get("organizer_display_name") else f"'{event['organizer_display_name']}'"
+        organizer_id = (
+            "NULL" if not event.get("organizer_id") else f"'{event['organizer_id']}'"
+        )
+        organizer_email = (
+            "NULL"
+            if not event.get("organizer_email")
+            else f"'{event['organizer_email']}'"
+        )
+        organizer_display_name = (
+            "NULL"
+            if not event.get("organizer_display_name")
+            else f"'{event['organizer_display_name']}'"
+        )
         organizer_self = 1 if event.get("organizer_self", False) else 0
-        
+
         event_values.append(
             f"('{event['event_id']}', '{event['calendar_id']}', '{event['user_id']}', {organizer_id}, {organizer_email}, {organizer_display_name}, {organizer_self}, "
-            f"'{recurring_event_id}', '{event['summary'].replace(chr(39), chr(39)+chr(39))}', {description}, {location}, "
+            f"'{recurring_event_id}', '{event['summary'].replace(chr(39), chr(39) + chr(39))}', {description}, {location}, "
             f"'{event['start_datetime'].isoformat()}', '{event['end_datetime'].isoformat()}', "
             f"{start_tz}, {end_tz}, {original_start_date}, {original_start_datetime}, {original_start_timezone}, {recurrence}, "
             f"'{event['status']}', '{event['visibility']}', {color_id}, '{event['iCalUID']}', '{event['eventType']}', {focus_props}, "
@@ -765,129 +809,167 @@ def generate_enhanced_event_sql(sql_statements) -> str:
             f"{1 if event['guestsCanSeeOtherGuests'] else 0}, "
             f"{ooo_props}, {event['sequence']}, {source}, datetime('now'), datetime('now'))"
         )
-    
+
     sql_statements.append(",\n".join(event_values) + ";")
     sql_statements.append("")
-    
+
     # ConferenceData
     if data["conference_data"]:
         sql_statements.append("-- ConferenceData")
         sql_statements.append("INSERT INTO conference_data (")
-        sql_statements.append("    id, event_id, request_id, solution_type, status_code, meeting_uri, label")
+        sql_statements.append(
+            "    id, event_id, request_id, solution_type, status_code, meeting_uri, label"
+        )
         sql_statements.append(") VALUES")
-        
+
         conf_values = []
         for conf in data["conference_data"]:
-            request_id = "NULL" if not conf.get("request_id") else f"'{conf['request_id']}'"
-            solution_type = "NULL" if not conf.get("solution_type") else f"'{conf['solution_type']}'"
-            status_code = "NULL" if not conf.get("status_code") else f"'{conf['status_code']}'"
-            meeting_uri = "NULL" if not conf.get("meeting_uri") else f"'{conf['meeting_uri']}'"
+            request_id = (
+                "NULL" if not conf.get("request_id") else f"'{conf['request_id']}'"
+            )
+            solution_type = (
+                "NULL"
+                if not conf.get("solution_type")
+                else f"'{conf['solution_type']}'"
+            )
+            status_code = (
+                "NULL" if not conf.get("status_code") else f"'{conf['status_code']}'"
+            )
+            meeting_uri = (
+                "NULL" if not conf.get("meeting_uri") else f"'{conf['meeting_uri']}'"
+            )
             label = "NULL" if not conf.get("label") else f"'{conf['label']}'"
-            
+
             conf_values.append(
                 f"('{conf['id']}', '{conf['event_id']}', {request_id}, {solution_type}, "
                 f"{status_code}, {meeting_uri}, {label})"
             )
-        
+
         sql_statements.append(",\n".join(conf_values) + ";")
         sql_statements.append("")
-    
+
     # BirthdayProperties
     if data["birthday_properties"]:
         sql_statements.append("-- BirthdayProperties")
-        sql_statements.append("INSERT INTO birthday_properties (id, event_id, type) VALUES")
-        
+        sql_statements.append(
+            "INSERT INTO birthday_properties (id, event_id, type) VALUES"
+        )
+
         birthday_values = []
         for birthday in data["birthday_properties"]:
-            birthday_values.append(f"('{birthday['id']}', '{birthday['event_id']}', '{birthday['type']}')")
-        
+            birthday_values.append(
+                f"('{birthday['id']}', '{birthday['event_id']}', '{birthday['type']}')"
+            )
+
         sql_statements.append(",\n".join(birthday_values) + ";")
         sql_statements.append("")
-    
+
     # ExtendedProperties
     if data["extended_properties"]:
         sql_statements.append("-- ExtendedProperties")
-        sql_statements.append("INSERT INTO extended_properties (id, event_id, scope, properties) VALUES")
-        
+        sql_statements.append(
+            "INSERT INTO extended_properties (id, event_id, scope, properties) VALUES"
+        )
+
         ext_values = []
         for ext in data["extended_properties"]:
-            properties = json.dumps(ext["properties"]).replace(chr(39), chr(39)+chr(39))
+            properties = json.dumps(ext["properties"]).replace(
+                chr(39), chr(39) + chr(39)
+            )
             ext_values.append(
                 f"('{ext['id']}', '{ext['event_id']}', '{ext['scope']}', '{properties}')"
             )
-        
+
         sql_statements.append(",\n".join(ext_values) + ";")
         sql_statements.append("")
-    
+
     # Reminders
     if data["reminders"]:
         sql_statements.append("-- Reminders")
-        sql_statements.append("INSERT INTO reminders (id, event_id, method, minutes, use_default) VALUES")
-        
+        sql_statements.append(
+            "INSERT INTO reminders (id, event_id, method, minutes, use_default) VALUES"
+        )
+
         reminder_values = []
         for reminder in data["reminders"]:
             reminder_values.append(
                 f"('{reminder['id']}', '{reminder['event_id']}', '{reminder['method']}', "
                 f"{reminder['minutes']}, {1 if reminder['use_default'] else 0})"
             )
-        
+
         sql_statements.append(",\n".join(reminder_values) + ";")
         sql_statements.append("")
-    
-    # Attendees - with 
+
+    # Attendees - with
     sql_statements.append("-- Attendees")
     sql_statements.append("INSERT INTO attendees (")
-    sql_statements.append("    attendees_id, event_id, user_id, comment, displayName,")  
-    sql_statements.append("    additionalGuests, optional, resource, responseStatus")  
+    sql_statements.append("    attendees_id, event_id, user_id, comment, displayName,")
+    sql_statements.append("    additionalGuests, optional, resource, responseStatus")
     sql_statements.append(") VALUES")
-    
+
     attendee_values = []
     for attendee in data["attendees"]:
         user_id = "NULL" if not attendee.get("user_id") else f"'{attendee['user_id']}'"
-        comment = "NULL" if not attendee.get("comment") else f"'{attendee['comment'].replace(chr(39), chr(39)+chr(39))}'"
-        display_name = "NULL" if not attendee.get("displayName") else f"'{attendee['displayName']}'"
-        
+        comment = (
+            "NULL"
+            if not attendee.get("comment")
+            else f"'{attendee['comment'].replace(chr(39), chr(39) + chr(39))}'"
+        )
+        display_name = (
+            "NULL"
+            if not attendee.get("displayName")
+            else f"'{attendee['displayName']}'"
+        )
+
         attendee_values.append(
             f"('{attendee['attendees_id']}', '{attendee['event_id']}', {user_id}, {comment}, {display_name}, "
             f"{attendee['additionalGuests']}, {1 if attendee['optional'] else 0}, "
             f"{1 if attendee['resource'] else 0}, '{attendee['responseStatus']}')"
         )
-    
+
     sql_statements.append(",\n".join(attendee_values) + ";")
     sql_statements.append("")
-    
+
     # Attachments
     sql_statements.append("-- Attachments")
-    sql_statements.append("INSERT INTO attachments (attachment_id, event_id, file_url) VALUES")
-    
+    sql_statements.append(
+        "INSERT INTO attachments (attachment_id, event_id, file_url) VALUES"
+    )
+
     attachment_values = []
     for attachment in data["attachments"]:
         attachment_values.append(
             f"('{attachment['attachment_id']}', '{attachment['event_id']}', '{attachment['file_url']}')"
         )
-    
+
     sql_statements.append(",\n".join(attachment_values) + ";")
     sql_statements.append("")
-    
+
     # Working Location Properties
     sql_statements.append("-- Working Location Properties")
     sql_statements.append("INSERT INTO working_location_properties (")
-    sql_statements.append("    working_location_id, event_id, type, homeOffice, customLocationLabel, officeLocationId")   
+    sql_statements.append(
+        "    working_location_id, event_id, type, homeOffice, customLocationLabel, officeLocationId"
+    )
     sql_statements.append(") VALUES")
-    
+
     wl_values = []
     for wl in data["working_location_properties"]:
-        custom_label = "NULL" if not wl.get("customLocationLabel") else f"'{wl['customLocationLabel']}'"
-        office_location_id = "NULL" if not wl.get("officeLocationId") else f"'{wl['officeLocationId']}'"
-        
+        custom_label = (
+            "NULL"
+            if not wl.get("customLocationLabel")
+            else f"'{wl['customLocationLabel']}'"
+        )
+        office_location_id = (
+            "NULL" if not wl.get("officeLocationId") else f"'{wl['officeLocationId']}'"
+        )
+
         wl_values.append(
             f"('{wl['working_location_id']}', '{wl['event_id']}', '{wl['type']}', "
             f"{1 if wl['homeOffice'] else 0}, {custom_label}, {office_location_id})"
         )
-    
+
     sql_statements.append(",\n".join(wl_values) + ";")
     sql_statements.append("")
-    
+
     return sql_statements
-
-

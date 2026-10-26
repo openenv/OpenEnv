@@ -1,171 +1,114 @@
-name: Deploy to Hugging Face Environment
+name: Deploy HF Environments
 
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Environment to deploy (leave empty for all)'
-        required: false
-        type: choice
-        default: 'all'
-        options:
-          - 'all'
-          - 'echo_env'
-          - 'coding_env'
-          - 'chat_env'
-          - 'atari_env'
-          - 'openspiel_env'
-          - 'wildfire_env'
-      custom_environment:
-        description: 'Custom environment to deploy (leave empty for none)'
+      envs_csv:
+        description: "Comma-separated env names (empty means all deployable envs)"
         required: false
         type: string
-        default: ''
-      base_image_sha:
-        description: 'SHA for openenv-base image (leave empty for latest)'
+        default: ""
+      openenv_version:
+        description: "Release version used for suffix and pinning (e.g. 0.2.1; empty means latest vX.Y.Z release tag)"
         required: false
         type: string
-        default: ''
+        default: ""
       hf_namespace:
-        description: 'Hugging Face namespace to deploy to (leave empty for openenv)'
+        description: "Hugging Face namespace"
         required: false
         type: string
-        default: 'openenv'
+        default: "openenv"
       private:
-        description: 'Deploy the space as private (default: public)'
+        description: "Deploy version-suffixed spaces as private"
+        required: false
+        type: boolean
+        default: true
+      skip_collection:
+        description: "Skip collection updates"
         required: false
         type: boolean
         default: false
-      space_suffix:
-        description: 'Suffix to add to space name (e.g., "-test" for test spaces)'
+      dry_run:
+        description: "Run staging-only dry run"
+        required: false
+        type: boolean
+        default: false
+      collection_namespace:
+        description: "Collection owner namespace"
         required: false
         type: string
-        default: ''
+        default: "openenv"
 
 jobs:
-  # Job to determine which environments to deploy
-  determine-environments:
+  deploy:
     runs-on: ubuntu-latest
-    outputs:
-      environments: ${{ steps.changes.outputs.environments }}
-      deploy_all: ${{ steps.changes.outputs.deploy_all }}
-      use_matrix: ${{ steps.changes.outputs.use_matrix }}
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
-      - name: Check for changes
-        id: changes
-        run: |
-          # Handle manual workflow dispatch
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ github.event.inputs.environment }}" = "all" ]; then
-              echo "deploy_all=true" >> $GITHUB_OUTPUT
-              echo "use_matrix=true" >> $GITHUB_OUTPUT
-              echo "environments=echo_env,coding_env,chat_env,atari_env,openspiel_env,wildfire_env" >> $GITHUB_OUTPUT
-              echo "Manual trigger - deploying all environments with matrix"
-            else
-              echo "deploy_all=false" >> $GITHUB_OUTPUT
-              echo "use_matrix=false" >> $GITHUB_OUTPUT
-              echo "environments=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
-              echo "Manual trigger - deploying ${{ github.event.inputs.environment }} environment"
-            fi
-            exit 0
-          fi
-          
-          # Check if core files changed (deploy all environments)
-          if git diff --name-only HEAD~1 HEAD | grep -E '^src/openenv/core/' > /dev/null; then
-            echo "deploy_all=true" >> $GITHUB_OUTPUT
-            echo "use_matrix=true" >> $GITHUB_OUTPUT
-            echo "environments=echo_env,coding_env,chat_env,atari_env,openspiel_env,wildfire_env" >> $GITHUB_OUTPUT
-            echo "Core files changed - deploying all environments with matrix"
-            exit 0
-          fi
-          
-          # Check which specific environments changed
-          changed_envs=()
-          for env in echo_env coding_env chat_env atari_env openspiel_env wildfire_env; do
-            if git diff --name-only HEAD~1 HEAD | grep -E "^envs/$env/" > /dev/null; then
-              changed_envs+=("$env")
-            fi
-          done
-          
-          if [ ${#changed_envs[@]} -eq 0 ]; then
-            echo "deploy_all=false" >> $GITHUB_OUTPUT
-            echo "use_matrix=false" >> $GITHUB_OUTPUT
-            echo "environments=" >> $GITHUB_OUTPUT
-            echo "No environment changes detected"
-          else
-            echo "deploy_all=false" >> $GITHUB_OUTPUT
-            echo "use_matrix=false" >> $GITHUB_OUTPUT
-            echo "environments=$(IFS=,; echo "${changed_envs[*]}")" >> $GITHUB_OUTPUT
-            echo "Changed environments: ${changed_envs[*]}"
-          fi
-
-  # Job to deploy environments (matrix for all environments)
-  deploy-matrix:
-    needs: determine-environments
-    if: needs.determine-environments.outputs.use_matrix == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        environment: [echo_env, coding_env, chat_env, atari_env, openspiel_env, wildfire_env]
-    permissions:
-      contents: read
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
 
       - name: Install Hugging Face CLI
         run: |
           curl -LsSf https://hf.co/cli/install.sh | bash
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Deploy to Hugging Face Space
+      - name: Install collection manager dependency
+        run: |
+          python -m pip install --upgrade pip
+          pip install "huggingface-hub>=0.24.0"
+
+      - name: Deploy selected environments
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_NAMESPACE: ${{ github.event.inputs.hf_namespace }}
-          HF_USERNAME: ${{ github.event.inputs.hf_namespace }}
+          ENVS_CSV_INPUT: ${{ github.event.inputs.envs_csv }}
+          OPENENV_VERSION: ${{ github.event.inputs.openenv_version }}
+          HF_NAMESPACE_INPUT: ${{ github.event.inputs.hf_namespace }}
+          COLLECTION_NAMESPACE_INPUT: ${{ github.event.inputs.collection_namespace }}
+          PRIVATE_INPUT: ${{ github.event.inputs.private }}
+          SKIP_COLLECTION_INPUT: ${{ github.event.inputs.skip_collection }}
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
         run: |
-          chmod +x scripts/deploy_to_hf.sh
-          if [ -n "${{ github.event.inputs.base_image_sha }}" ]; then
-            ./scripts/deploy_to_hf.sh --env "${{ matrix.environment }}" --base-sha "${{ github.event.inputs.base_image_sha }}"
+          set -euo pipefail
+          chmod +x scripts/prepare_hf_deployment.sh
+
+          cmd=(scripts/prepare_hf_deployment.sh
+            --hf-namespace "$HF_NAMESPACE_INPUT"
+            --collection-namespace "$COLLECTION_NAMESPACE_INPUT"
+          )
+
+          if [ "$PRIVATE_INPUT" = "true" ]; then
+            cmd+=(--private)
           else
-            ./scripts/deploy_to_hf.sh --env "${{ matrix.environment }}"
+            cmd+=(--public)
           fi
 
-  # Job to deploy single environment
-  deploy-single:
-    needs: determine-environments
-    if: needs.determine-environments.outputs.use_matrix == 'false' && needs.determine-environments.outputs.environments != ''
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        environment: ${{ fromJSON(format('["{0}"]', needs.determine-environments.outputs.environments)) }}
-    permissions:
-      contents: read
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Hugging Face CLI
-        run: |
-          curl -LsSf https://hf.co/cli/install.sh | bash
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Deploy to Hugging Face Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_NAMESPACE: ${{ github.event.inputs.hf_namespace }}
-          HF_USERNAME: ${{ github.event.inputs.hf_namespace }}
-        run: |
-          chmod +x scripts/deploy_to_hf.sh
-          if [ -n "${{ github.event.inputs.base_image_sha }}" ]; then
-            ./scripts/deploy_to_hf.sh --env "${{ matrix.environment }}" --base-sha "${{ github.event.inputs.base_image_sha }}"
-          else
-            ./scripts/deploy_to_hf.sh --env "${{ matrix.environment }}"
+          if [ "$SKIP_COLLECTION_INPUT" = "true" ]; then
+            cmd+=(--skip-collection)
           fi
+
+          if [ "$DRY_RUN_INPUT" = "true" ]; then
+            cmd+=(--dry-run)
+          fi
+
+          if [ -n "$ENVS_CSV_INPUT" ]; then
+            IFS=',' read -r -a envs <<< "$ENVS_CSV_INPUT"
+            for env_name in "${envs[@]}"; do
+              trimmed="$(echo "$env_name" | xargs)"
+              if [ -n "$trimmed" ]; then
+                cmd+=(--env "$trimmed")
+              fi
+            done
+          else
+            cmd+=(--all)
+          fi
+
+          echo "Running: ${cmd[*]}"
+          "${cmd[@]}"

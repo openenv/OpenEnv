@@ -61,12 +61,45 @@ Evaluation Example (WebArena - requires backend):
     ```
 """
 
+from __future__ import annotations
+
+from importlib import import_module
+from typing import TYPE_CHECKING
+
 from .client import BrowserGymEnv
 from .models import BrowserGymAction, BrowserGymObservation, BrowserGymState
+
+if TYPE_CHECKING:
+    from .harness import BrowserGymSessionFactory, build_browsergym_action_tool_call
 
 __all__ = [
     "BrowserGymEnv",
     "BrowserGymAction",
     "BrowserGymObservation",
     "BrowserGymState",
+    "BrowserGymSessionFactory",
+    "build_browsergym_action_tool_call",
 ]
+
+_LAZY_ATTRS = {
+    "BrowserGymSessionFactory": (".harness", "BrowserGymSessionFactory"),
+    "build_browsergym_action_tool_call": (
+        ".harness",
+        "build_browsergym_action_tool_call",
+    ),
+}
+
+
+def __getattr__(name: str):
+    if name not in _LAZY_ATTRS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module_path, attr_name = _LAZY_ATTRS[name]
+    module = import_module(module_path, __name__)
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals().keys()) | set(__all__))

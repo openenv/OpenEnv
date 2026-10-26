@@ -50,7 +50,9 @@ def main():
         print()
 
         # Create client using from_docker_image factory method
-        client = GitEnv.from_docker_image("git-env:latest", env_vars=env_vars)
+        client = GitEnv.from_docker_image(
+            "git-env:latest", env_vars=env_vars
+        ).sync()
 
         print("✓ Client created and container started!\n")
 

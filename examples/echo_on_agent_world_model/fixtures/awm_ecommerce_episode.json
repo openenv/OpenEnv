@@ -1,0 +1,147 @@
+{
+  "scenario": "e_commerce_33",
+  "task": "Search for 'wireless noise cancelling headphones', sort results by average customer rating, and add the top-rated item under $200 to my cart in quantity 1.",
+  "task_idx": 0,
+  "tools": [
+    "search_products",
+    "get_product_by_id",
+    "list_product_categories",
+    "list_product_versions",
+    "list_product_reviews",
+    "create_product_review",
+    "list_product_offers",
+    "get_top_products",
+    "get_or_create_active_cart",
+    "list_cart_items",
+    "add_item_to_cart",
+    "update_cart_item_quantity",
+    "remove_cart_item",
+    "list_orders",
+    "get_order_by_id",
+    "list_order_items",
+    "search_order_items_by_title",
+    "create_return_request",
+    "preview_checkout_for_active_cart",
+    "purchase_single_digital_product",
+    "submit_order_from_active_cart",
+    "list_user_addresses",
+    "create_user_address",
+    "update_user_address",
+    "set_default_shipping_address",
+    "list_user_payment_methods",
+    "create_user_payment_method",
+    "set_default_payment_method",
+    "delete_user_payment_method",
+    "list_user_devices",
+    "list_user_wishlists",
+    "create_user_wishlist",
+    "list_wishlist_items",
+    "add_item_to_wishlist",
+    "remove_item_from_wishlist",
+    "list_product_subscription_offers",
+    "list_user_subscriptions",
+    "create_user_subscription",
+    "update_user_subscription"
+  ],
+  "steps": [
+    {
+      "action": {
+        "tool_name": "search_products",
+        "arguments": {
+          "query": "wireless noise cancelling headphones",
+          "sort_by": "average_rating",
+          "limit": 5
+        }
+      },
+      "observation": {
+        "done": false,
+        "metadata": {},
+        "reward_type": "tool_call_ok",
+        "tool_name": "search_products",
+        "tool_result": "{\n  \"products\": [\n    {\n      \"product\": {\n        \"id\": 2,\n        \"title\": \"Bose QuietComfort 35 II Wireless Bluetooth Headphones\",\n        \"description\": \"Premium wireless noise cancelling headphones with Alexa voice control.\",\n        \"brand\": \"Bose\",\n        \"category_id\": 2,\n        \"is_prime_eligible\": true,\n        \"is_subscription_eligible\": false,\n        \"created_at\": \"2025-09-09T03:51:08\",\n        \"updated_at\": \"2026-06-14T03:51:08\"\n      },\n      \"aggregates\": {\n        \"product_id\": 2,\n        \"average_rating\": 4.8,\n        \"review_count\": 5000,\n        \"sales_rank\": 80\n      },\n      \"lowest_active_offer\": {\n        \"id\": 2,\n        \"product_id\": 2,\n        \"seller_id\": 3,\n        \"sku\": \"BOSE-QC35II-SLV\",\n        \"price\": 299.99,\n        \"currency\": \"USD\",\n        \"in_stock_quantity\": 20,\n        \"is_prime_eligible\": true,\n        \"is_active\": true,\n        \"created_at\": \"2025-09-09T03:51:08\",\n        \"updated_at\": \"2026-06-15T03:51:08\"\n      }\n    },\n    {\n      \"product\": {\n        \"id\": 1,\n        \"title\": \"Sony WH-CH710N Wireless Noise Cancelling Headphones\",\n        \"description\": \"Over-ear wireless Bluetooth headphones with active noise cancellation.\",\n        \"brand\": \"Sony\",\n        \"category_id\": 2,\n        \"is_prime_eligible\": true,\n        \"is_subscription_eligible\": false,\n        \"created_at\": \"2025-08-20T03:51:08\",\n        \"updated_at\": \"2026-06-14T03:51:08\"\n      },\n      \"aggregates\": {\n        \"product_id\": 1,\n        \"average_rating\": 4.5,\n        \"review_count\": 1200,\n        \"sales_rank\": 150\n      },\n      \"lowest_active_offer\": {\n        \"id\": 1,\n        \"product_id\": 1,\n        \"seller_id\": 3,\n        \"sku\": \"SONY-CH710N-BLK\",\n        \"price\": 149.99,\n        \"currency\": \"USD\",\n        \"in_stock_quantity\": 50,\n        \"is_prime_eligible\": true,\n        \"is_active\": true,\n        \"created_at\": \"2025-08-20T03:51:08\",\n        \"updated_at\": \"2026-06-15T03:51:08\"\n      }\n    },\n    {\n      \"product\": {\n        \"id\": 3,\n        \"title\": \"Budget Wireless Noise Cancelling Headphones\",\n        \"description\": \"Affordable wireless headphones with basic noise cancelling.\",\n        \"brand\": \"SoundMax\",\n        \"category_id\": 2,\n        \"is_prime_eligible\": false,\n        \"is_subscription_eligible\": false,\n        \"created_at\": \"2025-11-28T03:51:08\",\n        \"updated_at\": \"2026-06-14T03:51:08\"\n      },\n      \"aggregates\": {\n        \"product_id\": 3,\n        \"average_rating\": 3.9,\n        \"review_count\": 400,\n        \"sales_rank\": 600\n      },\n      \"lowest_active_offer\": {\n        \"id\": 3,\n        \"product_id\": 3,\n        \"seller_id\": 3,\n        \"sku\": \"SMAX-NC-BUDGET\",\n        \"price\": 89.99,\n        \"currency\": \"USD\",\n        \"in_stock_quantity\": 100,\n        \"is_prime_eligible\": false,\n        \"is_active\": true,\n        \"created_at\": \"2025-11-28T03:51:08\",\n        \"updated_at\": \"2026-06-15T03:51:08\"\n      }\n    }\n  ],\n  \"total\": 3\n}"
+      }
+    },
+    {
+      "action": {
+        "tool_name": "list_product_offers",
+        "arguments": {
+          "product_id": 1
+        }
+      },
+      "observation": {
+        "done": false,
+        "metadata": {},
+        "reward_type": "tool_call_ok",
+        "tool_name": "list_product_offers",
+        "tool_result": "{\n  \"offers\": [\n    {\n      \"id\": 1,\n      \"product_id\": 1,\n      \"seller_id\": 3,\n      \"sku\": \"SONY-CH710N-BLK\",\n      \"price\": 149.99,\n      \"currency\": \"USD\",\n      \"in_stock_quantity\": 50,\n      \"is_prime_eligible\": true,\n      \"is_active\": true,\n      \"created_at\": \"2025-08-20T03:51:08\",\n      \"updated_at\": \"2026-06-15T03:51:08\"\n    }\n  ]\n}"
+      }
+    },
+    {
+      "action": {
+        "tool_name": "get_or_create_active_cart",
+        "arguments": {}
+      },
+      "observation": {
+        "done": false,
+        "metadata": {},
+        "reward_type": "tool_call_ok",
+        "tool_name": "get_or_create_active_cart",
+        "tool_result": "{\n  \"cart\": {\n    \"id\": 1,\n    \"user_id\": 1,\n    \"status\": \"active\",\n    \"created_at\": \"2026-06-15T03:51:08\",\n    \"updated_at\": \"2026-06-15T03:51:08\"\n  }\n}"
+      }
+    },
+    {
+      "action": {
+        "tool_name": "add_item_to_cart",
+        "arguments": {
+          "product_offer_id": 1,
+          "quantity": 1
+        }
+      },
+      "observation": {
+        "done": false,
+        "metadata": {},
+        "reward_type": "tool_call_ok",
+        "tool_name": "add_item_to_cart",
+        "tool_result": "{\n  \"cart_item\": {\n    \"id\": 4,\n    \"cart_id\": 1,\n    \"product_offer_id\": 1,\n    \"quantity\": 1,\n    \"created_at\": \"2026-06-16T03:51:10.029385\",\n    \"updated_at\": \"2026-06-16T03:51:10.029385\"\n  }\n}"
+      }
+    },
+    {
+      "action": {
+        "tool_name": "list_cart_items",
+        "arguments": {}
+      },
+      "observation": {
+        "done": false,
+        "metadata": {},
+        "reward_type": "tool_call_ok",
+        "tool_name": "list_cart_items",
+        "tool_result": "{\n  \"cart_id\": 1,\n  \"items\": [\n    {\n      \"id\": 1,\n      \"product_offer_id\": 20,\n      \"quantity\": 1,\n      \"product_id\": 20,\n      \"product_title\": \"Wireless Bluetooth Earbuds\",\n      \"price\": 39.99,\n      \"currency\": \"USD\",\n      \"is_prime_eligible\": true,\n      \"created_at\": \"2026-06-15T03:51:08\",\n      \"updated_at\": \"2026-06-15T03:51:08\"\n    },\n    {\n      \"id\": 4,\n      \"product_offer_id\": 1,\n      \"quantity\": 1,\n      \"product_id\": 1,\n      \"product_title\": \"Sony WH-CH710N Wireless Noise Cancelling Headphones\",\n      \"price\": 149.99,\n      \"currency\": \"USD\",\n      \"is_prime_eligible\": true,\n      \"created_at\": \"2026-06-16T03:51:10.029385\",\n      \"updated_at\": \"2026-06-16T03:51:10.029385\"\n    }\n  ]\n}"
+      }
+    },
+    {
+      "action": {
+        "tool_name": "verify",
+        "arguments": {
+          "verifier_mode": "code"
+        }
+      },
+      "observation": {
+        "done": false,
+        "metadata": {},
+        "reward_type": "others",
+        "scenario": "e_commerce_33",
+        "task": "Search for 'wireless noise cancelling headphones', sort results by average customer rating, and add the top-rated item under $200 to my cart in quantity 1.",
+        "task_idx": 0,
+        "verify_result": {
+          "result": "others",
+          "execution_status": "success",
+          "raw_result": {
+            "result": "others"
+          }
+        },
+        "steps_taken": 7
+      }
+    }
+  ],
+  "reward": 0.0
+}

@@ -2,7 +2,8 @@
 Calendar models for Calendar API following Google Calendar API v3 structure
 """
 
-from typing import Optional, List
+from typing import List, Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 # Allowed conference solution types per Google Calendar API v3 spec
@@ -15,7 +16,7 @@ ALLOWED_CONFERENCE_SOLUTION_TYPES = {
 
 class ConferenceProperties(BaseModel):
     """Conference properties for calendar"""
-    
+
     allowedConferenceSolutionTypes: Optional[List[str]] = Field(
         default=None,
         description=(
@@ -25,7 +26,9 @@ class ConferenceProperties(BaseModel):
 
     @field_validator("allowedConferenceSolutionTypes")
     @classmethod
-    def validate_allowed_conference_solution_types(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def validate_allowed_conference_solution_types(
+        cls, v: Optional[List[str]]
+    ) -> Optional[List[str]]:
         """Ensure provided values are restricted to the API-supported set.
 
         The Google Calendar API v3 permits only the following values for
@@ -37,7 +40,11 @@ class ConferenceProperties(BaseModel):
         if v is None:
             return v
         # Allow empty list, but every provided value must be valid
-        invalid = [item for item in v if item not in ALLOWED_CONFERENCE_SOLUTION_TYPES and item not in [None, ""]]
+        invalid = [
+            item
+            for item in v
+            if item not in ALLOWED_CONFERENCE_SOLUTION_TYPES and item not in [None, ""]
+        ]
         if invalid:
             allowed_sorted = sorted(ALLOWED_CONFERENCE_SOLUTION_TYPES)
             raise ValueError(
@@ -53,21 +60,39 @@ class Calendar(BaseModel):
     kind: str = Field(default="calendar#calendar", description="Calendar resource type")
     etag: Optional[str] = Field(None, description="ETag of the resource")
     id: Optional[str] = Field(None, description="Unique calendar identifier")
-    summary: str = Field(..., min_length=1, max_length=255, description="Calendar title")
-    description: Optional[str] = Field(None, max_length=1000, description="Calendar description")
-    location: Optional[str] = Field(None, max_length=500, description="Calendar location")
+    summary: str = Field(
+        ..., min_length=1, max_length=255, description="Calendar title"
+    )
+    description: Optional[str] = Field(
+        None, max_length=1000, description="Calendar description"
+    )
+    location: Optional[str] = Field(
+        None, max_length=500, description="Calendar location"
+    )
     timeZone: str = Field(default="UTC", description="Calendar timezone in IANA format")
-    conferenceProperties: Optional[ConferenceProperties] = Field(None, description="Conference properties")
+    conferenceProperties: Optional[ConferenceProperties] = Field(
+        None, description="Conference properties"
+    )
 
 
 class CalendarCreateRequest(BaseModel):
     """Request model for creating a calendar (POST /calendars)"""
 
-    summary: str = Field(..., min_length=1, max_length=255, description="Calendar title (required)")
-    description: Optional[str] = Field(None, max_length=1000, description="Calendar description")
-    location: Optional[str] = Field(None, max_length=500, description="Calendar location") 
-    timeZone: Optional[str] = Field(None, description="Calendar timezone in IANA format")
-    conferenceProperties: Optional[ConferenceProperties] = Field(None, description="Conference properties")
+    summary: str = Field(
+        ..., min_length=1, max_length=255, description="Calendar title (required)"
+    )
+    description: Optional[str] = Field(
+        None, max_length=1000, description="Calendar description"
+    )
+    location: Optional[str] = Field(
+        None, max_length=500, description="Calendar location"
+    )
+    timeZone: Optional[str] = Field(
+        None, description="Calendar timezone in IANA format"
+    )
+    conferenceProperties: Optional[ConferenceProperties] = Field(
+        None, description="Conference properties"
+    )
 
     @field_validator("summary")
     @classmethod
@@ -85,6 +110,7 @@ class CalendarCreateRequest(BaseModel):
             return v
         try:
             from dateutil.tz import gettz
+
             if gettz(v) is None:
                 raise ValueError("Invalid timeZone; must be a valid IANA timezone name")
         except Exception:
@@ -96,11 +122,21 @@ class CalendarCreateRequest(BaseModel):
 class CalendarUpdateRequest(BaseModel):
     """Request model for updating a calendar (PATCH/PUT /calendars/{calendarId})"""
 
-    summary: str = Field(None, min_length=1, max_length=255, description="Calendar title")
-    description: Optional[str] = Field(None, max_length=1000, description="Calendar description")
-    location: Optional[str] = Field(None, max_length=500, description="Calendar location")
-    timeZone: Optional[str] = Field(None, description="Calendar timezone in IANA format")
-    conferenceProperties: Optional[ConferenceProperties] = Field(None, description="Conference properties")
+    summary: str = Field(
+        None, min_length=1, max_length=255, description="Calendar title"
+    )
+    description: Optional[str] = Field(
+        None, max_length=1000, description="Calendar description"
+    )
+    location: Optional[str] = Field(
+        None, max_length=500, description="Calendar location"
+    )
+    timeZone: Optional[str] = Field(
+        None, description="Calendar timezone in IANA format"
+    )
+    conferenceProperties: Optional[ConferenceProperties] = Field(
+        None, description="Conference properties"
+    )
 
     @field_validator("summary")
     @classmethod
@@ -118,6 +154,7 @@ class CalendarUpdateRequest(BaseModel):
             return v
         try:
             from dateutil.tz import gettz
+
             if gettz(v) is None:
                 raise ValueError("Invalid timeZone; must be a valid IANA timezone name")
         except Exception:
@@ -127,7 +164,9 @@ class CalendarUpdateRequest(BaseModel):
 
 class CalendarListResponse(BaseModel):
     """Response model for listing calendars"""
-    
-    kind: str = Field(default="calendar#calendarList", description="Calendar list resource type")
+
+    kind: str = Field(
+        default="calendar#calendarList", description="Calendar list resource type"
+    )
     etag: Optional[str] = Field(None, description="ETag of the collection")
     items: List[Calendar] = Field(default_factory=list, description="List of calendars")

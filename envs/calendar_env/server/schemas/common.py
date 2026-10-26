@@ -2,9 +2,10 @@
 Common models and response schemas for Calendar API
 """
 
-from typing import Dict, Optional, List, Any
-from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 
 class BaseResponse(BaseModel):
@@ -33,7 +34,9 @@ class SuccessResponse(BaseResponse):
 class PaginationModel(BaseModel):
     """Pagination model"""
 
-    limit: int = Field(default=100, ge=1, le=1000, description="Number of records to return")
+    limit: int = Field(
+        default=100, ge=1, le=1000, description="Number of records to return"
+    )
     offset: int = Field(default=0, ge=0, description="Number of records to skip")
 
 

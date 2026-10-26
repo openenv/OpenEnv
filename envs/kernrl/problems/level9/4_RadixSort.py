@@ -19,6 +19,7 @@ class Model(nn.Module):
     """
     Radix sort for 32-bit integers.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -38,10 +39,12 @@ class Model(nn.Module):
 # Problem configuration
 array_size = 4 * 1024 * 1024  # 4M elements
 
+
 def get_inputs():
     # Random 32-bit integers
     data = torch.randint(0, 2**31, (array_size,), dtype=torch.int64)
     return [data]
+
 
 def get_init_inputs():
     return []

@@ -20,13 +20,14 @@ class Model(nn.Module):
     """
     1D convolution with a filter kernel.
     """
+
     def __init__(self, kernel_size: int = 127):
         super(Model, self).__init__()
         self.kernel_size = kernel_size
 
         # Random kernel (for FIR filter, this would be designed coefficients)
         kernel = torch.randn(1, 1, kernel_size)
-        self.register_buffer('kernel', kernel)
+        self.register_buffer("kernel", kernel)
 
     def forward(self, signal: torch.Tensor) -> torch.Tensor:
         """
@@ -61,9 +62,11 @@ class Model(nn.Module):
 # Problem configuration
 signal_length = 1024 * 1024
 
+
 def get_inputs():
     signal = torch.randn(signal_length)
     return [signal]
+
 
 def get_init_inputs():
     return [127]  # kernel_size

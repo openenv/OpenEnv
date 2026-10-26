@@ -1,20 +1,19 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """LLM-as-a-judge rubric for reward computation.
 
 Uses an LLM endpoint (via LLMClient) to evaluate agent actions/observations.
 
-Usage:
+Examples:
+
+    ```python
     client = OpenAIClient("http://localhost", 8000, model="meta-llama/...")
     judge = LLMJudge(
         prompt_template="Rate this code solution:\\n{action}\\n\\nScore (0-1):",
         client=client,
     )
     score = await judge(action, observation)
+    ```
 
 See RFC 004 for full design: rfcs/004-rubrics.md
 """
@@ -33,12 +32,17 @@ class LLMJudge(Rubric):
     placeholders. The LLM response is parsed for a numeric score.
 
     Args:
-        prompt_template: Template string with {action} and {observation} placeholders.
-        client: An LLMClient instance for making LLM calls.
-        score_pattern: Regex to extract the score from the LLM response.
-            Defaults to matching the first decimal number.
-        default_score: Score returned when parsing fails.
-        normalize: If True, clamp extracted score to [0, 1].
+        prompt_template (`str`):
+            Template string with {action} and {observation} placeholders.
+        client (`LLMClient`):
+            An LLMClient instance for making LLM calls.
+        score_pattern (`str`, *optional*):
+            Regex to extract the score from the LLM response. Defaults to matching
+            the first decimal number.
+        default_score (`float`, *optional*, defaults to `0.0`):
+            Score returned when parsing fails.
+        normalize (`bool`, *optional*, defaults to `True`):
+            If True, clamp extracted score to [0, 1].
     """
 
     def __init__(
@@ -65,7 +69,7 @@ class LLMJudge(Rubric):
             observation: The resulting observation.
 
         Returns:
-            Parsed score from the LLM response.
+            `float`: Parsed score from the LLM response.
         """
         prompt = self._render_prompt(action, observation)
         response = await self._client.complete(prompt)

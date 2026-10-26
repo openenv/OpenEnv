@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Local Python Executor (enhanced).
 
@@ -25,9 +21,8 @@ import json
 import logging
 import traceback
 
-from smolagents import LocalPythonExecutor
-
 from openenv.core.env_server.types import CodeExecResult
+from smolagents import LocalPythonExecutor
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())

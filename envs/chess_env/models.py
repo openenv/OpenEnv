@@ -16,9 +16,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import Field
-
 from openenv.core.env_server import Action, Observation, State
+from pydantic import Field
 
 
 class ChessAction(Action):

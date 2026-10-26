@@ -79,6 +79,13 @@ docker build -t tbench2-env:latest -f envs/tbench2_env/server/Dockerfile .
 | `action_type` | str | The action type that produced this observation |
 | `info` | dict | Additional metadata |
 
+**Execution budgets in the `reset` observation.** `reset` reports the time budgets that bound a single env op in `info`, so clients can derive per-message deadlines (budget plus margin) instead of guessing:
+
+| Key | Modes | Description |
+|-----|-------|-------------|
+| `verifier_timeout_sec` | local, Docker | Budget for one `evaluate` call: the task's `task.toml` `[verifier].timeout_sec`, else 900. |
+| `command_timeout_s` | local only | Per-command budget for `exec` (`TB2_COMMAND_TIMEOUT_S`). Docker mode has no server-side per-command timeout, so it does not report one. |
+
 ### State
 **Tbench2State**: Server-side state for the task session
 
@@ -110,7 +117,7 @@ TB2_MODE=local python -m tbench2_env.server.app
 
 ### Docker Mode
 
-Each task runs in its own Docker container, using the image specified in the task's `task.toml`:
+Each task runs in its own Docker container, using the image specified in the task's `task.toml` (tasks that declare no `docker_image` are rejected at reset — there is no host-execution fallback). Agent commands run in the image's own `WORKDIR`, and `evaluate` scores with the task's canonical `tests/test.sh`, staged for exactly the verify window — the same scoring contract as local mode:
 
 ```bash
 # Enable Docker mode
@@ -164,6 +171,7 @@ env.step(Tbench2Action(action_type="view", session_id="sess1"))
 | `TB2_OUTPUT_DIR` | `/tmp/tbench2_env_runs` | Directory for session logs and cache |
 | `TB2_CACHE_DIR` | `$TB2_OUTPUT_DIR/repo_cache` | Where to extract TB2 repo |
 | `TB2_REPO_URL` | (GitHub main.zip) | Repo zip URL for auto-download |
+| `TB2_WITHHOLD_TESTS` | `0` | `1`: `reset()` deletes the task's `tests/` and `solution/` from disk (tests kept in server memory, staged at `/tests` only while scoring). Set for RL training so the agent cannot read the expected outputs or the answer; leave off when `TB2_TASKS_DIR` is a working checkout you don't want modified |
 
 ## Reward
 

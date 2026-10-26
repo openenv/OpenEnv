@@ -23,7 +23,7 @@ This example demonstrates how to train language models to play BlackJack using *
 1. **Install OpenEnv**:
    ```bash
    # Clone OpenEnv repo
-   git clone https://github.com/meta-pytorch/OpenEnv.git
+   git clone https://github.com/huggingface/OpenEnv.git
    cd OpenEnv
    pip install -e .
    ```
@@ -97,7 +97,7 @@ This tutorial is inspired by the excellent [Unsloth RL Guide](https://docs.unslo
 
 ### Further Reading
 
-- **OpenEnv**: [GitHub](https://github.com/meta-pytorch/OpenEnv)
+- **OpenEnv**: [GitHub](https://github.com/huggingface/OpenEnv)
 - **GRPO Paper**: [arXiv:2402.03300](https://arxiv.org/abs/2402.03300)
 - **Forge**: [GitHub](https://github.com/meta-pytorch/torchforge) | [Docs](https://meta-pytorch.org/torchforge/)
 - **Unsloth RL Guide**: [docs.unsloth.ai](https://docs.unsloth.ai/get-started/reinforcement-learning-rl-guide)

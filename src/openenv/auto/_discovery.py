@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Environment Auto-Discovery System
@@ -17,16 +13,19 @@ This module provides automatic discovery of OpenEnv environments by:
 This enables AutoEnv to work without coupling to src/envs/ directory.
 """
 
+from __future__ import annotations
+
 import importlib
 import importlib.metadata
 import importlib.resources
 import json
 import logging
+import os
 import re
-import tempfile
-from dataclasses import dataclass, asdict
+import stat
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Optional, Type, Any
+from typing import Any, Type
 
 import yaml
 
@@ -63,10 +62,10 @@ class EnvironmentInfo:
     action_class_name: str
     observation_class_name: str
     default_image: str
-    spec_version: Optional[int] = None
-    manifest: Optional[Dict[str, Any]] = None
+    spec_version: int | None = None
+    manifest: dict[str, Any] | None = None
 
-    def get_client_class(self) -> Type:
+    def get_client_class(self) -> Type[Any]:
         """
         Dynamically import and return the client class.
 
@@ -90,7 +89,7 @@ class EnvironmentInfo:
                 f"Class {self.client_class_name} not found in {self.client_module_path}: {e}"
             ) from e
 
-    def get_action_class(self) -> Type:
+    def get_action_class(self) -> Type[Any]:
         """
         Dynamically import and return the action class.
 
@@ -114,7 +113,7 @@ class EnvironmentInfo:
                 f"Class {self.action_class_name} not found in {self.client_module_path}: {e}"
             ) from e
 
-    def get_observation_class(self) -> Type:
+    def get_observation_class(self) -> Type[Any]:
         """
         Dynamically import and return the observation class.
 
@@ -178,9 +177,9 @@ def _is_hub_url(name: str) -> bool:
         True if it looks like a Hub URL
 
     Examples:
-        >>> _is_hub_url("meta-pytorch/echo_env")
+        >>> _is_hub_url("openenv/echo_env")
         True
-        >>> _is_hub_url("https://huggingface.co/meta-pytorch/echo_env")
+        >>> _is_hub_url("https://huggingface.co/openenv/echo_env")
         True
         >>> _is_hub_url("echo")
         False
@@ -225,7 +224,7 @@ def _infer_class_name(env_name: str, class_type: str) -> str:
 
 def _load_manifest_from_package(
     package_name: str, module_name: str
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Load openenv.yaml manifest from an installed package.
 
@@ -259,7 +258,7 @@ def _load_manifest_from_package(
 
 def _create_env_info_from_package(
     package_name: str, module_name: str, version: str
-) -> Optional[EnvironmentInfo]:
+) -> EnvironmentInfo | None:
     """
     Create EnvironmentInfo from an installed package.
 
@@ -338,6 +337,118 @@ def _create_env_info_from_package(
     )
 
 
+def _default_cache_file() -> Path:
+    """
+    Return the per-user discovery cache file path.
+
+    Uses a per-user cache directory (``$XDG_CACHE_HOME`` or ``~/.cache``) rather than a
+    shared, world-writable temporary directory. A fixed path under the shared temp dir
+    lets another local user pre-create the cache file and redirect discovery to
+    attacker-controlled import paths (`import_module` on a cached `client_module_path`).
+    Per the XDG Base Directory specification, relative `XDG_CACHE_HOME` values are
+    ignored so an untrusted working tree cannot supply a victim-owned cache file.
+    The fallback home must itself be absolute; otherwise discovery fails closed.
+    """
+    base = os.environ.get("XDG_CACHE_HOME")
+    if base and Path(base).is_absolute():
+        root = Path(base)
+    else:
+        home = Path.home()
+        if not home.is_absolute():
+            raise RuntimeError(
+                "discovery cache requires an absolute home directory when "
+                "XDG_CACHE_HOME is unset or relative"
+            )
+        root = home / ".cache"
+    return root / "openenv" / "discovery_cache.json"
+
+
+def _is_trusted_stat(info: os.stat_result) -> bool:
+    """
+    Return whether the file *info* describes is safe to load.
+
+    On POSIX the file must be owned by the current user and not writable by group or
+    others, so a cache file planted by another user is ignored rather than trusted.
+
+    Args:
+        info (`os.stat_result`):
+            Metadata for the file being considered.
+
+    Returns:
+        `bool`: `True` if the file is owned by the current user and not
+        group/other-writable (always `True` on non-POSIX platforms).
+    """
+    if os.name != "posix":
+        return True
+    return info.st_uid == os.getuid() and not (
+        info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    )
+
+
+def _is_trusted_cache_file(path: Path) -> bool:
+    """
+    Return whether *path* is safe to load.
+
+    Prefer `_open_trusted_cache`, which checks the descriptor it hands back. This
+    variant resolves the path a second time, so on its own it cannot promise that
+    the file inspected is the file later read.
+
+    Args:
+        path (`Path`):
+            The cache file to check.
+
+    Returns:
+        `bool`: `True` if the file is owned by the current user and not
+        group/other-writable (always `True` on non-POSIX platforms).
+    """
+    if os.name != "posix":
+        return True
+    try:
+        return _is_trusted_stat(path.stat())
+    except OSError:
+        return False
+
+
+def _open_trusted_cache(path: Path) -> int | None:
+    """
+    Open *path* for reading and return the descriptor only if it is trustworthy.
+
+    Checking a path and then opening it are two separate resolutions, and an
+    attacker who can write in the cache directory can swap the file for a symlink
+    in between, so the file that was vetted is not the file that gets read.
+    ``O_NOFOLLOW`` refuses a symlink outright and ``fstat`` inspects the descriptor
+    itself, which makes the ownership check and the read the same object.
+
+    Args:
+        path (`Path`):
+            The cache file to open.
+
+    Returns:
+        `int` or `None`: an open read-only descriptor the caller must close, or
+        `None` if the file is missing, is a symlink, is not a regular file, or
+        is not owned by the current user.
+    """
+    # O_NONBLOCK matters before the descriptor can be inspected: opening a FIFO
+    # read-only otherwise waits for a writer that an attacker simply never
+    # provides, so discovery hangs before any check runs. It has no effect on a
+    # regular file, which is the only thing accepted here anyway.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        # Missing, unreadable, or a symlink (ELOOP under O_NOFOLLOW).
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or not _is_trusted_stat(info):
+            os.close(fd)
+            return None
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
 class EnvironmentDiscovery:
     """
     Auto-discovery system for OpenEnv environments using installed packages.
@@ -347,17 +458,17 @@ class EnvironmentDiscovery:
 
     def __init__(self):
         """Initialize discovery system."""
-        self._cache: Optional[Dict[str, EnvironmentInfo]] = None
-        self._cache_file = Path(tempfile.gettempdir()) / "openenv_discovery_cache.json"
+        self._cache: dict[str, EnvironmentInfo] | None = None
+        self._cache_file = _default_cache_file()
 
-    def _discover_installed_packages(self) -> Dict[str, EnvironmentInfo]:
+    def _discover_installed_packages(self) -> dict[str, EnvironmentInfo]:
         """
         Discover all installed openenv-* packages.
 
         Returns:
             Dictionary mapping env_key to EnvironmentInfo
         """
-        environments = {}
+        environments: dict[str, EnvironmentInfo] = {}
 
         # Invalidate import caches to ensure we pick up newly installed packages
         importlib.invalidate_caches()
@@ -369,7 +480,7 @@ class EnvironmentDiscovery:
             logger.warning(f"Failed to get installed packages: {e}")
             return environments
 
-        # Filter for openenv-* packages (exclude openenv-core)
+        # Filter for openenv-* environment packages; ignore the legacy core wheel.
         for dist in distributions:
             package_name = dist.metadata["Name"]
 
@@ -403,22 +514,33 @@ class EnvironmentDiscovery:
 
         return environments
 
-    def _load_cache(self) -> Optional[Dict[str, EnvironmentInfo]]:
+    def _load_cache(self) -> dict[str, EnvironmentInfo] | None:
         """
         Load cached discovery results.
 
         Returns:
             Dictionary of env_key -> EnvironmentInfo, or None if cache invalid
         """
-        if not self._cache_file.exists():
+        # Only trust a cache file owned by the current user. This prevents another
+        # local user from planting a file that would redirect discovery (and the
+        # subsequent import_module) to attacker-controlled modules/classes. The
+        # descriptor is what gets vetted and then read, so the file cannot be
+        # swapped for a symlink after the check.
+        fd = _open_trusted_cache(self._cache_file)
+        if fd is None:
+            if self._cache_file.exists():
+                logger.warning(
+                    f"Ignoring discovery cache {self._cache_file}: not owned by "
+                    "the current user, writable by group/others, or a symlink."
+                )
             return None
 
         try:
-            with open(self._cache_file, "r") as f:
+            with os.fdopen(fd, "r") as f:
                 cache_data = json.load(f)
 
             # Reconstruct EnvironmentInfo objects
-            cache = {}
+            cache: dict[str, EnvironmentInfo] = {}
             for env_key, env_data in cache_data.items():
                 cache[env_key] = EnvironmentInfo(**env_data)
 
@@ -427,7 +549,7 @@ class EnvironmentDiscovery:
             logger.warning(f"Failed to load discovery cache: {e}")
             return None
 
-    def _save_cache(self, environments: Dict[str, EnvironmentInfo]) -> None:
+    def _save_cache(self, environments: dict[str, EnvironmentInfo]) -> None:
         """
         Save discovery results to cache.
 
@@ -439,13 +561,35 @@ class EnvironmentDiscovery:
             for env_key, env_info in environments.items():
                 cache_data[env_key] = asdict(env_info)
 
-            with open(self._cache_file, "w") as f:
-                json.dump(cache_data, f, indent=2)
+            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
+            # Write a new file and move it into place rather than writing
+            # through whatever already sits at the destination. A mode passed to
+            # `os.open` only applies when it creates the file, so truncating an
+            # existing group/world-writable cache would keep that mode and
+            # publish what was just written; and `os.replace` is atomic, so a
+            # reader never observes a half-written cache when serialization
+            # fails part way. `O_EXCL` requires the temporary name to be new,
+            # and 0600 is applied at creation so the umask cannot widen it.
+            tmp_path = self._cache_file.with_name(
+                f"{self._cache_file.name}.{os.getpid()}.tmp"
+            )
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(tmp_path, flags, 0o600)
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(cache_data, f, indent=2)
+                os.replace(tmp_path, self._cache_file)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
         except Exception as e:
             logger.warning(f"Failed to save discovery cache: {e}")
 
-    def discover(self, use_cache: bool = True) -> Dict[str, EnvironmentInfo]:
+    def discover(self, use_cache: bool = True) -> dict[str, EnvironmentInfo]:
         """
         Discover all installed OpenEnv environments.
 
@@ -481,7 +625,7 @@ class EnvironmentDiscovery:
 
         return environments
 
-    def get_environment(self, env_key: str) -> Optional[EnvironmentInfo]:
+    def get_environment(self, env_key: str) -> EnvironmentInfo | None:
         """
         Get information about a specific environment.
 
@@ -500,7 +644,7 @@ class EnvironmentDiscovery:
         environments = self.discover()
         return environments.get(env_key)
 
-    def get_environment_by_name(self, name: str) -> Optional[EnvironmentInfo]:
+    def get_environment_by_name(self, name: str) -> EnvironmentInfo | None:
         """
         Get environment info by flexible name matching.
 
@@ -554,7 +698,7 @@ class EnvironmentDiscovery:
 
 
 # Global discovery instance
-_global_discovery: Optional[EnvironmentDiscovery] = None
+_global_discovery: EnvironmentDiscovery | None = None
 
 
 def get_discovery() -> EnvironmentDiscovery:
@@ -577,8 +721,12 @@ def get_discovery() -> EnvironmentDiscovery:
 
 
 def reset_discovery() -> None:
-    """Reset the global discovery instance (useful for testing)."""
+    """Drop the global discovery singleton (useful for testing).
+
+    Does **not** delete the on-disk cache. The cache is now a persistent
+    per-user file under `$XDG_CACHE_HOME`; wiping it belongs on an explicit
+    [`EnvironmentDiscovery.clear_cache`][] call so test fixtures that only
+    need a fresh singleton cannot clobber a developer's real cache.
+    """
     global _global_discovery
-    if _global_discovery is not None:
-        _global_discovery.clear_cache()
     _global_discovery = None

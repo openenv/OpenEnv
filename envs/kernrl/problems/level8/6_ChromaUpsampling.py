@@ -23,14 +23,12 @@ class Model(nn.Module):
     """
     Upsamples chroma from 4:2:0 to 4:4:4.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
     def forward(
-        self,
-        y_full: torch.Tensor,
-        u_half: torch.Tensor,
-        v_half: torch.Tensor
+        self, y_full: torch.Tensor, u_half: torch.Tensor, v_half: torch.Tensor
     ) -> tuple:
         """
         Upsample chroma channels.
@@ -51,8 +49,8 @@ class Model(nn.Module):
         u_4d = u_half.unsqueeze(0).unsqueeze(0)
         v_4d = v_half.unsqueeze(0).unsqueeze(0)
 
-        u_full = F.interpolate(u_4d, size=(H, W), mode='bilinear', align_corners=False)
-        v_full = F.interpolate(v_4d, size=(H, W), mode='bilinear', align_corners=False)
+        u_full = F.interpolate(u_4d, size=(H, W), mode="bilinear", align_corners=False)
+        v_full = F.interpolate(v_4d, size=(H, W), mode="bilinear", align_corners=False)
 
         u_full = u_full.squeeze(0).squeeze(0)
         v_full = v_full.squeeze(0).squeeze(0)
@@ -64,11 +62,13 @@ class Model(nn.Module):
 frame_height = 1080
 frame_width = 1920
 
+
 def get_inputs():
     y = torch.rand(frame_height, frame_width)
     u = torch.rand(frame_height // 2, frame_width // 2)
     v = torch.rand(frame_height // 2, frame_width // 2)
     return [y, u, v]
+
 
 def get_init_inputs():
     return []

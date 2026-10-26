@@ -25,15 +25,12 @@ class Model(nn.Module):
     Each particle contributes charge to its 4 nearest grid points with
     bilinear weighting based on distance.
     """
+
     def __init__(self, grid_size: int = 256):
         super(Model, self).__init__()
         self.grid_size = grid_size
 
-    def forward(
-        self,
-        positions: torch.Tensor,
-        charges: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, positions: torch.Tensor, charges: torch.Tensor) -> torch.Tensor:
         """
         Deposit particle charges onto grid.
 
@@ -45,8 +42,12 @@ class Model(nn.Module):
             grid: (grid_size, grid_size) charge density grid
         """
         N = positions.shape[0]
-        grid = torch.zeros(self.grid_size, self.grid_size,
-                          device=positions.device, dtype=positions.dtype)
+        grid = torch.zeros(
+            self.grid_size,
+            self.grid_size,
+            device=positions.device,
+            dtype=positions.dtype,
+        )
 
         # Get cell indices and fractional positions
         # Cell index is floor of position
@@ -82,11 +83,13 @@ class Model(nn.Module):
 num_particles = 100000
 grid_size = 256
 
+
 def get_inputs():
     # Random particles uniformly distributed in grid
     positions = torch.rand(num_particles, 2) * (grid_size - 1)
     charges = torch.randn(num_particles)  # Can be positive or negative
     return [positions, charges]
+
 
 def get_init_inputs():
     return [grid_size]

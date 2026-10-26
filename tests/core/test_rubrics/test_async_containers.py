@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Tests for async container rubrics: Sequential, Gate, WeightedSum.
 
@@ -13,12 +9,12 @@ This test file verifies that container rubrics work with async forward():
 - Parallel execution optimization
 """
 
-import pytest
 import asyncio
 from typing import Any
 
+import pytest
 from openenv.core.rubrics.base import Rubric
-from openenv.core.rubrics.containers import Sequential, Gate, WeightedSum
+from openenv.core.rubrics.containers import Gate, Sequential, WeightedSum
 
 
 class AsyncRubric(Rubric):
@@ -330,6 +326,26 @@ class TestAsyncBackwardCompatibility:
         )
         result = await rubric("action", "obs")
         assert result == 0.8
+
+    @pytest.mark.asyncio
+    async def test_sequential_with_failing_sync_rubric(self):
+        """Sequential stopped by a sync child is still awaitable."""
+
+        class SyncRubric(Rubric):
+            def __init__(self, score: float):
+                super().__init__()
+                self.score = score
+
+            def forward(self, action, observation):
+                return self.score
+
+        first_fails = Sequential(SyncRubric(0.0), AsyncRubric(0.8))
+        assert await first_fails("action", "obs") == 0.0
+        assert first_fails.last_score == 0.0
+
+        later_fails = Sequential(SyncRubric(1.0), SyncRubric(0.0), AsyncRubric(0.8))
+        assert await later_fails("action", "obs") == 0.0
+        assert later_fails.last_score == 0.0
 
     @pytest.mark.asyncio
     async def test_weighted_sum_mixed_sync_async(self):

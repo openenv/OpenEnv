@@ -2,10 +2,10 @@
 Base Manager - Common CRUD operations for all Calendar services
 """
 
-import sqlite3
 import logging
-from typing import Dict, Optional, List, Any
+import sqlite3
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +65,16 @@ class BaseManager:
         results = self.execute_query(query, (record_id,))
         return results[0] if results else None
 
-    def get_all(self, table: str, limit: int = 100, offset: int = 0, order_by: str = "id DESC") -> List[Dict]:
+    def get_all(
+        self, table: str, limit: int = 100, offset: int = 0, order_by: str = "id DESC"
+    ) -> List[Dict]:
         """Get all records from a table with pagination"""
         query = f"SELECT * FROM {table} ORDER BY {order_by} LIMIT ? OFFSET ?"
         return self.execute_query(query, (limit, offset))
 
-    def count_records(self, table: str, where_clause: str = "", params: tuple = ()) -> int:
+    def count_records(
+        self, table: str, where_clause: str = "", params: tuple = ()
+    ) -> int:
         """Count records in a table"""
         query = f"SELECT COUNT(*) as count FROM {table}"
         if where_clause:
@@ -78,7 +82,9 @@ class BaseManager:
         result = self.execute_query(query, params)
         return result[0]["count"] if result else 0
 
-    def update_record(self, table: str, record_id: int, updates: Dict[str, Any]) -> bool:
+    def update_record(
+        self, table: str, record_id: int, updates: Dict[str, Any]
+    ) -> bool:
         """Update a record with given field values"""
         if not updates:
             return False

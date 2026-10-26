@@ -1,0 +1,9 @@
+# LLM Inference Examples Dependencies
+
+# Core OpenEnv (should already be installed)
+# openenv
+
+# LLM APIs
+anthropic>=0.40.0  # Claude models
+openai>=1.54.0     # GPT models + HuggingFace Inference (OpenAI-compatible)
+dashscope>=1.20.0  # Qwen models (via Alibaba Cloud)

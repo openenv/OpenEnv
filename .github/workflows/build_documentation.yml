@@ -1,0 +1,18 @@
+name: Build documentation
+
+on:
+  push:
+    branches:
+      - main
+      - doc-builder*
+      - v*-release
+
+jobs:
+  build:
+    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@90ddd199e07144a13408c523680c76987343c95f  # main
+    with:
+      commit_sha: ${{ github.sha }}
+      package: openenv
+      version_tag_suffix: ""
+    secrets:
+      hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}

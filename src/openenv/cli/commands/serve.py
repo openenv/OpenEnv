@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Serve OpenEnv environments locally (TO BE IMPLEMENTED)."""
 
@@ -91,4 +87,4 @@ def serve(
         console.print("  From an environment directory with pyproject.toml:")
         console.print(f"     [dim]$ uv run --project . server --port {port}[/dim]\n")
 
-    raise typer.Exit(0)
+    raise typer.Exit(1)

@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = ["setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -15,7 +15,7 @@ description = "GPU kernel optimization environment for OpenEnv - trains LLMs to 
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv dependencies (required for server functionality)
-    "openenv-core @ git+https://github.com/meta-pytorch/OpenEnv.git@main",
+    "openenv>=0.2.2",
     "fastapi>=0.115.0",
     "pydantic>=2.0.0",
     "uvicorn>=0.24.0",

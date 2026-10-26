@@ -21,9 +21,9 @@ Example:
     ...     print(result)  # "Hello!"
 """
 
-from .client import EchoEnv
-
 # Re-export MCP types for convenience
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
+
+from .client import EchoEnv
 
 __all__ = ["EchoEnv", "CallToolAction", "ListToolsAction"]

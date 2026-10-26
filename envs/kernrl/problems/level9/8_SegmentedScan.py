@@ -20,10 +20,13 @@ class Model(nn.Module):
     """
     Segmented exclusive prefix sum.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
-    def forward(self, values: torch.Tensor, segment_heads: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, values: torch.Tensor, segment_heads: torch.Tensor
+    ) -> torch.Tensor:
         """
         Compute segmented exclusive prefix sum.
 
@@ -57,14 +60,16 @@ class Model(nn.Module):
 array_size = 16 * 1024 * 1024
 num_segments = 1000
 
+
 def get_inputs():
     values = torch.rand(array_size)
     # Random segment heads
     segment_heads = torch.zeros(array_size, dtype=torch.bool)
     segment_heads[0] = True  # First element always starts a segment
-    head_positions = torch.randperm(array_size - 1)[:num_segments - 1] + 1
+    head_positions = torch.randperm(array_size - 1)[: num_segments - 1] + 1
     segment_heads[head_positions] = True
     return [values, segment_heads]
+
 
 def get_init_inputs():
     return []

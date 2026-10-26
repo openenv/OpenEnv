@@ -22,14 +22,17 @@ class Model(nn.Module):
 
     Computes the mean of all pixels in a rectangular window.
     """
+
     def __init__(self, kernel_size: int = 11):
         super(Model, self).__init__()
         self.kernel_size = kernel_size
         self.padding = kernel_size // 2
 
         # Uniform kernel
-        kernel = torch.ones(1, 1, kernel_size, kernel_size) / (kernel_size * kernel_size)
-        self.register_buffer('kernel', kernel)
+        kernel = torch.ones(1, 1, kernel_size, kernel_size) / (
+            kernel_size * kernel_size
+        )
+        self.register_buffer("kernel", kernel)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -50,9 +53,11 @@ class Model(nn.Module):
 image_height = 1920
 image_width = 1080
 
+
 def get_inputs():
     image = torch.rand(image_height, image_width)
     return [image]
+
 
 def get_init_inputs():
     return [11]  # kernel_size

@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 MCP (Model Context Protocol) type definitions for OpenEnv.
@@ -22,7 +18,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .types import Action, Observation, BaseMessage
+from .types import Action, BaseMessage, Observation
 
 
 # =============================================================================
@@ -231,9 +227,8 @@ class ListToolsAction(Action):
     Request list of available tools from the environment.
 
     This action triggers MCP's tools/list operation and returns
-    all available tools with their schemas.
-
-    Note: Does NOT require reset() to be called first.
+    all available tools with their schemas. Does NOT require reset()
+    to be called first.
     """
 
     type: Literal["list_tools"] = Field(

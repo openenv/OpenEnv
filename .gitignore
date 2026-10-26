@@ -128,6 +128,22 @@ log_outputs/*
 
 # .sesskey
 *.sesskey
+site/
 
 # FinQA data (downloaded via download_data.sh)
 envs/finqa_env/data/
+
+# Sphinx build output
+docs/_build/
+docs/source/_build/
+docs/source/_env_assets/
+
+# Sphinx-gallery generated output
+docs/source/auto_getting_started/
+docs/source/sg_execution_times.rst
+
+# Gradio UI build artifacts
+.gradio/
+
+# Local preservation archives and isolated preparation worktrees
+/temp/

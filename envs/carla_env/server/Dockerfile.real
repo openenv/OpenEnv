@@ -1,0 +1,63 @@
+# CARLA Environment - Real Mode (Client for External CARLA Server)
+# Connects to an external CARLA 0.9.x server
+# Lighter weight alternative to bundling CARLA in the container
+#
+# Requirements:
+#   - External CARLA 0.9.x server running (accessible via CARLA_HOST:CARLA_PORT)
+#   - GPU recommended for CARLA server (not this container)
+#
+# Usage:
+#   docker build -t carla-env-real:latest -f server/Dockerfile.real .
+#   docker run -p 8000:8000 \
+#     -e CARLA_HOST=your-carla-server.com \
+#     -e CARLA_PORT=2000 \
+#     carla-env-real:latest
+
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install OpenEnv core from GitHub
+RUN pip install --no-cache-dir git+https://github.com/huggingface/OpenEnv.git
+
+# Copy and install environment dependencies
+COPY server/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
+
+# Install CARLA Python client (0.10.0 with UE5, compatible with CARLA 0.10.x servers)
+# Uses carla-ue5-api package from PyPI (MIT license, import carla still works)
+RUN pip install --no-cache-dir carla-ue5-api==0.10.0
+
+# Copy CARLA environment code
+COPY . /app/carla_env/
+
+# Create non-root user
+RUN useradd -m -u 1000 -s /bin/bash carla \
+    && chown -R carla:carla /app
+
+# Set Python path
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+# Environment variables for REAL mode
+ENV CARLA_MODE=real
+ENV CARLA_SCENARIO=trolley_saves
+ENV CARLA_HOST=localhost
+ENV CARLA_PORT=2000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
+
+USER carla
+
+# Run server (expects external CARLA server at CARLA_HOST:CARLA_PORT)
+CMD ["uvicorn", "carla_env.server.app:app", "--host", "0.0.0.0", "--port", "8000"]

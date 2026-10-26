@@ -21,6 +21,7 @@ class Model(nn.Module):
     """
     Computes a 256-bin histogram of byte values.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -47,10 +48,12 @@ class Model(nn.Module):
 # Problem configuration
 num_pixels = 4 * 1024 * 1024  # 4 megapixels
 
+
 def get_inputs():
     # Random byte values (simulating grayscale image)
     data = torch.randint(0, 256, (num_pixels,), dtype=torch.long)
     return [data]
+
 
 def get_init_inputs():
     return []

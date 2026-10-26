@@ -1,0 +1,28 @@
+{
+  "train_runs": {
+    "expert": {
+      "steps": 31,
+      "mean_shaped_reward": 0.04596774193548387,
+      "max_batch_completion": 0.25
+    },
+    "baseline": {
+      "steps": 31,
+      "mean_shaped_reward": 0.13991935483870968,
+      "max_batch_completion": 0.25
+    }
+  },
+  "heldout_eval": {
+    "num_tasks": 33,
+    "expert_complete_rate": 0.030303030303030304,
+    "baseline_complete_rate": 0.030303030303030304,
+    "expert_mean_verifier_reward": 0.030303030303030304,
+    "baseline_mean_verifier_reward": 0.030303030303030304,
+    "paired_complete_delta": 0.0,
+    "paired_verifier_reward_delta": 0.0
+  },
+  "interpretation": "Held-out verifier success ties exactly at 1/33. Shaped reward is diagnostic and should not be claimed as expert improvement.",
+  "visual_assets": [
+    "eval_research.png",
+    "training_research.png"
+  ]
+}

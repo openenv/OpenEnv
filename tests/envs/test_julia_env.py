@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Test the JuliaCodeActEnv and JuliaExecutor functionality."""
 
@@ -123,6 +119,26 @@ class TestJuliaServerImport:
 
         transform = create_safe_julia_transform()
         assert callable(transform)
+
+
+def test_process_pool_failed_init_cleans_up(monkeypatch):
+    """__del__ must not raise when __init__ fails before the pool is set up."""
+    import gc
+
+    from julia_env.server.julia_process_pool import JuliaProcessPool
+
+    def fail(self):
+        raise RuntimeError("Julia executable not found")
+
+    unraisable = []
+    monkeypatch.setattr(JuliaProcessPool, "_find_julia_executable", fail)
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+
+    with pytest.raises(RuntimeError):
+        JuliaProcessPool(size=1)
+    gc.collect()
+
+    assert unraisable == []
 
 
 @pytest.mark.skipif(not julia_available, reason=julia_skip_reason)

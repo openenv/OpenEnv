@@ -18,14 +18,14 @@
 #     "peft",
 #     "trackio>=0.13.0",
 #     "kernels",
-#     "openenv @ git+https://github.com/meta-pytorch/OpenEnv.git",
+#     "openenv @ git+https://github.com/huggingface/OpenEnv.git",
 #     "openenv_core",
 # ]
 # ///
 
 
 """
-COPIED FROM https://raw.githubusercontent.com/huggingface/trl/refs/heads/main/examples/scripts/openenv/wordle.py
+COPIED FROM https://raw.githubusercontent.com/huggingface/trl/refs/heads/main/examples/grpo_wordle/grpo_wordle.py
 
 Simple script to run GRPO training with OpenEnv's Wordle environment and vLLM.
 
@@ -37,19 +37,22 @@ uv pip install git+https://huggingface.co/spaces/burtenshaw/wordle
 
 # Option 1: HF Spaces + Colocated vLLM (1 GPU required)
 ```sh
-python examples/scripts/openenv/wordle.py --vllm-mode colocate
+python examples/grpo_wordle/grpo_wordle.py --vllm-mode colocate
 ```
 
 # Option 2: HF Spaces + Separate vLLM server (2 GPUs required)
 
 # Spin up vLLM server (Terminal 1)
 ```sh
-CUDA_VISIBLE_DEVICES=0 trl vllm-serve --model Qwen/Qwen3-1.7B --host 0.0.0.0 --port 8000
+CUDA_VISIBLE_DEVICES=0 VLLM_SERVER_DEV_MODE=1 vllm serve Qwen/Qwen3-1.7B --host 0.0.0.0 --port 8000 \
+    --weight-transfer-config '{"backend": "nccl"}' \
+    --logprobs-mode processed_logprobs \
+    --max-logprobs -1
 ```
 
 # Run training (Terminal 2)
 ```sh
-CUDA_VISIBLE_DEVICES=1 python examples/scripts/openenv/wordle.py --vllm-mode server --vllm-server-url http://localhost:8000
+CUDA_VISIBLE_DEVICES=1 python examples/grpo_wordle/grpo_wordle.py --vllm-mode server --vllm-server-url http://localhost:8000
 ```
 
 # Option 3: Local + Colocated vLLM (1 GPU required)
@@ -62,14 +65,13 @@ docker run -d -p 8001:8001 registry.hf.space/burtenshaw-wordle:latest
 ```
 
 ```sh
-python examples/scripts/openenv/wordle.py --vllm-mode colocate
+python examples/grpo_wordle/grpo_wordle.py --vllm-mode colocate
 ```
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime
@@ -81,13 +83,13 @@ from transformers import AutoTokenizer
 from trl import GRPOConfig, GRPOTrainer
 from trl.experimental.openenv import generate_rollout_completions
 
-
-# Ensure src/ is on the path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
-from envs.textarena_env import TextArenaAction, TextArenaEnv
-from envs.textarena_env.models import TextArenaMessage
-from envs.textarena_env.rewards import extract_feedback_counts, extract_guess, extract_wordle_feedback
+from textarena_env import TextArenaAction, TextArenaEnv
+from textarena_env.models import TextArenaMessage
+from textarena_env.rewards import (
+    extract_feedback_counts,
+    extract_guess,
+    extract_wordle_feedback,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -433,8 +435,6 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_id)
     tokenizer.pad_token = tokenizer.eos_token
 
-    client = TextArenaEnv(base_url=args.env_url)
-
     system_prompt = resolve_system_prompt(args.system_prompt_path)
 
     dataset = Dataset.from_dict({"prompt": [args.dataset_prompt] * args.dataset_size})
@@ -507,27 +507,25 @@ def main() -> None:
             "repetition_reward": repetition_rewards,
         }
 
-    trainer = GRPOTrainer(
-        model=args.model_id,
-        processing_class=tokenizer,
-        reward_funcs=[
-            reward_correct,
-            reward_greens,
-            reward_yellows,
-            reward_repetition,
-        ],
-        train_dataset=dataset,
-        args=grpo_config,
-        rollout_func=rollout_func,
-    )
+    with TextArenaEnv(base_url=args.env_url).sync() as client:
+        trainer = GRPOTrainer(
+            model=args.model_id,
+            processing_class=tokenizer,
+            reward_funcs=[
+                reward_correct,
+                reward_greens,
+                reward_yellows,
+                reward_repetition,
+            ],
+            train_dataset=dataset,
+            args=grpo_config,
+            rollout_func=rollout_func,
+        )
 
-    print("Starting GRPO training with Wordle environment...")
-    print(f"Using {args.num_generations} rollouts per dataset prompt")
+        print("Starting GRPO training with Wordle environment...")
+        print(f"Using {args.num_generations} rollouts per dataset prompt")
 
-    try:
         trainer.train()
-    finally:
-        client.close()
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ class Model(nn.Module):
 
     Averages multiple frames with optional motion compensation.
     """
+
     def __init__(self, num_frames: int = 5):
         super(Model, self).__init__()
         self.num_frames = num_frames
@@ -47,7 +48,7 @@ class Model(nn.Module):
         # Create base grid
         y_coords = torch.linspace(-1, 1, H, device=frames.device)
         x_coords = torch.linspace(-1, 1, W, device=frames.device)
-        Y, X = torch.meshgrid(y_coords, x_coords, indexing='ij')
+        Y, X = torch.meshgrid(y_coords, x_coords, indexing="ij")
         base_grid = torch.stack([X, Y], dim=-1)
 
         # Warp frames to middle frame and accumulate
@@ -72,12 +73,15 @@ class Model(nn.Module):
 
             # Warp frame
             grid = base_grid - flow_normalized
-            frame_batch = frames[t:t+1].unsqueeze(0)  # (1, 1, H, W)
+            frame_batch = frames[t : t + 1].unsqueeze(0)  # (1, 1, H, W)
             grid_batch = grid.unsqueeze(0)  # (1, H, W, 2)
 
             warped = F.grid_sample(
-                frame_batch, grid_batch,
-                mode='bilinear', padding_mode='zeros', align_corners=True
+                frame_batch,
+                grid_batch,
+                mode="bilinear",
+                padding_mode="zeros",
+                align_corners=True,
             )
             warped = warped.squeeze()
 
@@ -99,11 +103,13 @@ num_temporal_frames = 5
 frame_height = 480
 frame_width = 640
 
+
 def get_inputs():
     frames = torch.rand(num_temporal_frames, frame_height, frame_width)
     # Small random flows between frames
     flows = torch.randn(num_temporal_frames - 1, frame_height, frame_width, 2) * 2
     return [frames, flows]
+
 
 def get_init_inputs():
     return [num_temporal_frames]

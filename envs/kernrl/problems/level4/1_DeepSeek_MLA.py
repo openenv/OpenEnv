@@ -1,7 +1,8 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
 # DeepSeek-V3 Multi-head Latent Attention (MLA)
 # Source: https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/modeling_deepseek.py
@@ -50,7 +51,9 @@ class DeepSeekRotaryEmbedding(nn.Module):
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float32) / self.dim))
+        inv_freq = 1.0 / (
+            self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float32) / self.dim)
+        )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()
@@ -102,7 +105,9 @@ class Model(nn.Module):
         # Query projection with LoRA compression
         self.q_a_proj = nn.Linear(hidden_size, q_lora_rank, bias=False)
         self.q_a_layernorm = DeepSeekRMSNorm(q_lora_rank)
-        self.q_b_proj = nn.Linear(q_lora_rank, num_attention_heads * self.q_head_dim, bias=False)
+        self.q_b_proj = nn.Linear(
+            q_lora_rank, num_attention_heads * self.q_head_dim, bias=False
+        )
 
         # KV projection with LoRA compression (MQA-style: shared across heads initially)
         self.kv_a_proj_with_mqa = nn.Linear(
@@ -116,7 +121,9 @@ class Model(nn.Module):
         )
 
         # Output projection
-        self.o_proj = nn.Linear(num_attention_heads * v_head_dim, hidden_size, bias=False)
+        self.o_proj = nn.Linear(
+            num_attention_heads * v_head_dim, hidden_size, bias=False
+        )
 
         # Rotary embeddings
         self.rotary_emb = DeepSeekRotaryEmbedding(
@@ -133,7 +140,9 @@ class Model(nn.Module):
         q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
 
         # Split query into nope (non-positional) and rope (positional) components
-        q_nope, q_pe = torch.split(q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+        q_nope, q_pe = torch.split(
+            q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
+        )
 
         # KV projection with compression
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states)
@@ -144,38 +153,60 @@ class Model(nn.Module):
 
         # Expand compressed KV
         kv = self.kv_b_proj(self.kv_a_layernorm(compressed_kv))
-        kv = kv.view(bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
+        kv = kv.view(
+            bsz, q_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
+        )
         kv = kv.transpose(1, 2)
 
-        k_nope, value_states = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+        k_nope, value_states = torch.split(
+            kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1
+        )
 
         # Apply rotary embeddings to positional components only
         cos, sin = self.rotary_emb(value_states, seq_len=q_len)
         q_pe, k_pe = apply_rotary_pos_emb(q_pe, k_pe, cos, sin)
 
         # Assemble full query and key states
-        query_states = torch.empty(bsz, self.num_heads, q_len, self.q_head_dim,
-                                   device=hidden_states.device, dtype=hidden_states.dtype)
-        query_states[:, :, :, :self.qk_nope_head_dim] = q_nope
-        query_states[:, :, :, self.qk_nope_head_dim:] = q_pe
+        query_states = torch.empty(
+            bsz,
+            self.num_heads,
+            q_len,
+            self.q_head_dim,
+            device=hidden_states.device,
+            dtype=hidden_states.dtype,
+        )
+        query_states[:, :, :, : self.qk_nope_head_dim] = q_nope
+        query_states[:, :, :, self.qk_nope_head_dim :] = q_pe
 
-        key_states = torch.empty(bsz, self.num_heads, q_len, self.q_head_dim,
-                                 device=hidden_states.device, dtype=hidden_states.dtype)
-        key_states[:, :, :, :self.qk_nope_head_dim] = k_nope
-        key_states[:, :, :, self.qk_nope_head_dim:] = k_pe
+        key_states = torch.empty(
+            bsz,
+            self.num_heads,
+            q_len,
+            self.q_head_dim,
+            device=hidden_states.device,
+            dtype=hidden_states.dtype,
+        )
+        key_states[:, :, :, : self.qk_nope_head_dim] = k_nope
+        key_states[:, :, :, self.qk_nope_head_dim :] = k_pe
 
         # Compute attention
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
+        attn_weights = (
+            torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
+        )
 
         # Apply causal mask
         causal_mask = torch.triu(
             torch.ones(q_len, q_len, device=hidden_states.device, dtype=torch.bool),
-            diagonal=1
+            diagonal=1,
         )
-        attn_weights = attn_weights.masked_fill(causal_mask, float('-inf'))
+        attn_weights = attn_weights.masked_fill(causal_mask, float("-inf"))
 
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(
+            query_states.dtype
+        )
+        attn_weights = F.dropout(
+            attn_weights, p=self.attention_dropout, training=self.training
+        )
 
         attn_output = torch.matmul(attn_weights, value_states)
         attn_output = attn_output.transpose(1, 2).contiguous()

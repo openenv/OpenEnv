@@ -21,13 +21,15 @@ import uuid
 try:
     # In-repo imports (when running from OpenEnv repository)
     from openenv.core.env_server.interfaces import Action, Environment, Observation
+
     from ..models import JuliaAction, JuliaObservation, JuliaState
     from .julia_executor import JuliaExecutor
     from .julia_transforms import create_safe_julia_transform
 except ImportError:
+    from models import JuliaAction, JuliaObservation, JuliaState
+
     # Standalone imports (when environment is standalone)
     from openenv.core.env_server.interfaces import Action, Environment, Observation
-    from models import JuliaAction, JuliaObservation, JuliaState
     from server.julia_executor import JuliaExecutor
     from server.julia_transforms import create_safe_julia_transform
 

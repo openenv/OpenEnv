@@ -14,15 +14,8 @@ for training and evaluating UI agents that interact with various apps
 
 from typing import Any, Dict, List, Optional
 
+from openenv.core.env_server.types import Action, Observation
 from pydantic import Field
-
-# Support both in-repo and standalone imports
-try:
-    # In-repo imports (when running from OpenEnv repository)
-    from openenv.core.env_server.types import Action, Observation
-except ImportError:
-    # Standalone imports (when environment is standalone with openenv-core from pip)
-    from openenv.core.env_server.types import Action, Observation
 
 
 class OpenAppAction(Action):
@@ -48,13 +41,18 @@ class OpenAppAction(Action):
     """
 
     action_type: str = Field(
-        ..., description="Type of action: click, fill, select_option, goto, scroll, send_keys, noop"
+        ...,
+        description="Type of action: click, fill, select_option, goto, scroll, send_keys, noop",
     )
     bid: Optional[str] = Field(default=None, description="BrowserGym element ID")
-    text: Optional[str] = Field(default=None, description="Text content for fill or send_keys")
+    text: Optional[str] = Field(
+        default=None, description="Text content for fill or send_keys"
+    )
     value: Optional[str] = Field(default=None, description="Value for select_option")
     url: Optional[str] = Field(default=None, description="URL for goto action")
-    direction: Optional[str] = Field(default=None, description="Scroll direction: 'up' or 'down'")
+    direction: Optional[str] = Field(
+        default=None, description="Scroll direction: 'up' or 'down'"
+    )
 
 
 class OpenAppObservation(Observation):
@@ -77,10 +75,22 @@ class OpenAppObservation(Observation):
 
     html: str = Field(default="", description="Current page HTML content")
     url: str = Field(default="", description="Current page URL")
-    open_pages_urls: List[str] = Field(default_factory=list, description="List of all open page URLs")
-    active_page_index: int = Field(default=0, ge=0, description="Index of currently active page")
-    screenshot: Optional[str] = Field(default=None, description="Base64-encoded screenshot")
+    open_pages_urls: List[str] = Field(
+        default_factory=list, description="List of all open page URLs"
+    )
+    active_page_index: int = Field(
+        default=0, ge=0, description="Index of currently active page"
+    )
+    screenshot: Optional[str] = Field(
+        default=None, description="Base64-encoded screenshot"
+    )
     axtree_txt: str = Field(default="", description="Accessibility tree as text")
-    app_state: Dict[str, Any] = Field(default_factory=dict, description="State of all apps")
-    task_info: Optional[Dict[str, Any]] = Field(default=None, description="Current task information")
-    last_action_error: Optional[str] = Field(default=None, description="Error from last action")
+    app_state: Dict[str, Any] = Field(
+        default_factory=dict, description="State of all apps"
+    )
+    task_info: Optional[Dict[str, Any]] = Field(
+        default=None, description="Current task information"
+    )
+    last_action_error: Optional[str] = Field(
+        default=None, description="Error from last action"
+    )

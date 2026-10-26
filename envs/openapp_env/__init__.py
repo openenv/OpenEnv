@@ -6,7 +6,14 @@
 
 """OpenApp Environment - Web application simulation environment for UI agents."""
 
-from .client import OpenAppEnv
 from .models import OpenAppAction, OpenAppObservation
 
 __all__ = ["OpenAppAction", "OpenAppObservation", "OpenAppEnv"]
+
+
+def __getattr__(name: str):
+    if name == "OpenAppEnv":
+        from .client import OpenAppEnv
+
+        return OpenAppEnv
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+
 class Model(nn.Module):
     """
     A model that performs a matrix multiplication, scaling, and residual addition.
@@ -10,6 +11,7 @@ class Model(nn.Module):
         out_features (int): Number of output features.
         scaling_factor (float): Scaling factor to apply after matrix multiplication.
     """
+
     def __init__(self, in_features, out_features, scaling_factor):
         super(Model, self).__init__()
         self.matmul = nn.Linear(in_features, out_features)
@@ -31,13 +33,16 @@ class Model(nn.Module):
         x = x + original_x
         return x
 
+
 batch_size = 128
 in_features = 64
 out_features = 128
 scaling_factor = 0.5
 
+
 def get_inputs():
     return [torch.randn(batch_size, in_features)]
+
 
 def get_init_inputs():
     return [in_features, out_features, scaling_factor]

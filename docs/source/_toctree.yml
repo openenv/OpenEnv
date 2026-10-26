@@ -1,0 +1,174 @@
+- sections:
+  - local: index
+    title: Overview
+  - local: getting-started
+    title: Getting Started
+  title: Get Started
+- sections:
+  - local: guides/concepts
+    title: Core Concepts
+  - local: tutorials/mcp-environment
+    title: MCP Environments
+  - local: guides/rewards
+    title: Rewards
+  - local: tutorials/rubrics
+    title: Rubrics
+  - local: guides/auto-discovery
+    title: Auto-Discovery
+  - local: guides/catalog-discovery
+    title: Catalog Discovery
+  - isExpanded: false
+    sections:
+    - local: guides/simulation-vs-production
+      title: Simulation vs Production
+    - local: guides/async-sync
+      title: Async vs Sync
+    - local: guides/runtime-providers
+      title: Runtime Providers
+    - local: guides/task-api
+      title: The Task API
+    - local: guides/customizing-web-ui
+      title: Customizing the Web UI
+    title: Advanced Concepts
+  title: Concepts
+- sections:
+  - sections:
+    - local: tutorials/index
+      title: Overview
+    - local: tutorials/openenv-tutorial
+      title: Hello World
+    - local: guides/first-environment
+      title: Your First Environment
+    - local: getting_started/environment-builder
+      title: Deploying an Environment
+    title: Basics
+  - sections:
+    - local: guides/training
+      title: Overview
+    - local: tutorials/end-to-end-walkthrough
+      title: Train a Reasoning Model
+    - local: tutorials/wordle-grpo
+      title: Play Wordle with GRPO
+    - local: tutorials/rl-training-2048
+      title: Play 2048 with GRPO
+    - local: tutorials/sft-warmup
+      title: Collect Rollouts for SFT
+    title: Training
+  - sections:
+    - local: tutorials/harnesses
+      title: Overview
+    - local: tutorials/browsergym-harness
+      title: "White-Box: Train a Web Agent on BrowserGym"
+    - local: tutorials/harbor-harness
+      title: "Black-Box: Train Real Agents with Harbor"
+    - local: tutorials/claude-code-harness
+      title: Evaluate Claude Code in an Environment
+    title: Harnesses
+  - sections:
+    - local: tutorials/evaluation-inspect
+      title: Evaluating with Environments
+    title: Evals
+  title: Learn
+- isExpanded: false
+  sections:
+  - local: environments
+    title: Environments
+  - local: environments/echo
+    title: Echo
+  - local: environments/coding
+    title: Coding
+  - local: environments/jupyter
+    title: Jupyter
+  - local: environments/terminus
+    title: Terminus
+  - local: environments/coding_tools
+    title: Coding Tools
+  - local: environments/harbor
+    title: Harbor
+  - local: guides/harbor-provider-qualification
+    title: Harbor Qualification
+  - local: environments/chat
+    title: Chat
+  - local: environments/atari
+    title: Atari
+  - local: environments/openspiel
+    title: OpenSpiel
+  - local: environments/sumo
+    title: SUMO-RL
+  - local: environments/finrl
+    title: FinRL
+  - local: environments/textarena
+    title: TextArena
+  - local: environments/git
+    title: Git
+  - local: environments/dipg
+    title: DIPG Safety
+  - local: environments/snake
+    title: Snake
+  - local: environments/websearch
+    title: Web Search
+  - local: environments/browsergym
+    title: BrowserGym
+  - local: environments/helium_browser
+    title: Helium Browser
+  - local: environments/repl
+    title: REPL
+  - local: environments/calendar
+    title: Calendar
+  - local: environments/carla
+    title: CARLA
+  - local: environments/chess
+    title: Chess
+  - local: environments/connect4
+    title: Connect4
+  - local: environments/dm_control
+    title: DM Control
+  - local: environments/finqa
+    title: FinQA
+  - local: environments/grid_world
+    title: Grid World
+  - local: environments/julia
+    title: Julia
+  - local: environments/kernrl
+    title: KernRL
+  - local: environments/maze
+    title: Maze
+  - local: environments/openapp
+    title: OpenApp
+  - local: environments/qed_math
+    title: QED Math
+  - local: environments/reasoning_gym
+    title: Reasoning Gym
+  - local: environments/tau2
+    title: τ²-bench
+  - local: environments/tbench2
+    title: TBench2
+  - local: environments/thinkingbox
+    title: ThinkingBox
+  - local: environments/unity
+    title: Unity
+  - local: environments/wildfire
+    title: Wildfire
+  - local: environments/agent_world_model
+    title: Agent World Model
+  - local: environments/pelican_svg
+    title: Pelican SVG
+  - local: environments/sophistry_bench_sprint
+    title: Sophistry Bench Sprint
+  title: Environments
+- isExpanded: false
+  sections:
+  - local: reference/index
+    title: Overview
+  - local: reference/core
+    title: Core API
+  - local: reference/cli
+    title: CLI
+  title: API Reference
+- isExpanded: false
+  sections:
+  - local: contributing
+    title: Contributing to OpenEnv
+  - local: getting_started/contributing-envs
+    title: Contributing Environments
+  title: Project

@@ -32,10 +32,20 @@ import os
 from pathlib import Path
 
 import pandas as pd
+
 from openenv.core.env_server import create_app
 
-from ..models import FinRLAction, FinRLObservation
-from .finrl_environment import FinRLEnvironment
+# Support both in-repo and standalone imports
+try:
+    # In-repo imports (when running from OpenEnv repository)
+    from ..models import FinRLAction, FinRLObservation
+    from .finrl_environment import FinRLEnvironment
+except ImportError as e:
+    if "relative import" not in str(e) and "no known parent package" not in str(e):
+        raise
+    # Standalone imports (when running via uvicorn server.app:app)
+    from models import FinRLAction, FinRLObservation
+    from server.finrl_environment import FinRLEnvironment
 
 
 def load_finrl_config():
@@ -120,12 +130,16 @@ finrl_env_class, finrl_config = load_finrl_config()
 # Factory function to create FinRLEnvironment instances
 def create_finrl_environment():
     """Factory function that creates FinRLEnvironment with config."""
-    return FinRLEnvironment(finrl_env_class=finrl_env_class, finrl_env_config=finrl_config)
+    return FinRLEnvironment(
+        finrl_env_class=finrl_env_class, finrl_env_config=finrl_config
+    )
 
 
 # Create the FastAPI app with routes
 # Pass the factory function instead of an instance for WebSocket session support
-app = create_app(create_finrl_environment, FinRLAction, FinRLObservation, env_name="finrl_env")
+app = create_app(
+    create_finrl_environment, FinRLAction, FinRLObservation, env_name="finrl_env"
+)
 
 
 @app.get("/config")
@@ -148,7 +162,7 @@ def get_config():
     }
 
 
-if __name__ == "__main__":
+def main():
     import uvicorn
 
     print("=" * 60)
@@ -163,3 +177,7 @@ if __name__ == "__main__":
     print("=" * 60)
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    main()

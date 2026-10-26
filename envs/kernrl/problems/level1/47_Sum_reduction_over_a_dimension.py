@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
 
+
 class Model(nn.Module):
     """
     Simple model that performs sum reduction over a specified dimension.
     """
+
     def __init__(self, dim: int):
         """
         Initializes the model with the dimension to reduce over.
@@ -27,14 +29,17 @@ class Model(nn.Module):
         """
         return torch.sum(x, dim=self.dim, keepdim=True)
 
+
 batch_size = 16
 dim1 = 256
 dim2 = 256
 reduce_dim = 1
 
+
 def get_inputs():
     x = torch.randn(batch_size, dim1, dim2)
     return [x]
+
 
 def get_init_inputs():
     return [reduce_dim]

@@ -178,7 +178,7 @@ def main():
         base_url=API_BASE_URL,
         api_key=API_KEY,
     )
-    env = OpenSpielEnv.from_docker_image("ghcr.io/meta-pytorch/openspiel-env:latest")
+    env = OpenSpielEnv.from_docker_image("ghcr.io/huggingface/openenv-openspiel-env:latest")
 
     # Store results for all models
     all_model_results = {

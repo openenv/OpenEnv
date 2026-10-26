@@ -6,38 +6,43 @@ Complete implementation of Google Calendar APIs
 import logging
 import os
 from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
-from dotenv import load_dotenv
 
 load_dotenv()
+
+from apis.acl.router import router as acl_router
+from apis.calendarList.router import router as calendar_list_router
+from apis.calendars.router import router as calendars_router
+from apis.colors.router import router as colors_router
 
 # Import API routers
 from apis.core_apis import router as core_router
 from apis.database_router import router as database_router
-from database.seed_database import init_seed_database
-from apis.mcp.router import router as mcp_router
-from apis.calendars.router import router as calendars_router
-from apis.calendarList.router import router as calendar_list_router
 from apis.events.router import router as events_router
-from apis.colors.router import router as colors_router
-from apis.users.router import router as users_router, api_router as user_api_router
-from apis.settings.router import router as settings_router
-from apis.acl.router import router as acl_router
 from apis.freebusy.router import router as freebusy_router
+from apis.mcp.router import router as mcp_router
+from apis.settings.router import router as settings_router
+from apis.users.router import api_router as user_api_router, router as users_router
+from database.seed_database import init_seed_database
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
 # Import OpenEnv modules
 try:
-    from openenv_wrapper.custom_http_server import MCPHTTPEnvServer
-    from openenv_wrapper.mcp_env_environment import MCPEnvironment
-    from openenv_wrapper.data_models import MCPAction, MCPObservation
     from openenv_wrapper.config import MCP_NAME
+    from openenv_wrapper.custom_http_server import MCPHTTPEnvServer
+    from openenv_wrapper.data_models import MCPAction, MCPObservation
+    from openenv_wrapper.mcp_env_environment import MCPEnvironment
+
     OPENENV_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"OpenEnv modules not available: {e}")
@@ -47,7 +52,7 @@ except ImportError as e:
 def create_calendar_environment():
     """
     Factory function for creating Calendar environment with config.
-    
+
     This function is called for each WebSocket session to create an isolated
     environment instance.
     """
@@ -60,10 +65,10 @@ def create_calendar_environment():
 async def lifespan(app: FastAPI):
     """
     Generic lifespan event handler for OpenEnv integration.
-    
+
     This lifespan function is fully generic and can be copied to any MCP project.
     It dynamically loads the MCP configuration from openenv_wrapper/config.py.
-    
+
     To use in a different MCP:
     1. Copy the entire openenv_wrapper folder to your MCP project
     2. Update openenv_wrapper/config.py with your MCP-specific settings
@@ -72,11 +77,11 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting Calendar API Backend...")
-    
+
     # Initialize separate seed storage database
     init_seed_database()
     logger.info("Seed database initialized successfully")
-    
+
     if OPENENV_AVAILABLE:
         logger.info(f"Initializing {MCP_NAME} OpenEnv environment...")
         try:
@@ -86,7 +91,7 @@ async def lifespan(app: FastAPI):
             http_server = MCPHTTPEnvServer(
                 env=create_calendar_environment,  # Pass function, don't call it!
                 action_cls=MCPAction,
-                observation_cls=MCPObservation
+                observation_cls=MCPObservation,
             )
 
             # Register all custom routes (reset, step, state)
@@ -98,9 +103,9 @@ async def lifespan(app: FastAPI):
             # Continue without OpenEnv routes if initialization fails
     else:
         logger.warning("OpenEnv routes not registered - modules not available")
-    
+
     yield
-    
+
     # Shutdown
     if OPENENV_AVAILABLE:
         logger.info(f"Shutting down {MCP_NAME} OpenEnv environment...")

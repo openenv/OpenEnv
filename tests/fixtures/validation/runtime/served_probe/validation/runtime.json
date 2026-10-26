@@ -1,0 +1,5 @@
+{
+  "plan_schema_version": "1",
+  "reset": {"episode_id": "validation-probe", "seed": 42, "options": {}},
+  "actions": [{"increment": 1}, {"increment": 1}]
+}

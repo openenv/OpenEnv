@@ -108,7 +108,9 @@ def parse_number(text: str, convert_percent: bool = True) -> Optional[float]:
         return None
 
 
-def normalize_answer(answer: str, convert_percent: bool = True) -> Tuple[Optional[float], str]:
+def normalize_answer(
+    answer: str, convert_percent: bool = True
+) -> Tuple[Optional[float], str]:
     """
     Normalize an answer string to a comparable format.
 
@@ -153,29 +155,34 @@ def _split_multi_value(text: str) -> list:
     if found, otherwise None.
     """
     # Split by comma or semicolon (with optional LaTeX spacing like \; or \ )
-    parts = re.split(r'[,;]\s*|\\[;,]\s*', text)
+    parts = re.split(r"[,;]\s*|\\[;,]\s*", text)
     results = []
     for part in parts:
         # Strip LaTeX whitespace commands (\ , \;, \,)
-        part = re.sub(r'\\[;, ]', ' ', part).strip()
+        part = re.sub(r"\\[;, ]", " ", part).strip()
         if not part:
             continue
         # Try to extract a year label (e.g. "2022:", "2022 to 2023:", "2022→2023:")
         # Normalize \rightarrow and similar to "to" before matching
-        part_normalized = re.sub(r'\\rightarrow|→|->|−>', ' to ', part)
-        year_match = re.search(r'(20\d{2}(?:\s*to\s*20\d{2})?)', part_normalized)
+        part_normalized = re.sub(r"\\rightarrow|→|->|−>", " to ", part)
+        year_match = re.search(r"(20\d{2}(?:\s*to\s*20\d{2})?)", part_normalized)
         key = year_match.group(1) if year_match else None
         # Remove label prefix like "2022:" or "2022:\"
-        cleaned = re.sub(r'^[^:]*:\s*\\?\s*', '', part)
+        cleaned = re.sub(r"^[^:]*:\s*\\?\s*", "", part)
         num = parse_number(cleaned)
         if num is not None:
             results.append((key, num))
     return results
 
 
-def compare_single_values(pred_num: Optional[float], truth_num: Optional[float],
-                          pred_str: str, truth_str: str,
-                          tolerance: float = 0.01, max_absolute_diff: float = 1.0) -> bool:
+def compare_single_values(
+    pred_num: Optional[float],
+    truth_num: Optional[float],
+    pred_str: str,
+    truth_str: str,
+    tolerance: float = 0.01,
+    max_absolute_diff: float = 1.0,
+) -> bool:
     """Compare two single values."""
     # If both are numbers, compare numerically with tolerance
     if pred_num is not None and truth_num is not None:
@@ -198,7 +205,12 @@ def compare_single_values(pred_num: Optional[float], truth_num: Optional[float],
     return pred_str == truth_str
 
 
-def compute_reward(predicted: str, ground_truth: str, tolerance: float = 0.01, max_absolute_diff: float = 1.0) -> float:
+def compute_reward(
+    predicted: str,
+    ground_truth: str,
+    tolerance: float = 0.01,
+    max_absolute_diff: float = 1.0,
+) -> float:
     """
     Compute reward based on answer correctness.
 
@@ -221,7 +233,7 @@ def compute_reward(predicted: str, ground_truth: str, tolerance: float = 0.01, m
 
     if len(truth_boxed) > 1:
         # Multiple ground truth values - split prediction by comma/semicolon
-        pred_values = re.split(r'[,;]\s*', predicted.strip())
+        pred_values = re.split(r"[,;]\s*", predicted.strip())
 
         if len(pred_values) != len(truth_boxed):
             return 0.0  # Different number of values
@@ -229,14 +241,25 @@ def compute_reward(predicted: str, ground_truth: str, tolerance: float = 0.01, m
         # Compare each pair
         for pred_val, truth_val in zip(pred_values, truth_boxed):
             # Strip year/label prefix (e.g. "2024: -4" -> "-4")
-            pred_val_cleaned = re.sub(r'^[^:]*:\s*', '', pred_val) if ':' in pred_val else pred_val
+            pred_val_cleaned = (
+                re.sub(r"^[^:]*:\s*", "", pred_val) if ":" in pred_val else pred_val
+            )
             pred_num, pred_str = normalize_answer(pred_val_cleaned)
             truth_num, truth_str = normalize_answer(truth_val)
 
-            if not compare_single_values(pred_num, truth_num, pred_str, truth_str, tolerance, max_absolute_diff):
+            if not compare_single_values(
+                pred_num, truth_num, pred_str, truth_str, tolerance, max_absolute_diff
+            ):
                 # Fallback: try without % conversion (for percentage points like "4.5%" vs "4.5")
                 pred_num_no_pct, _ = normalize_answer(pred_val, convert_percent=False)
-                if not compare_single_values(pred_num_no_pct, truth_num, pred_str, truth_str, tolerance, max_absolute_diff):
+                if not compare_single_values(
+                    pred_num_no_pct,
+                    truth_num,
+                    pred_str,
+                    truth_str,
+                    tolerance,
+                    max_absolute_diff,
+                ):
                     return 0.0
 
         return 1.0  # All values matched
@@ -245,11 +268,15 @@ def compute_reward(predicted: str, ground_truth: str, tolerance: float = 0.01, m
     pred_num, pred_str = normalize_answer(predicted)
     truth_num, truth_str = normalize_answer(ground_truth)
 
-    if compare_single_values(pred_num, truth_num, pred_str, truth_str, tolerance, max_absolute_diff):
+    if compare_single_values(
+        pred_num, truth_num, pred_str, truth_str, tolerance, max_absolute_diff
+    ):
         return 1.0
 
     pred_num_no_pct, _ = normalize_answer(predicted, convert_percent=False)
-    if compare_single_values(pred_num_no_pct, truth_num, pred_str, truth_str, tolerance, max_absolute_diff):
+    if compare_single_values(
+        pred_num_no_pct, truth_num, pred_str, truth_str, tolerance, max_absolute_diff
+    ):
         return 1.0
 
     # Fallback: multi-value inside single \boxed{} (only if truth didn't parse as single number)
@@ -266,7 +293,9 @@ def compute_reward(predicted: str, ground_truth: str, tolerance: float = 0.01, m
                 for key in truth_map:
                     p, t = pred_map[key], truth_map[key]
                     abs_diff = abs(p - t)
-                    rel_err = abs_diff / abs(t) if t != 0 else (0 if p == 0 else float('inf'))
+                    rel_err = (
+                        abs_diff / abs(t) if t != 0 else (0 if p == 0 else float("inf"))
+                    )
                     if not (rel_err <= tolerance and abs_diff <= max_absolute_diff):
                         return 0.0
                 return 1.0
@@ -274,7 +303,9 @@ def compute_reward(predicted: str, ground_truth: str, tolerance: float = 0.01, m
             # Otherwise fall back to positional matching
             for (_, p), (_, t) in zip(pred_pairs, truth_pairs):
                 abs_diff = abs(p - t)
-                rel_err = abs_diff / abs(t) if t != 0 else (0 if p == 0 else float('inf'))
+                rel_err = (
+                    abs_diff / abs(t) if t != 0 else (0 if p == 0 else float("inf"))
+                )
                 if not (rel_err <= tolerance and abs_diff <= max_absolute_diff):
                     return 0.0
             return 1.0

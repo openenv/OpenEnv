@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+  <!-- Well-formed and full of elements, but everything sits outside the viewBox. -->
+  <circle cx="9100" cy="8220" r="55" fill="none" stroke="black" stroke-width="6"/>
+  <circle cx="9290" cy="8220" r="55" fill="none" stroke="black" stroke-width="6"/>
+  <ellipse cx="9188" cy="8120" rx="48" ry="34" fill="white" stroke="black" stroke-width="3"/>
+  <line x1="9110" y1="8220" x2="9290" y2="8220" stroke="black" stroke-width="6"/>
+</svg>

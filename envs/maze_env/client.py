@@ -13,18 +13,13 @@ via WebSocket for persistent sessions.
 
 from typing import Dict
 
+from openenv.core.client_types import StepResult
+from openenv.core.env_client import EnvClient
+
 # Support both in-repo and standalone imports
 try:
-    # In-repo imports (when running from OpenEnv repository)
-    from openenv.core.client_types import StepResult
-    from openenv.core.env_server.types import State
-    from openenv.core.env_client import EnvClient
     from .models import MazeAction, MazeObservation, MazeState
 except ImportError:
-    # Standalone imports (when environment is standalone with openenv from pip)
-    from openenv_core.client_types import StepResult
-    from openenv_core.env_server.types import State
-    from openenv_core.env_client import EnvClient
     from models import MazeAction, MazeObservation, MazeState
 
 
@@ -68,13 +63,14 @@ class MazeEnv(EnvClient[MazeAction, MazeObservation, MazeState]):
             previous_position=obs_data.get("previous_position", []),
             done=payload.get("done", False),
             reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
 
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict) -> MazeState:

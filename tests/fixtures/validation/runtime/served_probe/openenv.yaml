@@ -1,0 +1,29 @@
+spec_version: 1
+name: validation_probe
+version: 0.1.0
+type: space
+runtime: fastapi
+app: served_probe.app:make_app
+port: 8000
+validation:
+  reward:
+    range: [0.0, 1.0]
+    oracle_tolerance: 0.0
+    floor_margin: 0.5
+  resources:
+    cpu: 1.0
+    memory_mb: 1024
+    disk_mb: 64
+    episode_timeout_s: 30.0
+  capabilities:
+    verifier:
+      kind: reward_channel
+    declared_tools: []
+  types:
+    tags: [demo]
+  execution:
+    kind: openenv_ws
+    probe_path: validation/runtime.json
+    dockerfile: Dockerfile
+    context: .
+    agent_boundary: api

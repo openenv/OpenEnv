@@ -1,0 +1,6 @@
+spec_version: 1
+name: thinkingbox_env
+type: space
+runtime: fastapi
+app: thinkingbox_env.server.app:app
+port: 8000

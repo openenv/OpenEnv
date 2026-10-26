@@ -24,6 +24,7 @@ Environment variables:
     OPENSPIEL_GAME: Game name to serve (default: "catch")
     OPENSPIEL_AGENT_PLAYER: Agent player ID (default: 0)
     OPENSPIEL_OPPONENT_POLICY: Opponent policy (default: "random")
+    MAX_CONCURRENT_ENVS: Maximum concurrent WebSocket sessions (default: 8)
 """
 
 import os
@@ -32,18 +33,21 @@ import os
 try:
     # In-repo imports (when running from OpenEnv repository)
     from openenv.core.env_server.http_server import create_app
-    from ..models import OpenSpielAction, OpenSpielObservation
+
+    from ..models import OpenSpielAction, OpenSpielObservation, OpenSpielState
     from .openspiel_environment import OpenSpielEnvironment
 except ImportError:
+    from models import OpenSpielAction, OpenSpielObservation, OpenSpielState
+
     # Standalone imports (when environment is standalone with openenv from pip)
     from openenv.core.env_server.http_server import create_app
-    from models import OpenSpielAction, OpenSpielObservation
     from server.openspiel_environment import OpenSpielEnvironment
 
 # Get game configuration from environment variables
 game_name = os.getenv("OPENSPIEL_GAME", "catch")
 agent_player = int(os.getenv("OPENSPIEL_AGENT_PLAYER", "0"))
 opponent_policy = os.getenv("OPENSPIEL_OPPONENT_POLICY", "random")
+max_concurrent = int(os.getenv("MAX_CONCURRENT_ENVS", "8"))
 
 
 # Factory function to create OpenSpielEnvironment instances
@@ -63,10 +67,12 @@ app = create_app(
     OpenSpielAction,
     OpenSpielObservation,
     env_name="openspiel_env",
+    max_concurrent_envs=max_concurrent,
+    state_cls=OpenSpielState,
 )
 
 
-def main(host: str = "0.0.0.0", port: int = 8000):
+def main():
     """
     Entry point for direct execution via uv run or python -m.
 
@@ -74,14 +80,16 @@ def main(host: str = "0.0.0.0", port: int = 8000):
         uv run --project . server
         uv run --project . server --port 8001
         python -m openspiel_env.server.app
-
-    Args:
-        host: Host address to bind to (default: "0.0.0.0")
-        port: Port number to listen on (default: 8000)
     """
+    import argparse
+
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

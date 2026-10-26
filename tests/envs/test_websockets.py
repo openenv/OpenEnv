@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Integration tests for OpenEnv environments.
@@ -19,6 +15,7 @@ Run with: pytest tests/envs/test_websockets.py -v
 Run specific category: pytest tests/envs/test_websockets.py -v -k "smoke"
 """
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -28,6 +25,7 @@ from typing import Generator
 
 import pytest
 import requests
+from websockets.protocol import State
 
 # Add the project root to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -161,8 +159,8 @@ class TestSmokeFactoryPattern:
 
     def test_smoke_create_app_accepts_class(self):
         """Test that create_app accepts a class (not instance)."""
-        from openenv.core.env_server.http_server import create_app
         from envs.echo_env.server.echo_environment import EchoEnvironment
+        from openenv.core.env_server.http_server import create_app
         from openenv.core.env_server.mcp_types import (
             CallToolAction,
             CallToolObservation,
@@ -176,8 +174,8 @@ class TestSmokeFactoryPattern:
 
     def test_smoke_create_app_accepts_factory_function(self):
         """Test that create_app accepts a factory function."""
-        from openenv.core.env_server.http_server import create_app
         from envs.echo_env.server.echo_environment import EchoEnvironment
+        from openenv.core.env_server.http_server import create_app
         from openenv.core.env_server.mcp_types import (
             CallToolAction,
             CallToolObservation,
@@ -194,8 +192,8 @@ class TestSmokeFactoryPattern:
 
     def test_smoke_create_app_rejects_instance(self):
         """Test that create_app rejects an instance (not callable)."""
-        from openenv.core.env_server.http_server import create_app
         from envs.echo_env.server.echo_environment import EchoEnvironment
+        from openenv.core.env_server.http_server import create_app
         from openenv.core.env_server.mcp_types import (
             CallToolAction,
             CallToolObservation,
@@ -293,7 +291,7 @@ class TestProtocolWebSocketClient:
         """Test client can connect and reset via WebSocket."""
         from envs.echo_env.client import EchoEnv
 
-        with EchoEnv(base_url=echo_server) as client:
+        with EchoEnv(base_url=echo_server).sync() as client:
             result = client.reset()
             assert result is not None
             assert result.observation is not None
@@ -302,7 +300,7 @@ class TestProtocolWebSocketClient:
         """Test client can step via WebSocket."""
         from envs.echo_env.client import EchoEnv
 
-        with EchoEnv(base_url=echo_server) as client:
+        with EchoEnv(base_url=echo_server).sync() as client:
             client.reset()
             result = client.call_tool("echo_message", message="Hello")
             assert result is not None
@@ -312,7 +310,7 @@ class TestProtocolWebSocketClient:
         """Test client can get state via WebSocket."""
         from envs.echo_env.client import EchoEnv
 
-        with EchoEnv(base_url=echo_server) as client:
+        with EchoEnv(base_url=echo_server).sync() as client:
             client.reset()
             client.call_tool("echo_message", message="Test")
 
@@ -320,11 +318,32 @@ class TestProtocolWebSocketClient:
             assert state is not None
             assert state.step_count == 1
 
+    def test_protocol_client_reconnects_after_close(self, echo_server):
+        """A socket closed by the far end must not disable the client."""
+        from envs.echo_env.client import EchoEnv
+
+        with EchoEnv(base_url=echo_server).sync() as client:
+            client.reset()
+            assert client.call_tool("echo_message", message="before") == "before"
+
+            # Close the socket the way a keepalive timeout or a dropped tunnel
+            # would: from underneath the client, without telling it. The sync
+            # wrapper drives its own loop on a background thread, so the close
+            # has to be scheduled onto that loop.
+            inner = client._async
+            asyncio.run_coroutine_threadsafe(inner._ws.close(), client._loop).result(
+                timeout=10
+            )
+            assert inner._ws.state in (State.CLOSING, State.CLOSED)
+
+            client.reset()
+            assert client.call_tool("echo_message", message="after") == "after"
+
     def test_protocol_client_multiple_episodes(self, echo_server):
         """Test client can run multiple episodes."""
         from envs.echo_env.client import EchoEnv
 
-        with EchoEnv(base_url=echo_server) as client:
+        with EchoEnv(base_url=echo_server).sync() as client:
             # Episode 1
             client.reset()
             client.call_tool("echo_message", message="E1S1")
@@ -375,8 +394,8 @@ class TestConcurrencyMultipleSessions:
         """Test that two clients can run independently."""
         from envs.echo_env.client import EchoEnv
 
-        with EchoEnv(base_url=echo_server_concurrent) as client1:
-            with EchoEnv(base_url=echo_server_concurrent) as client2:
+        with EchoEnv(base_url=echo_server_concurrent).sync() as client1:
+            with EchoEnv(base_url=echo_server_concurrent).sync() as client2:
                 # Both reset
                 client1.reset()
                 client2.reset()
@@ -402,11 +421,11 @@ class TestConcurrencyMultipleSessions:
         """Test that session state is isolated between clients."""
         from envs.echo_env.client import EchoEnv
 
-        with EchoEnv(base_url=echo_server_concurrent) as client1:
+        with EchoEnv(base_url=echo_server_concurrent).sync() as client1:
             client1.reset()
             result1 = client1.call_tool("echo_message", message="Secret from C1")
 
-            with EchoEnv(base_url=echo_server_concurrent) as client2:
+            with EchoEnv(base_url=echo_server_concurrent).sync() as client2:
                 client2.reset()
                 result2 = client2.call_tool("echo_message", message="Secret from C2")
 
@@ -433,7 +452,7 @@ class TestEchoEnvironment:
         """Test that messages are echoed correctly."""
         from envs.echo_env.client import EchoEnv
 
-        with EchoEnv(base_url=server) as client:
+        with EchoEnv(base_url=server).sync() as client:
             client.reset()
             result = client.call_tool("echo_message", message="Hello World!")
             assert result == "Hello World!"
@@ -442,7 +461,7 @@ class TestEchoEnvironment:
         """Test that echo_with_length returns message and length."""
         from envs.echo_env.client import EchoEnv
 
-        with EchoEnv(base_url=server) as client:
+        with EchoEnv(base_url=server).sync() as client:
             client.reset()
             result = client.call_tool("echo_with_length", message="Hello World!")
             assert result["message"] == "Hello World!"
@@ -462,7 +481,7 @@ class TestConnect4Environment:
         """Test that initial board is empty."""
         from envs.connect4_env.client import Connect4Env
 
-        with Connect4Env(base_url=server) as client:
+        with Connect4Env(base_url=server).sync() as client:
             result = client.reset()
 
             # Board should be 6x7 and empty (all zeros)
@@ -474,7 +493,7 @@ class TestConnect4Environment:
         """Test that all columns are legal initially."""
         from envs.connect4_env.client import Connect4Env
 
-        with Connect4Env(base_url=server) as client:
+        with Connect4Env(base_url=server).sync() as client:
             result = client.reset()
 
             # All 7 columns should be legal

@@ -1,5 +1,5 @@
-from .models import WildfireAction, WildfireObservation, WildfireState
 from .client import WildfireEnv
+from .models import WildfireAction, WildfireObservation, WildfireState
 
 __all__ = [
     "WildfireAction",

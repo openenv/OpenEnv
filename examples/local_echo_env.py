@@ -1,32 +1,37 @@
 #!/usr/bin/env python3
+"""Minimal Echo environment client example.
+
+Start the Echo server first:
+
+    PYTHONPATH=src:envs uv run python -m echo_env.server.app
+
+Then run this example:
+
+    PYTHONPATH=src:envs uv run python examples/local_echo_env.py
 """
-Simple test showing how users will use EchoEnv.from_docker_image().
 
-This is the simplest possible usage
-"""
+import os
 
-import sys
-from pathlib import Path
-
-from echo_env import EchoAction, EchoEnv
+from echo_env import EchoEnv
 
 
 def main():
-    """Test EchoEnv.from_docker_image()."""
+    """Exercise the MCP Echo tools through the Python client."""
+    base_url = os.getenv("ECHO_BASE_URL", "http://localhost:8000")
+
     print("=" * 60)
-    print("EchoEnv.from_docker_image() Test")
+    print("EchoEnv local client example")
     print("=" * 60)
     print()
 
     try:
-        # This is what users will do - just one line!
-        print("Creating client from Docker image...")
-        print("  EchoEnv.from_docker_image('echo-env:latest')")
+        print("Connecting to Echo server...")
+        print(f"  EchoEnv(base_url={base_url!r})")
         print()
 
-        client = EchoEnv(base_url="http://localhost:8000")
+        client = EchoEnv(base_url=base_url).sync()
 
-        print("✓ Client created and container started!\n")
+        print("Client created.\n")
 
         # Now use it like any other client
         print("Testing the environment:")
@@ -35,12 +40,18 @@ def main():
         # Reset
         print("\n1. Reset:")
         result = client.reset()
-        print(f"   Message: {result.observation.echoed_message}")
+        print(f"   Status: {result.observation.metadata.get('status')}")
+        print(f"   Message: {result.observation.metadata.get('message')}")
         print(f"   Reward: {result.reward}")
         print(f"   Done: {result.done}")
 
+        print("\n2. List tools:")
+        tools = client.list_tools()
+        for tool in tools:
+            print(f"   - {tool.name}: {tool.description}")
+
         # Send some messages
-        print("\n2. Send messages:")
+        print("\n3. Send messages:")
 
         messages = [
             "Hello, World!",
@@ -49,29 +60,29 @@ def main():
         ]
 
         for i, msg in enumerate(messages, 1):
-            result = client.step(EchoAction(message=msg))
+            echoed = client.call_tool("echo_message", message=msg)
+            with_length = client.call_tool("echo_with_length", message=msg)
             print(f"   {i}. '{msg}'")
-            print(f"      → Echoed: '{result.observation.echoed_message}'")
-            print(f"      → Length: {result.observation.message_length}")
-            print(f"      → Reward: {result.reward}")
+            print(f"      Echoed: '{echoed}'")
+            print(f"      Length: {with_length['length']}")
 
         print("\n" + "-" * 60)
-        print("\n✓ All operations successful!")
+        print("\nAll operations successful.")
         print()
 
         print("Cleaning up...")
         client.close()
-        print("✓ Container stopped and removed")
+        print("Client closed.")
         print()
 
         print("=" * 60)
-        print("Test completed successfully! 🎉")
+        print("Test completed successfully.")
         print("=" * 60)
 
         return True
 
     except Exception as e:
-        print(f"\n❌ Test failed: {e}")
+        print(f"\nTest failed: {e}")
         import traceback
 
         traceback.print_exc()

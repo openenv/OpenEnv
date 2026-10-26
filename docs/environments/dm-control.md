@@ -1,1 +1,0 @@
---8<-- "../../envs/dm_control_env/README.md"

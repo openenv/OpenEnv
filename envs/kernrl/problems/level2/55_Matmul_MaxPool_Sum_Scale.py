@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
 
+
 class Model(nn.Module):
     """
     Model that performs matrix multiplication, max pooling, sum, and scaling.
     """
+
     def __init__(self, in_features, out_features, kernel_size, scale_factor):
         super(Model, self).__init__()
         self.matmul = nn.Linear(in_features, out_features)
@@ -25,14 +27,17 @@ class Model(nn.Module):
         x = x * self.scale_factor
         return x
 
+
 batch_size = 128
 in_features = 10
 out_features = 5
 kernel_size = 2
 scale_factor = 0.5
 
+
 def get_inputs():
     return [torch.randn(batch_size, in_features)]
+
 
 def get_init_inputs():
     return [in_features, out_features, kernel_size, scale_factor]

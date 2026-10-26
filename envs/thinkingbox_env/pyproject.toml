@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thinkingbox-env"
+version = "0.1.0"
+description = "OpenEnv adapter for the public ThinkingBox benchmark"
+requires-python = ">=3.11"
+dependencies = [
+    "openenv>=0.4.1",
+    "fastapi>=0.116.0",
+    "filelock>=3.18.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "uvicorn>=0.24.0",
+    "thinkingbox @ git+https://github.com/microsoft/thinkingbox.git@40c1212f9582ca90175079bc313e530e9e9a4981",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.1.0",
+]
+
+[project.scripts]
+server = "thinkingbox_env.server.app:main"
+thinkingbox-eval = "thinkingbox_env.evaluation:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["thinkingbox_env", "thinkingbox_env.server"]
+package-dir = { "thinkingbox_env" = ".", "thinkingbox_env.server" = "server" }

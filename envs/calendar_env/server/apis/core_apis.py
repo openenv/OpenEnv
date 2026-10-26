@@ -4,6 +4,7 @@ Handles health check and other core endpoints for Calendar API clone
 """
 
 import logging
+
 from fastapi import APIRouter
 
 # Configure logging

@@ -1,0 +1,37 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-connect4-env"
+version = "0.1.0"
+description = "Connect4 Environment for OpenEnv - classic two-player board game"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    "requests>=2.31.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "connect4_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["connect4_env", "connect4_env.server"]
+package-dir = { "connect4_env" = ".", "connect4_env.server" = "server" }

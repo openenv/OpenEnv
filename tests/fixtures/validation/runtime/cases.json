@@ -1,0 +1,421 @@
+{
+  "catalog_schema_version": "1",
+  "checks": [
+    {
+      "check_id": "runtime.startup",
+      "implementation_pr": 3,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [
+        "docker_local"
+      ],
+      "positive_case": "good",
+      "negative_case": "startup_failure"
+    },
+    {
+      "check_id": "runtime.reward_well_formed",
+      "implementation_pr": 3,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [],
+      "positive_case": "good",
+      "negative_case": "bad_reward"
+    },
+    {
+      "check_id": "runtime.observation_schema",
+      "implementation_pr": 3,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [],
+      "positive_case": "good",
+      "negative_case": "bad_observation"
+    },
+    {
+      "check_id": "runtime.state_contract",
+      "implementation_pr": 3,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [],
+      "positive_case": "good",
+      "negative_case": "bad_state"
+    },
+    {
+      "check_id": "runtime.trajectory_record",
+      "implementation_pr": 5,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [
+        "session_telemetry"
+      ],
+      "positive_case": "good_trajectory_record",
+      "negative_case": "missing_record"
+    },
+    {
+      "check_id": "runtime.reward_attribution",
+      "implementation_pr": 6,
+      "applicability": "rubric_tree",
+      "required_provider_features": [
+        "session_telemetry"
+      ],
+      "positive_case": "good_reward_attribution",
+      "negative_case": "bad_attribution"
+    },
+    {
+      "check_id": "runtime.rubric_introspectable",
+      "implementation_pr": 6,
+      "applicability": "rubric_tree",
+      "required_provider_features": [
+        "session_telemetry"
+      ],
+      "positive_case": "good_rubric_introspectable",
+      "negative_case": "missing_rubric"
+    },
+    {
+      "check_id": "runtime.tool_declaration_accuracy",
+      "implementation_pr": 6,
+      "applicability": "declared_tools including empty declarations",
+      "required_provider_features": [],
+      "positive_case": "good_tool_declaration_accuracy",
+      "negative_case": "extra_tool"
+    },
+    {
+      "check_id": "runtime.task_declaration_accuracy",
+      "implementation_pr": 6,
+      "applicability": "task_api",
+      "required_provider_features": [],
+      "positive_case": "good_task_declaration_accuracy",
+      "negative_case": "bad_task_count"
+    },
+    {
+      "check_id": "runtime.seed_control",
+      "implementation_pr": 5,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [
+        "session_telemetry"
+      ],
+      "positive_case": "good_seed_control",
+      "negative_case": "ignored_seed"
+    },
+    {
+      "check_id": "runtime.episode_determinism",
+      "implementation_pr": 5,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [
+        "fresh_container"
+      ],
+      "positive_case": "good_episode_determinism",
+      "negative_case": "nondeterministic"
+    },
+    {
+      "check_id": "runtime.network_policy",
+      "implementation_pr": 8,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [
+        "network_policy"
+      ],
+      "positive_case": "good_network_policy",
+      "negative_case": "network_leak"
+    },
+    {
+      "check_id": "runtime.host_containment",
+      "implementation_pr": 7,
+      "applicability": "declared agent boundary",
+      "required_provider_features": [
+        "inspected_isolation"
+      ],
+      "positive_case": "good_host_containment",
+      "negative_case": "unsafe_inspection"
+    },
+    {
+      "check_id": "runtime.resource_bounds",
+      "implementation_pr": 7,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [
+        "resource_enforcement"
+      ],
+      "positive_case": "good_resource_bounds",
+      "negative_case": "missing_limit"
+    },
+    {
+      "check_id": "runtime.episode_isolation",
+      "implementation_pr": 10,
+      "applicability": "all runtime declarations",
+      "required_provider_features": [
+        "session_telemetry"
+      ],
+      "positive_case": "good_episode_isolation",
+      "negative_case": "sticky_episode"
+    },
+    {
+      "check_id": "runtime.oracle_containment",
+      "implementation_pr": 10,
+      "applicability": "oracle declared",
+      "required_provider_features": [
+        "agent_identity"
+      ],
+      "positive_case": "good_oracle_containment",
+      "negative_case": "exposed_oracle"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "good",
+      "implementation_pr": 3,
+      "requires_docker": true,
+      "expected": {
+        "runtime.startup": "pass",
+        "runtime.reward_well_formed": "pass",
+        "runtime.observation_schema": "pass",
+        "runtime.state_contract": "pass"
+      },
+      "evidence_predicate": "one session has valid reset/step/state responses and finite in-range rewards"
+    },
+    {
+      "case_id": "startup_failure",
+      "implementation_pr": 3,
+      "requires_docker": true,
+      "expected": {
+        "runtime.startup": "fail"
+      },
+      "evidence_predicate": "readiness must fail before collection starts"
+    },
+    {
+      "case_id": "bad_reward",
+      "implementation_pr": 3,
+      "requires_docker": true,
+      "expected": {
+        "runtime.reward_well_formed": "fail"
+      },
+      "evidence_predicate": "raw reward is bool, nonfinite, wrong typed or outside the declared range"
+    },
+    {
+      "case_id": "bad_observation",
+      "implementation_pr": 3,
+      "requires_docker": true,
+      "expected": {
+        "runtime.observation_schema": "fail"
+      },
+      "evidence_predicate": "raw envelope or reconstructed observation violates advertised schema"
+    },
+    {
+      "case_id": "bad_state",
+      "implementation_pr": 3,
+      "requires_docker": true,
+      "expected": {
+        "runtime.state_contract": "fail"
+      },
+      "evidence_predicate": "episode identity or step count differs from the requested sequence"
+    },
+    {
+      "case_id": "good_trajectory_record",
+      "implementation_pr": 5,
+      "requires_docker": true,
+      "expected": {
+        "runtime.trajectory_record": "pass"
+      },
+      "evidence_predicate": "trajectory_record measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "missing_record",
+      "implementation_pr": 5,
+      "requires_docker": true,
+      "expected": {
+        "runtime.trajectory_record": "fail"
+      },
+      "evidence_predicate": "subject emitted trajectory is absent or differs from the independent transcript"
+    },
+    {
+      "case_id": "good_reward_attribution",
+      "implementation_pr": 6,
+      "requires_docker": true,
+      "expected": {
+        "runtime.reward_attribution": "pass"
+      },
+      "evidence_predicate": "reward_attribution measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "bad_attribution",
+      "implementation_pr": 6,
+      "requires_docker": true,
+      "expected": {
+        "runtime.reward_attribution": "fail"
+      },
+      "evidence_predicate": "child scores disagree with the declared aggregation semantics"
+    },
+    {
+      "case_id": "good_rubric_introspectable",
+      "implementation_pr": 6,
+      "requires_docker": true,
+      "expected": {
+        "runtime.rubric_introspectable": "pass"
+      },
+      "evidence_predicate": "rubric_introspectable measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "missing_rubric",
+      "implementation_pr": 6,
+      "requires_docker": true,
+      "expected": {
+        "runtime.rubric_introspectable": "fail"
+      },
+      "evidence_predicate": "declared rubric has no named serializable session tree"
+    },
+    {
+      "case_id": "good_tool_declaration_accuracy",
+      "implementation_pr": 6,
+      "requires_docker": true,
+      "expected": {
+        "runtime.tool_declaration_accuracy": "pass"
+      },
+      "evidence_predicate": "tool_declaration_accuracy measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "extra_tool",
+      "implementation_pr": 6,
+      "requires_docker": true,
+      "expected": {
+        "runtime.tool_declaration_accuracy": "fail"
+      },
+      "evidence_predicate": "discovered tool names differ from the declared set"
+    },
+    {
+      "case_id": "good_task_declaration_accuracy",
+      "implementation_pr": 6,
+      "requires_docker": true,
+      "expected": {
+        "runtime.task_declaration_accuracy": "pass"
+      },
+      "evidence_predicate": "task_declaration_accuracy measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "bad_task_count",
+      "implementation_pr": 6,
+      "requires_docker": true,
+      "expected": {
+        "runtime.task_declaration_accuracy": "fail"
+      },
+      "evidence_predicate": "num_tasks differs from the declared split count"
+    },
+    {
+      "case_id": "good_seed_control",
+      "implementation_pr": 5,
+      "requires_docker": true,
+      "expected": {
+        "runtime.seed_control": "pass"
+      },
+      "evidence_predicate": "seed_control measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "ignored_seed",
+      "implementation_pr": 5,
+      "requires_docker": true,
+      "expected": {
+        "runtime.seed_control": "fail"
+      },
+      "evidence_predicate": "framework reports discarded or rejected seed"
+    },
+    {
+      "case_id": "good_episode_determinism",
+      "implementation_pr": 5,
+      "requires_docker": true,
+      "expected": {
+        "runtime.episode_determinism": "pass"
+      },
+      "evidence_predicate": "episode_determinism measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "nondeterministic",
+      "implementation_pr": 5,
+      "requires_docker": true,
+      "expected": {
+        "runtime.episode_determinism": "fail"
+      },
+      "evidence_predicate": "same-input replay diverges outside policy-owned volatile fields"
+    },
+    {
+      "case_id": "good_network_policy",
+      "implementation_pr": 8,
+      "requires_docker": true,
+      "expected": {
+        "runtime.network_policy": "pass"
+      },
+      "evidence_predicate": "network_policy measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "network_leak",
+      "implementation_pr": 8,
+      "requires_docker": true,
+      "expected": {
+        "runtime.network_policy": "fail"
+      },
+      "evidence_predicate": "subject reaches a prohibited controlled destination"
+    },
+    {
+      "case_id": "good_host_containment",
+      "implementation_pr": 7,
+      "requires_docker": true,
+      "expected": {
+        "runtime.host_containment": "pass"
+      },
+      "evidence_predicate": "host_containment measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "unsafe_inspection",
+      "implementation_pr": 7,
+      "requires_docker": false,
+      "expected": {
+        "runtime.host_containment": "fail"
+      },
+      "evidence_predicate": "synthetic inspected launch settings violate the isolation contract"
+    },
+    {
+      "case_id": "good_resource_bounds",
+      "implementation_pr": 7,
+      "requires_docker": true,
+      "expected": {
+        "runtime.resource_bounds": "pass"
+      },
+      "evidence_predicate": "resource_bounds measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "missing_limit",
+      "implementation_pr": 7,
+      "requires_docker": true,
+      "expected": {
+        "runtime.resource_bounds": "fail"
+      },
+      "evidence_predicate": "inspected or measured enforcement fails a declared budget"
+    },
+    {
+      "case_id": "good_episode_isolation",
+      "implementation_pr": 10,
+      "requires_docker": true,
+      "expected": {
+        "runtime.episode_isolation": "pass"
+      },
+      "evidence_predicate": "episode_isolation measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "sticky_episode",
+      "implementation_pr": 10,
+      "requires_docker": true,
+      "expected": {
+        "runtime.episode_isolation": "fail"
+      },
+      "evidence_predicate": "episode B observes a marker from episode A after same-server reset"
+    },
+    {
+      "case_id": "good_oracle_containment",
+      "implementation_pr": 10,
+      "requires_docker": true,
+      "expected": {
+        "runtime.oracle_containment": "pass"
+      },
+      "evidence_predicate": "oracle_containment measured evidence satisfies the RFC contract"
+    },
+    {
+      "case_id": "exposed_oracle",
+      "implementation_pr": 10,
+      "requires_docker": true,
+      "expected": {
+        "runtime.oracle_containment": "fail"
+      },
+      "evidence_predicate": "harmless oracle canary is readable through the declared agent boundary"
+    }
+  ]
+}

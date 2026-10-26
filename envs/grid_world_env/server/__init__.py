@@ -9,4 +9,3 @@
 from .grid_world_environment import GridWorldEnvironment
 
 __all__ = ["GridWorldEnvironment"]
-

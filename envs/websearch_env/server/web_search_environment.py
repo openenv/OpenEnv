@@ -11,21 +11,20 @@ A web search environment that uses the google search API (via Serper API) to sea
 """
 
 from __future__ import annotations
-import os
+
 import logging
+import os
 from uuid import uuid4
+
+from openenv.core.env_server.interfaces import Environment
+from openenv.core.env_server.types import State
 
 # Support both in-repo and standalone imports
 try:
-    # In-repo imports (when running from OpenEnv repository)
-    from openenv.core.env_server.interfaces import Environment
-    from openenv.core.env_server.types import State
     from ..models import WebSearchAction, WebSearchObservation
 except ImportError:
-    # Standalone imports (when environment is standalone with openenv from pip)
-    from openenv.core.env_server.interfaces import Environment
-    from openenv.core.env_server.types import State
     from models import WebSearchAction, WebSearchObservation
+
 from .web_search_tool import WebSearchTool
 
 logger = logging.getLogger(__name__)

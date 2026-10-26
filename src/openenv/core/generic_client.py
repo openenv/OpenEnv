@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Generic environment client that works with raw dictionaries.
@@ -32,29 +28,31 @@ class GenericEnvClient(EnvClient[Dict[str, Any], Dict[str, Any], Dict[str, Any]]
     The trade-off is that you lose type safety and IDE autocomplete for actions
     and observations. Instead of typed objects, you work with plain dictionaries.
 
-    Example:
-        >>> # Direct connection to a running server (no installation needed)
-        >>> with GenericEnvClient(base_url="http://localhost:8000") as env:
-        ...     result = env.reset()
-        ...     result = env.step({"code": "print('hello')"})
-        ...     print(result.observation)  # Dict[str, Any]
-        ...     print(result.observation.get("output"))
+    Examples:
 
-        >>> # From local Docker image
-        >>> env = GenericEnvClient.from_docker_image("coding-env:latest")
-        >>> result = env.reset()
-        >>> result = env.step({"code": "x = 1 + 2"})
-        >>> env.close()
+        ```python
+        # Direct connection to a running server (no installation needed)
+        with GenericEnvClient(base_url="http://localhost:8000") as env:
+            result = env.reset()
+            result = env.step({"code": "print('hello')"})
+            print(result.observation)  # Dict[str, Any]
+            print(result.observation.get("output"))
 
-        >>> # From HuggingFace Hub (pulls Docker image, no pip install)
-        >>> env = GenericEnvClient.from_env("user/my-env", use_docker=True)
-        >>> result = env.reset()
-        >>> env.close()
+        # From local Docker image (chain .sync() for synchronous use)
+        env = GenericEnvClient.from_docker_image("coding-env:latest").sync()
+        result = env.reset()
+        result = env.step({"code": "x = 1 + 2"})
+        env.close()
 
-    Note:
-        GenericEnvClient inherits `from_docker_image()` and `from_env()` from
-        EnvClient, so you can use it with Docker containers and HuggingFace
-        Spaces without any package installation.
+        # From HuggingFace Hub (pulls Docker image, no pip install)
+        env = GenericEnvClient.from_env("user/my-env", use_docker=True).sync()
+        result = env.reset()
+        env.close()
+        ```
+
+    `GenericEnvClient` inherits `from_docker_image()` and `from_env()` from
+    `EnvClient`, so you can use it with Docker containers and HuggingFace
+    Spaces without any package installation.
     """
 
     def _step_payload(self, action: Dict[str, Any]) -> Dict[str, Any]:
@@ -66,7 +64,8 @@ class GenericEnvClient(EnvClient[Dict[str, Any], Dict[str, Any], Dict[str, Any]]
         passed, it will be converted to a dictionary using model_dump().
 
         Args:
-            action: Action as a dictionary or Pydantic BaseModel
+            action (`dict` or `BaseModel`):
+                Action as a dictionary or Pydantic `BaseModel`.
 
         Returns:
             The action as a dictionary for the server
@@ -94,7 +93,8 @@ class GenericEnvClient(EnvClient[Dict[str, Any], Dict[str, Any], Dict[str, Any]]
         server response.
 
         Args:
-            payload: Response payload from the server
+            payload (`dict`):
+                Response payload from the server.
 
         Returns:
             StepResult with observation as a dictionary
@@ -103,6 +103,7 @@ class GenericEnvClient(EnvClient[Dict[str, Any], Dict[str, Any], Dict[str, Any]]
             observation=payload.get("observation", {}),
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -113,7 +114,8 @@ class GenericEnvClient(EnvClient[Dict[str, Any], Dict[str, Any], Dict[str, Any]]
         we're working with dictionaries.
 
         Args:
-            payload: State payload from the server
+            payload (`dict`):
+                State payload from the server.
 
         Returns:
             The state as a dictionary
@@ -129,22 +131,24 @@ class GenericAction(Dict[str, Any]):
     readable when working with GenericEnvClient. It behaves exactly like a
     dict but signals intent that this is an action for an environment.
 
-    Example:
-        >>> # Without GenericAction (works fine)
-        >>> env.step({"code": "print('hello')"})
+    Examples:
 
-        >>> # With GenericAction (more explicit)
-        >>> action = GenericAction(code="print('hello')")
-        >>> env.step(action)
+        ```python
+        # Without GenericAction (works fine)
+        env.step({"code": "print('hello')"})
 
-        >>> # With multiple fields
-        >>> action = GenericAction(code="x = 1", timeout=30, metadata={"tag": "test"})
-        >>> env.step(action)
+        # With GenericAction (more explicit)
+        action = GenericAction(code="print('hello')")
+        env.step(action)
 
-    Note:
-        GenericAction is just a dict with a constructor that accepts keyword
-        arguments. It's provided for symmetry with typed Action classes and
-        to make code more readable.
+        # With multiple fields
+        action = GenericAction(code="x = 1", timeout=30, metadata={"tag": "test"})
+        env.step(action)
+        ```
+
+    `GenericAction` is just a dict with a constructor that accepts keyword
+    arguments. It's provided for symmetry with typed Action classes and
+    to make code more readable.
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -152,12 +156,15 @@ class GenericAction(Dict[str, Any]):
         Create a GenericAction from keyword arguments.
 
         Args:
-            **kwargs: Action fields as keyword arguments
+            **kwargs:
+                Action fields as keyword arguments.
 
-        Example:
-            >>> action = GenericAction(code="print(1)", timeout=30)
-            >>> action["code"]
-            'print(1)'
+        Examples:
+
+            ```python
+            action = GenericAction(code="print(1)", timeout=30)
+            action["code"]  # 'print(1)'
+            ```
         """
         super().__init__(kwargs)
 

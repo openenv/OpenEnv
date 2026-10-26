@@ -7,14 +7,17 @@ Gitea service, optimized for task-based isolation where multiple environment
 instances share the same Gitea server but have isolated workspaces.
 """
 
+import atexit
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 
 @dataclass
@@ -43,19 +46,23 @@ class GitServerClient:
         password: Gitea password for authentication
         workspace_dir: Local workspace directory for cloning repos
 
-    Example:
-        >>> # Connect to shared Gitea (credentials from environment)
-        >>> import os
-        >>> client = GitServerClient(
-        ...     gitea_url=os.getenv("GITEA_URL"),
-        ...     username=os.getenv("GITEA_USERNAME"),
-        ...     password=os.getenv("GITEA_PASSWORD")
-        ... )
-        >>> client.wait_for_ready()
-        >>> # Clone repo to workspace
-        >>> path = client.clone_to_workspace("my-repo", commit="abc123")
-        >>> # Fast reset to base state
-        >>> client.reset_workspace("my-repo", commit="abc123")
+    Examples:
+
+        ```python
+        import os
+
+        # Connect to shared Gitea (credentials from environment)
+        client = GitServerClient(
+            gitea_url=os.getenv("GITEA_URL"),
+            username=os.getenv("GITEA_USERNAME"),
+            password=os.getenv("GITEA_PASSWORD")
+        )
+        client.wait_for_ready()
+        # Clone repo to workspace
+        path = client.clone_to_workspace("my-repo", commit="abc123")
+        # Fast reset to base state
+        client.reset_workspace("my-repo", commit="abc123")
+        ```
     """
 
     def __init__(
@@ -84,8 +91,26 @@ class GitServerClient:
         self._configure_git()
 
     def _configure_git(self):
-        """Configure git credentials for automatic authentication."""
-        home_dir = Path.home()
+        """
+        Configure git identity and credentials for automatic authentication.
+
+        The config lives in a client-owned temp directory and is passed to git via
+        `GIT_CONFIG_GLOBAL`, so the user's `~/.gitconfig` and `~/.git-credentials`
+        are never touched.
+        """
+        config_dir = Path(tempfile.mkdtemp(prefix="openenv-git-"))
+        atexit.register(shutil.rmtree, config_dir, ignore_errors=True)
+
+        # Git credentials. The entry must match the URL git is given (scheme and
+        # host[:port]), and the user name and password must be percent-encoded
+        # so characters such as "@", ":", "/" or "#" do not break the URL.
+        parsed = urlparse(self.gitea_url)
+        user = quote(self.username, safe="")
+        password = quote(self.password, safe="")
+        git_credentials = f"{parsed.scheme}://{user}:{password}@{parsed.netloc}\n"
+        gitcreds_path = config_dir / "git-credentials"
+        gitcreds_path.write_text(git_credentials)
+        gitcreds_path.chmod(0o600)
 
         # Git config
         git_config = f"""[user]
@@ -94,28 +119,23 @@ class GitServerClient:
 [init]
     defaultBranch = main
 [credential]
-    helper = store
+    helper = store --file {gitcreds_path}
 """
-        gitconfig_path = home_dir / ".gitconfig"
+        gitconfig_path = config_dir / "gitconfig"
         gitconfig_path.write_text(git_config)
 
-        # Git credentials
-        git_credentials = (
-            f"http://{self.username}:{self.password}@{self.domain}:{self.port}\n"
-        )
-        gitcreds_path = home_dir / ".git-credentials"
-        gitcreds_path.write_text(git_credentials)
-        gitcreds_path.chmod(0o600)
+        self._git_env = {**os.environ, "GIT_CONFIG_GLOBAL": str(gitconfig_path)}
 
     def wait_for_ready(self, timeout: int = 30) -> bool:
         """
         Wait for Gitea server to be ready.
 
         Args:
-            timeout: Maximum seconds to wait
+            timeout (`int`, *optional*, defaults to `30`):
+                Maximum seconds to wait.
 
         Returns:
-            True if server is ready, False otherwise
+            `bool`: True if server is ready, False otherwise.
         """
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -142,7 +162,7 @@ class GitServerClient:
         List all repositories in Gitea.
 
         Returns:
-            List of repository information dictionaries
+            `list` of repository information dictionaries.
         """
         if not self.is_ready:
             raise RuntimeError("Gitea server is not ready")
@@ -185,15 +205,18 @@ class GitServerClient:
         This creates a fresh clone optimized for task isolation.
 
         Args:
-            repo_name: Name of repository to clone
-            target_dir: Target directory name (defaults to repo_name)
-            commit: Commit hash or branch to check out
+            repo_name (`str`):
+                Name of repository to clone.
+            target_dir (`str`, *optional*):
+                Target directory name. Defaults to `repo_name`.
+            commit (`str`, *optional*, defaults to `"main"`):
+                Commit hash or branch to check out.
 
         Returns:
-            Path to cloned repository
+            `str`: Path to cloned repository.
 
         Raises:
-            RuntimeError: If clone fails
+            RuntimeError: If clone fails.
         """
         if not self.is_ready:
             raise RuntimeError("Gitea server is not ready")
@@ -210,6 +233,7 @@ class GitServerClient:
         # Clone repository
         result = subprocess.run(
             ["git", "clone", clone_url, str(target_path)],
+            env=self._git_env,
             capture_output=True,
             text=True,
         )
@@ -222,6 +246,7 @@ class GitServerClient:
             result = subprocess.run(
                 ["git", "checkout", commit],
                 cwd=str(target_path),
+                env=self._git_env,
                 capture_output=True,
                 text=True,
             )
@@ -241,14 +266,16 @@ class GitServerClient:
         3. Cleans untracked files
 
         Args:
-            repo_name: Name of repository (directory in workspace)
-            commit: Commit hash or branch to reset to
+            repo_name (`str`):
+                Name of repository (directory in workspace).
+            commit (`str`, *optional*, defaults to `"main"`):
+                Commit hash or branch to reset to.
 
         Returns:
-            True if reset successful
+            `bool`: True if reset successful.
 
         Raises:
-            RuntimeError: If reset fails
+            RuntimeError: If reset fails.
         """
         repo_path = self.workspace_dir / repo_name
 
@@ -259,6 +286,7 @@ class GitServerClient:
         subprocess.run(
             ["git", "fetch", "--all"],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
         )
 
@@ -266,6 +294,7 @@ class GitServerClient:
         result = subprocess.run(
             ["git", "checkout", commit],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
             text=True,
         )
@@ -281,6 +310,7 @@ class GitServerClient:
                 f"origin/{commit}" if commit != "main" else commit,
             ],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
             text=True,
         )
@@ -290,6 +320,7 @@ class GitServerClient:
             result = subprocess.run(
                 ["git", "reset", "--hard", commit],
                 cwd=str(repo_path),
+                env=self._git_env,
                 capture_output=True,
                 text=True,
             )
@@ -300,6 +331,7 @@ class GitServerClient:
         subprocess.run(
             ["git", "clean", "-fdx"],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
         )
 
@@ -312,11 +344,13 @@ class GitServerClient:
         Execute a git command in the workspace.
 
         Args:
-            command: Git command to execute (without 'git' prefix)
-            working_dir: Working directory relative to workspace
+            command (`str`):
+                Git command to execute (without `git` prefix).
+            working_dir (`str`, *optional*, defaults to `""`):
+                Working directory relative to workspace.
 
         Returns:
-            Tuple of (exit_code, stdout, stderr)
+            `tuple` of (exit_code, stdout, stderr).
         """
         work_path = (
             self.workspace_dir / working_dir if working_dir else self.workspace_dir
@@ -325,12 +359,12 @@ class GitServerClient:
         if not work_path.exists():
             return (1, "", f"Working directory does not exist: {work_path}")
 
-        # Split command safely
-        cmd_parts = ["git"] + command.split()
+        cmd_parts = ["git"] + shlex.split(command)
 
         result = subprocess.run(
             cmd_parts,
             cwd=str(work_path),
+            env=self._git_env,
             capture_output=True,
             text=True,
         )
@@ -342,10 +376,11 @@ class GitServerClient:
         Get current commit hash of a workspace repository.
 
         Args:
-            repo_name: Name of repository in workspace
+            repo_name (`str`):
+                Name of repository in workspace.
 
         Returns:
-            Commit hash
+            `str`: Commit hash.
         """
         repo_path = self.workspace_dir / repo_name
 
@@ -355,6 +390,7 @@ class GitServerClient:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=str(repo_path),
+            env=self._git_env,
             capture_output=True,
             text=True,
         )

@@ -1,7 +1,8 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
 # MoE Gated GEMM (Mixture of Experts with Fused Gating)
 # Used in: Mixtral, DeepSeek-V3, Grok, DBRX, Arctic
@@ -64,9 +65,9 @@ class Model(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,              # (batch, seq_len, hidden_size)
-        expert_indices: torch.Tensor, # (batch, seq_len, top_k) - selected expert indices
-        expert_weights: torch.Tensor, # (batch, seq_len, top_k) - routing weights
+        x: torch.Tensor,  # (batch, seq_len, hidden_size)
+        expert_indices: torch.Tensor,  # (batch, seq_len, top_k) - selected expert indices
+        expert_weights: torch.Tensor,  # (batch, seq_len, top_k) - routing weights
     ) -> torch.Tensor:
         """
         MoE forward with gated dual GEMM.
@@ -101,10 +102,9 @@ class Model(nn.Module):
 
         # Get expert boundaries
         expert_counts = torch.bincount(sorted_expert_idx, minlength=self.num_experts)
-        expert_offsets = torch.cat([
-            torch.zeros(1, dtype=torch.long, device=x.device),
-            expert_counts.cumsum(0)
-        ])
+        expert_offsets = torch.cat(
+            [torch.zeros(1, dtype=torch.long, device=x.device), expert_counts.cumsum(0)]
+        )
 
         # Gather sorted inputs
         sorted_x = x_flat[sorted_token_ids]  # (N*top_k, H)
@@ -129,7 +129,9 @@ class Model(nn.Module):
         weighted_sorted = sorted_output * sorted_weights.unsqueeze(-1)
 
         # Scatter-add back to original token positions
-        output = torch.zeros(num_tokens, self.hidden_size, device=x.device, dtype=x.dtype)
+        output = torch.zeros(
+            num_tokens, self.hidden_size, device=x.device, dtype=x.dtype
+        )
         output.index_add_(0, sorted_token_ids, weighted_sorted)
 
         return output.view(batch, seq_len, self.hidden_size)
@@ -148,10 +150,9 @@ def get_inputs():
     x = torch.randn(batch_size, seq_len, hidden_size)
 
     # Random expert selection (in real MoE, this comes from gating network)
-    expert_indices = torch.stack([
-        torch.randperm(num_experts)[:top_k]
-        for _ in range(batch_size * seq_len)
-    ]).view(batch_size, seq_len, top_k)
+    expert_indices = torch.stack(
+        [torch.randperm(num_experts)[:top_k] for _ in range(batch_size * seq_len)]
+    ).view(batch_size, seq_len, top_k)
 
     # Random routing weights (normalized)
     expert_weights = F.softmax(torch.randn(batch_size, seq_len, top_k), dim=-1)

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-sophistry-bench-sprint-env"
+version = "0.1.0"
+description = "OpenEnv port of the sophistry-bench single-agent advocacy reward-hacking sprint env"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    # >=0.1.6 exports aggregate_reward (imported directly, not reproduced here).
+    # Capped <0.2.0: a 0.2+ bump must re-run the parity test before widening.
+    "sophistry-bench-sprint>=0.1.6,<0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=0.21",
+    "pytest-cov",
+]
+
+[project.scripts]
+server = "sophistry_bench_sprint_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["sophistry_bench_sprint_env", "sophistry_bench_sprint_env.server"]
+package-dir = { "sophistry_bench_sprint_env" = ".", "sophistry_bench_sprint_env.server" = "server" }

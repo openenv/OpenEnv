@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Fork (duplicate) a Hugging Face Space using the Hub API."""
 
@@ -13,7 +9,7 @@ from typing import Annotated
 import typer
 from huggingface_hub import HfApi, login, whoami
 
-from .._cli_utils import console
+from .._cli_utils import _extract_hf_username, console
 
 app = typer.Typer(
     help="Fork (duplicate) an OpenEnv environment on Hugging Face to your account"
@@ -37,19 +33,7 @@ def _parse_key_value(s: str) -> tuple[str, str]:
 def _ensure_hf_authenticated() -> str:
     """Ensure user is authenticated with Hugging Face. Returns username."""
     try:
-        user_info = whoami()
-        if isinstance(user_info, dict):
-            username = (
-                user_info.get("name")
-                or user_info.get("fullname")
-                or user_info.get("username")
-            )
-        else:
-            username = (
-                getattr(user_info, "name", None)
-                or getattr(user_info, "fullname", None)
-                or getattr(user_info, "username", None)
-            )
+        username = _extract_hf_username(whoami())
         if not username:
             raise ValueError("Could not extract username from whoami response")
         console.print(f"[bold green]✓[/bold green] Authenticated as: {username}")
@@ -60,19 +44,7 @@ def _ensure_hf_authenticated() -> str:
         )
         try:
             login()
-            user_info = whoami()
-            if isinstance(user_info, dict):
-                username = (
-                    user_info.get("name")
-                    or user_info.get("fullname")
-                    or user_info.get("username")
-                )
-            else:
-                username = (
-                    getattr(user_info, "name", None)
-                    or getattr(user_info, "fullname", None)
-                    or getattr(user_info, "username", None)
-                )
+            username = _extract_hf_username(whoami())
             if not username:
                 raise ValueError("Could not extract username from whoami response")
             console.print(f"[bold green]✓[/bold green] Authenticated as: {username}")
@@ -136,11 +108,14 @@ def fork(
     and secrets, and request hardware/storage/sleep time at creation time.
 
     Examples:
+
+        ```bash
         $ openenv fork owner/source-space
         $ openenv fork owner/source-space --private
         $ openenv fork owner/source-space --repo-id myuser/my-fork
         $ openenv fork owner/source-space --set-env MODEL_ID=user/model --set-secret HF_TOKEN=hf_xxx
         $ openenv fork owner/source-space --hardware t4-medium
+        ```
     """
     if "/" not in source_space or source_space.count("/") != 1:
         raise typer.BadParameter(

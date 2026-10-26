@@ -25,12 +25,13 @@ import json
 import logging
 import traceback
 
-from smolagents import LocalPythonExecutor
-
 from openenv.core.env_server.types import CodeExecResult
+from smolagents import LocalPythonExecutor
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
+
+DEFAULT_SAFE_IMPORTS = ["json"]
 
 
 class PyExecutor:
@@ -44,7 +45,7 @@ class PyExecutor:
 
     def __init__(self, additional_imports: list[str] | None = None):
         if additional_imports is None:
-            additional_imports = []
+            additional_imports = DEFAULT_SAFE_IMPORTS.copy()
 
         self._executor = LocalPythonExecutor(
             additional_authorized_imports=additional_imports

@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Test Connect4 environment client and server integration.
 
@@ -18,17 +14,13 @@ import pytest
 # Add the project root to the path for envs imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from envs.connect4_env import (
-    Connect4Action,
-    Connect4Observation,
-    Connect4Env,
-)
-import subprocess
-
-import unittest
-import time
-import requests
 import signal
+import subprocess
+import time
+import unittest
+
+import requests
+from envs.connect4_env import Connect4Action, Connect4Env, Connect4Observation
 
 
 # Skip this legacy test file - comprehensive tests in test_websockets.py

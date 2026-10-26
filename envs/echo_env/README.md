@@ -15,31 +15,35 @@ tags:
 
 A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
 
+Try it on the [`openenv/echo_env`](https://huggingface.co/spaces/openenv/echo_env) Space, or connect a client to `https://openenv-echo-env.hf.space`.
+
 ## Quick Start
 
 The simplest way to use the Echo environment is through the `EchoEnv` class. The client is **async by default**:
 
 ```python
 import asyncio
-from echo_env import EchoAction, EchoEnv
+from echo_env import CallToolAction, EchoEnv
 
 async def main():
     # Create environment from Docker image
     client = await EchoEnv.from_docker_image("echo-env:latest")
 
     async with client:
-        # Reset
-        result = await client.reset()
-        print(f"Reset: {result.observation.echoed_message}")
+        await client.reset()
 
         # Send multiple messages
         messages = ["Hello, World!", "Testing echo", "Final message"]
 
         for msg in messages:
-            result = await client.step(EchoAction(message=msg))
+            result = await client.step(
+                CallToolAction(
+                    tool_name="echo_message",
+                    arguments={"message": msg},
+                )
+            )
             print(f"Sent: '{msg}'")
-            print(f"  → Echoed: '{result.observation.echoed_message}'")
-            print(f"  → Length: {result.observation.message_length}")
+            print(f"  → Echoed: '{result.observation.result}'")
             print(f"  → Reward: {result.reward}")
 
 asyncio.run(main())
@@ -48,12 +52,17 @@ asyncio.run(main())
 For **synchronous usage**, use the `.sync()` wrapper:
 
 ```python
-from echo_env import EchoAction, EchoEnv
+from echo_env import CallToolAction, EchoEnv
 
 with EchoEnv(base_url="http://localhost:8000").sync() as client:
-    result = client.reset()
-    result = client.step(EchoAction(message="Hello!"))
-    print(result.observation.echoed_message)
+    client.reset()
+    result = client.step(
+        CallToolAction(
+            tool_name="echo_message",
+            arguments={"message": "Hello!"},
+        )
+    )
+    print(result.observation.result)
 ```
 
 The `EchoEnv.from_docker_image()` method handles:
@@ -73,23 +82,20 @@ docker build -t echo-env:latest -f envs/echo_env/server/Dockerfile .
 
 ## Environment Details
 
-### Action
-**EchoAction**: Contains a single field
-- `message` (str) - The message to echo back
+### Tools
+- `echo_message(message)` - Echo the provided message
+- `echo_with_length(message)` - Echo the message and include its length
 
 ### Observation
-**EchoObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
+**CallToolObservation**: Contains the tool result and metadata
+- `result` - The tool return value
+- `reward` (float) - Reward returned by the environment
+- `done` (bool) - Always `False` for the echo environment
 - `metadata` (dict) - Additional info like step count
 
 ### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
+The echo environment returns `0.0` reward for tool calls. It is intended as a
+minimal MCP integration example rather than a reward-shaping reference.
 
 ## Advanced Usage
 
@@ -98,17 +104,27 @@ The reward is calculated as: `message_length × 0.1`
 If you already have an Echo environment server running, you can connect directly:
 
 ```python
-from echo_env import EchoAction, EchoEnv
+from echo_env import CallToolAction, EchoEnv
 
 # Async usage
 async with EchoEnv(base_url="http://localhost:8000") as client:
-    result = await client.reset()
-    result = await client.step(EchoAction(message="Hello!"))
+    await client.reset()
+    result = await client.step(
+        CallToolAction(
+            tool_name="echo_message",
+            arguments={"message": "Hello!"},
+        )
+    )
 
 # Sync usage
 with EchoEnv(base_url="http://localhost:8000").sync() as client:
-    result = client.reset()
-    result = client.step(EchoAction(message="Hello!"))
+    client.reset()
+    result = client.step(
+        CallToolAction(
+            tool_name="echo_message",
+            arguments={"message": "Hello!"},
+        )
+    )
 ```
 
 Note: When connecting to an existing server, closing the client will NOT stop the server.

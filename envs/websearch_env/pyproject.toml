@@ -15,18 +15,18 @@ description = "Web Search environment for OpenEnv"
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv dependencies (required for server functionality)
-    "openenv-core[core]>=0.2.1",
+    "openenv>=0.2.2",
     "fastapi>=0.115.0",
     "pydantic>=2.0.0",
     "uvicorn[standard]>=0.24.0",
-    "requests>=2.31.0",
+    "requests>=2.33.0",
     # Environment-specific dependencies
     "chardet==5.2.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
     "pytest-cov>=4.0.0",
 ]
 
@@ -39,4 +39,3 @@ server = "websearch_env.server.app:main"
 include-package-data = true
 packages = ["websearch_env", "websearch_env.server"]
 package-dir = { "websearch_env" = ".", "websearch_env.server" = "server" }
-

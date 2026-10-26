@@ -11,17 +11,17 @@ All MCP-specific configuration is loaded from config.py.
 import asyncio
 import logging
 import sqlite3
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import Body, FastAPI, Request, Query
+from fastapi import Body, FastAPI, Query, Request
 from openenv.core.env_server.http_server import HTTPEnvServer
 
 from .config import (
-    MCP_NAME,
-    HTTP_HEADERS,
-    HTTP_HEADER_DEFAULTS,
+    get_seed_data_function,
     get_session_manager_class,
-    get_seed_data_function
+    HTTP_HEADER_DEFAULTS,
+    HTTP_HEADERS,
+    MCP_NAME,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,23 +30,25 @@ logger = logging.getLogger(__name__)
 class MCPHTTPEnvServer(HTTPEnvServer):
     """
     Generic HTTP Environment Server for any MCP integration.
-    
+
     This server wraps any MCP environment and provides HTTP endpoints
     for OpenEnv integration. It's fully generic and works with any MCP.
-    
+
     HTTP headers are configured via config.py:HTTP_HEADERS, making it easy
     to adapt to different MCP authentication and multi-tenancy patterns.
     """
-    
+
     def __init__(self, env, action_cls, observation_cls):
         """Initialize custom HTTP server with MCP session manager."""
         # Store classes before calling super().__init__()
         self.action_cls = action_cls
         self.observation_cls = observation_cls
-        
+
         # Call parent init
-        super().__init__(env=env, action_cls=action_cls, observation_cls=observation_cls)
-        
+        super().__init__(
+            env=env, action_cls=action_cls, observation_cls=observation_cls
+        )
+
         # Create a persistent environment instance for HTTP endpoints
         # The parent class stores env_factory in self._env_factory
         # We create one instance for the HTTP endpoints (not WebSocket)
@@ -54,19 +56,19 @@ class MCPHTTPEnvServer(HTTPEnvServer):
             self.env = self._env_factory()
         else:
             self.env = self._env_factory
-        
+
         # Dynamically load the session manager from config
         SessionManagerClass = get_session_manager_class()
         self.session_manager = SessionManagerClass()
-    
+
     def _get_header_value(self, headers: dict, header_key: str) -> Optional[str]:
         """
         Get header value using configured header name.
-        
+
         Args:
             headers: Request headers dictionary
             header_key: Key in HTTP_HEADERS config (e.g., "database_id", "access_token")
-        
+
         Returns:
             Header value or default from config
         """
@@ -74,11 +76,11 @@ class MCPHTTPEnvServer(HTTPEnvServer):
         if not header_name:
             logger.warning(f"Header key '{header_key}' not configured in HTTP_HEADERS")
             return HTTP_HEADER_DEFAULTS.get(header_key)
-        
+
         value = headers.get(header_name)
         if value is None:
             value = HTTP_HEADER_DEFAULTS.get(header_key)
-        
+
         return value
 
     def register_routes(self, app: Any) -> None:
@@ -88,43 +90,45 @@ class MCPHTTPEnvServer(HTTPEnvServer):
         # Register custom reset endpoint
         @app.post("/reset")
         async def reset_with_database_refresh(
-            request: Request,
-            body: Optional[Dict[str, Any]] = Body(default=None)
+            request: Request, body: Optional[Dict[str, Any]] = Body(default=None)
         ) -> Dict[str, Any]:
             """
             Reset the environment and optionally reset the database.
-            
+
             The database_id can be provided via:
             1. Request body: {"database_id": "my_db", "sql_content": "INSERT INTO..."}
             2. HTTP header: x-database-id
             3. Default value if neither provided
-            
+
             Args (in request body, all optional):
                 database_id: Database identifier for multi-tenancy
                 sql_content: Custom SQL content to use for seeding instead of default
-            
+
             Returns:
                 Observation with reset status and database reset result
             """
             headers = dict(request.headers)
-            
+
             # Get database_id from body first, then header, then default
             body = body or {}
-            database_id = body.get("database_id") or self._get_header_value(headers, "database_id")
+            database_id = body.get("database_id") or self._get_header_value(
+                headers, "database_id"
+            )
             access_token = self._get_header_value(headers, "access_token")
-            
+
             # Get optional sql_content from body
             sql_content = body.get("sql_content")
 
-            logger.info(f"Reset request for database_id={database_id}, custom_sql={'yes' if sql_content else 'no'}")
+            logger.info(
+                f"Reset request for database_id={database_id}, custom_sql={'yes' if sql_content else 'no'}"
+            )
 
             # Reset database to original state (with optional custom SQL)
             db_reset_result = self._reset_database(database_id, sql_content=sql_content)
 
             # Set request context in environment
             self.env.set_request_context(
-                database_id=database_id,
-                access_token=access_token
+                database_id=database_id, access_token=access_token
             )
 
             # Execute reset in thread pool (environments may use sync code)
@@ -133,37 +137,53 @@ class MCPHTTPEnvServer(HTTPEnvServer):
 
             # Serialize observation manually
             result = {
-                "observation": observation.model_dump() if hasattr(observation, 'model_dump') else observation.__dict__,
-                "done": getattr(observation, 'done', False),
-                "reward": getattr(observation, 'reward', 0.0)
+                "observation": observation.model_dump()
+                if hasattr(observation, "model_dump")
+                else observation.__dict__,
+                "done": getattr(observation, "done", False),
+                "reward": getattr(observation, "reward", 0.0),
             }
 
             # Add database reset info to observation metadata
             if isinstance(result, dict) and "observation" in result:
                 if "metadata" not in result["observation"]:
                     result["observation"]["metadata"] = {}
-                result["observation"]["metadata"]["database_reset_result"] = db_reset_result
+                result["observation"]["metadata"]["database_reset_result"] = (
+                    db_reset_result
+                )
 
-            logger.info(f"Environment reset completed for database {database_id}, DB refresh: {db_reset_result['success']}")
+            logger.info(
+                f"Environment reset completed for database {database_id}, DB refresh: {db_reset_result['success']}"
+            )
             return result
 
         # Register custom step endpoint
         @app.post("/step")
-        async def step_with_headers(request: Request, body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        async def step_with_headers(
+            request: Request, body: Dict[str, Any] = Body(...)
+        ) -> Dict[str, Any]:
             # Extract headers using dynamic header names from config
             headers = dict(request.headers)
             database_id = self._get_header_value(headers, "database_id")
             access_token = self._get_header_value(headers, "access_token")
 
             # Debug logging to see what headers we're receiving
-            logger.info(f"Step request - database_id: {database_id}, has_access_token: {bool(access_token)}")
+            logger.info(
+                f"Step request - database_id: {database_id}, has_access_token: {bool(access_token)}"
+            )
             if not access_token:
-                logger.warning(f"No access token found in headers. Available headers: {list(headers.keys())}")
+                logger.warning(
+                    f"No access token found in headers. Available headers: {list(headers.keys())}"
+                )
 
             # Set request context in environment
-            self.env.set_request_context(database_id=database_id, access_token=access_token)
+            self.env.set_request_context(
+                database_id=database_id, access_token=access_token
+            )
 
-            logger.debug(f"Step request with database_id={database_id}, has_token={bool(access_token)}")
+            logger.debug(
+                f"Step request with database_id={database_id}, has_token={bool(access_token)}"
+            )
 
             # Support both {"action": {...}} and direct action fields
             action_data = body.get("action", body)
@@ -179,10 +199,10 @@ class MCPHTTPEnvServer(HTTPEnvServer):
                         "error_message": f"Invalid action: {str(e)}",
                         "done": False,
                         "reward": -1.0,
-                        "metadata": {}
+                        "metadata": {},
                     },
                     "done": False,
-                    "reward": -1.0
+                    "reward": -1.0,
                 }
 
             # Execute step in thread pool (environments may use sync code)
@@ -191,18 +211,19 @@ class MCPHTTPEnvServer(HTTPEnvServer):
 
             # Serialize observation manually
             result = {
-                "observation": observation.model_dump() if hasattr(observation, 'model_dump') else observation.__dict__,
-                "done": getattr(observation, 'done', False),
-                "reward": getattr(observation, 'reward', 0.0)
+                "observation": observation.model_dump()
+                if hasattr(observation, "model_dump")
+                else observation.__dict__,
+                "done": getattr(observation, "done", False),
+                "reward": getattr(observation, "reward", 0.0),
             }
-            
+
             return result
 
         # Register state endpoint
         @app.get("/state")
         async def get_state(
-            request: Request,
-            verify_queries: List[str] = Query(default=[])
+            request: Request, verify_queries: List[str] = Query(default=[])
         ) -> Dict[str, Any]:
             headers = dict(request.headers)
             database_id = headers.get("x-database-id", "default")
@@ -211,7 +232,7 @@ class MCPHTTPEnvServer(HTTPEnvServer):
             result = {
                 "episode_id": state.episode_id,
                 "step_count": state.step_count,
-                "database_id": database_id
+                "database_id": database_id,
             }
 
             db_path = self.session_manager.get_db_path(database_id)
@@ -223,22 +244,26 @@ class MCPHTTPEnvServer(HTTPEnvServer):
 
                 if verify_queries:
                     result["verification_results"] = []
-                    
+
                     for query in verify_queries:
                         try:
                             cursor.execute(query)
                             rows = cursor.fetchall()
-                            result["verification_results"].append({
-                                "query": query,
-                                "result": [dict(row) for row in rows],
-                                "success": True
-                            })
+                            result["verification_results"].append(
+                                {
+                                    "query": query,
+                                    "result": [dict(row) for row in rows],
+                                    "success": True,
+                                }
+                            )
                         except Exception as query_error:
-                            result["verification_results"].append({
-                                "query": query,
-                                "error": str(query_error),
-                                "success": False
-                            })
+                            result["verification_results"].append(
+                                {
+                                    "query": query,
+                                    "error": str(query_error),
+                                    "success": False,
+                                }
+                            )
 
                 conn.close()
             except Exception as e:
@@ -246,25 +271,27 @@ class MCPHTTPEnvServer(HTTPEnvServer):
 
             return result
 
-    def _reset_database(self, database_id: str, sql_content: Optional[str] = None) -> Dict[str, Any]:
+    def _reset_database(
+        self, database_id: str, sql_content: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Reset database to clean state with seed data.
-        
+
         This method is generic and works with any MCP that follows
         the standard session manager interface.
-        
+
         Args:
             database_id: Database identifier for multi-tenancy
             sql_content: Optional custom SQL content for seeding. If provided,
                         this will be used instead of the default seed data.
-        
+
         Returns:
             Dictionary with reset status and details
         """
         try:
             # Dispose any cached engine connections to prevent stale connections
             # (Only if the SessionManager has this method - some MCPs may not have it)
-            if hasattr(self.session_manager, 'dispose_engine'):
+            if hasattr(self.session_manager, "dispose_engine"):
                 self.session_manager.dispose_engine(database_id)
 
             # Get database path using session manager
@@ -274,7 +301,9 @@ class MCPHTTPEnvServer(HTTPEnvServer):
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
 
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
             tables = cursor.fetchall()
 
             for table in tables:
@@ -308,7 +337,9 @@ class MCPHTTPEnvServer(HTTPEnvServer):
                     statements.append(line)
 
             full_sql = " ".join(statements)
-            individual_statements = [stmt.strip() for stmt in full_sql.split(";") if stmt.strip()]
+            individual_statements = [
+                stmt.strip() for stmt in full_sql.split(";") if stmt.strip()
+            ]
 
             executed_count = 0
             for statement in individual_statements:
@@ -318,7 +349,9 @@ class MCPHTTPEnvServer(HTTPEnvServer):
                     cursor.execute(statement)
                     executed_count += 1
                 except Exception as e:
-                    logger.error(f"Error executing statement during seeding: {statement[:100]}...")
+                    logger.error(
+                        f"Error executing statement during seeding: {statement[:100]}..."
+                    )
                     logger.error(f"Error details: {e}")
                     raise e
 
@@ -326,7 +359,9 @@ class MCPHTTPEnvServer(HTTPEnvServer):
             conn.close()
 
             seed_source = "custom SQL" if used_custom_sql else "default seed data"
-            logger.info(f"Database {database_id} reset and seeded with {seed_source} ({executed_count} statements)")
+            logger.info(
+                f"Database {database_id} reset and seeded with {seed_source} ({executed_count} statements)"
+            )
 
             return {
                 "success": True,

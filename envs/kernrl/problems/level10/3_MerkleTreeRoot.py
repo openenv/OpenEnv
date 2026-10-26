@@ -18,9 +18,10 @@ Optimization opportunities:
 - Shared memory for intermediate hashes
 """
 
+import hashlib
+
 import torch
 import torch.nn as nn
-import hashlib
 
 
 class Model(nn.Module):
@@ -30,6 +31,7 @@ class Model(nn.Module):
     Uses simple concatenation + hash for internal nodes:
     parent = hash(left || right)
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -45,7 +47,9 @@ class Model(nn.Module):
         # Additional mixing
         for _ in range(4):
             for i in range(32):
-                result[i] = (result[i] ^ result[(i + 7) % 32] + result[(i + 13) % 32]) & 0xFF
+                result[i] = (
+                    result[i] ^ result[(i + 7) % 32] + result[(i + 13) % 32]
+                ) & 0xFF
 
         return result
 
@@ -74,7 +78,9 @@ class Model(nn.Module):
         # Build tree bottom-up
         while current_level.shape[0] > 1:
             num_nodes = current_level.shape[0]
-            next_level = torch.zeros(num_nodes // 2, 32, dtype=leaves.dtype, device=device)
+            next_level = torch.zeros(
+                num_nodes // 2, 32, dtype=leaves.dtype, device=device
+            )
 
             for i in range(num_nodes // 2):
                 # Concatenate children
@@ -93,10 +99,12 @@ class Model(nn.Module):
 # Problem configuration
 num_leaves = 1024
 
+
 def get_inputs():
     # Random leaf hashes
     leaves = torch.randint(0, 256, (num_leaves, 32), dtype=torch.int64)
     return [leaves]
+
 
 def get_init_inputs():
     return []

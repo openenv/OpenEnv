@@ -4,14 +4,13 @@ from typing import Any, Dict
 
 from openenv.core.client_types import StepResult
 from openenv.core.env_client import EnvClient
-from .models import (
-    BrowserGymAction,
-    BrowserGymObservation,
-    BrowserGymState,
-)
+
+from .models import BrowserGymAction, BrowserGymObservation, BrowserGymState
 
 
-class BrowserGymEnv(EnvClient[BrowserGymAction, BrowserGymObservation, BrowserGymState]):
+class BrowserGymEnv(
+    EnvClient[BrowserGymAction, BrowserGymObservation, BrowserGymState]
+):
     """Client for interacting with the BrowserGym environment.
 
     BrowserGym provides unified access to multiple web navigation benchmarks:
@@ -83,7 +82,9 @@ class BrowserGymEnv(EnvClient[BrowserGymAction, BrowserGymObservation, BrowserGy
             "metadata": action.metadata,
         }
 
-    def _parse_result(self, payload: Dict[str, Any]) -> StepResult[BrowserGymObservation]:
+    def _parse_result(
+        self, payload: Dict[str, Any]
+    ) -> StepResult[BrowserGymObservation]:
         """Parse the server response into a StepResult."""
         obs_data = payload.get("observation", {})
 
@@ -98,13 +99,14 @@ class BrowserGymEnv(EnvClient[BrowserGymAction, BrowserGymObservation, BrowserGy
             last_action_error=obs_data.get("last_action_error", False),
             done=payload.get("done", False),
             reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
 
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict[str, Any]) -> BrowserGymState:

@@ -13,15 +13,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy openenv-core package (root pyproject.toml + src/)
-COPY pyproject.toml ./
-COPY src/ ./src/
-
 # Copy coding_env package
 COPY envs/coding_env/ ./envs/coding_env/
 
-# Install openenv-core first (from root), then coding_env
-RUN pip install --no-cache-dir . && \
+# Install openenv first from PyPI, then coding_env
+RUN pip install --no-cache-dir "openenv>=0.2.2" && \
     pip install --no-cache-dir ./envs/coding_env/
 
 # Environment variables

@@ -8,9 +8,8 @@ sqlalchemy>=2.0.0
 python-dateutil>=2.8.0
 jsonschema>=4.0.0
 requests>=2.32.5
-openenv>=0.1.13
 websockets
-openenv-core
+openenv>=0.2.0
 fastmcp>=2.0.0
 langchain
 langchain-core

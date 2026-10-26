@@ -23,6 +23,7 @@ class Model(nn.Module):
 
     For each ray, finds the closest sphere intersection.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -31,7 +32,7 @@ class Model(nn.Module):
         ray_origins: torch.Tensor,
         ray_directions: torch.Tensor,
         sphere_centers: torch.Tensor,
-        sphere_radii: torch.Tensor
+        sphere_radii: torch.Tensor,
     ) -> tuple:
         """
         Find closest ray-sphere intersection for each ray.
@@ -52,7 +53,7 @@ class Model(nn.Module):
         M = sphere_centers.shape[0]
 
         # Initialize outputs
-        t_hit = torch.full((N,), float('inf'), device=ray_origins.device)
+        t_hit = torch.full((N,), float("inf"), device=ray_origins.device)
         sphere_idx = torch.full((N,), -1, dtype=torch.long, device=ray_origins.device)
 
         # Brute force: test each ray against each sphere
@@ -98,7 +99,7 @@ class Model(nn.Module):
         for i in range(N):
             if sphere_idx[i] >= 0:
                 center = sphere_centers[sphere_idx[i]]
-                hit_normals[i] = (hit_points[i] - center)
+                hit_normals[i] = hit_points[i] - center
                 hit_normals[i] = hit_normals[i] / hit_normals[i].norm()
 
         return t_hit, sphere_idx, hit_points, hit_normals
@@ -108,13 +109,14 @@ class Model(nn.Module):
 num_rays = 65536  # 256x256 image
 num_spheres = 256
 
+
 def get_inputs():
     # Camera rays (simple pinhole camera looking at origin)
     # Create a grid of rays
     W, H = 256, 256
     u = torch.linspace(-1, 1, W)
     v = torch.linspace(-1, 1, H)
-    U, V = torch.meshgrid(u, v, indexing='ij')
+    U, V = torch.meshgrid(u, v, indexing="ij")
 
     # Ray origins at z=5
     ray_origins = torch.zeros(num_rays, 3)
@@ -132,6 +134,7 @@ def get_inputs():
     sphere_radii = torch.rand(num_spheres) * 0.5 + 0.1
 
     return [ray_origins, ray_directions, sphere_centers, sphere_radii]
+
 
 def get_init_inputs():
     return []

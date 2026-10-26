@@ -2,5 +2,5 @@ spec_version: 1
 name: finqa_env
 type: space
 runtime: fastapi
-app: server.app:app
+app: finqa_env.server.app:app
 port: 8000

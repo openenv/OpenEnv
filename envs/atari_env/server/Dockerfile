@@ -1,43 +1,62 @@
-# Dockerfile for Atari Environment
-# This image provides Atari 2600 games via the Arcade Learning Environment (ALE)
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
 
-# Configurable base image - defaults to local build, can be overridden for CI/CD
-# Base image provides: fastapi, uvicorn, requests, curl, PYTHONPATH=/app/src
-#
-# Local build: docker build -t envtorch-base:latest -f src/core/containers/images/Dockerfile .
-#              docker build -f envs/atari_env/server/Dockerfile -t atari-env:latest .
-#
-# CI/CD build: docker build --build-arg BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base:latest \
-#              -f envs/atari_env/server/Dockerfile -t atari-env:latest .
-ARG BASE_IMAGE=openenv-base:latest
+ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest
+FROM ${BASE_IMAGE} AS builder
+
+WORKDIR /app
+
+
+COPY . /app/env
+
+WORKDIR /app/env
+
+RUN if ! command -v uv >/dev/null 2>&1; then \
+        curl -LsSf https://astral.sh/uv/install.sh | sh && \
+        mv /root/.local/bin/uv /usr/local/bin/uv && \
+        mv /root/.local/bin/uvx /usr/local/bin/uvx; \
+    fi
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -f uv.lock ]; then \
+        uv sync --frozen --no-install-project --no-editable; \
+    else \
+        uv sync --no-install-project --no-editable; \
+    fi
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -f uv.lock ]; then \
+        uv sync --frozen --no-editable; \
+    else \
+        uv sync --no-editable; \
+    fi
+
+# Final runtime stage
 FROM ${BASE_IMAGE}
 
-# Install dependencies
-COPY envs/atari_env/server/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
+WORKDIR /app
 
-# Copy OpenEnv core (base image already set WORKDIR=/app)
-COPY src/core/ /app/src/core/
+COPY --from=builder /app/env/.venv /app/.venv
+COPY --from=builder /app/env /app/env
 
-# Copy Atari environment code
-COPY envs/atari_env/ /app/envs/atari_env/
-
-# Copy README for web interface documentation
-COPY envs/atari_env/README.md /app/README.md
-
-# Atari-specific environment variables (can be overridden at runtime)
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app/env:$PYTHONPATH"
 ENV ATARI_GAME=pong
 ENV ATARI_OBS_TYPE=rgb
 ENV ATARI_FULL_ACTION_SPACE=false
 ENV ATARI_REPEAT_ACTION_PROB=0.0
 ENV ATARI_FRAMESKIP=4
 
-# Expose port
 EXPOSE 8000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
-# Run the FastAPI server
-CMD ["uvicorn", "envs.atari_env.server.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000"]

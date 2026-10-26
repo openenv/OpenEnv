@@ -1,11 +1,23 @@
 import torch
 import torch.nn as nn
 
+
 class Model(nn.Module):
     """
     Model that performs convolution, group normalization, scaling, max pooling, and clamping.
     """
-    def __init__(self, in_channels, out_channels, kernel_size, num_groups, scale_shape, maxpool_kernel_size, clamp_min, clamp_max):
+
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        num_groups,
+        scale_shape,
+        maxpool_kernel_size,
+        clamp_min,
+        clamp_max,
+    ):
         super(Model, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size)
         self.group_norm = nn.GroupNorm(num_groups, out_channels)
@@ -28,6 +40,7 @@ class Model(nn.Module):
         x = torch.clamp(x, self.clamp_min, self.clamp_max)
         return x
 
+
 batch_size = 128
 in_channels = 3
 out_channels = 16
@@ -39,8 +52,19 @@ maxpool_kernel_size = 2
 clamp_min = 0.0
 clamp_max = 1.0
 
+
 def get_inputs():
     return [torch.randn(batch_size, in_channels, height, width)]
 
+
 def get_init_inputs():
-    return [in_channels, out_channels, kernel_size, num_groups, scale_shape, maxpool_kernel_size, clamp_min, clamp_max]
+    return [
+        in_channels,
+        out_channels,
+        kernel_size,
+        num_groups,
+        scale_shape,
+        maxpool_kernel_size,
+        clamp_min,
+        clamp_max,
+    ]

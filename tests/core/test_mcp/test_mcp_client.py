@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Tests for MCPToolClient.
@@ -14,10 +10,10 @@ These tests verify the MCPToolClient class functionality including:
 4. Error handling for tool failures
 """
 
-import pytest
 from unittest.mock import AsyncMock
 
-from openenv.core.mcp_client import MCPClientBase, MCPToolClient
+import pytest
+from openenv.core.client_types import StepResult
 from openenv.core.env_server.mcp_types import (
     CallToolAction,
     CallToolObservation,
@@ -27,7 +23,7 @@ from openenv.core.env_server.mcp_types import (
     ToolError,
     ToolErrorType,
 )
-from openenv.core.client_types import StepResult
+from openenv.core.mcp_client import MCPClientBase, MCPToolClient
 
 
 # =============================================================================
@@ -130,6 +126,29 @@ class TestMCPClientBase:
         assert result.observation.tools[0].name == "add"
         assert result.done is False
 
+    def test_parse_result_list_tools_accepts_input_schema_alias(self):
+        """Test _parse_result accepts MCP-style inputSchema tool payloads."""
+        client = MCPClientBase.__new__(MCPClientBase)
+        client._ws = None
+        client._tools_cache = None
+
+        payload = {
+            "observation": {
+                "tools": [
+                    {
+                        "name": "search",
+                        "description": "Search documents",
+                        "inputSchema": {"type": "object"},
+                    },
+                ],
+            },
+        }
+
+        result = client._parse_result(payload)
+
+        assert isinstance(result.observation, ListToolsObservation)
+        assert result.observation.tools[0].input_schema == {"type": "object"}
+
     def test_parse_result_call_tool_observation(self):
         """Test _parse_result for CallToolObservation."""
         client = MCPClientBase.__new__(MCPClientBase)
@@ -179,6 +198,30 @@ class TestMCPClientBase:
         assert result.observation.tool_name == "invalid_tool"
         assert result.observation.error is not None
         assert result.observation.error.error_type == ToolErrorType.TOOL_NOT_FOUND
+
+    def test_parse_result_generic_observation_preserves_custom_fields(self):
+        """Test _parse_result keeps env-specific observation fields on reset/step."""
+        client = MCPClientBase.__new__(MCPClientBase)
+        client._ws = None
+        client._tools_cache = None
+
+        payload = {
+            "observation": {
+                "problem": "Prove that the sum of two even integers is even.",
+                "problem_id": "bootstrap_000001",
+                "problem_type": "proof",
+                "metadata": {"dataset_source": "bootstrap"},
+            },
+            "done": False,
+            "reward": None,
+        }
+
+        result = client._parse_result(payload)
+
+        assert isinstance(result, StepResult)
+        assert getattr(result.observation, "problem_id") == "bootstrap_000001"
+        assert getattr(result.observation, "problem_type") == "proof"
+        assert result.observation.metadata == {"dataset_source": "bootstrap"}
 
 
 # =============================================================================

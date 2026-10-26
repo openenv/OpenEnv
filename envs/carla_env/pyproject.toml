@@ -1,0 +1,44 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-carla-env"
+version = "0.1.0"
+description = "CARLA environment for OpenEnv - embodied evaluation with temporal flow"
+requires-python = ">=3.11"
+dependencies = [
+    # Core OpenEnv dependencies (required for server functionality)
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    "requests>=2.31.0",
+    # CARLA Python API is installed directly in Dockerfiles
+    # via: pip install carla-ue5-api==0.10.0
+]
+
+[project.optional-dependencies]
+carla = [
+    "carla-ue5-api==0.10.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+# Server entry point - enables running via: uv run --project . server
+# or: python -m carla_env.server.app
+server = "carla_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["carla_env", "carla_env.server"]
+package-dir = {"carla_env" = ".", "carla_env.server" = "server"}

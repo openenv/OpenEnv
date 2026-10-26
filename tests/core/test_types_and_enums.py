@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Tests for enums and Pydantic models in OpenEnv env_server.
@@ -22,23 +18,23 @@ Test coverage:
 """
 
 import json
-import pytest
-from pydantic import ValidationError
 
-from openenv.core.env_server.types import (
-    ServerMode,
-    HealthStatus,
-    WSErrorCode,
-    HealthResponse,
-    WSErrorResponse,
-)
+import pytest
 from openenv.core.env_server.mcp_types import (
-    JsonRpcErrorCode,
-    McpMethod,
     JsonRpcError,
+    JsonRpcErrorCode,
     JsonRpcRequest,
     JsonRpcResponse,
+    McpMethod,
 )
+from openenv.core.env_server.types import (
+    HealthResponse,
+    HealthStatus,
+    ServerMode,
+    WSErrorCode,
+    WSErrorResponse,
+)
+from pydantic import ValidationError
 
 
 # =============================================================================

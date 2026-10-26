@@ -14,7 +14,6 @@ control environment via WebSocket for persistent sessions.
 from typing import Any, Dict
 
 from openenv.core.client_types import StepResult
-
 from openenv.core.env_client import EnvClient
 
 from .models import SumoAction, SumoObservation, SumoState
@@ -105,15 +104,18 @@ class SumoRLEnv(EnvClient[SumoAction, SumoObservation, SumoState]):
             observation_shape=obs_data.get("observation_shape", []),
             action_mask=obs_data.get("action_mask", []),
             sim_time=obs_data.get("sim_time", 0.0),
-            done=obs_data.get("done", False),
-            reward=obs_data.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            # Read from the envelope, where `serialize_observation` puts these,
+            # so `result.observation.reward` agrees with `result.reward`.
+            done=bool(payload.get("done", False)),
+            reward=payload.get("reward"),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
 
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict[str, Any]) -> SumoState:

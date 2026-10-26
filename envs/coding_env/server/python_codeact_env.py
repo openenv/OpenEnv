@@ -13,11 +13,26 @@ Python code actions using PyExecutor.
 
 import uuid
 
-from openenv.core.env_server.interfaces import Action, Environment, Observation
-from .python_executor import PyExecutor
+from openenv.core.env_server.interfaces import (
+    Action,
+    Environment,
+    Observation,
+    Transform,
+)
 
 from ..models import CodeAction, CodeObservation, CodeState
+from .python_executor import DEFAULT_SAFE_IMPORTS, PyExecutor
 from .transforms import create_safe_coding_transform
+
+
+def _authorized_imports(additional_imports: list[str] | None) -> list[str] | None:
+    """PyExecutor takes a complete allowlist, so keep the defaults in it."""
+    if additional_imports is None:
+        return None
+
+    merged = list(DEFAULT_SAFE_IMPORTS)
+    merged.extend(name for name in additional_imports if name not in merged)
+    return merged
 
 
 class PythonCodeActEnv(Environment):
@@ -31,6 +46,7 @@ class PythonCodeActEnv(Environment):
     Args:
         transform: Optional transform to apply to observations
         additional_imports: List of additional module imports to authorize
+                          on top of DEFAULT_SAFE_IMPORTS
                           (e.g., ["numpy", "pandas", "matplotlib"])
 
     Example:
@@ -45,9 +61,13 @@ class PythonCodeActEnv(Environment):
 
     def __init__(
         self,
+        transform: Transform | None = None,
+        additional_imports: list[str] | None = None,
     ):
-        self.transform = create_safe_coding_transform()
-        self._executor = PyExecutor()
+        self._transform = transform
+        self._additional_imports = _authorized_imports(additional_imports)
+        self.transform = transform or create_safe_coding_transform()
+        self._executor = PyExecutor(additional_imports=self._additional_imports)
         self._state = CodeState()
 
     def reset(self) -> Observation:
@@ -63,10 +83,10 @@ class PythonCodeActEnv(Environment):
         self._state.last_exit_code = 0
 
         # Reset executor to clear any previously defined variables/functions
-        self._executor = PyExecutor()
+        self._executor = PyExecutor(additional_imports=self._additional_imports)
 
         # Reset transform to clear any accumulated state
-        self.transform = create_safe_coding_transform()
+        self.transform = self._transform or create_safe_coding_transform()
 
         # Return initial observation
         observation = CodeObservation(

@@ -15,29 +15,29 @@ Following RFC 003 - Traditional Tool Calling Approach:
 These models are fully generic and work with any MCP integration.
 """
 
-from typing import Any, Dict, List, Optional, Literal
-from pydantic import Field
+from typing import Any, Dict, List, Literal, Optional
 
 from openenv.core.env_server.types import Action, Observation
+from pydantic import Field
 
 
 class MCPAction(Action):
     """
     Generic wrapper action for MCP environment that supports multiple action types.
-    
+
     This action uses an action_type discriminator to determine which action to execute:
     - "ListToolsAction": Discover available MCP tools
     - "ToolCallAction": Execute a specific MCP tool
-    
+
     Args:
         action_type: Type of action ("ListToolsAction" or "ToolCallAction")
         tool_name: Name of tool to call (required for ToolCallAction)
         arguments: Arguments for tool (optional, for ToolCallAction)
-    
+
     Examples:
         >>> # List tools
         >>> action = MCPAction(action_type="ListToolsAction")
-        >>> 
+        >>>
         >>> # Call a tool
         >>> action = MCPAction(
         ...     action_type="ToolCallAction",
@@ -45,6 +45,7 @@ class MCPAction(Action):
         ...     arguments={"name": "New Resource", "type": "example"}
         ... )
     """
+
     action_type: Literal["ListToolsAction", "ToolCallAction"] = Field(
         ..., description="Type of action to perform"
     )
@@ -60,20 +61,22 @@ class MCPAction(Action):
 class ListToolsAction(Action):
     """
     Internal: Request list of available tools from MCP server.
-    
+
     This action corresponds to the MCP tools/list API.
     Use MCPAction with action_type="ListToolsAction" instead.
     """
+
     pass  # No parameters needed
 
 
 class ToolCallAction(Action):
     """
     Internal: Call a specific MCP tool with arguments.
-    
+
     This action corresponds to the MCP tools/call API.
     Use MCPAction with action_type="ToolCallAction" instead.
     """
+
     tool_name: str = Field(..., description="Name of the tool to call")
     arguments: Dict[str, Any] = Field(
         default_factory=dict, description="Arguments to pass to the tool"
@@ -83,11 +86,11 @@ class ToolCallAction(Action):
 class MCPObservation(Observation):
     """
     Generic observation from the MCP Environment.
-    
+
     Depending on the action type, different fields will be populated:
     - For ListToolsAction: tools_list contains available tool schemas
     - For ToolCallAction: tool_result contains the execution result
-    
+
     Args:
         success: Whether the action succeeded
         error_message: Error message if action failed
@@ -97,8 +100,11 @@ class MCPObservation(Observation):
         done: Whether the episode is complete
         reward: Reward for the action
     """
+
     success: bool = Field(True, description="Whether the action succeeded")
-    error_message: Optional[str] = Field(None, description="Error message if action failed")
+    error_message: Optional[str] = Field(
+        None, description="Error message if action failed"
+    )
     tools_list: Optional[List[Dict[str, Any]]] = Field(
         None, description="List of available tools (for ListToolsAction)"
     )

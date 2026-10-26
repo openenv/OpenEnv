@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Container provider abstractions for running environment servers.
@@ -14,7 +10,9 @@ This module provides a pluggable architecture for different container providers
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence, TypeVar
+
+_ContainerProviderT = TypeVar("_ContainerProviderT", bound="ContainerProvider")
 
 
 class ContainerProvider(ABC):
@@ -30,12 +28,15 @@ class ContainerProvider(ABC):
     The provider manages a single container lifecycle and provides the base URL
     for connecting to it.
 
-    Example:
-        >>> provider = LocalDockerProvider()
-        >>> base_url = provider.start_container("echo-env:latest")
-        >>> print(base_url)  # http://localhost:8000
-        >>> # Use the environment via base_url
-        >>> provider.stop_container()
+    Examples:
+
+        ```python
+        provider = LocalDockerProvider()
+        base_url = provider.start_container("echo-env:latest")
+        print(base_url)  # http://localhost:8000
+        # Use the environment via base_url
+        provider.stop_container()
+        ```
     """
 
     @abstractmethod
@@ -50,16 +51,23 @@ class ContainerProvider(ABC):
         Start a container from the specified image.
 
         Args:
-            image: Container image name (e.g., "echo-env:latest")
-            port: Port to expose (if None, provider chooses)
-            env_vars: Environment variables to pass to container
-            **kwargs: Provider-specific options
+            image (`str`):
+                Provider-specific container *source* identifier. For
+                container-based providers this is a registry image name (e.g.
+                `"echo-env:latest"`); other providers may map it to a
+                provider-specific source (see the provider's documentation).
+            port (`int`, *optional*):
+                Port to expose. If `None`, the provider chooses.
+            env_vars (`dict`, *optional*):
+                Environment variables to pass to container.
+            **kwargs:
+                Provider-specific options.
 
         Returns:
-            Base URL to connect to the container (e.g., "http://localhost:8000")
+            `str`: Base URL to connect to the container (e.g., `"http://localhost:8000"`).
 
         Raises:
-            RuntimeError: If container fails to start
+            RuntimeError: If container fails to start.
         """
         pass
 
@@ -80,13 +88,33 @@ class ContainerProvider(ABC):
         This typically polls the /health endpoint until it returns 200.
 
         Args:
-            base_url: Base URL of the container
-            timeout_s: Maximum time to wait
+            base_url (`str`):
+                Base URL of the container.
+            timeout_s (`float`, *optional*, defaults to `30.0`):
+                Maximum time to wait in seconds.
 
         Raises:
-            TimeoutError: If container doesn't become ready in time
+            TimeoutError: If container doesn't become ready in time.
         """
         pass
+
+    def close(self) -> None:
+        """
+        Release provider-held resources (e.g. SDK clients, connections).
+
+        Defaults to a no-op so existing providers are unaffected. Providers that
+        hold external resources beyond the container itself (such as a cloud SDK
+        client) override this to release them; it is also invoked on context-
+        manager exit. Lightweight providers need not override it.
+        """
+        pass
+
+    def __enter__(self: _ContainerProviderT) -> _ContainerProviderT:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> Optional[bool]:
+        self.close()
+        return None
 
 
 class LocalDockerProvider(ContainerProvider):
@@ -96,11 +124,14 @@ class LocalDockerProvider(ContainerProvider):
     This provider runs containers on the local machine using Docker.
     Useful for development and testing.
 
-    Example:
-        >>> provider = LocalDockerProvider()
-        >>> base_url = provider.start_container("echo-env:latest")
-        >>> # Container running on http://localhost:<random-port>
-        >>> provider.stop_container()
+    Examples:
+
+        ```python
+        provider = LocalDockerProvider()
+        base_url = provider.start_container("echo-env:latest")
+        # Container running on http://localhost:<random-port>
+        provider.stop_container()
+        ```
     """
 
     def __init__(self):
@@ -138,13 +169,17 @@ class LocalDockerProvider(ContainerProvider):
         Start a Docker container locally.
 
         Args:
-            image: Docker image name
-            port: Port to expose (if None, finds available port)
-            env_vars: Environment variables for the container
-            **kwargs: Additional Docker run options
+            image (`str`):
+                Docker image name.
+            port (`int`, *optional*):
+                Port to expose. If `None`, finds an available port.
+            env_vars (`dict`, *optional*):
+                Environment variables for the container.
+            **kwargs:
+                Additional Docker run options.
 
         Returns:
-            Base URL to connect to the container
+            `str`: Base URL to connect to the container.
         """
         import subprocess
         import time
@@ -226,13 +261,16 @@ class LocalDockerProvider(ContainerProvider):
         Wait for container to be ready by polling /health endpoint.
 
         Args:
-            base_url: Base URL of the container
-            timeout_s: Maximum time to wait
+            base_url (`str`):
+                Base URL of the container.
+            timeout_s (`float`, *optional*, defaults to `30.0`):
+                Maximum time to wait in seconds.
 
         Raises:
-            TimeoutError: If container doesn't become ready
+            TimeoutError: If container doesn't become ready.
         """
         import time
+
         import requests
 
         start_time = time.time()
@@ -260,7 +298,7 @@ class LocalDockerProvider(ContainerProvider):
         Find an available port on localhost.
 
         Returns:
-            An available port number
+            `int`: An available port number.
         """
         import socket
 
@@ -275,10 +313,11 @@ class LocalDockerProvider(ContainerProvider):
         Generate a unique container name based on image name and timestamp.
 
         Args:
-            image: Docker image name
+            image (`str`):
+                Docker image name.
 
         Returns:
-            A unique container name
+            `str`: A unique container name.
         """
         import time
 
@@ -305,12 +344,13 @@ class DockerSwarmProvider(ContainerProvider):
     ):
         """
         Args:
-            auto_init_swarm: Whether to call ``docker swarm init`` when Swarm
-                is not active. Otherwise, user must manually initialize Swarm.
-            overlay_network: Optional overlay network name for the service.
-                When provided, the network is created with
-                ``docker network create --driver overlay --attachable`` if it
-                does not already exist.
+            auto_init_swarm (`bool`, *optional*, defaults to `True`):
+                Whether to call `docker swarm init` when Swarm is not active.
+                Otherwise, the user must manually initialize Swarm.
+            overlay_network (`str`, *optional*):
+                Overlay network name for the service. When provided, the network
+                is created with `docker network create --driver overlay --attachable`
+                if it does not already exist.
         """
         self._service_name: Optional[str] = None
         self._service_id: Optional[str] = None
@@ -333,13 +373,28 @@ class DockerSwarmProvider(ContainerProvider):
         """
         Start (or scale) a Swarm service for the given image.
 
-        Supported kwargs:
-            replicas (int): Number of container replicas (default: 2).
-            cpu_limit (float | str): CPU limit passed to ``--limit-cpu``.
-            memory_limit (str): Memory limit passed to ``--limit-memory``.
-            constraints (Sequence[str]): Placement constraints.
-            labels (Dict[str, str]): Service labels.
-            command (Sequence[str] | str): Override container command.
+        Args:
+            image (`str`):
+                Docker image name.
+            port (`int`, *optional*):
+                Port to expose. If `None`, finds an available port.
+            env_vars (`dict`, *optional*):
+                Environment variables for the container.
+            replicas (`int`, *optional*, defaults to `2`):
+                Number of container replicas.
+            cpu_limit (`float` or `str`, *optional*):
+                CPU limit passed to `--limit-cpu`.
+            memory_limit (`str`, *optional*):
+                Memory limit passed to `--limit-memory`.
+            constraints (`Sequence[str]`, *optional*):
+                Placement constraints.
+            labels (`dict`, *optional*):
+                Service labels.
+            command (`Sequence[str]` or `str`, *optional*):
+                Override container command.
+
+        Returns:
+            `str`: Base URL to connect to the service.
         """
         import shlex
         import subprocess
@@ -463,11 +518,12 @@ class DockerSwarmProvider(ContainerProvider):
         """
         Wait for at least one replica to become healthy by polling /health.
 
-        Note: With Swarm's load balancer, requests round-robin across replicas,
+        With Swarm's load balancer, requests round-robin across replicas,
         so this only verifies that at least one replica is responding. Some
         replicas may still be starting when this returns.
         """
         import time
+
         import requests
 
         deadline = time.time() + timeout_s
@@ -590,16 +646,12 @@ class DockerSwarmProvider(ContainerProvider):
 
 class KubernetesProvider(ContainerProvider):
     """
-    Container provider for Kubernetes clusters.
+    Planned container provider for Kubernetes clusters.
 
-    This provider creates pods in a Kubernetes cluster and exposes them
-    via services or port-forwarding.
-
-    Example:
-        >>> provider = KubernetesProvider(namespace="envtorch-dev")
-        >>> base_url = provider.start_container("echo-env:latest")
-        >>> # Pod running in k8s, accessible via service or port-forward
-        >>> provider.stop_container()
+    Not yet implemented: this is a placeholder for the planned Kubernetes
+    backend and does not implement the abstract `ContainerProvider` methods, so
+    it cannot be instantiated. Use `LocalDockerProvider`, `DockerSwarmProvider`,
+    `DaytonaProvider`, or `ACASandboxProvider` instead.
     """
 
     pass
@@ -614,11 +666,14 @@ class RuntimeProvider(ABC):
     The provider manages a single runtime lifecycle and provides the base URL
     for connecting to it.
 
-    Example:
-        >>> provider = UVProvider(project_path="/path/to/env")
-        >>> base_url = provider.start()
-        >>> print(base_url)  # http://localhost:8000
-        >>> provider.stop()
+    Examples:
+
+        ```python
+        provider = UVProvider(project_path="/path/to/env")
+        base_url = provider.start()
+        print(base_url)  # http://localhost:8000
+        provider.stop()
+        ```
     """
 
     @abstractmethod
@@ -629,13 +684,18 @@ class RuntimeProvider(ABC):
         **kwargs: Any,
     ) -> str:
         """
-        Start a runtime from the specified image.
+        Start the runtime.
 
         Args:
-            image: Runtime image name
-            port: Port to expose (if None, provider chooses)
-            env_vars: Environment variables for the runtime
-            **kwargs: Additional runtime options
+            port (`int`, *optional*):
+                Port to expose. If `None`, the provider chooses.
+            env_vars (`dict`, *optional*):
+                Environment variables for the runtime.
+            **kwargs:
+                Additional runtime options.
+
+        Returns:
+            `str`: Base URL to connect to the runtime.
         """
 
     @abstractmethod

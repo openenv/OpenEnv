@@ -8,16 +8,14 @@
 
 from typing import Dict
 
+from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
-from openenv.core import EnvClient
 
 from .models import ReasoningGymAction, ReasoningGymObservation
 
 
-class ReasoningGymEnv(
-    EnvClient[ReasoningGymAction, ReasoningGymObservation, State]
-):
+class ReasoningGymEnv(EnvClient[ReasoningGymAction, ReasoningGymObservation, State]):
     """
     Client for the Reasoning Gym Environment.
 
@@ -95,7 +93,7 @@ class ReasoningGymEnv(
             correct_answer=obs_data.get("correct_answer"),
             done=payload.get("done", False),
             reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
             dataset_metadata=obs_data.get("dataset_metadata"),
         )
 
@@ -103,6 +101,7 @@ class ReasoningGymEnv(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict) -> State:

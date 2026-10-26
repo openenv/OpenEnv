@@ -23,11 +23,12 @@ class Model(nn.Module):
 
     Smooths block edges adaptively based on gradient strength.
     """
+
     def __init__(self, block_size: int = 8, alpha: float = 0.1, beta: float = 0.05):
         super(Model, self).__init__()
         self.block_size = block_size
         self.alpha = alpha  # Edge threshold
-        self.beta = beta    # Neighbor threshold
+        self.beta = beta  # Neighbor threshold
 
     def forward(self, frame: torch.Tensor) -> torch.Tensor:
         """
@@ -84,10 +85,12 @@ class Model(nn.Module):
 frame_height = 720
 frame_width = 1280
 
+
 def get_inputs():
     # Simulated blocky frame
     frame = torch.rand(frame_height, frame_width)
     return [frame]
+
 
 def get_init_inputs():
     return [8, 0.1, 0.05]  # block_size, alpha, beta

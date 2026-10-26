@@ -23,8 +23,10 @@ The simplest way to use the __ENV_TITLE_NAME__ environment is through the `__ENV
 from __ENV_NAME__ import __ENV_CLASS_NAME__Action, __ENV_CLASS_NAME__Env
 
 try:
-    # Create environment from Docker image
-    __ENV_NAME__env = __ENV_CLASS_NAME__Env.from_docker_image("__ENV_NAME__-env:latest")
+    # Create environment from Docker image (.sync() for synchronous use)
+    __ENV_NAME__env = __ENV_CLASS_NAME__Env.from_docker_image(
+        "__ENV_IMAGE_NAME__:latest"
+    ).sync()
 
     # Reset
     result = __ENV_NAME__env.reset()
@@ -57,7 +59,7 @@ Before using the environment, you need to build the Docker image:
 
 ```bash
 # From project root
-docker build -t __ENV_NAME__-env:latest -f server/Dockerfile .
+docker build -t __ENV_IMAGE_NAME__:latest -f server/Dockerfile .
 ```
 
 ## Deploying to Hugging Face Spaces
@@ -69,7 +71,7 @@ You can easily deploy your OpenEnv environment to Hugging Face Spaces using the 
 openenv push
 
 # Or specify options
-openenv push --namespace my-org --private
+openenv push --repo-id my-org/my-env --private
 ```
 
 The `openenv push` command will:
@@ -83,7 +85,7 @@ The `openenv push` command will:
 
 ### Options
 
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
+- `DIRECTORY` (positional): Directory containing the OpenEnv environment (defaults to current directory)
 - `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
 - `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
 - `--private`: Deploy the space as private (default: public)
@@ -98,7 +100,7 @@ openenv push
 openenv push --repo-id my-org/my-env
 
 # Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
+openenv push --base-image ghcr.io/huggingface/openenv-base:latest
 
 # Push as a private space
 openenv push --private
@@ -198,12 +200,16 @@ Then multiple clients can connect simultaneously:
 from __ENV_NAME__ import __ENV_CLASS_NAME__Action, __ENV_CLASS_NAME__Env
 from concurrent.futures import ThreadPoolExecutor
 
+
 def run_episode(client_id: int):
     with __ENV_CLASS_NAME__Env(base_url="http://localhost:8000") as env:
         result = env.reset()
         for i in range(10):
-            result = env.step(__ENV_CLASS_NAME__Action(message=f"Client {client_id}, step {i}"))
+            result = env.step(
+                __ENV_CLASS_NAME__Action(message=f"Client {client_id}, step {i}")
+            )
         return client_id, result.observation.message_length
+
 
 # Run 4 episodes concurrently
 with ThreadPoolExecutor(max_workers=4) as executor:

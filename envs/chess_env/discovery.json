@@ -1,0 +1,9 @@
+{
+  "description": "Play chess with legal UCI moves against a Moonfish engine, a random opponent, or in self-play. Observations include the FEN board position, legal moves, and game outcome.",
+  "tags": ["openenv", "rl-environment", "chess", "strategy", "board-game", "self-play"],
+  "representative_queries": [
+    "find a chess environment with a configurable opponent",
+    "evaluate move selection from a FEN board position",
+    "run chess self-play through an OpenEnv client"
+  ]
+}

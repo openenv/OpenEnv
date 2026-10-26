@@ -1,0 +1,10 @@
+{
+  "schema_version": "1",
+  "python": "3.12.13",
+  "uv": "0.9.3",
+  "base_image": "python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28",
+  "reference_platform": "linux/amd64",
+  "supported_platforms": ["linux/amd64", "linux/arm64"],
+  "setuptools": "84.0.0",
+  "wheel": "0.48.0"
+}

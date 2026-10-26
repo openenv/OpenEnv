@@ -1,0 +1,26 @@
+spec_version: 1
+name: served-min-pass
+type: env
+runtime: python
+app: server.app:app
+port: 8000
+validation:
+  reward:
+    range: [0.0, 1.0]
+    oracle_tolerance: 0.0
+    floor_margin: 0.5
+  resources:
+    cpu: 1.0
+    memory_mb: 1024
+    disk_mb: 512
+    episode_timeout_s: 60.0
+  capabilities:
+    oracle:
+      form: injected_state
+      location: oracle/solved_state.json
+    verifier:
+      kind: reward_channel
+    set_state: true
+    declared_tools: [echo]
+  types:
+    tags: [demo]

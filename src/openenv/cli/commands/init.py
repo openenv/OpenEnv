@@ -74,7 +74,7 @@ def _get_random_hf_space_config() -> Dict[str, str]:
     Get random Hugging Face Space configuration values.
 
     Returns:
-        Dictionary with 'emoji', 'colorFrom', and 'colorTo' keys
+        `dict` with keys `emoji`, `colorFrom`, and `colorTo`.
     """
     # Valid emojis (emoji-only characters)
     emojis = [
@@ -237,6 +237,8 @@ def _create_template_replacements(env_name: str) -> Dict[str, str]:
         "__ENV_CLASS_NAME__": env_prefix,  # Use prefix, not full PascalCase
         "__ENV_TITLE_NAME__": env_title,
         "__ENV_CAMEL_NAME__": env_camel,
+        # Default image tag of `openenv build`
+        "__ENV_IMAGE_NAME__": f"openenv-{env_name.removesuffix('_env')}",
         # Hugging Face Space config placeholders
         "__HF_EMOJI__": hf_config["emoji"],
         "__HF_COLOR_FROM__": hf_config["colorFrom"],
@@ -298,16 +300,8 @@ def _copy_and_template_file(
         ) from e
 
 
-def _copy_template_directory(
-    template_pkg: str,
-    template_dir: str,
-    dest_dir: Path,
-    replacements: Dict[str, str],
-    env_name: str,
-) -> List[Path]:
-    """Recursively copy template directory and apply replacements."""
-    created_files: List[Path] = []
-
+def _resolve_template_path(template_pkg: str, template_dir: str) -> Path:
+    """Resolve the template package directory used by `openenv init`."""
     # Get the package path using importlib.resources but avoid importing the template package
     # We'll use the package's __file__ to get the directory path
     import importlib
@@ -340,6 +334,20 @@ def _copy_template_directory(
         raise FileNotFoundError(
             f"Template directory not found: {template_pkg}.{template_dir}"
         )
+
+    return template_path
+
+
+def _copy_template_directory(
+    template_pkg: str,
+    template_dir: str,
+    dest_dir: Path,
+    replacements: Dict[str, str],
+    env_name: str,
+) -> List[Path]:
+    """Recursively copy template directory and apply replacements."""
+    created_files: List[Path] = []
+    template_path = _resolve_template_path(template_pkg, template_dir)
 
     # Walk through all files in template directory using Path
     for item in template_path.rglob("*"):
@@ -416,9 +424,12 @@ def init(
     Creates a new directory with the environment name and generates all necessary
     files based on the OpenEnv template structure.
 
-    Example:
+    Examples:
+
+        ```bash
         $ openenv init my_game_env
         $ openenv init my_env --output-dir /path/to/projects
+        ```
     """
     # Validate environment name
     env_name = _validate_env_name(env_name)
@@ -480,12 +491,10 @@ def init(
         console.print("  # Edit your models in models.py")
         console.print("  # Install dependencies: uv sync")
         console.print("\n  # To integrate into OpenEnv repo:")
-        console.print(f"  # 1. Copy this directory to <repo_root>/envs/{env_name}_env")
+        console.print(f"  # 1. Copy this directory to <repo_root>/envs/{env_name}")
+        console.print(f"  # 2. Build from repo root: openenv build envs/{env_name}")
         console.print(
-            f"  # 2. Build from repo root: docker build -t {env_name}_env:latest -f envs/{env_name}_env/server/Dockerfile ."
-        )
-        console.print(
-            f"  # 3. Run your image: docker run -p 8000:8000 {env_name}_env:latest"
+            f"  # 3. Run your image: docker run -p 8000:8000 {replacements['__ENV_IMAGE_NAME__']}:latest"
         )
 
     except Exception as e:

@@ -20,6 +20,7 @@ class Model(nn.Module):
     """
     Parallel sum reduction.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -39,9 +40,11 @@ class Model(nn.Module):
 # Problem configuration
 array_size = 64 * 1024 * 1024  # 64M elements
 
+
 def get_inputs():
     data = torch.rand(array_size)
     return [data]
+
 
 def get_init_inputs():
     return []

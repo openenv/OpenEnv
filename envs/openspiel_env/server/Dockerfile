@@ -23,7 +23,7 @@
 # =============================================================================
 
 # Default: use pre-built image from GHCR (skips C++ compilation)
-ARG OPENSPIEL_BASE_IMAGE=ghcr.io/meta-pytorch/openenv-openspiel-base:sha-e622c7e
+ARG OPENSPIEL_BASE_IMAGE=ghcr.io/huggingface/openenv-openspiel-base:latest
 FROM ${OPENSPIEL_BASE_IMAGE}
 
 WORKDIR /app

@@ -16,8 +16,8 @@ Optimization opportunities:
 """
 
 import torch
-import torch.nn as nn
 import torch.fft
+import torch.nn as nn
 
 
 class Model(nn.Module):
@@ -26,6 +26,7 @@ class Model(nn.Module):
 
     Given a blurred image and blur kernel, estimates the original image.
     """
+
     def __init__(self, kernel_size: int = 15, noise_var: float = 0.01):
         super(Model, self).__init__()
         self.kernel_size = kernel_size
@@ -34,12 +35,12 @@ class Model(nn.Module):
         # Gaussian blur kernel (typical PSF)
         x = torch.arange(kernel_size).float() - kernel_size // 2
         y = torch.arange(kernel_size).float() - kernel_size // 2
-        X, Y = torch.meshgrid(x, y, indexing='ij')
+        X, Y = torch.meshgrid(x, y, indexing="ij")
         sigma = kernel_size / 6
         kernel = torch.exp(-(X**2 + Y**2) / (2 * sigma**2))
         kernel = kernel / kernel.sum()
 
-        self.register_buffer('blur_kernel', kernel)
+        self.register_buffer("blur_kernel", kernel)
 
     def forward(self, blurred: torch.Tensor) -> torch.Tensor:
         """
@@ -58,7 +59,7 @@ class Model(nn.Module):
         kh, kw = self.blur_kernel.shape
         kernel_padded[:kh, :kw] = self.blur_kernel
         # Center the kernel (circular shift)
-        kernel_padded = torch.roll(kernel_padded, (-kh//2, -kw//2), dims=(0, 1))
+        kernel_padded = torch.roll(kernel_padded, (-kh // 2, -kw // 2), dims=(0, 1))
 
         # FFT of blurred image and kernel
         G = torch.fft.fft2(blurred)
@@ -86,10 +87,12 @@ class Model(nn.Module):
 image_height = 1024
 image_width = 1024
 
+
 def get_inputs():
     # Simulated blurred image
     image = torch.rand(image_height, image_width)
     return [image]
+
 
 def get_init_inputs():
     return [15, 0.01]  # kernel_size, noise_var

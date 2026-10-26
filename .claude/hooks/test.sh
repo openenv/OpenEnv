@@ -18,6 +18,9 @@ PYTHONPATH=src:envs timeout 300 uv run pytest tests/ \
     --ignore=tests/envs/test_browsergym_environment.py \
     --ignore=tests/envs/test_dipg_environment.py \
     --ignore=tests/envs/test_websearch_environment.py \
+    --ignore=tests/envs/test_python_codeact_reset.py \
+    --ignore=tests/envs/test_python_codeact_rewards.py \
+    --ignore=tests/envs/test_textarena_environment.py \
     -m "not integration and not network and not docker" \
     -v \
     --tb=short

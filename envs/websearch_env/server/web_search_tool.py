@@ -14,11 +14,11 @@
 # Inspired by: https://github.com/THUDM/slime/tree/main/examples/search-r1
 
 from __future__ import annotations
+
 import random
 
-import requests
 import chardet
-
+import requests
 from models import WebContent, WebSearchAction, WebSearchObservation
 
 
@@ -70,6 +70,7 @@ class WebSearchTool:
 
         except Exception as e:
             import traceback
+
             tb_str = traceback.format_exc()
             return WebSearchObservation(
                 content=f"[ERROR] Search failed due to: {str(e)}\nTraceback:\n{tb_str}",
@@ -131,7 +132,11 @@ class WebSearchTool:
                 if title or context:
                     title = title or "No title."
                     context = context or "No snippet available."
-                    web_contents.append(WebContent(title=title, content=context, url=item.get("link", "")))
+                    web_contents.append(
+                        WebContent(
+                            title=title, content=context, url=item.get("link", "")
+                        )
+                    )
         else:
             # Deep mode: fetch full page content
             links = [item.get("link", "") for item in items if "link" in item]
@@ -142,12 +147,20 @@ class WebSearchTool:
                 snippet = item.get("snippet", "")
 
                 # Extract relevant context from the full page
-                context = self.expand_search_snippet(snippet, raw_contents[i]) if i < len(raw_contents) and raw_contents[i] else snippet
+                context = (
+                    self.expand_search_snippet(snippet, raw_contents[i])
+                    if i < len(raw_contents) and raw_contents[i]
+                    else snippet
+                )
 
                 if title or context:
                     title = title or "No title."
                     context = context or "No content available."
-                    web_contents.append(WebContent(title=title, content=context, url=item.get("link", "")))
+                    web_contents.append(
+                        WebContent(
+                            title=title, content=context, url=item.get("link", "")
+                        )
+                    )
 
         return web_contents
 
@@ -189,7 +202,7 @@ class WebSearchTool:
         results = []
         for url in urls:
             results.append(_fetch(url))
-        
+
         return results
 
     @staticmethod
@@ -259,7 +272,9 @@ class WebSearchTool:
         for i, result in enumerate(web_contents, 1):
             lines.append(f"[{i}] {result.title}")
             lines.append(f"    URL: {result.url or 'N/A'}")
-            lines.append(f"    {result.content[:500]}{'...' if len(result.content) > 500 else ''}")
+            lines.append(
+                f"    {result.content[:500]}{'...' if len(result.content) > 500 else ''}"
+            )
             lines.append("")
 
         return "\n".join(lines)

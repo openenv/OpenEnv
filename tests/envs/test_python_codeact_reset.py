@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Test that PythonCodeActEnv.reset() properly resets executor state."""
 
@@ -10,10 +6,15 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 
 # Add the project root and src to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+
+# Skip entire module if smolagents is not installed (optional dependency)
+pytest.importorskip("smolagents", reason="smolagents is not installed")
 
 from envs.coding_env.models import CodeAction
 from envs.coding_env.server.python_codeact_env import PythonCodeActEnv
@@ -116,6 +117,20 @@ def test_reset_clears_imports():
         or "'m'" in obs3.stderr
         or "variable `m` is not defined" in obs3.stderr
     )
+
+
+def test_json_import_is_available_by_default():
+    """Test that the coding env permits common JSON serialization code."""
+    env = PythonCodeActEnv()
+    env.reset()
+
+    action = CodeAction(
+        code="import json\nprint(json.dumps({'status': 'ok', 'n': 3}, sort_keys=True))"
+    )
+    obs = env.step(action)
+
+    assert obs.exit_code == 0
+    assert obs.stdout.strip() == '{"n": 3, "status": "ok"}'
 
 
 def test_reset_preserves_step_count_reset():

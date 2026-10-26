@@ -1,11 +1,12 @@
 # tests/envs/test_dipg_environment.py
 import os
 import shutil
-import sys
 import subprocess
+import sys
 import time
-import requests
+
 import pytest
+import requests
 
 # Add the project root to the path for envs imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))

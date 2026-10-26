@@ -31,7 +31,7 @@ echo "📁 OpenEnv root: $OPENENV_ROOT"
 echo ""
 
 # Build OpenSpiel environment image
-# Note: Docker will automatically pull ghcr.io/meta-pytorch/openenv-base:latest if needed
+# Note: Docker will automatically pull ghcr.io/huggingface/openenv-base:latest if needed
 echo "⏳ Building (this may take 5-10 minutes due to OpenSpiel compilation)..."
 docker build \
     -f "$SCRIPT_DIR/Dockerfile" \

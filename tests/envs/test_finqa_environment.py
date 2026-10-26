@@ -26,8 +26,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from envs.finqa_env.server.rewards import (
     compute_reward,
-    parse_number,
     extract_boxed_answer,
+    parse_number,
 )
 
 
@@ -551,6 +551,106 @@ class TestTools:
     def test_sql_query_no_filter(self, tools):
         result = tools.sql_query("alphabet", "some_table", "SELECT * FROM some_table")
         assert "Error" in result
+
+
+class TestToolsPathTraversal:
+    """Agent-supplied company/table names must not escape the data directory (CWE-22).
+
+    Self-contained (synthetic data, no downloaded dataset needed) so it runs in CI.
+    """
+
+    @pytest.fixture
+    def tools(self, tmp_path):
+        pytest.importorskip("pandas")
+        from envs.finqa_env.server.tools import FinQATools
+
+        company = tmp_path / "input_companies" / "acme"
+        company.mkdir(parents=True)
+        (company / "revenue.json").write_text('[{"x": 1}]')
+        # A file the agent must never be able to reach, placed outside input_companies/.
+        (tmp_path / "secret.json").write_text('[{"password": "leaked-secret"}]')
+        return FinQATools(str(tmp_path))
+
+    def test_legit_access_still_works(self, tools):
+        assert "Error" not in tools.get_descriptions("acme")
+        assert "leaked" not in tools.sql_query(
+            "acme", "revenue", "SELECT x FROM revenue WHERE x = 1"
+        )
+
+    def test_get_descriptions_rejects_traversal(self, tools):
+        for evil in ["..", "../..", "../../../../etc"]:
+            result = tools.get_descriptions(evil)
+            assert "Error" in result
+            assert "secret" not in result
+
+    def test_sql_query_rejects_company_traversal(self, tools):
+        result = tools.sql_query(
+            "..", "secret", "SELECT password FROM secret WHERE 1 = 1"
+        )
+        assert "leaked-secret" not in result
+
+    def test_sql_query_rejects_table_traversal(self, tools):
+        result = tools.sql_query(
+            "acme", "../../secret", "SELECT password FROM x WHERE 1 = 1"
+        )
+        assert "leaked-secret" not in result
+
+    def test_get_table_info_rejects_traversal(self, tools):
+        assert "Error" in tools.get_table_info("../..", "whatever")
+
+
+class TestResetSeed:
+    """reset(seed=...) must make the question order reproducible.
+
+    Self-contained (synthetic data, no downloaded dataset needed) so it runs in CI.
+    """
+
+    @pytest.fixture
+    def data_path(self, tmp_path):
+        pytest.importorskip("pandas")
+        questions = tmp_path / "benchmark_questions"
+        questions.mkdir()
+        rows = ["id,user_query,company,question,answer"]
+        rows += [f"{i},query {i},acme,question {i},\\boxed{{{i}}}" for i in range(20)]
+        (questions / "finqa.csv").write_text("\n".join(rows) + "\n")
+        return str(tmp_path)
+
+    @staticmethod
+    def _make_env(data_path):
+        from envs.finqa_env.server.finqa_environment import FinQAEnvironment
+
+        return FinQAEnvironment(data_path=data_path)
+
+    @staticmethod
+    def _questions_after_seed(env, seed, n=5):
+        """One seeded reset followed by n - 1 unseeded ones."""
+        questions = [env.reset(seed=seed).metadata["question"]]
+        questions += [env.reset().metadata["question"] for _ in range(n - 1)]
+        return questions
+
+    def test_same_seed_same_question_across_instances(self, data_path):
+        questions = {
+            self._make_env(data_path).reset(seed=1234).metadata["question"]
+            for _ in range(5)
+        }
+        assert len(questions) == 1
+
+    def test_same_seed_same_sequence_across_instances(self, data_path):
+        first = self._questions_after_seed(self._make_env(data_path), seed=1234)
+        second = self._questions_after_seed(self._make_env(data_path), seed=1234)
+        assert first == second
+
+    def test_reseeding_restarts_the_sequence(self, data_path):
+        env = self._make_env(data_path)
+        first = self._questions_after_seed(env, seed=1234)
+        second = self._questions_after_seed(env, seed=1234)
+        assert first == second
+
+    def test_different_seeds_give_different_sequences(self, data_path):
+        env = self._make_env(data_path)
+        assert self._questions_after_seed(env, seed=1) != self._questions_after_seed(
+            env, seed=2
+        )
 
 
 @pytest.mark.skipif(_integration_skip, reason=_integration_reason)

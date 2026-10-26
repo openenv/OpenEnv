@@ -1,0 +1,106 @@
+spec_version: 1
+name: pelican_svg_env
+type: space
+runtime: fastapi
+app: pelican_svg_env.server.app:app
+port: 8000
+
+description: >
+  Blind vector drawing benchmark. The model is asked for an SVG of an animal
+  riding a vehicle and never sees the result, so it must hold the spatial
+  arrangement in its head and emit coordinates for it. Subject and vehicle are
+  sampled from a grid so the canonical "pelican riding a bicycle" prompt is not
+  the only thing measured.
+version: "0.1.0"
+
+# Environment configuration defaults, overridable via constructor arguments.
+environment:
+  subject: null            # pin the animal, or null to sample
+  vehicle: null            # pin the vehicle, or null to sample
+  held_out_only: false     # exclude the canonical pelican/bicycle pair
+  enable_judge: true       # false scores with the deterministic layers only
+  return_image: false      # include the rendered PNG in the observation
+
+# Public Space variables, applied by `openenv push`.
+variables:
+  PELICAN_SVG_JUDGE_MODEL: Qwen/Qwen2.5-VL-72B-Instruct
+
+# Secrets never live in this file. Pass them at push time, where the value is
+# not logged:
+#
+#   openenv push envs/pelican_svg_env --secret HF_TOKEN=hf_...
+#
+# HF_TOKEN enables the vision judge. Without it the Space still runs and scores
+# on the deterministic layers, and sets judged=false on every observation so a
+# harness can tell "scored badly" from "nobody looked at it".
+#
+# PELICAN_SVG_DISABLE_JUDGE=1 forces deterministic-only scoring even when a
+# token is present.
+
+# Scoring runs in layers of increasing cost. Each one earns the right to run
+# the next, so a run against a model producing garbage stays cheap.
+rubric:
+  type: sequential
+  name: PelicanSvgRubric
+  layers:
+    - name: gate
+      cost: free
+      description: >
+        Source inspection and rasterisation. Rejects unparseable documents,
+        blank or off-canvas output, DTD declarations, external references,
+        embedded rasters, and drawings that write the answer as text. A
+        rejected submission scores zero and never reaches the judge.
+    - name: structure
+      weight: 0.35
+      cost: free
+      description: >
+        Geometry over the parsed document with transforms applied. Counts
+        wheels, checks they are similar in size, level and apart, that
+        something spans between them, and that a body of plausible size rests
+        above them.
+    - name: semantic
+      weight: 0.65
+      cost: one vision call pair per sample
+      description: >
+        A blind caption with no mention of the task, plus a binary feature
+        checklist. The blind caption cannot be inflated by a leading question,
+        which is why it carries half the semantic weight.
+
+# Anti-gaming rules enforced before any scoring happens.
+gate_violations:
+  - no_svg_in_response
+  - truncated_svg
+  - unparseable
+  - render_failed
+  - embedded_raster
+  - external_reference
+  - forbidden_element
+  - text_label
+  - text_heavy
+  - too_few_elements
+  - too_many_elements
+  - blank_canvas
+  - content_off_canvas
+
+metrics:
+  reward:
+    - reward/total
+    - reward/structure
+    - reward/semantic
+  structure:
+    - structure/wheel_count
+    - structure/wheels_similar_size
+    - structure/wheels_level
+    - structure/wheels_apart
+    - structure/frame_spans_wheels
+    - structure/rider_present
+    - structure/rider_proportionate
+  judge:
+    - judge/blind_subject
+    - judge/blind_vehicle
+    - judge/checklist_score
+    - judge/unavailable
+  episode:
+    - episode/task_id
+    - episode/held_out
+    - episode/gate_passed

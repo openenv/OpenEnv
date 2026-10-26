@@ -1,0 +1,7 @@
+{
+  "kind": "openenv_ws",
+  "probe_path": "validation/runtime.json",
+  "dockerfile": "Dockerfile",
+  "context": ".",
+  "agent_boundary": "api"
+}

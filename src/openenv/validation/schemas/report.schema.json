@@ -1,0 +1,591 @@
+{
+  "$defs": {
+    "CapabilitiesSpec": {
+      "additionalProperties": false,
+      "description": "Declared capabilities; these select the contract graders.\n\nA `None` oracle is a valid manifest \u2014 the missing oracle is a graded FAIL on\n`semantic.oracle_max` (it appears in the report with remediation), not a parse\nerror.\n\nAttributes:\n    oracle ([`~openenv.validation.manifest.OracleDeclaration`], *optional*):\n        The oracle declaration; absence FAILs `semantic.oracle_max`.\n    verifier ([`~openenv.validation.manifest.VerifierBinding`]):\n        How the verifier is invoked.\n    set_state (`bool`, *optional*, defaults to `False`):\n        Whether the environment accepts an `injected_state` kwarg on `reset()`.\n        `False` with `oracle.form == \"injected_state\"` is a manifest schema error.\n    llm_judged (`bool`, *optional*, defaults to `False`):\n        Reward involves an LLM judge; requires a judge pin and variance tolerance.\n    rubric_tree (`bool`, *optional*, defaults to `False`):\n        OpenEnv format: an RFC 004 `Rubric` is present.\n    task_api (`bool`, *optional*, defaults to `False`):\n        `TaskProvider` implemented.\n    canaries (`str`, *optional*):\n        Package-relative path to shipped canary trajectories (#778 test #28).\n    declared_tools (`list[str]`, *optional*):\n        Checked against runtime discovery (#778 test #34).\n    declared_task_count (`dict[str, int]`, *optional*):\n        Split name to task count, checked against discovery (#778 test #35).",
+      "properties": {
+        "canaries": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Canaries"
+        },
+        "declared_task_count": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Declared Task Count",
+          "type": "object"
+        },
+        "declared_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Tools",
+          "type": "array"
+        },
+        "llm_judged": {
+          "default": false,
+          "title": "Llm Judged",
+          "type": "boolean"
+        },
+        "oracle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OracleDeclaration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rubric_tree": {
+          "default": false,
+          "title": "Rubric Tree",
+          "type": "boolean"
+        },
+        "set_state": {
+          "default": false,
+          "title": "Set State",
+          "type": "boolean"
+        },
+        "task_api": {
+          "default": false,
+          "title": "Task Api",
+          "type": "boolean"
+        },
+        "verifier": {
+          "$ref": "#/$defs/VerifierBinding"
+        }
+      },
+      "required": [
+        "verifier"
+      ],
+      "title": "CapabilitiesSpec",
+      "type": "object"
+    },
+    "CheckResult": {
+      "additionalProperties": false,
+      "description": "Outcome of one check, as emitted by its grader.\n\nAttributes:\n    check_id (`str`):\n        Stable, policy-addressed id. Local runs use `static.*`/`runtime.*`/\n        `semantic.*`; the `hub.*` and `statistical.*` namespaces are reserved for\n        operator lanes.\n    status ([`~openenv.validation.types.CheckStatus`]):\n        The grader's finding. Severity is assigned by the policy, never here.\n    measured (`dict[str, Any]`, *optional*):\n        Measured values, e.g. `{\"oracle_reward\": 0.98, \"declared_tolerance\": 0.05}`.\n    evidence (`list[str]`, *optional*):\n        Human-readable, credential-safe evidence lines.\n    remediation (`str`, *optional*):\n        What the author changes to go green.\n    duration_s (`float`):\n        Wall-clock time this check took.",
+      "properties": {
+        "check_id": {
+          "pattern": "^[a-z_]+\\.[a-z_]+$",
+          "title": "Check Id",
+          "type": "string"
+        },
+        "duration_s": {
+          "minimum": 0.0,
+          "title": "Duration S",
+          "type": "number"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "measured": {
+          "additionalProperties": true,
+          "title": "Measured",
+          "type": "object"
+        },
+        "remediation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remediation"
+        },
+        "status": {
+          "$ref": "#/$defs/CheckStatus"
+        }
+      },
+      "required": [
+        "check_id",
+        "status",
+        "duration_s"
+      ],
+      "title": "CheckResult",
+      "type": "object"
+    },
+    "CheckStatus": {
+      "description": "What a grader may return for a single check.\n\nSKIP requires a reason (unmet dependency or missing capability). ERROR means the\ngrader crashed or its evidence was malformed; the policy fails ERROR closed.",
+      "enum": [
+        "pass",
+        "fail",
+        "skip",
+        "error"
+      ],
+      "title": "CheckStatus",
+      "type": "string"
+    },
+    "JudgePin": {
+      "additionalProperties": false,
+      "description": "Pinned judge configuration. Required iff `capabilities.llm_judged`.\n\nThe pin lives in the manifest, not the rubric object: `LLMJudge.state_dict()` does\nnot serialize model/version/params, so validation checks the declared pin.",
+      "properties": {
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "version"
+      ],
+      "title": "JudgePin",
+      "type": "object"
+    },
+    "Lane": {
+      "description": "Who runs a check.\n\nLOCAL checks run in the author's `openenv validate`. HUB checks are operator-run\nand are never referenced in local reports \u2014 an author is never shown a check they\ncannot red-to-green.",
+      "enum": [
+        "local",
+        "hub"
+      ],
+      "title": "Lane",
+      "type": "string"
+    },
+    "Level": {
+      "description": "Validation levels, ordered by cost budget.\n\nSTATISTICAL is reserved: its check ids exist in the report schema and severity\npolicy, but no local implementation ships in this repo.",
+      "enum": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "title": "Level",
+      "type": "integer"
+    },
+    "NetworkPolicy": {
+      "additionalProperties": false,
+      "description": "Declared network posture, following the Harbor `task.toml` (schema 1.4)\n`network_mode` precedent.\n\nAttributes:\n    mode (`str`, *optional*, defaults to `\"public\"`):\n        `\"public\"` (egress allowed \u2014 the default), `\"no-network\"`, or\n        `\"allowlist\"`.\n    allowed_hosts (`list[str]`, *optional*):\n        Permitted destinations (exact hostnames, CIDR ranges, wildcards).\n        Only valid with mode `\"allowlist\"`.",
+      "properties": {
+        "allowed_hosts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Hosts",
+          "type": "array"
+        },
+        "mode": {
+          "default": "public",
+          "enum": [
+            "public",
+            "no-network",
+            "allowlist"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "NetworkPolicy",
+      "type": "object"
+    },
+    "NormalizedManifest": {
+      "additionalProperties": false,
+      "description": "The one document every grader reads. Produced only by parsers.\n\nAfter a parser returns this, the package format has left the pipeline: `signature`\nis provenance for the report and nothing else.",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/CapabilitiesSpec"
+        },
+        "judge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JudgePin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "manifest_schema_version": {
+          "const": "1",
+          "title": "Manifest Schema Version",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "network": {
+          "$ref": "#/$defs/NetworkPolicy"
+        },
+        "resources": {
+          "$ref": "#/$defs/ResourceDeclaration"
+        },
+        "reward": {
+          "$ref": "#/$defs/RewardDeclaration"
+        },
+        "signature": {
+          "$ref": "#/$defs/SignatureKind"
+        },
+        "task_distribution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskDistributionPin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "types": {
+          "$ref": "#/$defs/TypeSpec"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "manifest_schema_version",
+        "name",
+        "signature",
+        "reward",
+        "resources",
+        "capabilities",
+        "types"
+      ],
+      "title": "NormalizedManifest",
+      "type": "object"
+    },
+    "OracleDeclaration": {
+      "additionalProperties": false,
+      "description": "How the package demonstrates max reward.\n\nAttributes:\n    form (`str`):\n        `\"injected_state\"` (preferred \u2014 most deterministic; requires the\n        `set_state` capability) or `\"script\"` (Harbor `solution/solve.sh`\n        precedent, executed inside the sandbox).\n    location (`str`):\n        Package-relative path to the oracle artifact; containment-checked.",
+      "properties": {
+        "form": {
+          "enum": [
+            "injected_state",
+            "script"
+          ],
+          "title": "Form",
+          "type": "string"
+        },
+        "location": {
+          "title": "Location",
+          "type": "string"
+        }
+      },
+      "required": [
+        "form",
+        "location"
+      ],
+      "title": "OracleDeclaration",
+      "type": "object"
+    },
+    "ResourceDeclaration": {
+      "additionalProperties": false,
+      "description": "Declared resource budget; measured usage must fall within it (#778 test #10).\n\nGPU needs are declarations, not disqualifiers: a package declaring `gpus`\nvalidates on a sandbox provider with the GPU capability; on providers without\nit, runtime+ checks SKIP with the capability named.",
+      "properties": {
+        "cpu": {
+          "exclusiveMinimum": 0.0,
+          "title": "Cpu",
+          "type": "number"
+        },
+        "disk_mb": {
+          "exclusiveMinimum": 0,
+          "title": "Disk Mb",
+          "type": "integer"
+        },
+        "episode_timeout_s": {
+          "exclusiveMinimum": 0.0,
+          "title": "Episode Timeout S",
+          "type": "number"
+        },
+        "gpu_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Gpu Types",
+          "type": "array"
+        },
+        "gpus": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Gpus",
+          "type": "integer"
+        },
+        "memory_mb": {
+          "exclusiveMinimum": 0,
+          "title": "Memory Mb",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cpu",
+        "memory_mb",
+        "disk_mb",
+        "episode_timeout_s"
+      ],
+      "title": "ResourceDeclaration",
+      "type": "object"
+    },
+    "RewardDeclaration": {
+      "additionalProperties": false,
+      "description": "Author-declared reward contract. Graders normalize measurements against it.\n\nDeclared tolerances are bounded by the severity policy; reports carry the declared\nvalues so hubs can apply stricter ceilings.\n\nAttributes:\n    range (`tuple[float, float]`):\n        Declared reward range, defaults to `(0.0, 1.0)`. Must be strictly increasing.\n    oracle_tolerance (`float`):\n        The oracle check passes when `reward(oracle) >= max - oracle_tolerance`.\n    floor_margin (`float`):\n        The gap check requires `max - measured_floor >= floor_margin`.\n    variance_tolerance (`float`, *optional*):\n        Required iff the environment declares `llm_judged`; bounds reward variance\n        for variance-mode determinism checks.",
+      "properties": {
+        "floor_margin": {
+          "minimum": 0.0,
+          "title": "Floor Margin",
+          "type": "number"
+        },
+        "oracle_tolerance": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Oracle Tolerance",
+          "type": "number"
+        },
+        "range": {
+          "default": [
+            0.0,
+            1.0
+          ],
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Range",
+          "type": "array"
+        },
+        "variance_tolerance": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Variance Tolerance"
+        }
+      },
+      "required": [
+        "floor_margin"
+      ],
+      "title": "RewardDeclaration",
+      "type": "object"
+    },
+    "SignatureKind": {
+      "description": "Recognized package formats, named by their well-known file.\n\nA manifest's signature is provenance for the report only \u2014 no grader, core or\nthird-party, may branch on it.",
+      "enum": [
+        "openenv.yaml",
+        "task.toml",
+        "task.md"
+      ],
+      "title": "SignatureKind",
+      "type": "string"
+    },
+    "TaskDistributionPin": {
+      "additionalProperties": false,
+      "description": "Pins for generated or externally sourced task distributions (#778 test #42).",
+      "properties": {
+        "dataset_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dataset Version"
+        },
+        "generator_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Generator Model"
+        },
+        "generator_seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Generator Seed"
+        }
+      },
+      "title": "TaskDistributionPin",
+      "type": "object"
+    },
+    "TypeSpec": {
+      "additionalProperties": false,
+      "description": "Type tags; these select domain graders.\n\nBare tags are shared (`swe`); prefixed tags are hub-scoped (`hf:agentic-swe`).\npass@k comparisons are valid only within a tag.",
+      "properties": {
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tags"
+      ],
+      "title": "TypeSpec",
+      "type": "object"
+    },
+    "Verdict": {
+      "description": "Overall outcome of a validation run. WARN means only warn/advisory findings.",
+      "enum": [
+        "pass",
+        "warn",
+        "fail"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    },
+    "VerifierBinding": {
+      "additionalProperties": false,
+      "description": "How \"evaluate this state\" is invoked.\n\nAttributes:\n    kind (`str`):\n        `\"reward_channel\"` (served reward) or `\"script\"` (Harbor-style\n        `tests/test.sh`).\n    entry (`str`, *optional*):\n        Script path; required when `kind == \"script\"`, forbidden otherwise.",
+      "properties": {
+        "entry": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entry"
+        },
+        "kind": {
+          "enum": [
+            "reward_channel",
+            "script"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "VerifierBinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One report per validation run, maximum information per run.\n\nPin `policy_version` and a local run reproduces the hub verdict, modulo hub-lane\nchecks.\n\n`manifest` is `None` only when the package's declarations failed the manifest\nschema. The report then carries the `static.manifest` FAIL explaining why.",
+  "properties": {
+    "lane": {
+      "$ref": "#/$defs/Lane"
+    },
+    "levels_run": {
+      "items": {
+        "$ref": "#/$defs/Level"
+      },
+      "title": "Levels Run",
+      "type": "array"
+    },
+    "manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NormalizedManifest"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "policy_version": {
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "report_schema_version": {
+      "const": "1",
+      "title": "Report Schema Version",
+      "type": "string"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/CheckResult"
+      },
+      "title": "Results",
+      "type": "array"
+    },
+    "signature": {
+      "$ref": "#/$defs/SignatureKind"
+    },
+    "source_digest": {
+      "title": "Source Digest",
+      "type": "string"
+    },
+    "target": {
+      "title": "Target",
+      "type": "string"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict"
+    }
+  },
+  "required": [
+    "report_schema_version",
+    "target",
+    "source_digest",
+    "signature",
+    "manifest",
+    "policy_version",
+    "lane",
+    "levels_run",
+    "results",
+    "verdict"
+  ],
+  "title": "ValidationReport",
+  "type": "object"
+}

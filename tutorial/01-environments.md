@@ -12,8 +12,8 @@
 
 That's OpenEnv. Type-safe. Isolated. Production-ready. 🎯
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/meta-pytorch/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb)
-[![GitHub](https://img.shields.io/badge/GitHub-meta--pytorch%2FOpenEnv-blue?logo=github)](https://github.com/meta-pytorch/OpenEnv)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb)
+[![GitHub](https://img.shields.io/badge/GitHub-huggingface%2FOpenEnv-blue?logo=github)](https://github.com/huggingface/OpenEnv)
 [![License](https://img.shields.io/badge/License-BSD%203--Clause-green.svg)](https://opensource.org/licenses/BSD-3-Clause)
 [![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
 
@@ -245,8 +245,8 @@ Think of it like this: You don't run your database in the same process as your w
 │                                                            │
 └─────────────────┬──────────────────────────────────────────┘
                   │
-                  │  HTTP/JSON (Language-Agnostic)
-                  │  POST /reset, POST /step, GET /state
+                  │  OpenEnv protocol over WebSocket
+                  │  (persistent session, language-agnostic)
                   │
 ┌─────────────────▼──────────────────────────────────────────┐
 │  DOCKER CONTAINER                                          │
@@ -262,15 +262,17 @@ Think of it like this: You don't run your database in the same process as your w
 ```
 
 !!! info "Key Insight"
-    You never see HTTP details - just clean Python methods!
+    You never see the wire protocol - just clean Python methods!
 
     ```python
-    env.reset()    # Under the hood: HTTP POST to /reset
-    env.step(...)  # Under the hood: HTTP POST to /step
-    env.state()    # Under the hood: HTTP GET to /state
+    await env.reset()    # Under the hood: a reset message over WebSocket
+    await env.step(...)  # Under the hood: a step message over WebSocket
+    await env.state()    # Under the hood: a state message over WebSocket
     ```
 
-    The magic? OpenEnv handles all the plumbing. You focus on RL! ✨
+    In a notebook you can `await` directly; in a plain script, the same calls
+    block automatically. The magic? OpenEnv handles all the plumbing. You focus
+    on RL! ✨
 
 ---
 
@@ -292,7 +294,7 @@ except ImportError:
 
 if IN_COLAB:
     print("\n📦 Cloning OpenEnv repository...")
-    !git clone https://github.com/meta-pytorch/OpenEnv.git > /dev/null 2>&1
+    !git clone https://github.com/huggingface/OpenEnv.git > /dev/null 2>&1
     %cd OpenEnv
     
     print("📚 Installing dependencies (this takes ~10 seconds)...")
@@ -332,7 +334,7 @@ src/envs/your_env/
 │                           (Action, Observation, State)
 │
 ├── 📱 client.py          ← What YOU import
-│                           (HTTPEnvClient implementation)
+│                           (EnvClient implementation)
 │
 └── 🖥️  server/
     ├── environment.py    ← Game/simulation logic
@@ -343,94 +345,32 @@ src/envs/your_env/
 Let's explore the actual OpenEnv code to see how this works:
 
 ```python
-# Import OpenEnv's core abstractions
-from core.env_server import Environment, Action, Observation, State
-from core.http_env_client import HTTPEnvClient
-
-print("="*70)
-print("   🧩 OPENENV CORE ABSTRACTIONS")
-print("="*70)
-
-print("""
-🖥️  SERVER SIDE (runs in Docker):
-
-    class Environment(ABC):
-        '''Base class for all environment implementations'''
-        
-        @abstractmethod
-        def reset(self) -> Observation:
-            '''Start new episode'''
-        
-        @abstractmethod
-        def step(self, action: Action) -> Observation:
-            '''Execute action, return observation'''
-        
-        @property
-        def state(self) -> State:
-            '''Get episode metadata'''
-
-📱 CLIENT SIDE (your training code):
-
-    class HTTPEnvClient(ABC):
-        '''Base class for HTTP clients'''
-        
-        def reset(self) -> StepResult:
-            # HTTP POST /reset
-        
-        def step(self, action) -> StepResult:
-            # HTTP POST /step
-        
-        def state(self) -> State:
-            # HTTP GET /state
-""")
-
-print("="*70)
-print("\n✨ Same interface on both sides - communication via HTTP!")
-print("🎯 You focus on RL, OpenEnv handles the infrastructure.\n")
+from openenv.core.env_client import EnvClient
+from openenv.core.env_server.interfaces import Environment
+from openenv.core.env_server.types import Action, Observation, State
 ```
 
-**Output:**
+Server side:
+
+```python
+class YourEnvironment(Environment[Action, Observation, State]):
+    def reset(self, seed=None, episode_id=None, **kwargs) -> Observation:
+        ...
+
+    def step(self, action: Action, timeout_s=None, **kwargs) -> Observation:
+        ...
 ```
-======================================================================
-   🧩 OPENENV CORE ABSTRACTIONS
-======================================================================
 
-🖥️  SERVER SIDE (runs in Docker):
+Client side:
 
-    class Environment(ABC):
-        '''Base class for all environment implementations'''
-        
-        @abstractmethod
-        def reset(self) -> Observation:
-            '''Start new episode'''
-        
-        @abstractmethod
-        def step(self, action: Action) -> Observation:
-            '''Execute action, return observation'''
-        
-        @property
-        def state(self) -> State:
-            '''Get episode metadata'''
-
-📱 CLIENT SIDE (your training code):
-
-    class HTTPEnvClient(ABC):
-        '''Base class for HTTP clients'''
-        
-        def reset(self) -> StepResult:
-            # HTTP POST /reset
-        
-        def step(self, action) -> StepResult:
-            # HTTP POST /step
-        
-        def state(self) -> State:
-            # HTTP GET /state
-
-======================================================================
-
-✨ Same interface on both sides - communication via HTTP!
-🎯 You focus on RL, OpenEnv handles the infrastructure.
+```python
+class YourEnv(EnvClient[Action, Observation, State]):
+    ...
 ```
+
+The environment implements the game or simulation logic. The client maintains the session and exposes the same `reset()`, `step()`, and `state()` flow to your training code.
+
+Same interface on both sides, with OpenEnv handling the transport and session management for you.
 
 ---
 
@@ -453,95 +393,44 @@ We've wrapped **6 OpenSpiel games** following the OpenEnv pattern:
 
 This shows how OpenEnv can wrap **any** existing RL library!
 
+The client (`envs/openspiel_env/client.py`) inherits from `EnvClient` and declares how actions and observations cross the wire:
+
 ```python
-from envs.openspiel_env.client import OpenSpielEnv
-
-print("="*70)
-print("   🔌 HOW OPENENV WRAPS OPENSPIEL")
-print("="*70)
-
-print("""
-class OpenSpielEnv(HTTPEnvClient[OpenSpielAction, OpenSpielObservation]):
-    
+class OpenSpielEnv(EnvClient[OpenSpielAction, OpenSpielObservation, OpenSpielState]):
     def _step_payload(self, action: OpenSpielAction) -> dict:
-        '''Convert typed action to JSON for HTTP'''
+        """Convert typed action to JSON for the step message."""
         return {
             "action_id": action.action_id,
             "game_name": action.game_name,
+            "game_params": action.game_params,
         }
-    
+
     def _parse_result(self, payload: dict) -> StepResult:
-        '''Parse HTTP JSON response into typed observation'''
+        """Parse the server response into a typed observation."""
         return StepResult(
             observation=OpenSpielObservation(...),
-            reward=payload['reward'],
-            done=payload['done']
+            reward=payload["reward"],
+            done=payload["done"],
         )
 
-""")
-
-print("─" * 70)
-print("\n✨ Usage (works for ALL OpenEnv environments):")
-print("""
-  env = OpenSpielEnv(base_url="http://localhost:8000")
-  
-  result = env.reset()
-  # Returns StepResult[OpenSpielObservation] - Type safe!
-  
-  result = env.step(OpenSpielAction(action_id=2, game_name="catch"))
-  # Type checker knows this is valid!
-  
-  state = env.state()
-  # Returns OpenSpielState
-""")
-
-print("─" * 70)
-print("\n🎯 This pattern works for ANY environment you want to wrap!\n")
+    def _parse_state(self, payload: dict) -> OpenSpielState:
+        """Parse the server response into a typed state."""
+        return OpenSpielState(...)
 ```
 
-**Output:**
+Usage is the same as any OpenEnv environment. In a plain script, these calls
+block automatically (in a notebook you can `await` the same client directly
+instead):
+
+```python
+env = OpenSpielEnv(base_url="http://localhost:8000")
+
+result = env.reset()                                                # StepResult[OpenSpielObservation]
+result = env.step(OpenSpielAction(action_id=2, game_name="catch"))
+state = env.state()                                                 # OpenSpielState
 ```
-======================================================================
-   🔌 HOW OPENENV WRAPS OPENSPIEL
-======================================================================
 
-class OpenSpielEnv(HTTPEnvClient[OpenSpielAction, OpenSpielObservation]):
-    
-    def _step_payload(self, action: OpenSpielAction) -> dict:
-        '''Convert typed action to JSON for HTTP'''
-        return {
-            "action_id": action.action_id,
-            "game_name": action.game_name,
-        }
-    
-    def _parse_result(self, payload: dict) -> StepResult:
-        '''Parse HTTP JSON response into typed observation'''
-        return StepResult(
-            observation=OpenSpielObservation(...),
-            reward=payload['reward'],
-            done=payload['done']
-        )
-
-
-──────────────────────────────────────────────────────────────────────
-
-✨ Usage (works for ALL OpenEnv environments):
-
-  env = OpenSpielEnv(base_url="http://localhost:8000")
-  
-  result = env.reset()
-  # Returns StepResult[OpenSpielObservation] - Type safe!
-  
-  result = env.step(OpenSpielAction(action_id=2, game_name="catch"))
-  # Type checker knows this is valid!
-  
-  state = env.state()
-  # Returns OpenSpielState
-
-──────────────────────────────────────────────────────────────────────
-
-🎯 This pattern works for ANY environment you want to wrap!
-```
+This pattern works for any environment you want to wrap.
 
 ### Type-Safe Models
 
@@ -552,7 +441,6 @@ from envs.openspiel_env.models import (
     OpenSpielObservation,
     OpenSpielState
 )
-from dataclasses import fields
 
 print("="*70)
 print("   🎮 OPENSPIEL INTEGRATION - TYPE-SAFE MODELS")
@@ -560,18 +448,18 @@ print("="*70)
 
 print("\n📤 OpenSpielAction (what you send):")
 print("   " + "─" * 64)
-for field in fields(OpenSpielAction):
-    print(f"   • {field.name:20s} : {field.type}")
+for name, field in OpenSpielAction.model_fields.items():
+    print(f"   • {name:20s} : {field.annotation}")
 
 print("\n📥 OpenSpielObservation (what you receive):")
 print("   " + "─" * 64)
-for field in fields(OpenSpielObservation):
-    print(f"   • {field.name:20s} : {field.type}")
+for name, field in OpenSpielObservation.model_fields.items():
+    print(f"   • {name:20s} : {field.annotation}")
 
 print("\n📊 OpenSpielState (episode metadata):")
 print("   " + "─" * 64)
-for field in fields(OpenSpielState):
-    print(f"   • {field.name:20s} : {field.type}")
+for name, field in OpenSpielState.model_fields.items():
+    print(f"   • {name:20s} : {field.annotation}")
 
 print("\n" + "="*70)
 print("\n💡 Type safety means:")
@@ -626,13 +514,13 @@ print("   ✅ Self-documenting code\n")
 
 ### How the Client Works
 
-The client **inherits from HTTPEnvClient** and implements 3 methods:
+The client **inherits from `EnvClient`** and implements 3 methods:
 
 1. `_step_payload()` - Convert action → JSON
 2. `_parse_result()` - Parse JSON → typed observation  
 3. `_parse_state()` - Parse JSON → state
 
-That's it! The base class handles all HTTP communication.
+That's it! The base class handles all the async WebSocket communication.
 
 ---
 
@@ -704,28 +592,27 @@ from envs.openspiel_env.models import (
     OpenSpielObservation,
     OpenSpielState
 )
-from dataclasses import fields
 
 print("🎮 " + "="*64 + " 🎮")
 print("   ✅ Importing Real OpenSpiel Environment!")
 print("🎮 " + "="*64 + " 🎮\n")
 
 print("📦 What we just imported:")
-print("   • OpenSpielEnv - HTTP client for OpenSpiel games")
+print("   • OpenSpielEnv - EnvClient for OpenSpiel games")
 print("   • OpenSpielAction - Type-safe actions")
 print("   • OpenSpielObservation - Type-safe observations")
 print("   • OpenSpielState - Episode metadata\n")
 
 print("📋 OpenSpielObservation fields:")
 print("   " + "─" * 60)
-for field in fields(OpenSpielObservation):
-    print(f"   • {field.name:25s} : {field.type}")
+for name, field in OpenSpielObservation.model_fields.items():
+    print(f"   • {name:25s} : {field.annotation}")
 
 print("\n" + "="*70)
 print("\n💡 This is REAL OpenEnv code - used in production!")
 print("   • Wraps 6 OpenSpiel games (Catch, Tic-Tac-Toe, Poker, etc.)")
 print("   • Type-safe actions and observations")
-print("   • Works via HTTP (we'll see that next!)\n")
+print("   • Talks to the server over WebSocket (we'll see that next!)\n")
 ```
 
 **Output:**
@@ -735,7 +622,7 @@ print("   • Works via HTTP (we'll see that next!)\n")
 🎮 ================================================================ 🎮
 
 📦 What we just imported:
-   • OpenSpielEnv - HTTP client for OpenSpiel games
+   • OpenSpielEnv - EnvClient for OpenSpiel games
    • OpenSpielAction - Type-safe actions
    • OpenSpielObservation - Type-safe observations
    • OpenSpielState - Episode metadata
@@ -756,7 +643,7 @@ print("   • Works via HTTP (we'll see that next!)\n")
 💡 This is REAL OpenEnv code - used in production!
    • Wraps 6 OpenSpiel games (Catch, Tic-Tac-Toe, Poker, etc.)
    • Type-safe actions and observations
-   • Works via HTTP (we'll see that next!)
+   • Talks to the server over WebSocket (we'll see that next!)
 ```
 
 ---
@@ -891,7 +778,7 @@ print("   • Work with ANY OpenSpiel game that exposes these!\n")
 
 Let's run **50 episodes** for each policy against **REAL OpenSpiel** and see who wins!
 
-This is production code - every action is an HTTP call to the OpenSpiel server!
+This is production code - every action is a WebSocket message to the OpenSpiel server!
 
 ```python
 def evaluate_policies(env, num_episodes=50):
@@ -940,7 +827,7 @@ def evaluate_policies(env, num_episodes=50):
     print("   • Learning (~85%):    Improves over time 📈")
     print("\n🎓 This is Reinforcement Learning + OpenEnv in action:")
     print("   1. We USED existing OpenSpiel environment (didn't build it)")
-    print("   2. Type-safe communication over HTTP")
+    print("   2. Type-safe communication over WebSocket")
     print("   3. Same code works for ANY OpenSpiel game")
     print("   4. Production-ready architecture\n")
 
@@ -961,10 +848,10 @@ In Parts 6-8, we **USED** the existing OpenSpiel Catch environment:
 |-------------|--------------|
 | **Imported** | OpenSpielEnv client (pre-built) |
 | **Started** | OpenSpiel server via uvicorn |
-| **Connected** | HTTP client to server |
+| **Connected** | Async client over WebSocket |
 | **Played** | Real OpenSpiel Catch game |
 
-**🎯 This is production code!** Every action was an HTTP call to a real OpenSpiel environment.
+**🎯 This is production code!** Every action was a WebSocket message to a real OpenSpiel environment.
 
 ### 🎮 6 Games Available - Same Interface!
 
@@ -1027,79 +914,88 @@ Want to wrap your own environment in OpenEnv? Here's how:
 
 ### Step 1: Define Types (`models.py`)
 
+Actions, observations, and state are **Pydantic models**. The base classes already
+provide the common fields — `Observation` has `done`, `reward`, `metadata`, and
+`State` has `episode_id`, `step_count` — so you only add what's specific to your env.
+
 ```python
-from dataclasses import dataclass
-from core.env_server import Action, Observation, State
+from typing import List
+from openenv.core.env_server import Action, Observation, State
+from pydantic import Field
 
-@dataclass
 class YourAction(Action):
-    action_value: int
-    # Add your action fields
+    action_value: int  # add your action fields
 
-@dataclass
 class YourObservation(Observation):
-    state_data: List[float]
-    done: bool
-    reward: float
-    # Add your observation fields
+    # `done`, `reward`, and `metadata` are inherited from Observation
+    state_data: List[float]  # add your observation fields
 
-@dataclass
 class YourState(State):
-    episode_id: str
-    step_count: int
-    # Add your state fields
+    # `episode_id` and `step_count` are inherited from State
+    score: int = 0  # add your state fields
 ```
 
 ### Step 2: Implement Environment (`server/environment.py`)
 
 ```python
-from core.env_server import Environment
+from openenv.core.env_server import Environment
 
 class YourEnvironment(Environment):
-    def reset(self) -> Observation:
+    def reset(self, seed=None, episode_id=None, **kwargs) -> YourObservation:
         # Initialize your game/simulation
         return YourObservation(...)
-    
-    def step(self, action: Action) -> Observation:
+
+    def step(self, action, **kwargs) -> YourObservation:
         # Execute action, update state
         return YourObservation(...)
-    
+
     @property
-    def state(self) -> State:
+    def state(self) -> YourState:
         return self._state
 ```
 
 ### Step 3: Create Client (`client.py`)
 
-```python
-from core.http_env_client import HTTPEnvClient
-from core.types import StepResult
+The client subclasses `EnvClient` and implements 3 hooks. Callers can `await`
+`reset()`/`step()`/`state()` in async contexts, or call them directly from
+synchronous scripts.
 
-class YourEnv(HTTPEnvClient[YourAction, YourObservation]):
+```python
+from openenv.core.env_client import EnvClient
+from openenv.core.client_types import StepResult
+
+class YourEnv(EnvClient[YourAction, YourObservation, YourState]):
     def _step_payload(self, action: YourAction) -> dict:
-        """Convert action to JSON"""
+        """Convert action to the JSON step message."""
         return {"action_value": action.action_value}
-    
+
     def _parse_result(self, payload: dict) -> StepResult:
-        """Parse JSON to observation"""
+        """Parse the server response into a typed observation."""
         return StepResult(
             observation=YourObservation(...),
             reward=payload['reward'],
             done=payload['done']
         )
-    
+
     def _parse_state(self, payload: dict) -> YourState:
         return YourState(...)
 ```
 
 ### Step 4: Create Server (`server/app.py`)
 
+Pass the environment **class** (a factory) plus the action and observation types.
+OpenEnv builds the WebSocket + HTTP endpoints for you.
+
 ```python
-from core.env_server import create_fastapi_app
+from openenv.core.env_server import create_app
 from .your_environment import YourEnvironment
 
-env = YourEnvironment()
-app = create_fastapi_app(env)
+app = create_app(
+    YourEnvironment,
+    YourAction,
+    YourObservation,
+    env_name="your_env",
+)
 
 # That's it! OpenEnv creates all endpoints for you.
 ```
@@ -1159,7 +1055,7 @@ OpenEnv includes 3 complete examples:
 
 - Client-server separation
 - Type-safe contracts
-- HTTP communication layer
+- WebSocket communication layer
 
 ✅ **Production Patterns**
 
@@ -1182,7 +1078,7 @@ OpenEnv includes 3 complete examples:
 
 - Define type-safe models
 - Implement Environment class
-- Create HTTPEnvClient
+- Subclass EnvClient
 
 ✅ **Testing & Debugging**
 
@@ -1221,7 +1117,7 @@ OpenEnv includes 3 complete examples:
 
 ### 🔗 Essential Links
 
-- **🏠 OpenEnv GitHub**: https://github.com/meta-pytorch/OpenEnv
+- **🏠 OpenEnv GitHub**: https://github.com/huggingface/OpenEnv
 - **🎮 OpenSpiel**: https://github.com/google-deepmind/open_spiel
 - **⚡ FastAPI Docs**: https://fastapi.tiangolo.com/
 - **🐳 Docker Guide**: https://docs.docker.com/get-started/
@@ -1232,19 +1128,30 @@ OpenEnv includes 3 complete examples:
 - **Environment Creation Guide**: `src/envs/README.md`
 - **OpenSpiel Integration**: `src/envs/openspiel_env/README.md`
 - **Example Scripts**: `examples/`
-- **RFC 001**: [Baseline API Specs](https://github.com/meta-pytorch/OpenEnv/pull/26)
+- **RFC 001**: [Baseline API Specs](https://github.com/huggingface/OpenEnv/pull/26)
 
 ### 🎓 Community & Support
 
-**Supported by amazing organizations:**
+**Openly governed by a technical committee including:**
 
 - 🔥 Meta PyTorch
+- 🌟 Reflection
+- ⚡ Unsloth
+- ☁️ Modal
+- 🧠 Prime Intellect
+- 🟢 Nvidia
+- 💼 Mercor
+- 🚀 Fleet AI
+- 🪟 Microsoft
 - 🤗 Hugging Face
-- ⚡ Unsloth AI
-- 🌟 Reflection AI
+
+**Supported by amazing organizations and contributors.**
+
 - 🚀 And many more!
 
-**License**: BSD 3-Clause (very permissive!)
+Technical direction, RFCs, and release planning are coordinated in public through the OpenEnv repository.
+
+**License**: BSD 3-Clause License
 
 **Contributions**: Always welcome! Check out the issues tab.
 
@@ -1257,4 +1164,3 @@ OpenEnv includes 3 complete examples:
 3. 🎮 **Explore** other OpenSpiel games
 4. 🛠️ **Build** your own environment integration
 5. 💬 **Share** what you build with the community!
-

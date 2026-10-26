@@ -1,13 +1,10 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Utility functions for OpenEnv core."""
 
 import asyncio
 import concurrent.futures
+import re
 
 
 def run_async_safely(coro):
@@ -57,3 +54,20 @@ def convert_to_ws_url(url: str) -> str:
     elif not ws_url.startswith("ws://") and not ws_url.startswith("wss://"):
         ws_url = "ws://" + ws_url
     return ws_url
+
+
+def hf_space_subdomain(repo_id: str) -> str:
+    """
+    Convert a Hugging Face Space repo ID to its subdomain / registry name.
+
+    The Hub lowercases the repo ID and replaces every character outside
+    ``[a-z0-9]`` with ``-`` (e.g. ``openenv/echo_env`` is served at
+    ``openenv-echo-env.hf.space`` and ``registry.hf.space/openenv-echo-env``).
+
+    Args:
+        repo_id: Space repo ID in ``owner/name`` form.
+
+    Returns:
+        The Space subdomain.
+    """
+    return re.sub(r"[^a-z0-9]", "-", repo_id.lower())

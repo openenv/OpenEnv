@@ -67,17 +67,18 @@ class Connect4Env(EnvClient[Connect4Action, Connect4Observation, Connect4State])
         obs_data = payload.get("observation", {})
 
         observation = Connect4Observation(
-            board=obs_data.get("board", [[0]*7 for _ in range(6)]),
+            board=obs_data.get("board", [[0] * 7 for _ in range(6)]),
             legal_actions=obs_data.get("legal_actions", []),
             done=payload.get("done", False),
             reward=payload.get("reward", 0.0),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
 
         return StepResult(
             observation=observation,
             reward=payload.get("reward", 0.0),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict[str, Any]) -> Connect4State:
@@ -92,7 +93,7 @@ class Connect4Env(EnvClient[Connect4Action, Connect4Observation, Connect4State])
         """
         return Connect4State(
             episode_id=payload.get("episode_id", ""),
-            board=payload.get("board", [[0]*7 for _ in range(6)]),
+            board=payload.get("board", [[0] * 7 for _ in range(6)]),
             next_player=payload.get("next_player", 1),
             step_count=payload.get("step_count", 0),
         )

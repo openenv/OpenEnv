@@ -21,7 +21,7 @@ sed_inplace() {
 }
 
 # Replace ARG with hardcoded FROM using the special OpenSpiel base
-sed_inplace 's|ARG OPENSPIEL_BASE_IMAGE=.*|FROM ghcr.io/meta-pytorch/openenv-openspiel-base:sha-e622c7e|g' "$DOCKERFILE_PATH"
+sed_inplace 's|ARG OPENSPIEL_BASE_IMAGE=.*|FROM ghcr.io/huggingface/openenv-openspiel-base:latest|g' "$DOCKERFILE_PATH"
 sed_inplace '/^FROM \${OPENSPIEL_BASE_IMAGE}/d' "$DOCKERFILE_PATH"
 
 echo "OpenSpiel: Modified Dockerfile to use GHCR OpenSpiel base image"

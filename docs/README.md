@@ -1,30 +1,55 @@
-# OpenEnv docs workflow
+# Building the Docs Locally
 
-Use this guide to preview and build the MkDocs site that lives under `docs/`.
+The documentation is built with [HF doc-builder](https://github.com/huggingface/doc-builder).
 
-## 1. Install dependencies
+## Prerequisites
 
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install mkdocs-material mkdocs-include-markdown-plugin "mkdocstrings[python]" pymdown-extensions
-```
+- Python 3.11+
+- Node.js 18+
 
-The packages mirror what the GitHub Pages workflow installs, so local builds match CI.
+## Setup
 
-## 2. Run the live preview server
+Install the package and doc-builder:
 
 ```bash
-mkdocs serve --config-file docs/mkdocs.yml
+pip install -e ".[core,cli]"
+pip install hf-doc-builder watchdog
 ```
 
-The site is served at `http://127.0.0.1:8000/` with automatic reloads whenever files in `docs/` or `docs/mkdocs.yml` change.
+## Preview
 
-## 3. Produce the production build
+From the repo root:
 
 ```bash
-mkdocs build --config-file docs/mkdocs.yml --clean --site-dir site
+doc-builder preview openenv docs/source
 ```
 
-This regenerates the static HTML into `site/`, matching `.github/workflows/docs.yml`. Inspect the output locally.
+Then open the URL printed in the terminal and navigate to `/index` (usually `http://localhost:5173/index`).
 
+## Adding an Environment to the Docs
+
+Every environment page is generated from the environment's own `README.md`. There are three steps:
+
+### 1. Write the environment README
+
+Your environment must have a `README.md` at `envs/<name>/README.md`.
+
+### 2. Generate the doc stub
+
+Run the sync script from the repo root to create or refresh the stub:
+
+```bash
+python scripts/sync_env_docs.py --fix
+```
+
+This inlines the README content into `docs/source/environments/<slug>.md`.
+To check if stubs are in sync without modifying files:
+
+```bash
+python scripts/sync_env_docs.py --check
+```
+
+### 3. Add a card and toctree entry
+
+- Add an HTML card in `docs/source/environments.md`
+- Add a `local: environments/<slug>` entry in `docs/source/_toctree.yml`

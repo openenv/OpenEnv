@@ -8,10 +8,10 @@ Action/Observation types for the Git environment with Gitea server.
 
 from __future__ import annotations
 
-from pydantic import Field
 from typing import Optional
 
 from openenv.core.env_server import Action, Observation, State
+from pydantic import Field
 
 
 class GitAction(Action):

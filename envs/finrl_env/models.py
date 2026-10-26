@@ -11,9 +11,8 @@ The FinRL environment wraps FinRL's StockTradingEnv for reinforcement learning
 based stock trading.
 """
 
-from pydantic import Field
-
 from openenv.core.env_server.types import Action, Observation
+from pydantic import Field
 
 
 class FinRLAction(Action):

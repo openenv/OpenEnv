@@ -5,16 +5,19 @@ This module provides a wildfire-specific web interface with visual grid display
 and wildfire-specific features, without modifying the base web_interface.py.
 """
 
-from typing import Optional
 import json
+from typing import Optional
 
 from openenv.core.env_server.types import EnvironmentMetadata
+
 from ..models import WildfireAction
 
 
-def get_wildfire_web_interface_html(metadata: Optional[EnvironmentMetadata] = None) -> str:
+def get_wildfire_web_interface_html(
+    metadata: Optional[EnvironmentMetadata] = None,
+) -> str:
     """Generate custom HTML for the wildfire environment web interface."""
-    
+
     # Prepare README markdown and a simple HTML fallback
     instructions_html = ""
     instructions_json = "null"
@@ -23,7 +26,7 @@ def get_wildfire_web_interface_html(metadata: Optional[EnvironmentMetadata] = No
         instructions_html = _markdown_to_html_simple(metadata.readme_content)
         # Primary: pass raw markdown to the client for proper rendering via marked.js
         instructions_json = json.dumps(metadata.readme_content)
-    
+
     return f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -1061,16 +1064,20 @@ def get_wildfire_web_interface_html(metadata: Optional[EnvironmentMetadata] = No
     </script>
 </body>
 </html>
-    """.replace('{_generate_instructions_section(instructions_html, metadata)}', 
-                _generate_instructions_section(instructions_html, metadata))
+    """.replace(
+        "{_generate_instructions_section(instructions_html, metadata)}",
+        _generate_instructions_section(instructions_html, metadata),
+    )
 
 
-def _generate_instructions_section(instructions_html: str, metadata: Optional[EnvironmentMetadata]) -> str:
+def _generate_instructions_section(
+    instructions_html: str, metadata: Optional[EnvironmentMetadata]
+) -> str:
     """Generate the instructions section."""
     if not instructions_html or not metadata:
-        return ''
-    
-    return f'''
+        return ""
+
+    return f"""
                 <!-- Instructions Section -->
                 <div class="instructions-section">
                     <div class="instructions-header">
@@ -1088,36 +1095,50 @@ def _generate_instructions_section(instructions_html: str, metadata: Optional[En
                         </div>
                     </div>
                 </div>
-    '''
+    """
 
 
 def _markdown_to_html_simple(markdown: str) -> str:
     """Convert basic markdown to HTML."""
     import html
     import re
-    
+
     # Escape HTML first
     html_content = html.escape(markdown)
-    
-    # Convert headers
-    html_content = re.sub(r'^# (.*?)$', r'<h1>\1</h1>', html_content, flags=re.MULTILINE)
-    html_content = re.sub(r'^## (.*?)$', r'<h2>\1</h2>', html_content, flags=re.MULTILINE)
-    html_content = re.sub(r'^### (.*?)$', r'<h3>\1</h3>', html_content, flags=re.MULTILINE)
-    
-    # Convert code blocks
-    html_content = re.sub(r'```(.*?)\n(.*?)\n```', r'<pre><code>\2</code></pre>', html_content, flags=re.DOTALL)
-    html_content = re.sub(r'`([^`]+)`', r'<code>\1</code>', html_content)
-    
-    # Convert bold and italic
-    html_content = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html_content)
-    html_content = re.sub(r'\*(.*?)\*', r'<em>\1</em>', html_content)
-    
-    # Convert lists
-    html_content = re.sub(r'^- (.*?)$', r'<li>\1</li>', html_content, flags=re.MULTILINE)
-    html_content = re.sub(r'(<li>.*</li>)', r'<ul>\1</ul>', html_content, flags=re.DOTALL)
-    
-    # Convert line breaks
-    html_content = html_content.replace('\n', '<br>')
-    
-    return html_content
 
+    # Convert headers
+    html_content = re.sub(
+        r"^# (.*?)$", r"<h1>\1</h1>", html_content, flags=re.MULTILINE
+    )
+    html_content = re.sub(
+        r"^## (.*?)$", r"<h2>\1</h2>", html_content, flags=re.MULTILINE
+    )
+    html_content = re.sub(
+        r"^### (.*?)$", r"<h3>\1</h3>", html_content, flags=re.MULTILINE
+    )
+
+    # Convert code blocks
+    html_content = re.sub(
+        r"```(.*?)\n(.*?)\n```",
+        r"<pre><code>\2</code></pre>",
+        html_content,
+        flags=re.DOTALL,
+    )
+    html_content = re.sub(r"`([^`]+)`", r"<code>\1</code>", html_content)
+
+    # Convert bold and italic
+    html_content = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", html_content)
+    html_content = re.sub(r"\*(.*?)\*", r"<em>\1</em>", html_content)
+
+    # Convert lists
+    html_content = re.sub(
+        r"^- (.*?)$", r"<li>\1</li>", html_content, flags=re.MULTILINE
+    )
+    html_content = re.sub(
+        r"(<li>.*</li>)", r"<ul>\1</ul>", html_content, flags=re.DOTALL
+    )
+
+    # Convert line breaks
+    html_content = html_content.replace("\n", "<br>")
+
+    return html_content

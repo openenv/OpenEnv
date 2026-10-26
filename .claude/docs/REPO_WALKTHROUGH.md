@@ -15,7 +15,7 @@ OpenEnv/
 ├── envs/                     # Example environments (not installed, used via PYTHONPATH)
 ├── tests/                    # Test suite
 ├── examples/                 # Usage examples and tutorials
-├── docs/                     # Documentation (MkDocs)
+├── docs/                     # Documentation (Sphinx)
 ├── rfcs/                     # Design documents and architectural decisions
 ├── scripts/                  # Utility scripts
 │
@@ -35,6 +35,9 @@ src/
 │   │   ├── env_client.py         # EnvClient base class (WebSocket client)
 │   │   ├── client_types.py       # Client-side type definitions
 │   │   ├── utils.py              # Shared utilities
+│   │   │
+│   │   ├── harness/              # Agent protocols and captured trace collection
+│   │   │   └── capture/              # Dialect adapters, session routing, exact tokens, SSE replay
 │   │   │
 │   │   ├── env_server/           # Server-side components
 │   │   │   ├── interfaces.py         # Environment abstract base class
@@ -58,12 +61,37 @@ src/
 │   │       ├── local_python_executor.py  # Python code execution
 │   │       └── git_server_client.py      # Git operations
 │   │
+│   ├── harbor/               # Harbor tasks, harness seams, provider qualification, live UI
+│   │
+│   ├── discovery/            # RFC 011 metadata-only repository catalogs
+│   │   ├── models.py             # Declaration profile and identity invariants
+│   │   ├── repository.py         # Bounded reads from one committed Git tree
+│   │   ├── producer.py           # Inventory, provenance and record generation
+│   │   ├── search.py             # Lexical selection, exact lookup and lifecycle
+│   │   ├── serialization.py      # Complete-snapshot loading and atomic writes
+│   │   └── schemas/              # Packaged versioned JSON schemas
+│   │
+│   ├── validation/           # RFC 008 environment validation contracts
+│   │   ├── types.py              # Shared validation enums and protocol types
+│   │   ├── manifest.py           # Normalized environment manifest models
+│   │   ├── signature.py          # Package signature detection
+│   │   ├── report.py             # Versioned validation report models
+│   │   ├── policy.py             # Severity-policy loading and application
+│   │   ├── runner.py             # Local validation orchestration
+│   │   ├── runtime/              # Bounded plans, launch requests and raw evidence
+│   │   ├── parsers/              # Manifest parser registry
+│   │   ├── providers/            # Validation provider contracts
+│   │   ├── graders/              # Grader registry and protocols
+│   │   ├── policies/             # Versioned severity policies
+│   │   └── schemas/              # Generated JSON schemas
+│   │
 │   └── cli/                  # Command-line interface
 │       ├── __main__.py           # Entry point (`python -m openenv.cli`)
 │       ├── commands/             # CLI subcommands
 │       │   ├── init.py               # `openenv init` - scaffold new env
 │       │   ├── serve.py              # `openenv serve` - run server locally
 │       │   ├── build.py              # `openenv build` - build Docker image
+│       │   ├── catalog.py            # `catalog` and `discover` - metadata only
 │       │   ├── push.py               # `openenv push` - deploy to HF Spaces
 │       │   └── validate.py           # `openenv validate` - check config
 │       └── templates/            # Scaffolding templates
@@ -89,6 +117,8 @@ envs/
 │       ├── echo_environment.py       # Environment implementation
 │       └── Dockerfile                # Container definition
 │
+├── harbor_env/              # Thin Harbor package and trainer session factory
+├── thinkingbox_env/           # Stateful MCP business-workflow benchmark adapter
 ├── coding_env/               # Python code execution environment
 ├── chat_env/                 # Conversational environment
 ├── textarena_env/            # Text-based games (TextArena)
@@ -115,6 +145,7 @@ tests/
 ├── envs/                     # Per-environment integration tests
 │   ├── test_echo_environment.py
 │   ├── test_coding_environment.py
+│   ├── test_thinkingbox_env.py  # Focused wire, fidelity, provenance, and evaluator suite
 │   └── ...
 │
 ├── test_cli/                 # CLI command tests
@@ -160,6 +191,8 @@ rfcs/
 │   │   └── SKILL.md              # Parallel multi-issue batch (Agent Teams)
 │   ├── update-docs/
 │   │   └── SKILL.md              # Fix stale docs after API changes
+│   ├── watch-pr/
+│   │   └── SKILL.md              # Monitor CI + Greptile review after PR
 │   ├── work-on-issue/
 │   │   └── SKILL.md              # Start TDD on a single issue
 │   └── write-tests/
@@ -191,33 +224,50 @@ rfcs/
     ├── delegate-todos.sh         # PostToolUse: TDD workflow reminder on TodoWrite
     ├── after-tester.sh           # SubagentStop: next steps after tester
     ├── after-implementer.sh      # SubagentStop: next steps after implementer
+    ├── ci-wait.sh                # CI polling: block until checks complete or timeout
     └── after-docs-updater.sh     # SubagentStop: next steps after docs-updater
 ```
 
 ## Documentation (`docs/`)
 
-MkDocs-based documentation:
+Sphinx-based documentation:
 
 ```
 docs/
-├── mkdocs.yml                # MkDocs configuration
-├── index.md                  # Home page
-├── quickstart.md             # Getting started guide
-├── core.md                   # Core library documentation
-├── cli.md                    # CLI reference
-├── environment-builder.md    # How to create environments
+├── Makefile                  # Sphinx build targets (html, html-noplot, html-stable)
+├── README.md                 # Local build instructions
 │
-├── environments/             # Per-environment documentation
-│   ├── echo.md
-│   ├── coding.md
-│   └── ...
-│
-├── tutorials/                # Step-by-step guides
-│   ├── openenv-tutorial.md
-│   └── wordle-grpo.md
-│
-└── styles/                   # Custom CSS
+└── source/                   # Sphinx source root
+    ├── conf.py               # Sphinx configuration
+    ├── index.md              # Home page
+    ├── core.md               # Core API reference (autodoc)
+    ├── cli.md                # CLI reference (autodoc)
+    ├── auto_discovery.md     # Auto-discovery API docs
+    ├── customizing-web-ui.md # Web UI customization guide
+    ├── environments.md       # Environments catalog page
+    │
+    ├── environments/         # Per-environment documentation
+    │   ├── echo.md
+    │   ├── coding.md
+    │   ├── thinkingbox.md    # Generated from envs/thinkingbox_env/README.md
+    │   └── ...
+    │
+    ├── getting_started/      # Sphinx Gallery executable tutorials
+    │   ├── plot_01_introduction_quickstart.py
+    │   ├── plot_02_using_environments.py
+    │   ├── plot_03_building_environments.py
+    │   ├── contributing-envs.md
+    │   └── environment-builder.md
+    │
+    ├── tutorials/            # Additional tutorials
+    │   ├── openenv-tutorial.md
+    │   ├── wordle-grpo.md
+    │   └── rl-training-2048.md
+    │
+    └── _static/              # Static assets (versions.json, etc.)
 ```
+
+ThinkingBox examples: `example_usage.py` is a public-client smoke test, while `eval_testlist.py` invokes the packaged evaluator.
 
 ## Key Files to Know
 
@@ -230,3 +280,9 @@ docs/
 | `envs/echo_env/` | Reference implementation - start here |
 | `rfcs/001-abstractions.md` | Core architectural decisions |
 | `.claude/docs/INVARIANTS.md` | Rules that must never be broken |
+
+## Harbor integration
+
+`src/openenv/core/harness/capture/` records inference calls independently of a trainer or tokenizer. `src/openenv/harbor/` runs Harbor tasks, reconciles their trajectories, and exposes the shared training contract through clients and the Gradio playground. `envs/harbor_env/` is the installable environment wrapper. `examples/harbor/nemo_shell_profile/` provides the explicitly qualified NeMo shell workflow.
+
+See `docs/source/guides/harbor-provider-qualification.md` for provider and adapter evidence, `rfcs/012-harbor-capture-providers.md` for explicit evaluation/training and session ownership, and `tests/envs/test_harbor*.py` / `test_capture*.py` for deterministic capture regressions.

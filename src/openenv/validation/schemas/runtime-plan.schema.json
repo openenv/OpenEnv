@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "RuntimeReset": {
+      "additionalProperties": false,
+      "description": "Explicit reset inputs for one measured episode.\n\nAttributes:\n    episode_id (`str`):\n        Requested episode identity; verified by the state contract grader.\n    seed (`int`):\n        Requested seed. Acceptance alone does not establish determinism.\n    options (`dict[str, Any]`, *optional*):\n        Additional public reset arguments, never replacements for the seed or ID.",
+      "properties": {
+        "episode_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Episode Id",
+          "type": "string"
+        },
+        "options": {
+          "additionalProperties": true,
+          "title": "Options",
+          "type": "object"
+        },
+        "seed": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "episode_id",
+        "seed"
+      ],
+      "title": "RuntimeReset",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Bounded, data-only runtime inputs. Capability declarations stay in the manifest.\n\nAttributes:\n    plan_schema_version (`str`):\n        The pinned sidecar schema version, `\"1\"`.\n    reset ([`~openenv.validation.runtime.contracts.RuntimeReset`]):\n        Inputs to the first reset on the measured WebSocket session.\n    actions (`list[dict[str, Any]]`):\n        Between one and 100 public actions, applied in order until termination.",
+  "properties": {
+    "actions": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Actions",
+      "type": "array"
+    },
+    "plan_schema_version": {
+      "const": "1",
+      "title": "Plan Schema Version",
+      "type": "string"
+    },
+    "reset": {
+      "$ref": "#/$defs/RuntimeReset"
+    }
+  },
+  "required": [
+    "plan_schema_version",
+    "reset",
+    "actions"
+  ],
+  "title": "RuntimePlan",
+  "type": "object"
+}

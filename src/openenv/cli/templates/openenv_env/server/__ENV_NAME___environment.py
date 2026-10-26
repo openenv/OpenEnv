@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 __ENV_TITLE_NAME__ Environment Implementation.
@@ -11,12 +7,16 @@ A simple test environment that echoes back messages sent to it.
 Perfect for testing HTTP server infrastructure.
 """
 
+from typing import Any, Optional
 from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
-from models import __ENV_CLASS_NAME__Action, __ENV_CLASS_NAME__Observation
+try:
+    from ..models import __ENV_CLASS_NAME__Action, __ENV_CLASS_NAME__Observation
+except ImportError:
+    from models import __ENV_CLASS_NAME__Action, __ENV_CLASS_NAME__Observation
 
 
 class __ENV_CLASS_NAME__Environment(Environment):
@@ -47,14 +47,27 @@ class __ENV_CLASS_NAME__Environment(Environment):
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._reset_count = 0
 
-    def reset(self) -> __ENV_CLASS_NAME__Observation:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> __ENV_CLASS_NAME__Observation:
         """
         Reset the environment.
+
+        Args:
+            seed: Optional random seed. Seed any randomness in your environment from it.
+            episode_id: Optional episode ID to use. A new UUID is generated if omitted.
+            **kwargs: Additional reset options.
 
         Returns:
             __ENV_CLASS_NAME__Observation with a ready message
         """
-        self._state = State(episode_id=str(uuid4()), step_count=0)
+        self._state = State(
+            episode_id=episode_id if episode_id is not None else str(uuid4()),
+            step_count=0,
+        )
         self._reset_count += 1
 
         return __ENV_CLASS_NAME__Observation(
@@ -79,8 +92,8 @@ class __ENV_CLASS_NAME__Environment(Environment):
         message = action.message
         length = len(message)
 
-        # Simple reward: longer messages get higher rewards
-        reward = length * 0.1
+        # Simple bounded reward: longer messages get higher rewards up to 1.0
+        reward = min(length * 0.1, 1.0)
 
         return __ENV_CLASS_NAME__Observation(
             echoed_message=message,

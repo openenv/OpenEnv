@@ -33,8 +33,8 @@ async with EchoEnv(base_url="https://openenv-echo-env.hf.space") as client:
     result = await client.reset()
     result = await client.step(EchoAction(message="Hello"))
 
-# Sync (using .sync() wrapper):
-with EchoEnv(base_url="https://openenv-echo-env.hf.space").sync() as client:
+# Sync:
+with EchoEnv(base_url="https://openenv-echo-env.hf.space") as client:
     result = client.reset()
     result = client.step(EchoAction(message="Hello"))
 ```
@@ -132,8 +132,8 @@ async def main():
 
 asyncio.run(main())
 
-# For sync usage, use the .sync() wrapper:
-with EchoEnv(base_url="http://localhost:8001").sync() as client:
+# Sync usage:
+with EchoEnv(base_url="http://localhost:8001") as client:
     result = client.reset()
 ```
 
@@ -242,8 +242,8 @@ async def main():
 
 asyncio.run(main())
 
-# Sync usage (using .sync() wrapper)
-with EchoEnv(base_url="http://localhost:8000").sync() as client:
+# Sync usage
+with EchoEnv(base_url="http://localhost:8000") as client:
     result = client.reset()
     result = client.step(EchoAction(message="Hello"))
     print(result.observation)
@@ -345,7 +345,7 @@ my_env/
 │   ├── environment.py   # Your environment logic
 │   └── Dockerfile
 ├── models.py            # Action/Observation types
-├── client.py            # HTTP client
+├── client.py            # Client (EnvClient subclass)
 ├── openenv.yaml         # Manifest
 └── pyproject.toml
 ```
@@ -410,7 +410,7 @@ from echo_env import EchoEnv, EchoAction
 
 # Async (recommended)
 async def main():
-    async with EchoEnv(base_url="http://localhost:8000") as env:
+    async with EchoEnv(base_url="http://localhost:7860") as env:
         result = await env.reset()
         print(result.observation)
         result = await env.step(EchoAction(message="Hello"))
@@ -418,8 +418,8 @@ async def main():
 
 asyncio.run(main())
 
-# Sync (using .sync() wrapper)
-with EchoEnv(base_url="http://localhost:8000").sync() as env:
+# Sync
+with EchoEnv(base_url="http://localhost:7860") as env:
     result = env.reset()
     print(result.observation)
     result = env.step(EchoAction(message="Hello"))

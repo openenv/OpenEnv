@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Trajectory-based rubrics for delayed reward computation.
 
@@ -40,7 +36,9 @@ class TrajectoryRubric(Rubric):
     Known limitation: Very long episodes (thousands of steps) may consume
     significant CPU memory. For such cases, consider streaming rubrics.
 
-    Usage:
+    Examples:
+
+        ```python
         class WinLossRubric(TrajectoryRubric):
             def score_trajectory(self, trajectory):
                 _, final_obs = trajectory[-1]
@@ -55,6 +53,7 @@ class TrajectoryRubric(Rubric):
         for action, obs in episode:
             reward = rubric(action, obs)  # 0.0 until done
         step_rewards = rubric.compute_step_rewards()  # Credit assignment
+        ```
     """
 
     _trajectory: List[Tuple[Any, Any]]
@@ -64,8 +63,8 @@ class TrajectoryRubric(Rubric):
         """Initialize trajectory rubric.
 
         Args:
-            intermediate_reward: Value to return for non-terminal steps.
-                Defaults to 0.0.
+            intermediate_reward (`float`, *optional*, defaults to `0.0`):
+                Value to return for non-terminal steps.
         """
         super().__init__()
         self.intermediate_reward = intermediate_reward
@@ -81,7 +80,7 @@ class TrajectoryRubric(Rubric):
             observation: The resulting observation. Must have a 'done' attribute.
 
         Returns:
-            intermediate_reward if not done, else score_trajectory() result.
+            `float`: intermediate_reward if not done, else score_trajectory() result.
         """
         self._trajectory.append((action, observation))
 
@@ -97,10 +96,11 @@ class TrajectoryRubric(Rubric):
         Called when observation.done=True.
 
         Args:
-            trajectory: List of (action, observation) tuples.
+            trajectory (`list`):
+                List of (action, observation) tuples.
 
         Returns:
-            Final trajectory score (typically 0.0 to 1.0).
+            `float`: Final trajectory score (typically 0.0 to 1.0).
         """
         raise NotImplementedError
 
@@ -108,11 +108,11 @@ class TrajectoryRubric(Rubric):
     def compute_step_rewards(self) -> List[float]:
         """Compute per-step rewards from the accumulated trajectory.
 
-        Returns:
-            List of rewards, one per step. Length matches len(trajectory).
-
         Define your credit assignment strategy here (e.g., discounting,
         assigning all credit to specific steps, etc.).
+
+        Returns:
+            `list[float]`: Rewards, one per step. Length matches len(trajectory).
         """
         raise NotImplementedError
 
@@ -138,7 +138,11 @@ class TrajectoryRubric(Rubric):
 class ExponentialDiscountingTrajectoryRubric(TrajectoryRubric):
     """TrajectoryRubric with exponential discounting for credit assignment.
 
-    Per-step reward: r_t = gamma^(T-1-t) * R_final
+    Per-step reward:
+
+    ```text
+    r_t = gamma^(T-1-t) * R_final
+    ```
 
     With gamma=0.99, later steps get higher reward (they're "closer" to the outcome).
     With gamma=1.0, all steps get equal reward.
@@ -147,7 +151,9 @@ class ExponentialDiscountingTrajectoryRubric(TrajectoryRubric):
     This is the standard temporal discounting used in reinforcement learning,
     applied retroactively once the episode outcome is known.
 
-    Usage:
+    Examples:
+
+        ```python
         class ChessRubric(ExponentialDiscountingTrajectoryRubric):
             def score_trajectory(self, trajectory):
                 _, final_obs = trajectory[-1]
@@ -159,6 +165,7 @@ class ExponentialDiscountingTrajectoryRubric(TrajectoryRubric):
         rubric = ChessRubric(gamma=0.99)
         reward = rubric(action, obs)  # 0.0 until done, then final score
         step_rewards = rubric.compute_step_rewards()  # Discounted per-step rewards
+        ```
     """
 
     gamma: float
@@ -167,9 +174,10 @@ class ExponentialDiscountingTrajectoryRubric(TrajectoryRubric):
         """Initialize with discount factor.
 
         Args:
-            gamma: Discount factor in [0, 1]. Higher values give more credit
-                to early moves. 0.99 is a common choice.
-            intermediate_reward: Value to return for non-terminal steps.
+            gamma (`float`, *optional*, defaults to `0.99`):
+                Discount factor in [0, 1]. Higher values give more credit to early moves.
+            intermediate_reward (`float`, *optional*, defaults to `0.0`):
+                Value to return for non-terminal steps.
         """
         super().__init__(intermediate_reward=intermediate_reward)
         if not 0.0 <= gamma <= 1.0:
@@ -180,8 +188,8 @@ class ExponentialDiscountingTrajectoryRubric(TrajectoryRubric):
         """Apply exponential discounting from final reward.
 
         Returns:
-            List of discounted rewards. step_rewards[t] = gamma^(T-1-t) * R_final
-            where T is the trajectory length and R_final is score_trajectory().
+            `list[float]`: Discounted rewards where `step_rewards[t] = gamma^(T-1-t) * R_final`,
+            T is the trajectory length and R_final is score_trajectory().
         """
         if not self._trajectory:
             return []

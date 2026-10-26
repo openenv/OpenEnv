@@ -7,10 +7,10 @@
 # Multi-stage build using openenv-base
 # This Dockerfile is flexible and works for both:
 # - In-repo environments (with local src/core)
-# - Standalone environments (with openenv-core from pip)
+# - Standalone environments (with openenv from pip)
 # The build script (openenv build) handles context detection and sets appropriate build args.
 
-ARG BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base:latest
+ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest
 FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
@@ -21,8 +21,8 @@ ARG BUILD_MODE=in-repo
 # Copy environment code (always at root of build context)
 COPY . /app/env
 
-# For in-repo builds, openenv-core is already in the pyproject.toml dependencies
-# For standalone builds, openenv-core will be installed from pip via pyproject.toml
+# For in-repo builds, openenv is already in the pyproject.toml dependencies
+# For standalone builds, openenv will be installed from pip via pyproject.toml
 WORKDIR /app/env
 
 # Ensure uv is available (for local builds where base image lacks it)
@@ -70,6 +70,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Set PYTHONPATH so imports work correctly
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
+ENV ENABLE_WEB_INTERFACE=true
 
 # Health check using Python (more portable than curl/wget)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

@@ -1,0 +1,56 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-finrl-env"
+version = "0.1.0"
+description = "FinRL Environment for OpenEnv - stock trading via FinRL"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    "requests>=2.33.0",
+    "finrl==0.3.7",
+    "alpaca-trade-api>=3.0.0",
+    "exchange_calendars>=4.5,<4.6",
+    "wrds>=3.1,<3.2",
+    "yfinance==0.2.28",
+    "pandas==2.0.3",
+    "numpy==1.24.3",
+    "gymnasium==0.29.1",
+    "stable-baselines3==2.1.0",
+    "matplotlib==3.7.2",
+    "ta==0.11.0",
+    "stockstats==0.6.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "finrl_env.server.app:main"
+
+[tool.uv]
+# alpaca-trade-api is EOL and pins websockets<11, conflicting with openenv.
+# Override to use the version openenv requires; alpaca-trade-api still works
+# at runtime with a newer websockets.
+override-dependencies = [
+    "websockets>=15.0.1",
+]
+
+[tool.setuptools]
+include-package-data = true
+packages = ["finrl_env", "finrl_env.server"]
+package-dir = { "finrl_env" = ".", "finrl_env.server" = "server" }

@@ -7,13 +7,18 @@
 # Multi-stage build using openenv-base
 # This Dockerfile is flexible and works for both:
 # - In-repo environments (with local src/core)
-# - Standalone environments (with openenv-core from pip)
+# - Standalone environments (with openenv from pip)
 # The build script (openenv build) handles context detection and sets appropriate build args.
 
-ARG BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base:latest
+ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest
 FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
+
+# Staged Hub builds resolve openenv from a git URL.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
 # Build argument to control whether we're building standalone or in-repo
 ARG BUILD_MODE=in-repo
@@ -22,8 +27,8 @@ ARG ENV_NAME=web_search
 # Copy environment code (always at root of build context)
 COPY . /app/env
 
-# For in-repo builds, openenv-core is already in the pyproject.toml dependencies
-# For standalone builds, openenv-core will be installed from pip via pyproject.toml
+# For in-repo builds, openenv is already in the pyproject.toml dependencies
+# For standalone builds, openenv will be installed from pip via pyproject.toml
 WORKDIR /app/env
 
 # Ensure uv is available (for local builds where base image lacks it)

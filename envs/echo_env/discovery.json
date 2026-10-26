@@ -1,0 +1,13 @@
+{
+  "tags": ["openenv", "smoke-test"],
+  "representative_queries": [
+    "find an environment that echoes a message",
+    "find a minimal environment for checking OpenEnv tool calls",
+    "find an environment for a client smoke test"
+  ],
+  "agent_tools": {
+    "protocol": "mcp",
+    "names": ["echo_message", "echo_with_length"],
+    "source": "envs/echo_env/server/echo_environment.py"
+  }
+}

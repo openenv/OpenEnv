@@ -21,20 +21,21 @@ class Model(nn.Module):
     """
     Short-Time Fourier Transform.
     """
-    def __init__(self, n_fft: int = 1024, hop_length: int = 256, window: str = 'hann'):
+
+    def __init__(self, n_fft: int = 1024, hop_length: int = 256, window: str = "hann"):
         super(Model, self).__init__()
         self.n_fft = n_fft
         self.hop_length = hop_length
 
         # Create window function
-        if window == 'hann':
+        if window == "hann":
             w = torch.hann_window(n_fft)
-        elif window == 'hamming':
+        elif window == "hamming":
             w = torch.hamming_window(n_fft)
         else:
             w = torch.ones(n_fft)
 
-        self.register_buffer('window', w)
+        self.register_buffer("window", w)
 
     def forward(self, signal: torch.Tensor) -> torch.Tensor:
         """
@@ -53,17 +54,19 @@ class Model(nn.Module):
             window=self.window,
             return_complex=True,
             center=True,
-            pad_mode='reflect'
+            pad_mode="reflect",
         )
 
 
 # Problem configuration
 signal_length = 16000 * 10  # 10 seconds at 16kHz
 
+
 def get_inputs():
     # Audio signal
     signal = torch.randn(signal_length)
     return [signal]
 
+
 def get_init_inputs():
-    return [1024, 256, 'hann']  # n_fft, hop_length, window
+    return [1024, 256, "hann"]  # n_fft, hop_length, window

@@ -26,6 +26,7 @@ class Model(nn.Module):
     - Laplace equation (steady-state)
     - Poisson equation (with source term)
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -46,11 +47,14 @@ class Model(nn.Module):
 
         # Apply 5-point stencil to interior
         # u_new[1:-1, 1:-1] = 0.25 * (u[:-2, 1:-1] + u[2:, 1:-1] + u[1:-1, :-2] + u[1:-1, 2:])
-        u_new[1:-1, 1:-1] = 0.25 * (
-            u[:-2, 1:-1] +   # North
-            u[2:, 1:-1] +    # South
-            u[1:-1, :-2] +   # West
-            u[1:-1, 2:]      # East
+        u_new[1:-1, 1:-1] = (
+            0.25
+            * (
+                u[:-2, 1:-1]  # North
+                + u[2:, 1:-1]  # South
+                + u[1:-1, :-2]  # West
+                + u[1:-1, 2:]  # East
+            )
         )
 
         return u_new
@@ -60,15 +64,17 @@ class Model(nn.Module):
 grid_height = 2048
 grid_width = 2048
 
+
 def get_inputs():
     # Initialize with random values (or could be zeros with boundary conditions)
     u = torch.randn(grid_height, grid_width)
     # Set boundary conditions (Dirichlet - fixed boundary)
-    u[0, :] = 1.0   # Top
+    u[0, :] = 1.0  # Top
     u[-1, :] = 0.0  # Bottom
-    u[:, 0] = 1.0   # Left
+    u[:, 0] = 1.0  # Left
     u[:, -1] = 0.0  # Right
     return [u]
+
 
 def get_init_inputs():
     return []

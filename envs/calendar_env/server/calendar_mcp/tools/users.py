@@ -26,12 +26,9 @@ Complete user information including id, name, given_name, family_name, picture, 
         "inputSchema": {
             "type": "object",
             "properties": {
-                "email": {
-                    "type": "string",
-                    "description": "Email address to lookup"
-                }
+                "email": {"type": "string", "description": "Email address to lookup"}
             },
-            "required": ["email"]
-        }
+            "required": ["email"],
+        },
     }
 ]

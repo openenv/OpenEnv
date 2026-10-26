@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Push an OpenEnv environment to Hugging Face Spaces."""
 
@@ -19,12 +15,69 @@ import typer
 import yaml
 from huggingface_hub import HfApi, login, whoami
 
-from .._cli_utils import console, validate_env_structure
+from .._cli_utils import _extract_hf_username, console, validate_env_structure
 
 app = typer.Typer(help="Push an OpenEnv environment to Hugging Face Spaces")
 
 
-DEFAULT_PUSH_IGNORE_PATTERNS = [".*", "__pycache__", "*.pyc"]
+DEFAULT_PUSH_IGNORE_PATTERNS = [".*", "__pycache__", "*.pyc", "build/", "*.egg-info"]
+
+
+def _format_kv_entry_for_error(entry: str, *, flag: str) -> str:
+    """Redact secret values from CLI parse errors."""
+    if flag == "--secret":
+        return "<redacted>"
+    return repr(entry)
+
+
+def _parse_kv_pairs(raw_pairs: list[str], *, flag: str) -> dict[str, str]:
+    """Parse a list of 'KEY=VALUE' strings into a dict.
+
+    Splits only on the first '=', so values can contain '='. Later entries
+    override earlier ones with the same key (repeated CLI flags still work).
+    """
+    parsed: dict[str, str] = {}
+    for entry in raw_pairs:
+        entry_display = _format_kv_entry_for_error(entry, flag=flag)
+        if "=" not in entry:
+            raise typer.BadParameter(
+                f"Invalid {flag} format: {entry_display}. Expected KEY=VALUE."
+            )
+        key, value = entry.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise typer.BadParameter(
+                f"Invalid {flag} format: {entry_display}. Key cannot be empty."
+            )
+        parsed[key] = value
+    return parsed
+
+
+def _apply_space_variables_and_secrets(
+    repo_id: str,
+    variables: dict[str, str],
+    secrets: dict[str, str],
+    api: HfApi,
+) -> None:
+    """Configure Space-level variables and secrets on a deployed repo.
+
+    Idempotent: add_space_variable/secret with the same key overwrites.
+    Secret values are never logged — only the key is printed.
+    """
+    for key, value in variables.items():
+        try:
+            api.add_space_variable(repo_id=repo_id, key=key, value=value)
+        except Exception as e:
+            console.print(f"[bold red]✗[/bold red] Failed to set variable {key}: {e}")
+            raise typer.Exit(1) from e
+        console.print(f"[bold green]✓[/bold green] Set variable {key} on {repo_id}")
+    for key, value in secrets.items():
+        try:
+            api.add_space_secret(repo_id=repo_id, key=key, value=value)
+        except Exception as e:
+            console.print(f"[bold red]✗[/bold red] Failed to set secret {key}: {e}")
+            raise typer.Exit(1) from e
+        console.print(f"[bold green]✓[/bold green] Set secret {key} on {repo_id}")
 
 
 def _path_matches_pattern(relative_path: Path, pattern: str) -> bool:
@@ -158,7 +211,7 @@ def _validate_openenv_directory(directory: Path) -> tuple[str, dict]:
     Validate that the directory is an OpenEnv environment.
 
     Returns:
-        Tuple of (env_name, manifest_data)
+        `tuple` of `(env_name, manifest_data)`.
     """
     # Use the comprehensive validation function
     try:
@@ -186,36 +239,83 @@ def _validate_openenv_directory(directory: Path) -> tuple[str, dict]:
     return env_name, manifest
 
 
+def _rewrite_dockerfile_for_space(
+    dockerfile_content: str,
+    *,
+    base_image: str | None,
+    enable_interface: bool,
+) -> tuple[str, list[str]]:
+    """Rewrite deployment Dockerfile content and return printed change labels."""
+    lines = dockerfile_content.split("\n")
+    new_lines = []
+    cmd_found = False
+    base_image_updated = False
+    web_interface_env_exists = "ENABLE_WEB_INTERFACE" in dockerfile_content
+    last_instruction = None
+
+    for line in lines:
+        stripped = line.strip()
+        token = stripped.split(maxsplit=1)[0] if stripped else ""
+        current_instruction = token.upper()
+
+        is_healthcheck_continuation = last_instruction == "HEALTHCHECK"
+
+        # Update base image if specified
+        if base_image and stripped.startswith("FROM") and not base_image_updated:
+            new_lines.append(f"FROM {base_image}")
+            base_image_updated = True
+            last_instruction = "FROM"
+            continue
+
+        if (
+            stripped.startswith("CMD")
+            and not cmd_found
+            and not web_interface_env_exists
+            and enable_interface
+            and not is_healthcheck_continuation
+        ):
+            new_lines.append("ENV ENABLE_WEB_INTERFACE=true")
+            cmd_found = True
+
+        new_lines.append(line)
+
+        if current_instruction:
+            last_instruction = current_instruction
+
+    if not cmd_found and not web_interface_env_exists and enable_interface:
+        new_lines.append("ENV ENABLE_WEB_INTERFACE=true")
+
+    if base_image and not base_image_updated:
+        new_lines.insert(0, f"FROM {base_image}")
+
+    changes = []
+    if base_image and base_image_updated:
+        changes.append("updated base image")
+    if enable_interface and not web_interface_env_exists:
+        changes.append("enabled web interface")
+
+    return "\n".join(new_lines), changes
+
+
+def _get_hf_username() -> str:
+    """Return the authenticated Hugging Face username from whoami()."""
+    username = _extract_hf_username(whoami())
+    if not username:
+        raise ValueError("Could not extract username from whoami response")
+
+    console.print(f"[bold green]✓[/bold green] Authenticated as: {username}")
+    return username
+
+
 def _ensure_hf_authenticated() -> str:
     """
     Ensure user is authenticated with Hugging Face.
 
     Returns:
-        Username of authenticated user
+        `str`: username of the authenticated user.
     """
     try:
-        # Try to get current user
-        user_info = whoami()
-        # Handle both dict and object return types
-        if isinstance(user_info, dict):
-            username = (
-                user_info.get("name")
-                or user_info.get("fullname")
-                or user_info.get("username")
-            )
-        else:
-            # If it's an object, try to get name attribute
-            username = (
-                getattr(user_info, "name", None)
-                or getattr(user_info, "fullname", None)
-                or getattr(user_info, "username", None)
-            )
-
-        if not username:
-            raise ValueError("Could not extract username from whoami response")
-
-        console.print(f"[bold green]✓[/bold green] Authenticated as: {username}")
-        return username
+        return _get_hf_username()
     except Exception:
         # Not authenticated, prompt for login
         console.print(
@@ -224,27 +324,7 @@ def _ensure_hf_authenticated() -> str:
 
         try:
             login()
-            # Verify login worked
-            user_info = whoami()
-            # Handle both dict and object return types
-            if isinstance(user_info, dict):
-                username = (
-                    user_info.get("name")
-                    or user_info.get("fullname")
-                    or user_info.get("username")
-                )
-            else:
-                username = (
-                    getattr(user_info, "name", None)
-                    or getattr(user_info, "fullname", None)
-                    or getattr(user_info, "username", None)
-                )
-
-            if not username:
-                raise ValueError("Could not extract username from whoami response")
-
-            console.print(f"[bold green]✓[/bold green] Authenticated as: {username}")
-            return username
+            return _get_hf_username()
         except Exception as e:
             raise typer.BadParameter(
                 f"Hugging Face authentication failed: {e}. Please run login manually."
@@ -301,55 +381,12 @@ def _prepare_staging_directory(
     # Modify Dockerfile to optionally enable web interface and update base image
     if dockerfile_path and dockerfile_path.exists():
         dockerfile_content = dockerfile_path.read_text()
-        lines = dockerfile_content.split("\n")
-        new_lines = []
-        cmd_found = False
-        base_image_updated = False
-        web_interface_env_exists = "ENABLE_WEB_INTERFACE" in dockerfile_content
-        last_instruction = None
-
-        for line in lines:
-            stripped = line.strip()
-            token = stripped.split(maxsplit=1)[0] if stripped else ""
-            current_instruction = token.upper()
-
-            is_healthcheck_continuation = last_instruction == "HEALTHCHECK"
-
-            # Update base image if specified
-            if base_image and stripped.startswith("FROM") and not base_image_updated:
-                new_lines.append(f"FROM {base_image}")
-                base_image_updated = True
-                last_instruction = "FROM"
-                continue
-
-            if (
-                stripped.startswith("CMD")
-                and not cmd_found
-                and not web_interface_env_exists
-                and enable_interface
-                and not is_healthcheck_continuation
-            ):
-                new_lines.append("ENV ENABLE_WEB_INTERFACE=true")
-                cmd_found = True
-
-            new_lines.append(line)
-
-            if current_instruction:
-                last_instruction = current_instruction
-
-        if not cmd_found and not web_interface_env_exists and enable_interface:
-            new_lines.append("ENV ENABLE_WEB_INTERFACE=true")
-
-        if base_image and not base_image_updated:
-            new_lines.insert(0, f"FROM {base_image}")
-
-        dockerfile_path.write_text("\n".join(new_lines))
-
-        changes = []
-        if base_image and base_image_updated:
-            changes.append("updated base image")
-        if enable_interface and not web_interface_env_exists:
-            changes.append("enabled web interface")
+        dockerfile_content, changes = _rewrite_dockerfile_for_space(
+            dockerfile_content,
+            base_image=base_image,
+            enable_interface=enable_interface,
+        )
+        dockerfile_path.write_text(dockerfile_content)
         if changes:
             console.print(
                 f"[bold green]✓[/bold green] Updated Dockerfile: {', '.join(changes)}"
@@ -384,8 +421,8 @@ def _prepare_staging_directory(
                     frontmatter = f"""---
 title: {env_name.replace("_", " ").title()} Environment Server
 emoji: 🔊
-colorFrom: '#00C9FF'
-colorTo: '#1B2845'
+colorFrom: blue
+colorTo: indigo
 sdk: docker
 pinned: false
 app_port: 8000
@@ -407,18 +444,22 @@ def _create_hf_space(
     repo_id: str,
     api: HfApi,
     private: bool = False,
+    hardware: str | None = None,
 ) -> None:
     """Create a Hugging Face Space if it doesn't exist."""
     console.print(f"[bold cyan]Creating/verifying space: {repo_id}[/bold cyan]")
 
     try:
-        api.create_repo(
-            repo_id=repo_id,
-            repo_type="space",
-            space_sdk="docker",
-            private=private,
-            exist_ok=True,
-        )
+        create_kwargs: dict = {
+            "repo_id": repo_id,
+            "repo_type": "space",
+            "space_sdk": "docker",
+            "private": private,
+            "exist_ok": True,
+        }
+        if hardware is not None:
+            create_kwargs["space_hardware"] = hardware
+        api.create_repo(**create_kwargs)
         console.print(f"[bold green]✓[/bold green] Space {repo_id} is ready")
     except Exception as e:
         # Space might already exist, which is okay with exist_ok=True
@@ -434,6 +475,7 @@ def _upload_to_hf_space(
     private: bool = False,
     create_pr: bool = False,
     commit_message: str | None = None,
+    delete_patterns: list[str] | None = None,
 ) -> None:
     """Upload files to Hugging Face Space."""
     if create_pr:
@@ -449,6 +491,7 @@ def _upload_to_hf_space(
         "repo_type": "space",
         "create_pr": create_pr,
         "ignore_patterns": ignore_patterns,
+        "delete_patterns": delete_patterns,
     }
     if commit_message:
         upload_kwargs["commit_message"] = commit_message
@@ -479,7 +522,7 @@ def push(
         typer.Option(
             "--repo-id",
             "-r",
-            help="Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)",
+            help="Repository ID as 'repo_name' or 'namespace/repo_name'. Defaults to 'username/env-name' from openenv.yaml.",
         ),
     ] = None,
     base_image: Annotated[
@@ -532,6 +575,45 @@ def push(
             help="Optional additional ignore file with newline-separated glob patterns to exclude from Hugging Face uploads",
         ),
     ] = None,
+    delete: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--delete",
+            help="Glob pattern of remote Space files to delete in the same commit, as in `hf upload --delete` (repeatable). Use '*' to remove every file not uploaded again.",
+        ),
+    ] = None,
+    hardware: Annotated[
+        str | None,
+        typer.Option(
+            "--hardware",
+            "-H",
+            help="Request hardware for Hugging Face Space (e.g. t4-medium, cpu-basic). See HF docs for options.",
+        ),
+    ] = None,
+    count: Annotated[
+        int,
+        typer.Option(
+            "--count",
+            "-n",
+            help="Number of Space instances to deploy. Each gets a numeric suffix (e.g. env-1, env-2).",
+            min=1,
+        ),
+    ] = 1,
+    env_vars: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--env-var",
+            "-e",
+            help="Public Space variable as KEY=VALUE (repeatable). Overrides matching keys from openenv.yaml variables:.",
+        ),
+    ] = None,
+    secrets: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--secret",
+            help="Private Space secret as KEY=VALUE (repeatable). Value is never logged.",
+        ),
+    ] = None,
 ) -> None:
     """
     Push an OpenEnv environment to Hugging Face Spaces or a custom Docker registry.
@@ -545,6 +627,8 @@ def push(
     but disabled by default when pushing to a custom Docker registry.
 
     Examples:
+
+        ```bash
         # Push to HuggingFace Spaces from current directory (web interface enabled)
         $ cd my_env
         $ openenv push
@@ -569,8 +653,31 @@ def push(
         $ openenv push --repo-id my-org/my-env
 
         # Push privately with custom base image
-        $ openenv push --private --base-image ghcr.io/meta-pytorch/openenv-base:latest
+        $ openenv push --private --base-image ghcr.io/huggingface/openenv-base:latest
+
+        # Push with GPU hardware
+        $ openenv push --hardware t4-medium
+
+        # Set a public Space variable (overrides openenv.yaml variables:)
+        $ openenv push -e OPENSPIEL_GAME=tic_tac_toe -e MAX_STEPS=100
+
+        # Set a private Space secret (value never logged)
+        $ openenv push --secret OPENAI_API_KEY=sk-...
+        ```
     """
+    # Validate --count flag combinations
+    if count > 1 and registry:
+        console.print(
+            "[bold red]Error:[/bold red] --count cannot be used with --registry",
+        )
+        raise typer.Exit(1)
+
+    if count > 1 and create_pr:
+        console.print(
+            "[bold red]Error:[/bold red] --count cannot be used with --create-pr",
+        )
+        raise typer.Exit(1)
+
     # Handle interface flag logic
     if no_interface and interface:
         console.print(
@@ -617,6 +724,37 @@ def push(
     )
     env_name, manifest = _validate_openenv_directory(env_dir)
     console.print(f"[bold green]✓[/bold green] Found OpenEnv environment: {env_name}")
+
+    # Parse and merge Space variables (yaml < CLI) and secrets (CLI only).
+    yaml_variables_raw = manifest.get("variables")
+    if yaml_variables_raw is None:
+        yaml_variables_raw = {}
+    elif not isinstance(yaml_variables_raw, dict):
+        raise typer.BadParameter(
+            "openenv.yaml 'variables' must be a mapping of KEY: value"
+        )
+    if registry and (env_vars or secrets):
+        raise typer.BadParameter(
+            "--env-var/--secret cannot be used with --registry because custom registry pushes do not configure Hugging Face Space settings"
+        )
+    if create_pr and (env_vars or secrets):
+        raise typer.BadParameter(
+            "--env-var/--secret cannot be used with --create-pr because Space settings are only applied to the live Space after merge"
+        )
+    merged_variables: dict[str, str] = {
+        str(k): str(v) for k, v in yaml_variables_raw.items()
+    }
+    cli_variables = _parse_kv_pairs(env_vars or [], flag="--env-var")
+    merged_variables.update(cli_variables)
+    cli_secrets = _parse_kv_pairs(secrets or [], flag="--secret")
+    if registry and merged_variables:
+        console.print(
+            "[bold yellow]⚠[/bold yellow] openenv.yaml variables: are only applied to Hugging Face Spaces and will be ignored with --registry"
+        )
+    if create_pr and merged_variables:
+        console.print(
+            "[bold yellow]⚠[/bold yellow] openenv.yaml variables: are not applied when using --create-pr; configure them after the PR is merged"
+        )
 
     # Handle custom registry push
     if registry:
@@ -672,11 +810,12 @@ def push(
     if not repo_id:
         repo_id = f"{username}/{env_name}"
 
-    # Validate repo_id format
-    if "/" not in repo_id or repo_id.count("/") != 1:
+    if repo_id.count("/") > 1:
         raise typer.BadParameter(
-            f"Invalid repo-id format: {repo_id}. Expected format: 'username/repo-name'"
+            f"Invalid repo-id format: {repo_id!r}. Repo id must be in the form 'repo_name' or 'namespace/repo_name'."
         )
+    if "/" not in repo_id:
+        repo_id = f"{username}/{repo_id}"
 
     # Initialize Hugging Face API
     api = HfApi()
@@ -699,20 +838,60 @@ def push(
             enable_interface=enable_interface,
         )
 
-        # Create/verify space (no-op if exists; needed when pushing to own new repo)
-        if not create_pr:
-            _create_hf_space(repo_id, api, private=private)
-        # When create_pr we rely on upload_folder to create branch and PR
+        if count > 1:
+            base_repo_id = repo_id
+            for i in range(1, count + 1):
+                instance_repo_id = f"{base_repo_id}-{i}"
+                console.print(
+                    f"\n[bold cyan][{i}/{count}] Deploying {instance_repo_id}...[/bold cyan]"
+                )
+                _create_hf_space(
+                    instance_repo_id, api, private=private, hardware=hardware
+                )
+                _upload_to_hf_space(
+                    instance_repo_id,
+                    staging_dir,
+                    api,
+                    private=private,
+                    create_pr=False,
+                    ignore_patterns=ignore_patterns,
+                    delete_patterns=delete,
+                )
+                _apply_space_variables_and_secrets(
+                    instance_repo_id, merged_variables, cli_secrets, api
+                )
+            console.print(
+                f"\n[bold green]✓ All {count} instances deployed![/bold green]"
+            )
+            for i in range(1, count + 1):
+                console.print(
+                    f"Visit instance {i}: https://huggingface.co/spaces/{base_repo_id}-{i}"
+                )
+        else:
+            # Create/verify space (no-op if exists; needed when pushing to own new repo)
+            if not create_pr:
+                _create_hf_space(repo_id, api, private=private, hardware=hardware)
+            # When create_pr we rely on upload_folder to create branch and PR
 
-        # Upload files
-        _upload_to_hf_space(
-            repo_id,
-            staging_dir,
-            api,
-            private=private,
-            create_pr=create_pr,
-            ignore_patterns=ignore_patterns,
-        )
+            # Upload files
+            _upload_to_hf_space(
+                repo_id,
+                staging_dir,
+                api,
+                private=private,
+                create_pr=create_pr,
+                ignore_patterns=ignore_patterns,
+                delete_patterns=delete,
+            )
 
-        console.print("\n[bold green]✓ Deployment complete![/bold green]")
-        console.print(f"Visit your space at: https://huggingface.co/spaces/{repo_id}")
+            # Skip variable/secret configuration in PR mode since the target
+            # repo's live environment should only change when the PR is merged.
+            if not create_pr:
+                _apply_space_variables_and_secrets(
+                    repo_id, merged_variables, cli_secrets, api
+                )
+
+            console.print("\n[bold green]✓ Deployment complete![/bold green]")
+            console.print(
+                f"Visit your space at: https://huggingface.co/spaces/{repo_id}"
+            )

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+  <!-- A competent bicycle with no animal on it. Structure checks should pass,
+       subject checks should fail. -->
+  <circle cx="110" cy="220" r="55" fill="none" stroke="#222" stroke-width="6"/>
+  <circle cx="290" cy="220" r="55" fill="none" stroke="#222" stroke-width="6"/>
+  <line x1="110" y1="220" x2="200" y2="220" stroke="#2c3e50" stroke-width="6"/>
+  <line x1="200" y1="220" x2="175" y2="145" stroke="#2c3e50" stroke-width="6"/>
+  <line x1="110" y1="220" x2="175" y2="145" stroke="#2c3e50" stroke-width="6"/>
+  <line x1="175" y1="145" x2="262" y2="145" stroke="#2c3e50" stroke-width="6"/>
+  <line x1="200" y1="220" x2="262" y2="145" stroke="#2c3e50" stroke-width="6"/>
+  <line x1="262" y1="145" x2="290" y2="220" stroke="#2c3e50" stroke-width="6"/>
+  <line x1="246" y1="132" x2="280" y2="132" stroke="#222" stroke-width="5"/>
+  <rect x="160" y="134" width="30" height="9" rx="4" fill="#222"/>
+  <circle cx="200" cy="220" r="9" fill="none" stroke="#222" stroke-width="4"/>
+</svg>

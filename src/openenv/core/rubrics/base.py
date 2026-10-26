@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Base Rubric class for reward computation.
 
@@ -15,7 +11,7 @@ See RFC 004 for full design: rfcs/004-rubrics.md
 
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Callable
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 
 class Rubric(ABC):
@@ -24,13 +20,16 @@ class Rubric(ABC):
     A Rubric computes a reward signal from an action and observation.
     Subclasses implement forward() to define the reward logic.
 
-    Usage:
+    Examples:
+
+        ```python
         class MyRubric(Rubric):
             def forward(self, action, observation) -> float:
                 return 1.0 if action.valid else 0.0
 
         rubric = MyRubric()
         reward = rubric(action, observation)
+        ```
 
     Child rubrics are auto-registered when assigned as attributes,
     enabling hierarchical composition and introspection.
@@ -62,7 +61,7 @@ class Rubric(ABC):
             observation: The resulting observation.
 
         Returns:
-            Reward value (typically 0.0 to 1.0).
+            `float`: Reward value (typically 0.0 to 1.0).
         """
         # Check if forward method is async BEFORE calling it
         if inspect.iscoroutinefunction(self.forward):
@@ -74,10 +73,50 @@ class Rubric(ABC):
             for hook in self._forward_pre_hooks:
                 hook(self, action, observation)
             result = self.forward(action, observation)
+            if inspect.iscoroutine(result):
+                # forward() handed back an async child's call unawaited (e.g. a
+                # RubricDict dispatch): await it before recording the score
+                return self._finish_awaited(action, observation, result)
             return self._call_sync(action, observation, result)
 
     def _call_sync(self, action: Any, observation: Any, result: float) -> float:
         """Synchronous call path."""
+        return self._finish_forward(action, observation, result)
+
+    def _run_forward_pre_hooks(
+        self, action: Any, observation: Any, start: int = 0
+    ) -> None:
+        """Run pre-forward hooks synchronously, from index ``start`` on."""
+        for hook in self._forward_pre_hooks[start:]:
+            hook(self, action, observation)
+
+    async def _run_forward_pre_hooks_async(
+        self, action: Any, observation: Any, start: int = 0
+    ) -> None:
+        """Run pre-forward hooks from an async call path, from index ``start`` on."""
+        for hook in self._forward_pre_hooks[start:]:
+            if inspect.iscoroutinefunction(hook):
+                await hook(self, action, observation)
+            else:
+                hook(self, action, observation)
+
+    def _run_leading_sync_pre_hooks(self, action: Any, observation: Any) -> int:
+        """Run pre-forward hooks up to the first async one; return how many ran.
+
+        Containers call this before evaluating any child: they learn whether
+        they are on the async path only by calling a child, but pre-hooks must
+        run first. The rest are passed as ``start`` to the hook runners above.
+        """
+        ran = 0
+        for hook in self._forward_pre_hooks:
+            if inspect.iscoroutinefunction(hook):
+                break
+            hook(self, action, observation)
+            ran += 1
+        return ran
+
+    def _finish_forward(self, action: Any, observation: Any, result: float) -> float:
+        """Store the result and run post-forward hooks synchronously."""
         self.last_score = result
 
         # Post-forward hooks
@@ -86,17 +125,10 @@ class Rubric(ABC):
 
         return result
 
-    async def _call_async(self, action: Any, observation: Any, result_coro) -> float:
-        """Asynchronous call path."""
-        # Pre-forward hooks
-        for hook in self._forward_pre_hooks:
-            if inspect.iscoroutinefunction(hook):
-                await hook(self, action, observation)
-            else:
-                hook(self, action, observation)
-
-        # Await the forward result
-        result = await result_coro
+    async def _finish_forward_async(
+        self, action: Any, observation: Any, result: float
+    ) -> float:
+        """Store the result and run post-forward hooks from an async call path."""
         self.last_score = result
 
         # Post-forward hooks
@@ -108,6 +140,22 @@ class Rubric(ABC):
 
         return result
 
+    async def _finish_awaited(
+        self, action: Any, observation: Any, result_coro
+    ) -> float:
+        """Await a coroutine returned by a sync forward(); pre-hooks already ran."""
+        result = await result_coro
+        return await self._finish_forward_async(action, observation, result)
+
+    async def _call_async(self, action: Any, observation: Any, result_coro) -> float:
+        """Asynchronous call path."""
+        # Pre-forward hooks
+        await self._run_forward_pre_hooks_async(action, observation)
+
+        # Await the forward result
+        result = await result_coro
+        return await self._finish_forward_async(action, observation, result)
+
     @abstractmethod
     def forward(self, action: Any, observation: Any) -> float:
         """Compute the reward. Implement this in subclasses.
@@ -117,7 +165,7 @@ class Rubric(ABC):
             observation: The resulting observation.
 
         Returns:
-            Reward value (typically 0.0 to 1.0).
+            `float`: Reward value (typically 0.0 to 1.0).
         """
         raise NotImplementedError
 
@@ -127,7 +175,8 @@ class Rubric(ABC):
         """Register a hook called after forward().
 
         Args:
-            hook: Callable with signature (rubric, action, observation, result).
+            hook (`Callable`):
+                Callable with signature (rubric, action, observation, result).
         """
         self._forward_hooks.append(hook)
 
@@ -137,7 +186,8 @@ class Rubric(ABC):
         """Register a hook called before forward().
 
         Args:
-            hook: Callable with signature (rubric, action, observation).
+            hook (`Callable`):
+                Callable with signature (rubric, action, observation).
         """
         self._forward_pre_hooks.append(hook)
 
@@ -166,10 +216,11 @@ class Rubric(ABC):
         """Access a nested rubric by dot-separated path.
 
         Args:
-            path: Dot-separated path (e.g., "code.syntax").
+            path (`str`):
+                Dot-separated path (e.g., "code.syntax").
 
         Returns:
-            The rubric at the specified path.
+            `Rubric`: The rubric at the specified path.
 
         Raises:
             KeyError: If the path does not exist.

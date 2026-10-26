@@ -1,0 +1,17 @@
+spec_version: 1
+name: helium_browser_env
+version: "0.1.0"
+type: space
+runtime: fastapi
+app: helium_browser_env.server.app:app
+port: 8000
+
+description: >
+  Visual browser environment that exposes screenshot observations and a small
+  action vocabulary for controlling Chromium with Helium and Selenium.
+
+variables:
+  BROWSER_SANDBOX: hf
+  BROWSER_MAX_STEPS: "20"
+  BROWSER_ACTION_WAIT_SECONDS: "1.5"
+  BROWSER_EXPLICIT_WAIT_SECONDS: "3"

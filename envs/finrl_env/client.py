@@ -14,9 +14,8 @@ via WebSocket for persistent sessions.
 from typing import Any, Dict
 
 from openenv.core.client_types import StepResult
-
-from openenv.core.env_server.types import State
 from openenv.core.env_client import EnvClient
+from openenv.core.env_server.types import State
 
 from .models import FinRLAction, FinRLObservation
 
@@ -110,13 +109,14 @@ class FinRLEnv(EnvClient[FinRLAction, FinRLObservation, State]):
             date=obs_data.get("date", ""),
             done=payload.get("done", False),
             reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
 
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict) -> State:

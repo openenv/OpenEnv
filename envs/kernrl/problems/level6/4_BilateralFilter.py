@@ -23,7 +23,10 @@ class Model(nn.Module):
 
     Weight = exp(-spatial_dist^2 / (2*sigma_s^2)) * exp(-intensity_diff^2 / (2*sigma_r^2))
     """
-    def __init__(self, kernel_size: int = 9, sigma_spatial: float = 3.0, sigma_range: float = 0.1):
+
+    def __init__(
+        self, kernel_size: int = 9, sigma_spatial: float = 3.0, sigma_range: float = 0.1
+    ):
         super(Model, self).__init__()
         self.kernel_size = kernel_size
         self.sigma_spatial = sigma_spatial
@@ -42,11 +45,13 @@ class Model(nn.Module):
         """
         H, W = image.shape
         radius = self.radius
-        sigma_s_sq = 2 * self.sigma_spatial ** 2
-        sigma_r_sq = 2 * self.sigma_range ** 2
+        sigma_s_sq = 2 * self.sigma_spatial**2
+        sigma_r_sq = 2 * self.sigma_range**2
 
         # Pad image
-        padded = torch.nn.functional.pad(image, (radius, radius, radius, radius), mode='reflect')
+        padded = torch.nn.functional.pad(
+            image, (radius, radius, radius, radius), mode="reflect"
+        )
 
         # Output
         output = torch.zeros_like(image)
@@ -57,17 +62,17 @@ class Model(nn.Module):
                 center_val = image[i, j]
 
                 # Extract window
-                window = padded[i:i + self.kernel_size, j:j + self.kernel_size]
+                window = padded[i : i + self.kernel_size, j : j + self.kernel_size]
 
                 # Compute spatial weights
                 y_coords = torch.arange(self.kernel_size).float() - radius
                 x_coords = torch.arange(self.kernel_size).float() - radius
-                Y, X = torch.meshgrid(y_coords, x_coords, indexing='ij')
+                Y, X = torch.meshgrid(y_coords, x_coords, indexing="ij")
                 spatial_weight = torch.exp(-(X**2 + Y**2) / sigma_s_sq)
 
                 # Compute range weights
                 intensity_diff = window - center_val
-                range_weight = torch.exp(-intensity_diff**2 / sigma_r_sq)
+                range_weight = torch.exp(-(intensity_diff**2) / sigma_r_sq)
 
                 # Combined weight
                 weight = spatial_weight.to(image.device) * range_weight
@@ -84,10 +89,12 @@ class Model(nn.Module):
 image_height = 256
 image_width = 256
 
+
 def get_inputs():
     # Grayscale image with some noise
     image = torch.rand(image_height, image_width)
     return [image]
+
 
 def get_init_inputs():
     return [9, 3.0, 0.1]  # kernel_size, sigma_spatial, sigma_range

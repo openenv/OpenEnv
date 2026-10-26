@@ -8,17 +8,16 @@
 from __future__ import annotations
 
 try:
-    from openenv.core.env_client import EnvClient
     from openenv.core.client_types import StepResult
+    from openenv.core.env_client import EnvClient
     from openenv.core.env_server.types import State
 except ImportError:
-    from core.env_client import EnvClient
     from core.client_types import StepResult
+    from core.env_client import EnvClient
     from core.env_server.types import State
 
 
 from .models import GridWorldAction, GridWorldObservation, MoveAction
-
 
 
 class GridWorldEnv(EnvClient[GridWorldAction, GridWorldObservation, State]):
@@ -29,18 +28,17 @@ class GridWorldEnv(EnvClient[GridWorldAction, GridWorldObservation, State]):
     GridWorld Pydantic models for automatic (de)serialization.
     """
 
-
     def step_move(self, move: MoveAction) -> StepResult[GridWorldObservation]:
         """
         Helper method to send a simple move action.
-        
+
         Args:
             move: The MoveAction enum (e.g., MoveAction.UP)
         """
         action_payload = GridWorldAction(action=move)
         # 'super().step' comes from the base HTTPEnvClient
         return super().step(action_payload)
-    
+
     # --- REQUIRED ABSTRACT METHODS (The Missing Pieces) ---
 
     def _step_payload(self, action: GridWorldAction) -> dict:
@@ -51,10 +49,12 @@ class GridWorldEnv(EnvClient[GridWorldAction, GridWorldObservation, State]):
     def _parse_result(self, data: dict) -> StepResult[GridWorldObservation]:
         """Convert the raw dictionary response into a typed StepResult."""
         return StepResult(
-            observation=GridWorldObservation(**data["observation"]),
+            observation=GridWorldObservation(
+                **data["observation"], reward=data["reward"], done=data["done"]
+            ),
             reward=data["reward"],
             done=data["done"],
-            info=data.get("info", {})
+            metadata=data.get("metadata"),
         )
 
     def _parse_state(self, data: dict) -> State:

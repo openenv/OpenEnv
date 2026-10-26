@@ -1,16 +1,12 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Tests for the openenv fork command."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from typer.testing import CliRunner
-
 from openenv.cli.__main__ import app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -51,6 +47,27 @@ def test_fork_calls_duplicate_space_with_from_id() -> None:
         assert call_kwargs["private"] is False
         # HF API requires hardware; default to free cpu-basic when not specified
         assert call_kwargs["hardware"] == "cpu-basic"
+
+
+def test_fork_authenticates_object_whoami_response() -> None:
+    """Test that fork accepts object-shaped whoami responses."""
+    with (
+        patch("openenv.cli.commands.fork.whoami") as mock_whoami,
+        patch("openenv.cli.commands.fork.login") as mock_login,
+        patch("openenv.cli.commands.fork.HfApi") as mock_hf_api_class,
+    ):
+        mock_whoami.return_value = SimpleNamespace(username="testuser")
+        mock_api = MagicMock()
+        mock_api.duplicate_space.return_value = (
+            "https://huggingface.co/spaces/testuser/source-space"
+        )
+        mock_hf_api_class.return_value = mock_api
+
+        result = runner.invoke(app, ["fork", "owner/source-space"])
+
+        assert result.exit_code == 0
+        mock_login.assert_not_called()
+        mock_api.duplicate_space.assert_called_once()
 
 
 def test_fork_passes_private_and_to_id() -> None:

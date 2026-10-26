@@ -8,11 +8,13 @@
 
 from __future__ import annotations
 
+import os
+import re
+import subprocess
 import sys
+import urllib.request
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
-
-import nltk
 
 from openenv.core.env_server.interfaces import Environment
 
@@ -24,7 +26,7 @@ try:
         TextArenaObservation,
         TextArenaState,
     )
-    from textarena_env.rewards import RewardProvider, build_reward_providers
+    from textarena_env.rewards import build_reward_providers, RewardProvider
 except ImportError:
     # When running uvicorn directly from textarena_env/
     from models import (
@@ -33,12 +35,27 @@ except ImportError:
         TextArenaObservation,
         TextArenaState,
     )
-    from rewards import RewardProvider, build_reward_providers
+    from rewards import build_reward_providers, RewardProvider
 
 
 _TEXTARENA_MODULE: Any | None = None
 _TEXTARENA_IMPORT_ERROR: Exception | None = None
 _NLTK_DOWNLOADED: bool = False
+
+# TextArena's Wordle feedback, e.g. "You submitted [crane].\nFeedback:\nC R A N E\nG X Y X G".
+_WORDLE_FEEDBACK = re.compile(
+    r"You submitted \[(\w+)\]\.\nFeedback:\n[^\n]*\n([GYX ]+)"
+)
+_WORDLE_ATTEMPTS = re.compile(r"You have (\d+) attempts")
+_WORDLE_WIN = re.compile(
+    r"\[(\w+)\]\n\[GAME\] Congratulations! You guessed the word correctly!"
+)
+_WORDLE_TILES = {
+    "G": "background:var(--color-accent);color:var(--background-fill-primary);border-color:var(--color-accent)",
+    "Y": "color:var(--color-accent);border-color:var(--color-accent);border-style:dashed",
+    "X": "background:var(--background-fill-primary);color:var(--body-text-color-subdued);border-color:var(--border-color-primary)",
+    "-": "",
+}
 
 
 def _ensure_nltk_data() -> None:
@@ -46,8 +63,53 @@ def _ensure_nltk_data() -> None:
     global _NLTK_DOWNLOADED
     if _NLTK_DOWNLOADED:
         return
-    nltk.download("words", quiet=True)
-    nltk.download("averaged_perceptron_tagger_eng", quiet=True)
+    try:
+        import nltk
+    except ImportError as exc:
+        raise RuntimeError(
+            "NLTK is required for TextArena environments. "
+            "Install textarena_env dependencies (including nltk)."
+        ) from exc
+    packages = ("words", "averaged_perceptron_tagger_eng")
+    opener = urllib.request._opener
+    explicit_proxy = opener is not None and any(
+        isinstance(handler, urllib.request.ProxyHandler)
+        and any(scheme != "no" for scheme in handler.proxies)
+        for handler in opener.handlers
+    )
+    if (
+        nltk.__version__ == "3.10.3"
+        and set(urllib.request.getproxies()) == {"no"}
+        and not explicit_proxy
+    ):
+        # NLTK #3748 mistakes NO_PROXY alone for a carrying proxy. Isolate the
+        # workaround so other server threads retain their proxy configuration.
+        # Real proxies still use NLTK's normal, security-enforcing download path.
+        download_env = os.environ.copy()
+        download_env.pop("NO_PROXY", None)
+        download_env.pop("no_proxy", None)
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "nltk.downloader",
+                "--quiet",
+                "--exit-on-error",
+                "--dir",
+                nltk.downloader.Downloader().default_download_dir(),
+                *packages,
+            ],
+            env=download_env,
+            check=True,
+            timeout=120,
+        )
+    else:
+        for package in packages:
+            nltk.download(package, quiet=True, raise_on_error=True)
+    # NLTK 3.10.3's CLI can exit zero after a failed download. Verify the
+    # resources in this process before caching successful initialization.
+    nltk.data.find("corpora/words")
+    nltk.data.find("taggers/averaged_perceptron_tagger_eng")
     _NLTK_DOWNLOADED = True
 
 
@@ -81,6 +143,8 @@ def _import_textarena() -> Any:
 
 class TextArenaEnvironment(Environment):
     """Wrap any TextArena game behind the OpenEnv ``Environment`` API."""
+
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
     def __init__(
         self,
@@ -176,7 +240,9 @@ class TextArenaEnvironment(Environment):
         observation.reward = reward
         self._state.last_reward = reward
 
-        reward_signals = self._compute_reward_signals(action=action, observation=observation)
+        reward_signals = self._compute_reward_signals(
+            action=action, observation=observation
+        )
         if reward_signals:
             observation.info.setdefault("reward_signals", {}).update(reward_signals)
             observation.metadata.setdefault("reward_signals", {}).update(reward_signals)
@@ -190,6 +256,40 @@ class TextArenaEnvironment(Environment):
 
         return observation
 
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the Wordle board (one row per guess, empty rows for those left). Other games draw nothing."""
+        if "messages" not in observation:
+            return None
+        text = "".join(message["content"] for message in observation["messages"])
+        attempts = _WORDLE_ATTEMPTS.search(text)
+        if attempts is None:
+            return None
+        guesses = _WORDLE_FEEDBACK.findall(text)
+        length = len(guesses[0][0]) if guesses else 5
+        rows = [(word.upper(), marks.split()) for word, marks in guesses]
+        # A winning guess has no feedback line.
+        won = _WORDLE_WIN.search(text)
+        if won:
+            length = len(won.group(1))
+            rows.append((won.group(1).upper(), ["G"] * len(won.group(1))))
+        rows += [(" " * length, ["-"] * length)] * (int(attempts.group(1)) - len(rows))
+        tile = (
+            '<span style="display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;'
+            'border:2px solid var(--border-color-primary);border-radius:4px;{}">{}</span>'
+        )
+        cells = [
+            tile.format(_WORDLE_TILES[mark], letter)
+            for word, marks in rows
+            for letter, mark in zip(word, marks)
+        ]
+        return (
+            f'<div role="img" aria-label="Wordle board" style="display:inline-grid;'
+            f"grid-template-columns:repeat({length},38px);grid-auto-rows:38px;gap:5px;padding:10px;"
+            'border:1px solid var(--border-color-primary);border-radius:10px;background:var(--background-fill-secondary)">'
+            + "".join(cells)
+            + "</div>"
+        )
+
     @property
     def state(self) -> TextArenaState:
         return self._state
@@ -200,7 +300,24 @@ class TextArenaEnvironment(Environment):
     def _build_observation(self) -> TextArenaObservation:
         player_id, messages = self._ta_env.get_observation()
 
+        # TextArena keeps how the game ended in game_info, out of the observation.
+        state = self._ta_env.state
+        reason = (
+            state.game_info.get(player_id, {}).get("reason") if state.done else None
+        )
+        if reason and isinstance(messages, str):
+            # LLMObservationWrapper clients diff this single cumulative message.
+            messages += f"\n[GAME] {reason}"
+
         ta_messages = self._convert_messages(messages)
+        if reason and not isinstance(messages, str):
+            ta_messages.append(
+                TextArenaMessage(
+                    sender_id=-1,
+                    content=f"\n[GAME] {reason}",
+                    category="GAME_ADMIN",
+                )
+            )
 
         # Extract prompt from the appropriate messages.
         # TextArena PROMPT type messages contain the game instructions added during reset.
@@ -247,7 +364,9 @@ class TextArenaEnvironment(Environment):
 
     def _legal_players(self) -> List[int]:
         role_mapping = getattr(self._ta_env.state, "role_mapping", {}) or {}
-        players = [pid for pid in role_mapping.keys() if isinstance(pid, int) and pid >= 0]
+        players = [
+            pid for pid in role_mapping.keys() if isinstance(pid, int) and pid >= 0
+        ]
         return sorted(players)
 
     def _convert_messages(self, messages: Iterable[Any]) -> List[TextArenaMessage]:
@@ -284,7 +403,11 @@ class TextArenaEnvironment(Environment):
             sender_id = int(sender) if isinstance(sender, (int, float)) else -1
             text = str(content)
 
-            if buffered_content and buffered_category == category_name and buffered_sender == sender_id:
+            if (
+                buffered_content
+                and buffered_category == category_name
+                and buffered_sender == sender_id
+            ):
                 buffered_content.append(text)
             else:
                 flush_buffer()

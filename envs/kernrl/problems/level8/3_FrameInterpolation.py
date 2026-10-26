@@ -22,6 +22,7 @@ class Model(nn.Module):
 
     Uses motion vectors to warp frames and blend.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -30,7 +31,7 @@ class Model(nn.Module):
         frame0: torch.Tensor,
         frame1: torch.Tensor,
         flow_01: torch.Tensor,
-        t: float = 0.5
+        t: float = 0.5,
     ) -> torch.Tensor:
         """
         Interpolate frame at time t between frame0 (t=0) and frame1 (t=1).
@@ -57,7 +58,7 @@ class Model(nn.Module):
         # Create sampling grid
         y_coords = torch.linspace(-1, 1, H, device=frame0.device)
         x_coords = torch.linspace(-1, 1, W, device=frame0.device)
-        Y, X = torch.meshgrid(y_coords, x_coords, indexing='ij')
+        Y, X = torch.meshgrid(y_coords, x_coords, indexing="ij")
         grid = torch.stack([X, Y], dim=-1)  # (H, W, 2)
 
         # Normalize flow to [-1, 1] range
@@ -79,12 +80,18 @@ class Model(nn.Module):
 
         # Warp frames
         warped_0 = F.grid_sample(
-            frame0_batch, grid_t_to_0,
-            mode='bilinear', padding_mode='border', align_corners=True
+            frame0_batch,
+            grid_t_to_0,
+            mode="bilinear",
+            padding_mode="border",
+            align_corners=True,
         )
         warped_1 = F.grid_sample(
-            frame1_batch, grid_t_to_1,
-            mode='bilinear', padding_mode='border', align_corners=True
+            frame1_batch,
+            grid_t_to_1,
+            mode="bilinear",
+            padding_mode="border",
+            align_corners=True,
         )
 
         # Blend warped frames (simple linear blend)
@@ -101,12 +108,14 @@ class Model(nn.Module):
 frame_height = 720
 frame_width = 1280
 
+
 def get_inputs():
     frame0 = torch.rand(frame_height, frame_width)
     frame1 = torch.rand(frame_height, frame_width)
     # Random small flow
     flow = torch.randn(frame_height, frame_width, 2) * 5
     return [frame0, frame1, flow, 0.5]
+
 
 def get_init_inputs():
     return []

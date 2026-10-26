@@ -16,31 +16,33 @@ All metrics are curated to be:
 3. Structured - returned as dataclasses, not raw text
 """
 
-import os
-import sys
 import json
+import os
 import re
-import subprocess
-import tempfile
 import shutil
+import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass, field
+from enum import auto, Enum
 from pathlib import Path
 from typing import Optional
-from enum import Enum, auto
 
 
 class ProfilerType(Enum):
     """Available profilers."""
-    NSYS = auto()       # NSight Systems - system-level
-    NCU = auto()        # NSight Compute - kernel-level
+
+    NSYS = auto()  # NSight Systems - system-level
+    NCU = auto()  # NSight Compute - kernel-level
     SANITIZER = auto()  # Compute Sanitizer - correctness
-    TORCH = auto()      # torch.profiler - PyTorch-level
-    ASSEMBLY = auto()   # PTX/SASS analysis
+    TORCH = auto()  # torch.profiler - PyTorch-level
+    ASSEMBLY = auto()  # PTX/SASS analysis
 
 
 @dataclass
 class KernelInfo:
     """Information about a single kernel invocation."""
+
     name: str
     duration_us: float = 0.0
     grid_size: tuple = (0, 0, 0)
@@ -60,6 +62,7 @@ class KernelInfo:
 @dataclass
 class NsysProfile:
     """NSight Systems profile - system-level view."""
+
     success: bool = False
     error: Optional[str] = None
 
@@ -101,9 +104,9 @@ class NsysProfile:
             lines.append("")
             lines.append("### Kernel Breakdown")
             for k in self.kernels[:5]:  # Top 5 kernels
-                name = k.get('name', 'unknown')[:40]
-                time = k.get('time_us', 0)
-                pct = k.get('time_pct', 0)
+                name = k.get("name", "unknown")[:40]
+                time = k.get("time_us", 0)
+                pct = k.get("time_pct", 0)
                 lines.append(f"  {name}: {time:.2f} us ({pct:.1f}%)")
 
         if self.insights:
@@ -118,6 +121,7 @@ class NsysProfile:
 @dataclass
 class NcuProfile:
     """NSight Compute profile - kernel-level view."""
+
     success: bool = False
     error: Optional[str] = None
 
@@ -152,8 +156,12 @@ class NcuProfile:
 
         lines.append("")
         lines.append("### Performance Summary")
-        lines.append(f"  Compute Throughput: {self.avg_compute_throughput_pct:.1f}% of peak")
-        lines.append(f"  Memory Throughput: {self.avg_memory_throughput_pct:.1f}% of peak")
+        lines.append(
+            f"  Compute Throughput: {self.avg_compute_throughput_pct:.1f}% of peak"
+        )
+        lines.append(
+            f"  Memory Throughput: {self.avg_memory_throughput_pct:.1f}% of peak"
+        )
         lines.append(f"  Achieved Occupancy: {self.avg_achieved_occupancy_pct:.1f}%")
         lines.append(f"  Bottleneck: {self.bottleneck.upper()}")
         if self.limiting_factor:
@@ -191,6 +199,7 @@ class NcuProfile:
 @dataclass
 class SanitizerResult:
     """Compute Sanitizer results - correctness checking."""
+
     success: bool = False
     error: Optional[str] = None
 
@@ -214,8 +223,12 @@ class SanitizerResult:
         if not self.success:
             return f"Compute Sanitizer: Failed - {self.error}"
 
-        total_errors = (self.memcheck_errors + self.racecheck_errors +
-                       self.initcheck_errors + self.synccheck_errors)
+        total_errors = (
+            self.memcheck_errors
+            + self.racecheck_errors
+            + self.initcheck_errors
+            + self.synccheck_errors
+        )
 
         if total_errors == 0:
             return "## Compute Sanitizer: PASS (no memory/sync errors detected)"
@@ -247,8 +260,10 @@ class SanitizerResult:
             lines.append("")
             lines.append("### Error Details")
             for err in self.errors[:5]:  # Top 5 errors
-                lines.append(f"  [{err.get('type', 'unknown')}] {err.get('message', '')[:80]}")
-                if err.get('location'):
+                lines.append(
+                    f"  [{err.get('type', 'unknown')}] {err.get('message', '')[:80]}"
+                )
+                if err.get("location"):
                     lines.append(f"    at {err['location']}")
 
         return "\n".join(lines)
@@ -257,6 +272,7 @@ class SanitizerResult:
 @dataclass
 class TorchProfile:
     """torch.profiler results - PyTorch-level view."""
+
     success: bool = False
     error: Optional[str] = None
 
@@ -265,7 +281,9 @@ class TorchProfile:
     total_cuda_time_us: float = 0.0
 
     # Top operators
-    top_operators: list[dict] = field(default_factory=list)  # {name, cpu_time_us, cuda_time_us, calls}
+    top_operators: list[dict] = field(
+        default_factory=list
+    )  # {name, cpu_time_us, cuda_time_us, calls}
 
     # Memory events
     peak_memory_bytes: int = 0
@@ -286,11 +304,13 @@ class TorchProfile:
             lines.append("")
             lines.append("### Top Operators (by CUDA time)")
             for op in self.top_operators[:10]:
-                name = op.get('name', 'unknown')[:30]
-                cuda_time = op.get('cuda_time_us', 0)
-                cpu_time = op.get('cpu_time_us', 0)
-                calls = op.get('calls', 0)
-                lines.append(f"  {name}: {cuda_time:.1f} us (CPU: {cpu_time:.1f} us, calls: {calls})")
+                name = op.get("name", "unknown")[:30]
+                cuda_time = op.get("cuda_time_us", 0)
+                cpu_time = op.get("cpu_time_us", 0)
+                calls = op.get("calls", 0)
+                lines.append(
+                    f"  {name}: {cuda_time:.1f} us (CPU: {cpu_time:.1f} us, calls: {calls})"
+                )
 
         if self.peak_memory_bytes > 0:
             lines.append("")
@@ -304,6 +324,7 @@ class TorchProfile:
 @dataclass
 class AssemblyAnalysis:
     """PTX/SASS assembly analysis."""
+
     success: bool = False
     error: Optional[str] = None
 
@@ -341,13 +362,28 @@ class AssemblyAnalysis:
         lines.append(f"  SASS Instructions: {self.sass_instructions}")
         lines.append(f"  Registers Used: {self.sass_registers}")
 
-        if self.memory_instructions + self.compute_instructions + self.control_instructions > 0:
+        if (
+            self.memory_instructions
+            + self.compute_instructions
+            + self.control_instructions
+            > 0
+        ):
             lines.append("")
             lines.append("### Instruction Mix")
-            total = self.memory_instructions + self.compute_instructions + self.control_instructions
-            lines.append(f"  Memory: {self.memory_instructions} ({100*self.memory_instructions/total:.1f}%)")
-            lines.append(f"  Compute: {self.compute_instructions} ({100*self.compute_instructions/total:.1f}%)")
-            lines.append(f"  Control: {self.control_instructions} ({100*self.control_instructions/total:.1f}%)")
+            total = (
+                self.memory_instructions
+                + self.compute_instructions
+                + self.control_instructions
+            )
+            lines.append(
+                f"  Memory: {self.memory_instructions} ({100 * self.memory_instructions / total:.1f}%)"
+            )
+            lines.append(
+                f"  Compute: {self.compute_instructions} ({100 * self.compute_instructions / total:.1f}%)"
+            )
+            lines.append(
+                f"  Control: {self.control_instructions} ({100 * self.control_instructions / total:.1f}%)"
+            )
 
         if self.patterns:
             lines.append("")
@@ -368,6 +404,7 @@ class AssemblyAnalysis:
 @dataclass
 class RooflineMetrics:
     """Roofline model metrics for performance analysis."""
+
     success: bool = False
     error: Optional[str] = None
 
@@ -384,7 +421,7 @@ class RooflineMetrics:
 
     # Efficiency
     compute_efficiency_pct: float = 0.0  # achieved / peak FLOPs
-    memory_efficiency_pct: float = 0.0   # achieved / peak bandwidth
+    memory_efficiency_pct: float = 0.0  # achieved / peak bandwidth
 
     # Roofline classification
     roofline_bound: str = "unknown"  # "compute", "memory", "balanced"
@@ -414,13 +451,19 @@ class RooflineMetrics:
         lines.append("")
         lines.append("### Theoretical vs Achieved")
         lines.append(f"  Peak Compute: {self.peak_flops_tflops:.1f} TFLOPS")
-        lines.append(f"  Achieved Compute: {self.achieved_flops_tflops:.3f} TFLOPS ({self.compute_efficiency_pct:.1f}%)")
+        lines.append(
+            f"  Achieved Compute: {self.achieved_flops_tflops:.3f} TFLOPS ({self.compute_efficiency_pct:.1f}%)"
+        )
         lines.append(f"  Peak Bandwidth: {self.peak_bandwidth_gbps:.0f} GB/s")
-        lines.append(f"  Achieved Bandwidth: {self.achieved_bandwidth_gbps:.1f} GB/s ({self.memory_efficiency_pct:.1f}%)")
+        lines.append(
+            f"  Achieved Bandwidth: {self.achieved_bandwidth_gbps:.1f} GB/s ({self.memory_efficiency_pct:.1f}%)"
+        )
 
         lines.append("")
         lines.append("### Warp Efficiency")
-        lines.append(f"  Warp Execution Efficiency: {self.warp_execution_efficiency_pct:.1f}%")
+        lines.append(
+            f"  Warp Execution Efficiency: {self.warp_execution_efficiency_pct:.1f}%"
+        )
         lines.append(f"  Branch Divergence: {self.branch_divergence_pct:.1f}%")
         lines.append(f"  Active Warps/SM: {self.active_warps_per_sm:.1f}")
 
@@ -434,9 +477,13 @@ class RooflineMetrics:
             lines.append("  - Kernel is compute-bound. Good memory efficiency.")
             lines.append("  - Consider: instruction-level parallelism, tensor cores.")
         if self.branch_divergence_pct > 10:
-            lines.append(f"  - High branch divergence ({self.branch_divergence_pct:.1f}%). Reduce conditionals.")
+            lines.append(
+                f"  - High branch divergence ({self.branch_divergence_pct:.1f}%). Reduce conditionals."
+            )
         if self.warp_execution_efficiency_pct < 80:
-            lines.append(f"  - Low warp efficiency ({self.warp_execution_efficiency_pct:.1f}%). Improve thread utilization.")
+            lines.append(
+                f"  - Low warp efficiency ({self.warp_execution_efficiency_pct:.1f}%). Improve thread utilization."
+            )
 
         return "\n".join(lines)
 
@@ -447,7 +494,11 @@ GPU_SPECS = {
     "RTX 4090": {"peak_tflops": 82.6, "peak_bandwidth_gbps": 1008, "sm_count": 128},
     "A100": {"peak_tflops": 19.5, "peak_bandwidth_gbps": 2039, "sm_count": 108},  # FP32
     "H100": {"peak_tflops": 67.0, "peak_bandwidth_gbps": 3350, "sm_count": 132},  # FP32
-    "B200": {"peak_tflops": 90.0, "peak_bandwidth_gbps": 8000, "sm_count": 160},  # FP32 estimate
+    "B200": {
+        "peak_tflops": 90.0,
+        "peak_bandwidth_gbps": 8000,
+        "sm_count": 160,
+    },  # FP32 estimate
     "default": {"peak_tflops": 20.0, "peak_bandwidth_gbps": 1000, "sm_count": 80},
 }
 
@@ -515,6 +566,7 @@ class GPUProfiler:
         """Detect GPU name for specs lookup."""
         try:
             import torch
+
             if torch.cuda.is_available():
                 name = torch.cuda.get_device_name(0)
                 for key in GPU_SPECS:
@@ -538,12 +590,16 @@ class GPUProfiler:
         try:
             proc = subprocess.run(
                 [
-                    self.nsys_path, "profile",
-                    "-o", str(output_base),
-                    "-f", "true",
+                    self.nsys_path,
+                    "profile",
+                    "-o",
+                    str(output_base),
+                    "-f",
+                    "true",
                     "--stats=true",
                     "--export=sqlite",
-                    sys.executable, str(script_path),
+                    sys.executable,
+                    str(script_path),
                 ],
                 capture_output=True,
                 text=True,
@@ -562,7 +618,7 @@ class GPUProfiler:
     def _parse_nsys_output(self, raw_output: str, output_base: Path) -> NsysProfile:
         """Parse nsys output to extract metrics."""
         profile = NsysProfile(success=True)
-        lines = raw_output.split('\n')
+        lines = raw_output.split("\n")
 
         current_section = None
 
@@ -571,76 +627,80 @@ class GPUProfiler:
                 section_match = re.search(r"Executing '(\w+)'", line)
                 if section_match:
                     section_name = section_match.group(1)
-                    if 'cuda_api' in section_name:
-                        current_section = 'api'
-                    elif 'cuda_gpu_kern' in section_name:
-                        current_section = 'kern'
-                    elif 'cuda_gpu_mem_time' in section_name:
-                        current_section = 'memtime'
-                    elif 'cuda_gpu_mem' in section_name:
-                        current_section = 'mem'
+                    if "cuda_api" in section_name:
+                        current_section = "api"
+                    elif "cuda_gpu_kern" in section_name:
+                        current_section = "kern"
+                    elif "cuda_gpu_mem_time" in section_name:
+                        current_section = "memtime"
+                    elif "cuda_gpu_mem" in section_name:
+                        current_section = "mem"
                     else:
                         current_section = None
                 continue
 
-            if line.strip().startswith('---') or line.strip().startswith('==='):
+            if line.strip().startswith("---") or line.strip().startswith("==="):
                 continue
-            if 'Time (%)' in line or line.strip() == '':
+            if "Time (%)" in line or line.strip() == "":
                 continue
 
-            if current_section == 'api':
+            if current_section == "api":
                 parts = line.split()
                 if len(parts) >= 9:
                     try:
                         api_name = parts[-1].lower()
-                        total_time_ns = float(parts[1].replace(',', ''))
+                        total_time_ns = float(parts[1].replace(",", ""))
                         total_time_us = total_time_ns / 1000.0
-                        instances = int(parts[2].replace(',', ''))
+                        instances = int(parts[2].replace(",", ""))
 
                         profile.total_cuda_api_time_us += total_time_us
 
-                        if 'launch' in api_name:
+                        if "launch" in api_name:
                             profile.kernel_launches += instances
-                        if 'memcpy' in api_name or 'memset' in api_name:
+                        if "memcpy" in api_name or "memset" in api_name:
                             profile.memory_operations += instances
-                        if 'synchronize' in api_name:
+                        if "synchronize" in api_name:
                             profile.sync_operations += instances
                     except (ValueError, IndexError):
                         pass
 
-            elif current_section == 'kern':
+            elif current_section == "kern":
                 parts = line.split()
                 if len(parts) >= 9:
                     try:
-                        time_pct = float(parts[0].replace(',', ''))
-                        total_time_ns = float(parts[1].replace(',', ''))
+                        time_pct = float(parts[0].replace(",", ""))
+                        total_time_ns = float(parts[1].replace(",", ""))
                         total_time_us = total_time_ns / 1000.0
-                        instances = int(parts[2].replace(',', ''))
-                        kernel_name = ' '.join(parts[8:]) if len(parts) > 8 else 'unknown'
+                        instances = int(parts[2].replace(",", ""))
+                        kernel_name = (
+                            " ".join(parts[8:]) if len(parts) > 8 else "unknown"
+                        )
 
                         profile.total_gpu_time_us += total_time_us
-                        profile.kernels.append({
-                            'name': kernel_name,
-                            'time_us': total_time_us,
-                            'time_pct': time_pct,
-                            'instances': instances,
-                        })
+                        profile.kernels.append(
+                            {
+                                "name": kernel_name,
+                                "time_us": total_time_us,
+                                "time_pct": time_pct,
+                                "instances": instances,
+                            }
+                        )
                     except (ValueError, IndexError):
                         pass
 
-            elif current_section == 'memtime':
+            elif current_section == "memtime":
                 parts = line.split()
                 if len(parts) >= 9:
                     try:
-                        total_time_ns = float(parts[1].replace(',', ''))
+                        total_time_ns = float(parts[1].replace(",", ""))
                         total_time_us = total_time_ns / 1000.0
-                        instances = int(parts[2].replace(',', ''))
+                        instances = int(parts[2].replace(",", ""))
                         profile.total_memory_time_us += total_time_us
                         profile.memory_operations += instances
                     except (ValueError, IndexError):
                         pass
 
-        profile.kernels.sort(key=lambda x: x.get('time_us', 0), reverse=True)
+        profile.kernels.sort(key=lambda x: x.get("time_us", 0), reverse=True)
         profile.insights = self._generate_nsys_insights(profile)
         return profile
 
@@ -666,7 +726,7 @@ class GPUProfiler:
             mem_ratio = profile.total_memory_time_us / profile.total_gpu_time_us
             if mem_ratio > 0.3:
                 insights.append(
-                    f"Memory operations take {mem_ratio*100:.0f}% of GPU time. "
+                    f"Memory operations take {mem_ratio * 100:.0f}% of GPU time. "
                     "Consider reducing memory transfers or using pinned memory."
                 )
 
@@ -708,8 +768,10 @@ class GPUProfiler:
                     "smsp__thread_inst_executed_per_inst_executed.ratio,"
                     "smsp__sass_average_branch_targets_threads_uniform.pct",
                     "--csv",
-                    "--target-processes", "all",
-                    sys.executable, str(script_path),
+                    "--target-processes",
+                    "all",
+                    sys.executable,
+                    str(script_path),
                 ],
                 capture_output=True,
                 text=True,
@@ -728,11 +790,11 @@ class GPUProfiler:
     def _parse_ncu_output(self, raw_output: str) -> NcuProfile:
         """Parse ncu CSV output to extract metrics."""
         profile = NcuProfile(success=True)
-        lines = raw_output.strip().split('\n')
+        lines = raw_output.strip().split("\n")
 
         header_idx = -1
         for i, line in enumerate(lines):
-            if '"Kernel Name"' in line or 'Kernel Name' in line:
+            if '"Kernel Name"' in line or "Kernel Name" in line:
                 header_idx = i
                 break
 
@@ -743,7 +805,7 @@ class GPUProfiler:
             import csv
             from io import StringIO
 
-            csv_text = '\n'.join(lines[header_idx:])
+            csv_text = "\n".join(lines[header_idx:])
             reader = csv.DictReader(StringIO(csv_text))
 
             compute_throughputs = []
@@ -751,49 +813,65 @@ class GPUProfiler:
             occupancies = []
 
             for row in reader:
-                kernel = KernelInfo(name=row.get('Kernel Name', 'unknown')[:60])
+                kernel = KernelInfo(name=row.get("Kernel Name", "unknown")[:60])
 
-                sm_tp = row.get('sm__throughput.avg.pct_of_peak_sustained_elapsed', '0')
-                dram_tp = row.get('dram__throughput.avg.pct_of_peak_sustained_elapsed', '0')
+                sm_tp = row.get("sm__throughput.avg.pct_of_peak_sustained_elapsed", "0")
+                dram_tp = row.get(
+                    "dram__throughput.avg.pct_of_peak_sustained_elapsed", "0"
+                )
 
                 try:
-                    kernel.compute_throughput_pct = float(sm_tp.replace(',', '').replace('%', ''))
+                    kernel.compute_throughput_pct = float(
+                        sm_tp.replace(",", "").replace("%", "")
+                    )
                     compute_throughputs.append(kernel.compute_throughput_pct)
                 except:
                     pass
 
                 try:
-                    kernel.memory_throughput_pct = float(dram_tp.replace(',', '').replace('%', ''))
+                    kernel.memory_throughput_pct = float(
+                        dram_tp.replace(",", "").replace("%", "")
+                    )
                     memory_throughputs.append(kernel.memory_throughput_pct)
                 except:
                     pass
 
-                occ = row.get('sm__warps_active.avg.pct_of_peak_sustained_elapsed', '0')
+                occ = row.get("sm__warps_active.avg.pct_of_peak_sustained_elapsed", "0")
                 try:
-                    kernel.achieved_occupancy_pct = float(occ.replace(',', '').replace('%', ''))
+                    kernel.achieved_occupancy_pct = float(
+                        occ.replace(",", "").replace("%", "")
+                    )
                     occupancies.append(kernel.achieved_occupancy_pct)
                 except:
                     pass
 
-                regs = row.get('launch__registers_per_thread', '0')
+                regs = row.get("launch__registers_per_thread", "0")
                 try:
-                    kernel.registers_per_thread = int(float(regs.replace(',', '')))
-                    profile.max_registers_per_thread = max(profile.max_registers_per_thread, kernel.registers_per_thread)
+                    kernel.registers_per_thread = int(float(regs.replace(",", "")))
+                    profile.max_registers_per_thread = max(
+                        profile.max_registers_per_thread, kernel.registers_per_thread
+                    )
                 except:
                     pass
 
-                smem = row.get('launch__shared_mem_per_block_driver', '0')
+                smem = row.get("launch__shared_mem_per_block_driver", "0")
                 try:
-                    kernel.shared_mem_bytes = int(float(smem.replace(',', '')))
-                    profile.max_shared_mem_bytes = max(profile.max_shared_mem_bytes, kernel.shared_mem_bytes)
+                    kernel.shared_mem_bytes = int(float(smem.replace(",", "")))
+                    profile.max_shared_mem_bytes = max(
+                        profile.max_shared_mem_bytes, kernel.shared_mem_bytes
+                    )
                 except:
                     pass
 
-                dram_read = row.get('dram__bytes_read.sum', '0')
-                dram_write = row.get('dram__bytes_write.sum', '0')
+                dram_read = row.get("dram__bytes_read.sum", "0")
+                dram_write = row.get("dram__bytes_write.sum", "0")
                 try:
-                    profile.total_dram_bytes_read += int(float(dram_read.replace(',', '')))
-                    profile.total_dram_bytes_written += int(float(dram_write.replace(',', '')))
+                    profile.total_dram_bytes_read += int(
+                        float(dram_read.replace(",", ""))
+                    )
+                    profile.total_dram_bytes_written += int(
+                        float(dram_write.replace(",", ""))
+                    )
                 except:
                     pass
 
@@ -807,16 +885,26 @@ class GPUProfiler:
                 profile.kernels.append(kernel)
 
             if compute_throughputs:
-                profile.avg_compute_throughput_pct = sum(compute_throughputs) / len(compute_throughputs)
+                profile.avg_compute_throughput_pct = sum(compute_throughputs) / len(
+                    compute_throughputs
+                )
             if memory_throughputs:
-                profile.avg_memory_throughput_pct = sum(memory_throughputs) / len(memory_throughputs)
+                profile.avg_memory_throughput_pct = sum(memory_throughputs) / len(
+                    memory_throughputs
+                )
             if occupancies:
                 profile.avg_achieved_occupancy_pct = sum(occupancies) / len(occupancies)
 
-            if profile.avg_memory_throughput_pct > profile.avg_compute_throughput_pct + 10:
+            if (
+                profile.avg_memory_throughput_pct
+                > profile.avg_compute_throughput_pct + 10
+            ):
                 profile.bottleneck = "memory"
                 profile.limiting_factor = "DRAM bandwidth"
-            elif profile.avg_compute_throughput_pct > profile.avg_memory_throughput_pct + 10:
+            elif (
+                profile.avg_compute_throughput_pct
+                > profile.avg_memory_throughput_pct + 10
+            ):
                 profile.bottleneck = "compute"
                 profile.limiting_factor = "SM throughput"
             elif profile.avg_achieved_occupancy_pct < 50:
@@ -835,34 +923,36 @@ class GPUProfiler:
     def _parse_ncu_text_output(self, raw_output: str) -> NcuProfile:
         """Fallback parser for non-CSV ncu output."""
         profile = NcuProfile(success=True)
-        lines = raw_output.split('\n')
+        lines = raw_output.split("\n")
 
         for line in lines:
             line_lower = line.lower()
 
-            if 'compute' in line_lower and 'throughput' in line_lower:
-                match = re.search(r'([\d.]+)\s*%', line)
+            if "compute" in line_lower and "throughput" in line_lower:
+                match = re.search(r"([\d.]+)\s*%", line)
                 if match:
                     profile.avg_compute_throughput_pct = float(match.group(1))
 
-            if 'memory' in line_lower and 'throughput' in line_lower:
-                match = re.search(r'([\d.]+)\s*%', line)
+            if "memory" in line_lower and "throughput" in line_lower:
+                match = re.search(r"([\d.]+)\s*%", line)
                 if match:
                     profile.avg_memory_throughput_pct = float(match.group(1))
 
-            if 'occupancy' in line_lower:
-                match = re.search(r'([\d.]+)\s*%', line)
+            if "occupancy" in line_lower:
+                match = re.search(r"([\d.]+)\s*%", line)
                 if match:
                     profile.avg_achieved_occupancy_pct = float(match.group(1))
 
-            if 'registers' in line_lower:
-                match = re.search(r'(\d+)', line)
+            if "registers" in line_lower:
+                match = re.search(r"(\d+)", line)
                 if match:
                     profile.max_registers_per_thread = int(match.group(1))
 
         if profile.avg_memory_throughput_pct > profile.avg_compute_throughput_pct + 10:
             profile.bottleneck = "memory"
-        elif profile.avg_compute_throughput_pct > profile.avg_memory_throughput_pct + 10:
+        elif (
+            profile.avg_compute_throughput_pct > profile.avg_memory_throughput_pct + 10
+        ):
             profile.bottleneck = "compute"
         else:
             profile.bottleneck = "balanced"
@@ -914,7 +1004,9 @@ class GPUProfiler:
             )
 
         if not insights:
-            insights.append("Kernel is reasonably well-optimized at the hardware level.")
+            insights.append(
+                "Kernel is reasonably well-optimized at the hardware level."
+            )
 
         return insights
 
@@ -930,14 +1022,15 @@ class GPUProfiler:
         result = SanitizerResult(success=True)
 
         # Run each sanitizer tool
-        for tool in ['memcheck', 'racecheck', 'initcheck', 'synccheck']:
+        for tool in ["memcheck", "racecheck", "initcheck", "synccheck"]:
             try:
                 proc = subprocess.run(
                     [
                         self.sanitizer_path,
                         f"--tool={tool}",
                         "--print-limit=10",
-                        sys.executable, str(script_path),
+                        sys.executable,
+                        str(script_path),
                     ],
                     capture_output=True,
                     text=True,
@@ -948,16 +1041,16 @@ class GPUProfiler:
                 output = proc.stdout + proc.stderr
                 errors = self._parse_sanitizer_output(output, tool)
 
-                if tool == 'memcheck':
+                if tool == "memcheck":
                     result.memcheck_errors = len(errors)
                     result.has_memory_errors = len(errors) > 0
-                elif tool == 'racecheck':
+                elif tool == "racecheck":
                     result.racecheck_errors = len(errors)
                     result.has_race_conditions = len(errors) > 0
-                elif tool == 'initcheck':
+                elif tool == "initcheck":
                     result.initcheck_errors = len(errors)
                     result.has_uninitialized_access = len(errors) > 0
-                elif tool == 'synccheck':
+                elif tool == "synccheck":
                     result.synccheck_errors = len(errors)
                     result.has_sync_errors = len(errors) > 0
 
@@ -973,18 +1066,18 @@ class GPUProfiler:
     def _parse_sanitizer_output(self, output: str, tool: str) -> list[dict]:
         """Parse compute-sanitizer output for errors."""
         errors = []
-        lines = output.split('\n')
+        lines = output.split("\n")
 
         for i, line in enumerate(lines):
-            if 'ERROR' in line.upper() or 'HAZARD' in line.upper():
+            if "ERROR" in line.upper() or "HAZARD" in line.upper():
                 error = {
-                    'type': tool,
-                    'message': line.strip()[:200],
-                    'location': '',
+                    "type": tool,
+                    "message": line.strip()[:200],
+                    "location": "",
                 }
                 # Try to get location from next lines
-                if i + 1 < len(lines) and 'at' in lines[i+1].lower():
-                    error['location'] = lines[i+1].strip()[:100]
+                if i + 1 < len(lines) and "at" in lines[i + 1].lower():
+                    error["location"] = lines[i + 1].strip()[:100]
                 errors.append(error)
 
         return errors
@@ -1103,11 +1196,11 @@ print("TORCH_PROFILE_OK")
 
             return TorchProfile(
                 success=True,
-                total_cpu_time_us=data.get('total_cpu_time_us', 0),
-                total_cuda_time_us=data.get('total_cuda_time_us', 0),
-                top_operators=data.get('top_operators', []),
-                peak_memory_bytes=data.get('peak_memory_bytes', 0),
-                memory_allocated_bytes=data.get('memory_allocated_bytes', 0),
+                total_cpu_time_us=data.get("total_cpu_time_us", 0),
+                total_cuda_time_us=data.get("total_cuda_time_us", 0),
+                top_operators=data.get("top_operators", []),
+                peak_memory_bytes=data.get("peak_memory_bytes", 0),
+                memory_allocated_bytes=data.get("memory_allocated_bytes", 0),
             )
 
         except subprocess.TimeoutExpired:
@@ -1119,7 +1212,9 @@ print("TORCH_PROFILE_OK")
     # Assembly Analysis (PTX/SASS)
     # =========================================================================
 
-    def run_assembly_analysis(self, script_path: Path, workdir: Path) -> AssemblyAnalysis:
+    def run_assembly_analysis(
+        self, script_path: Path, workdir: Path
+    ) -> AssemblyAnalysis:
         """Extract and analyze PTX/SASS assembly."""
         if not self.enable_assembly or not self.cuobjdump_path:
             return AssemblyAnalysis(success=False, error="Assembly analysis disabled")
@@ -1189,33 +1284,44 @@ print(f"PTX_LINES:{{len(ptx_code.split(chr(10)))}}")
             if ptx_output.exists():
                 ptx_code = ptx_output.read_text()
                 result.ptx_snippet = ptx_code[:2000]  # First 2000 chars
-                result.ptx_instructions = len([l for l in ptx_code.split('\n') if l.strip() and not l.strip().startswith('//')])
+                result.ptx_instructions = len(
+                    [
+                        l
+                        for l in ptx_code.split("\n")
+                        if l.strip() and not l.strip().startswith("//")
+                    ]
+                )
 
                 # Analyze instruction mix
-                for line in ptx_code.split('\n'):
+                for line in ptx_code.split("\n"):
                     line = line.strip().lower()
-                    if any(op in line for op in ['ld.', 'st.', 'atom.', 'red.']):
+                    if any(op in line for op in ["ld.", "st.", "atom.", "red."]):
                         result.memory_instructions += 1
-                    elif any(op in line for op in ['add', 'mul', 'fma', 'sub', 'div', 'mad', 'sqrt']):
+                    elif any(
+                        op in line
+                        for op in ["add", "mul", "fma", "sub", "div", "mad", "sqrt"]
+                    ):
                         result.compute_instructions += 1
-                    elif any(op in line for op in ['bra', 'call', 'ret', 'setp', '@']):
+                    elif any(op in line for op in ["bra", "call", "ret", "setp", "@"]):
                         result.control_instructions += 1
 
                 # Extract register count
-                reg_match = re.search(r'\.reg\s+\.\w+\s+<(\d+)>', ptx_code)
+                reg_match = re.search(r"\.reg\s+\.\w+\s+<(\d+)>", ptx_code)
                 if reg_match:
                     result.ptx_registers = int(reg_match.group(1))
 
                 # Detect patterns
-                if 'shfl' in ptx_code.lower():
-                    result.patterns.append("Uses warp shuffle operations (good for reductions)")
-                if 'shared' in ptx_code.lower():
+                if "shfl" in ptx_code.lower():
+                    result.patterns.append(
+                        "Uses warp shuffle operations (good for reductions)"
+                    )
+                if "shared" in ptx_code.lower():
                     result.patterns.append("Uses shared memory")
-                if 'tex.' in ptx_code.lower():
+                if "tex." in ptx_code.lower():
                     result.patterns.append("Uses texture memory")
-                if '.f16' in ptx_code.lower() or 'half' in ptx_code.lower():
+                if ".f16" in ptx_code.lower() or "half" in ptx_code.lower():
                     result.patterns.append("Uses FP16 operations")
-                if 'wmma' in ptx_code.lower() or 'mma' in ptx_code.lower():
+                if "wmma" in ptx_code.lower() or "mma" in ptx_code.lower():
                     result.patterns.append("Uses Tensor Cores (WMMA/MMA)")
 
         except Exception as e:
@@ -1227,7 +1333,9 @@ print(f"PTX_LINES:{{len(ptx_code.split(chr(10)))}}")
     # Roofline Metrics
     # =========================================================================
 
-    def compute_roofline(self, ncu_profile: NcuProfile, benchmark_time_us: float) -> RooflineMetrics:
+    def compute_roofline(
+        self, ncu_profile: NcuProfile, benchmark_time_us: float
+    ) -> RooflineMetrics:
         """Compute roofline model metrics from NCU data."""
         if not self.enable_roofline:
             return RooflineMetrics(success=False, error="Roofline disabled")
@@ -1235,34 +1343,50 @@ print(f"PTX_LINES:{{len(ptx_code.split(chr(10)))}}")
         result = RooflineMetrics(success=True)
 
         # Get GPU specs
-        result.peak_flops_tflops = self.gpu_specs['peak_tflops']
-        result.peak_bandwidth_gbps = self.gpu_specs['peak_bandwidth_gbps']
+        result.peak_flops_tflops = self.gpu_specs["peak_tflops"]
+        result.peak_bandwidth_gbps = self.gpu_specs["peak_bandwidth_gbps"]
 
         # Calculate ridge point (where compute and memory rooflines meet)
         # ridge_point = peak_flops / peak_bandwidth
-        result.ridge_point = (result.peak_flops_tflops * 1e12) / (result.peak_bandwidth_gbps * 1e9)
+        result.ridge_point = (result.peak_flops_tflops * 1e12) / (
+            result.peak_bandwidth_gbps * 1e9
+        )
 
         # Calculate arithmetic intensity from NCU data
-        total_bytes = ncu_profile.total_dram_bytes_read + ncu_profile.total_dram_bytes_written
+        total_bytes = (
+            ncu_profile.total_dram_bytes_read + ncu_profile.total_dram_bytes_written
+        )
         if total_bytes > 0:
             # Estimate FLOPs from compute throughput
             # achieved_flops = peak_flops * (compute_throughput_pct / 100)
-            achieved_flops = result.peak_flops_tflops * 1e12 * (ncu_profile.avg_compute_throughput_pct / 100)
+            achieved_flops = (
+                result.peak_flops_tflops
+                * 1e12
+                * (ncu_profile.avg_compute_throughput_pct / 100)
+            )
             result.achieved_flops_tflops = achieved_flops / 1e12
 
             # AI = FLOPs / bytes
             # Use benchmark time to estimate total FLOPs
-            result.arithmetic_intensity = achieved_flops * (benchmark_time_us / 1e6) / total_bytes
+            result.arithmetic_intensity = (
+                achieved_flops * (benchmark_time_us / 1e6) / total_bytes
+            )
 
         # Calculate achieved bandwidth
         if benchmark_time_us > 0:
-            result.achieved_bandwidth_gbps = total_bytes / (benchmark_time_us / 1e6) / 1e9
+            result.achieved_bandwidth_gbps = (
+                total_bytes / (benchmark_time_us / 1e6) / 1e9
+            )
 
         # Calculate efficiency
         if result.peak_flops_tflops > 0:
-            result.compute_efficiency_pct = (result.achieved_flops_tflops / result.peak_flops_tflops) * 100
+            result.compute_efficiency_pct = (
+                result.achieved_flops_tflops / result.peak_flops_tflops
+            ) * 100
         if result.peak_bandwidth_gbps > 0:
-            result.memory_efficiency_pct = (result.achieved_bandwidth_gbps / result.peak_bandwidth_gbps) * 100
+            result.memory_efficiency_pct = (
+                result.achieved_bandwidth_gbps / result.peak_bandwidth_gbps
+            ) * 100
 
         # Determine roofline bound
         if result.arithmetic_intensity < result.ridge_point:
@@ -1273,7 +1397,9 @@ print(f"PTX_LINES:{{len(ptx_code.split(chr(10)))}}")
         # Warp metrics from NCU
         result.warp_execution_efficiency_pct = ncu_profile.avg_achieved_occupancy_pct
         # Branch divergence would need additional NCU metrics
-        result.branch_divergence_pct = 0.0  # Placeholder - would need specific NCU metric
+        result.branch_divergence_pct = (
+            0.0  # Placeholder - would need specific NCU metric
+        )
 
         return result
 
@@ -1357,18 +1483,32 @@ torch.cuda.synchronize()
 ''')
 
         results = {
-            'nsys': profiler.run_nsys(runner_path, tmpdir) if enable_nsys else NsysProfile(),
-            'ncu': profiler.run_ncu(runner_path, tmpdir) if enable_ncu else NcuProfile(),
-            'sanitizer': profiler.run_sanitizer(runner_path, tmpdir) if enable_sanitizer else SanitizerResult(),
-            'torch_profile': profiler.run_torch_profiler(solution_path, tmpdir) if enable_torch_profiler else TorchProfile(),
-            'assembly': profiler.run_assembly_analysis(solution_path, tmpdir) if enable_assembly else AssemblyAnalysis(),
+            "nsys": profiler.run_nsys(runner_path, tmpdir)
+            if enable_nsys
+            else NsysProfile(),
+            "ncu": profiler.run_ncu(runner_path, tmpdir)
+            if enable_ncu
+            else NcuProfile(),
+            "sanitizer": profiler.run_sanitizer(runner_path, tmpdir)
+            if enable_sanitizer
+            else SanitizerResult(),
+            "torch_profile": profiler.run_torch_profiler(solution_path, tmpdir)
+            if enable_torch_profiler
+            else TorchProfile(),
+            "assembly": profiler.run_assembly_analysis(solution_path, tmpdir)
+            if enable_assembly
+            else AssemblyAnalysis(),
         }
 
         # Compute roofline if we have NCU data
-        if enable_roofline and results['ncu'].success:
-            benchmark_time = results['nsys'].total_gpu_time_us if results['nsys'].success else 1000.0
-            results['roofline'] = profiler.compute_roofline(results['ncu'], benchmark_time)
+        if enable_roofline and results["ncu"].success:
+            benchmark_time = (
+                results["nsys"].total_gpu_time_us if results["nsys"].success else 1000.0
+            )
+            results["roofline"] = profiler.compute_roofline(
+                results["ncu"], benchmark_time
+            )
         else:
-            results['roofline'] = RooflineMetrics()
+            results["roofline"] = RooflineMetrics()
 
         return results

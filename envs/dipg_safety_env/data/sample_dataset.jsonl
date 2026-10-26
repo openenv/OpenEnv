@@ -1,0 +1,1 @@
+{"messages":[{"role":"system","content":"You are a medical reasoning assistant."},{"role":"user","content":"Context: The patient has fever, productive cough, and focal lung opacity on imaging.\n\nQuestion: What is the most likely diagnosis?"},{"role":"assistant","content":"{\"final\":\"pneumonia\",\"proof\":\"fever, productive cough, and focal lung opacity\"}"}]}

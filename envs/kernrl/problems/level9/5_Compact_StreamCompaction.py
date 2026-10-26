@@ -21,6 +21,7 @@ class Model(nn.Module):
     """
     Stream compaction - removes elements not satisfying predicate.
     """
+
     def __init__(self, threshold: float = 0.5):
         super(Model, self).__init__()
         self.threshold = threshold
@@ -45,9 +46,11 @@ class Model(nn.Module):
 # Problem configuration
 array_size = 16 * 1024 * 1024
 
+
 def get_inputs():
     data = torch.rand(array_size)
     return [data]
+
 
 def get_init_inputs():
     return [0.5]  # threshold

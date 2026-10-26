@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Web interface for OpenEnv environments.
@@ -15,57 +11,79 @@ option (e.g. openenv push --enable-interface) or ENABLE_WEB_INTERFACE env var.
 from __future__ import annotations
 
 import asyncio
+import functools
+import inspect
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, get_origin, List, Optional, Tuple, Type
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import gradio as gr
+from fastapi import Body, FastAPI, HTTPException, status, WebSocket, WebSocketDisconnect
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ._utils import overrides_method
 from .gradio_theme import OPENENV_GRADIO_CSS, OPENENV_GRADIO_THEME
 from .gradio_ui import build_gradio_app, get_gradio_display_title
 from .interfaces import Environment
 from .serialization import deserialize_action_with_preprocessing, serialize_observation
 from .types import Action, EnvironmentMetadata, Observation, State
 
-# Quick Start markdown template; placeholders match init suffixes (__ENV_NAME__, __ENV_CLASS_NAME__*).
-DEFAULT_QUICK_START_MARKDOWN = """
-### Connect to this environment
 
-Connect from Python using `__ENV_CLASS_NAME__Env`:
+_CLIENT_BASES = {"EnvClient", "MCPClientBase", "MCPToolClient"}
 
-```python
-from __ENV_NAME__ import __ENV_CLASS_NAME__Action, __ENV_CLASS_NAME__Env
 
-with __ENV_CLASS_NAME__Env.from_env("<SPACE_ID>") as env:
-    result = await env.step(__ENV_CLASS_NAME__Action(message="..."))
-```
+def _read_package(package: str) -> Tuple[Optional[str], set]:
+    """
+    The client class defined in the package's `client.py` and the names its
+    `__init__.py` exports. The files are parsed, not imported, so the server
+    never loads client code.
+    """
+    import ast
+    import importlib.util
+    from pathlib import Path
 
-Or connect directly to a running server:
+    spec = importlib.util.find_spec(package)
+    if spec is None or not spec.submodule_search_locations:
+        return None, set()
+    root = Path(next(iter(spec.submodule_search_locations)))
 
-```python
-env = __ENV_CLASS_NAME__Env(base_url="http://localhost:8000")
-```
+    def parse(name: str) -> Optional[ast.Module]:
+        path = root / name
+        return ast.parse(path.read_text()) if path.exists() else None
 
-### Contribute to this environment
+    client = None
+    tree = parse("client.py")
+    for node in tree.body if tree else []:
+        if isinstance(node, ast.ClassDef):
+            bases = {ast.unparse(b).split("[")[0].split(".")[-1] for b in node.bases}
+            if bases & _CLIENT_BASES:
+                client = node.name
+                break
 
-Submit improvements via pull request on the Hugging Face Hub.
+    exports = set()
+    tree = parse("__init__.py")
+    for node in ast.walk(tree) if tree else []:
+        if isinstance(node, ast.ImportFrom):
+            exports.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            exports.add(node.value)
+    return client, exports
 
-```bash
-openenv fork <SPACE_ID> --repo-id <your-username>/<your-repo-name>
-```
 
-Then make your changes and submit a pull request:
-
-```bash
-cd <forked-repo>
-openenv push <SPACE_ID> --create-pr
-```
-
-For more information, see the [OpenEnv documentation](https://meta-pytorch.org/OpenEnv/).
-"""
+def _example_value(annotation: Any) -> str:
+    """A placeholder literal for a field of the given type."""
+    origin = get_origin(annotation) or annotation
+    literals = {
+        bool: "False",
+        int: "0",
+        float: "0.0",
+        str: '"..."',
+        list: "[]",
+        dict: "{}",
+    }
+    return literals.get(origin, "...")
 
 
 def get_quick_start_markdown(
@@ -74,35 +92,86 @@ def get_quick_start_markdown(
     observation_cls: Type[Observation],
 ) -> str:
     """
-    Build Quick Start markdown with class names replaced from current env (init-style suffixes).
+    Build the Quick Start markdown shown next to the web interface.
 
-    Uses the same placeholder names as the init template so that __ENV_CLASS_NAME__Env,
-    __ENV_CLASS_NAME__Action, __ENV_CLASS_NAME__Observation and __ENV_NAME__ are
-    replaced with the actual class/package names.
+    The client class is the one the environment package exports, the URL is the
+    Space's own when running on Hugging Face Spaces, and the example action uses
+    the action's real fields.
     """
     import os
 
-    # Prefix from action class (e.g. EchoAction -> Echo)
-    action_name = getattr(action_cls, "__name__", "Action")
-    if action_name.endswith("Action"):
-        prefix = action_name[: -len("Action")]
+    from .mcp_types import CallToolAction
+
+    package = (metadata.name if metadata else "env").replace(" ", "_").lower()
+    client, exports = _read_package(package)
+    if client is None:
+        # The env name can differ from its package (reasoning_gym vs reasoning_gym_env).
+        module_root = action_cls.__module__.split(".")[0]
+        if module_root not in (package, "openenv", "models", "server"):
+            package = module_root
+            client, exports = _read_package(package)
+    space_id = os.environ.get("SPACE_ID")
+    space_host = os.environ.get("SPACE_HOST")
+    base_url = f"https://{space_host}" if space_host else "http://localhost:8000"
+
+    if client is None:
+        return (
+            "### Connect to this environment\n\n"
+            f"The server is at `{base_url}`. See the environment's README for how to connect."
+        )
+
+    lines = ["### Connect to this environment", ""]
+    if space_id:
+        lines += [
+            "```bash",
+            f"pip install git+https://huggingface.co/spaces/{space_id}",
+            "```",
+            "",
+        ]
+
+    if issubclass(action_cls, CallToolAction):
+        code = [
+            f"from {package} import {client}",
+            "",
+            f'with {client}(base_url="{base_url}").sync() as env:',
+            "    env.reset()",
+            "    print([tool.name for tool in env.list_tools()])",
+        ]
+        after = "Then call a tool with `env.call_tool(name, **arguments)`."
     else:
-        prefix = action_name.replace("Action", "").strip() or "Env"
+        action = action_cls.__name__
+        exported = action in exports
+        action_module = package if exported else action_cls.__module__
+        fields = ", ".join(
+            f"{name}={_example_value(field.annotation)}"
+            for name, field in action_cls.model_fields.items()
+            if field.is_required() and name != "metadata"
+        )
+        code = [
+            *(
+                [f"from {package} import {action}, {client}"]
+                if exported
+                else [
+                    f"from {action_module} import {action}",
+                    f"from {package} import {client}",
+                ]
+            ),
+            "",
+            f'with {client}(base_url="{base_url}").sync() as env:',
+            "    result = env.reset()",
+            f"    result = env.step({action}({fields}))",
+            "    print(result.observation, result.reward)",
+        ]
+        after = ""
 
-    env_client_name = f"{prefix}Env"
-    obs_name = getattr(observation_cls, "__name__", "Observation")
-    pkg_name = (metadata.name if metadata else "env").replace(" ", "_").lower()
-
-    space_id = os.environ.get("SPACE_ID", "<hf-username>/<hf-repo-name>")
-
-    content = DEFAULT_QUICK_START_MARKDOWN
-    content = content.replace("__ENV_CLASS_NAME__Env", env_client_name)
-    content = content.replace("__ENV_CLASS_NAME__Action", action_name)
-    content = content.replace("__ENV_CLASS_NAME__Observation", obs_name)
-    content = content.replace("__ENV_CLASS_NAME__", prefix)
-    content = content.replace("__ENV_NAME__", pkg_name)
-    content = content.replace("<SPACE_ID>", space_id)
-    return content.strip()
+    lines += ["```python", *code, "```"]
+    if after:
+        lines += ["", after]
+    lines += [
+        "",
+        "More in the [OpenEnv documentation](https://huggingface.co/docs/openenv).",
+    ]
+    return "\n".join(lines)
 
 
 def load_environment_metadata(
@@ -112,39 +181,29 @@ def load_environment_metadata(
     Load environment metadata including README content.
 
     Args:
-        env: The environment instance, class, or factory function.
-             - If a class: used as a factory, won't call instance methods
-             - If a function: used as a factory, won't call instance methods
-             - If an instance: may call get_metadata() if available
-        env_name: Optional environment name for README file lookup
+        env: The environment instance or factory (class, function or
+            `functools.partial`). A factory is not instantiated. If an instance,
+            `get_metadata()` is called.
+        env_name (`str`, *optional*):
+            Optional environment name for README file lookup.
 
     Returns:
-        EnvironmentMetadata with loaded information
+        `EnvironmentMetadata` with loaded information.
     """
-    import inspect
-
-    # Determine what type of env we received:
-    # 1. A class (used as factory) - e.g., PythonCodeActEnv
-    # 2. A function (factory function) - e.g., create_chat_environment
-    # 3. An actual instance - e.g., SnakeEnvironment()
-    is_class = inspect.isclass(env)
-    is_function = inspect.isfunction(env) or inspect.ismethod(env)
-    is_factory = is_class or is_function
-
-    # Try to get metadata from environment if it's an instance with get_metadata
-    if not is_factory and hasattr(env, "get_metadata"):
+    # An Environment instance provides its own metadata. Anything else is a factory:
+    # a class (e.g. PythonCodeActEnv), a factory function (e.g.
+    # create_chat_environment) or a `functools.partial` of either.
+    if isinstance(env, Environment):
         return env.get_metadata()
 
+    if isinstance(env, functools.partial):
+        env = env.func
+
     # Determine the class name for default metadata
-    if is_class:
-        # env is the class itself
+    if inspect.isclass(env):
         class_name = env.__name__
-    elif is_function:
-        # env is a factory function - use its name or derive from env_name
-        class_name = env_name or env.__name__
     else:
-        # env is an instance
-        class_name = env.__class__.__name__
+        class_name = env_name or env.__name__
 
     # Default metadata
     metadata = EnvironmentMetadata(
@@ -165,21 +224,13 @@ def _load_readme_from_filesystem(env_name: Optional[str]) -> Optional[str]:
     """
     Load README content from the filesystem.
 
-    Tries multiple locations:
-    1. Container filesystem: /app/README.md
-    2. Local development: src/envs/{env_name}/README.md
-    3. Environment variable: ENV_README_PATH
+    Tries multiple locations in order: the path given by the `ENV_README_PATH`
+    environment variable, the repository path `envs/{env_name}/README.md`, and the
+    container paths `/app/env/README.md` (where Space images copy the environment)
+    and `/app/README.md`.
     """
     import os
     from pathlib import Path
-
-    # Try container filesystem first
-    container_readme = Path("/app/README.md")
-    if container_readme.exists():
-        try:
-            return container_readme.read_text(encoding="utf-8")
-        except Exception:
-            pass
 
     # Try environment variable path
     custom_path = os.environ.get("ENV_README_PATH")
@@ -189,12 +240,12 @@ def _load_readme_from_filesystem(env_name: Optional[str]) -> Optional[str]:
         except Exception:
             pass
 
-    # Try local development path
-    if env_name:
-        local_readme = Path(f"src/envs/{env_name}/README.md")
-        if local_readme.exists():
+    candidates = [Path(f"envs/{env_name}/README.md")] if env_name else []
+    candidates += [Path("/app/env/README.md"), Path("/app/README.md")]
+    for readme in candidates:
+        if readme.exists():
             try:
-                return local_readme.read_text(encoding="utf-8")
+                return readme.read_text(encoding="utf-8")
             except Exception:
                 pass
 
@@ -246,13 +297,8 @@ class WebInterfaceManager:
         observation_cls: Type[Observation],
         metadata: Optional[EnvironmentMetadata] = None,
     ):
-        import inspect
-
-        # If env is a class or factory function, instantiate it
-        if inspect.isclass(env) or inspect.isfunction(env):
-            self.env = env()
-        else:
-            self.env = env
+        # Anything that is not an Environment instance is a factory, instantiate it
+        self.env = env if isinstance(env, Environment) else env()
         self.action_cls = action_cls
         self.observation_cls = observation_cls
         self.metadata = metadata or EnvironmentMetadata(
@@ -268,6 +314,28 @@ class WebInterfaceManager:
         self.connected_clients: List[WebSocket] = []
         # Thread pool for running sync code (e.g., Playwright sync API) in async context
         self._executor = ThreadPoolExecutor(max_workers=1)
+
+    @staticmethod
+    def _get_valid_kwargs(
+        sig: inspect.Signature,
+        kwargs: Dict[str, Any],
+        skip_params: Optional[set[str]] = None,
+    ) -> Dict[str, Any]:
+        """Filter kwargs to only those accepted by the target function."""
+        skip_params = skip_params or set()
+        valid_kwargs: Dict[str, Any] = {}
+        has_var_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in sig.parameters.values()
+        )
+
+        for key, value in kwargs.items():
+            if key in skip_params:
+                continue
+            if key in sig.parameters or has_var_kwargs:
+                valid_kwargs[key] = value
+
+        return valid_kwargs
 
     async def _run_sync_in_thread_pool(self, func, *args, **kwargs):
         """Run a synchronous function in the thread pool executor.
@@ -317,11 +385,24 @@ class WebInterfaceManager:
         for client in disconnected_clients:
             self.connected_clients.remove(client)
 
-    async def reset_environment(self) -> Dict[str, Any]:
+    async def reset_environment(
+        self, reset_kwargs: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Reset the environment and update state."""
-        # Run sync reset in thread pool to avoid blocking event loop
-        # and to support environments using sync libraries (e.g., Playwright)
-        observation: Observation = await self._run_sync_in_thread_pool(self.env.reset)
+        reset_kwargs = reset_kwargs or {}
+
+        is_async = overrides_method(self.env.reset_async, Environment.reset_async)
+        sig = inspect.signature(self.env.reset_async if is_async else self.env.reset)
+        valid_kwargs = self._get_valid_kwargs(sig, reset_kwargs)
+
+        if is_async:
+            observation = await self.env.reset_async(**valid_kwargs)
+        else:
+            # Run sync reset in thread pool to avoid blocking event loop
+            # and to support environments using sync libraries (e.g., Playwright)
+            observation = await self._run_sync_in_thread_pool(
+                self.env.reset, **valid_kwargs
+            )
         state: State = self.env.state
 
         # Serialize observation once using shared utility
@@ -396,6 +477,14 @@ def create_web_interface_app(
     max_concurrent_envs: Optional[int] = None,
     concurrency_config: Optional[Any] = None,
     gradio_builder: Optional[Callable[..., Any]] = None,
+    custom_tab_name: str = "Custom",
+    custom_tab_primary: bool = False,
+    show_default_tab: bool = True,
+    title_override: Optional[str] = None,
+    state_cls: Type[State] = State,
+    *,
+    mode: Optional[Any] = None,
+    reset_observation_cls: Optional[Type[Observation]] = None,
 ) -> FastAPI:
     """
     Create a FastAPI application with web interface for the given environment.
@@ -403,13 +492,36 @@ def create_web_interface_app(
     Args:
         env: The Environment instance to serve
         action_cls: The Action subclass this environment expects
-        observation_cls: The Observation subclass this environment returns
+        observation_cls: The Observation subclass returned by step
+        reset_observation_cls: The reset observation model published in /schema.
+            Defaults to observation_cls.
         env_name: Optional environment name for README loading
         max_concurrent_envs: Maximum concurrent WebSocket sessions
         concurrency_config: Optional ConcurrencyConfig for advanced concurrency settings
         gradio_builder: Optional callable (web_manager, action_fields, metadata,
             is_chat_env, title, quick_start_md) -> gr.Blocks to use instead of the
             default Gradio UI. Lets envs replace or customize the /web interface.
+        custom_tab_name: Label shown on the env-specific tab when ``gradio_builder``
+            is provided. Defaults to ``"Custom"`` for backwards compatibility; envs
+            that ship a rich custom UI should pass a descriptive name
+            (e.g. ``"REPL"``). Ignored when ``show_default_tab=False`` (no tab chrome
+            is rendered).
+        custom_tab_primary: When True, the env-specific tab is rendered first and
+            selected by default; the auto-generated Playground becomes secondary.
+            Use this for envs whose custom tab is the real interaction surface
+            (so visitors don't land on a less informative schema form). Ignored
+            when ``show_default_tab=False``.
+        show_default_tab: When False, the auto-generated Playground tab is not
+            rendered and the env's ``gradio_builder`` output is mounted directly
+            (single-view UI, no tab chrome). Only meaningful when
+            ``gradio_builder`` is provided.
+        title_override: If set, used verbatim as the Gradio app/browser-tab
+            title instead of the default ``"OpenEnv Agentic Environment: {name}"``.
+        state_cls: The State subclass this environment reports. Used for the /state
+            response model and the state entry of /schema. Defaults to State.
+        mode: Server mode (``ServerMode`` or string). When ``None``, resolved
+            from the ``OPENENV_MODE`` environment variable, defaulting to
+            simulation.
 
     Returns:
         FastAPI application instance with web interface
@@ -418,7 +530,15 @@ def create_web_interface_app(
 
     # Create the base environment app
     app = create_fastapi_app(
-        env, action_cls, observation_cls, max_concurrent_envs, concurrency_config
+        env,
+        action_cls,
+        observation_cls,
+        max_concurrent_envs,
+        concurrency_config,
+        env_name=env_name,
+        state_cls=state_cls,
+        reset_observation_cls=reset_observation_cls,
+        mode=mode,
     )
 
     # Load environment metadata
@@ -428,6 +548,16 @@ def create_web_interface_app(
     web_manager = WebInterfaceManager(env, action_cls, observation_cls, metadata)
 
     # Web API routes first (so they take precedence over Gradio mount at /web)
+    @app.get("/", include_in_schema=False)
+    async def web_root():
+        """Redirect the app root to the Gradio interface."""
+        return RedirectResponse(url="/web/")
+
+    @app.get("/web", include_in_schema=False)
+    async def web_root_no_slash():
+        """Redirect /web to /web/ for mounted Gradio deployments behind proxies."""
+        return RedirectResponse(url="/web/")
+
     @app.get("/web/metadata")
     async def web_metadata():
         """Get environment metadata."""
@@ -437,7 +567,7 @@ def create_web_interface_app(
     async def websocket_ui_endpoint(websocket: WebSocket):
         """WebSocket endpoint for web UI real-time updates.
 
-        Note: Uses /ws/ui to avoid conflict with /ws in http_server.py
+        Uses `/ws/ui` to avoid conflict with `/ws` in `http_server.py`,
         which is used for concurrent environment sessions.
         """
         await web_manager.connect_websocket(websocket)
@@ -449,9 +579,9 @@ def create_web_interface_app(
             await web_manager.disconnect_websocket(websocket)
 
     @app.post("/web/reset")
-    async def web_reset():
+    async def web_reset(request: Optional[Dict[str, Any]] = Body(default=None)):
         """Reset endpoint for web interface."""
-        return await web_manager.reset_environment()
+        return await web_manager.reset_environment(request)
 
     @app.post("/web/step")
     async def web_step(request: Dict[str, Any]):
@@ -475,41 +605,31 @@ def create_web_interface_app(
     @app.get("/web/state")
     async def web_state():
         """State endpoint for web interface."""
-        return web_manager.get_state()
+        try:
+            return web_manager.get_state()
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
 
     action_fields = _extract_action_fields(action_cls)
     is_chat_env = _is_chat_env(action_cls)
     quick_start_md = get_quick_start_markdown(metadata, action_cls, observation_cls)
 
-    default_blocks = build_gradio_app(
+    display_title = title_override or get_gradio_display_title(metadata)
+    gradio_blocks = _build_gradio_blocks(
         web_manager,
         action_fields,
         metadata,
         is_chat_env,
-        title=metadata.name,
-        quick_start_md=quick_start_md,
+        quick_start_md,
+        display_title=display_title,
+        gradio_builder=gradio_builder,
+        custom_tab_name=custom_tab_name,
+        custom_tab_primary=custom_tab_primary,
+        show_default_tab=show_default_tab,
     )
-    if gradio_builder is not None:
-        custom_blocks = gradio_builder(
-            web_manager,
-            action_fields,
-            metadata,
-            is_chat_env,
-            metadata.name,
-            quick_start_md,
-        )
-        if not isinstance(custom_blocks, gr.Blocks):
-            raise TypeError(
-                f"gradio_builder must return a gr.Blocks instance, "
-                f"got {type(custom_blocks).__name__}"
-            )
-        gradio_blocks = gr.TabbedInterface(
-            [default_blocks, custom_blocks],
-            tab_names=["Playground", "Visualization"],
-            title=get_gradio_display_title(metadata),
-        )
-    else:
-        gradio_blocks = default_blocks
     app = gr.mount_gradio_app(
         app,
         gradio_blocks,
@@ -519,6 +639,65 @@ def create_web_interface_app(
     )
 
     return app
+
+
+def _build_gradio_blocks(
+    web_manager: WebInterfaceManager,
+    action_fields: List[Dict[str, Any]],
+    metadata: EnvironmentMetadata,
+    is_chat_env: bool,
+    quick_start_md: str,
+    *,
+    display_title: str,
+    gradio_builder: Optional[Callable[..., Any]],
+    custom_tab_name: str,
+    custom_tab_primary: bool,
+    show_default_tab: bool,
+) -> gr.Blocks:
+    """Build the Gradio block tree mounted at `/web`."""
+    default_blocks = build_gradio_app(
+        web_manager,
+        action_fields,
+        metadata,
+        is_chat_env,
+        title=metadata.name,
+        quick_start_md=quick_start_md,
+    )
+    default_blocks.title = display_title
+
+    if gradio_builder is None:
+        return default_blocks
+
+    custom_blocks = gradio_builder(
+        web_manager,
+        action_fields,
+        metadata,
+        is_chat_env,
+        display_title,
+        quick_start_md,
+    )
+    if not isinstance(custom_blocks, gr.Blocks):
+        raise TypeError(
+            f"gradio_builder must return a gr.Blocks instance, "
+            f"got {type(custom_blocks).__name__}"
+        )
+
+    if not show_default_tab:
+        # No TabbedInterface wrapper to carry the app title.
+        custom_blocks.title = display_title
+        return custom_blocks
+
+    if custom_tab_primary:
+        tab_blocks = [custom_blocks, default_blocks]
+        tab_labels = [custom_tab_name, "Playground"]
+    else:
+        tab_blocks = [default_blocks, custom_blocks]
+        tab_labels = ["Playground", custom_tab_name]
+
+    # The playground has its own header, so the title only names the browser tab.
+    tabbed = gr.TabbedInterface(tab_blocks, tab_names=tab_labels)
+    tabbed.title = display_title
+    return tabbed
 
 
 def _is_chat_env(action_cls: Type[Action]) -> bool:

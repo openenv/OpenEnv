@@ -7,7 +7,7 @@
 # Multi-stage build using openenv-base
 # This Dockerfile works for both in-repo and standalone builds.
 
-ARG BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base:latest
+ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest
 FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app

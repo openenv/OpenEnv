@@ -26,11 +26,11 @@ from fla.ops import chunk_kda
 
 
 def kimi_delta_attention(
-    q: torch.Tensor,      # (batch, heads, seq, d_qk)
-    k: torch.Tensor,      # (batch, heads, seq, d_qk)
-    v: torch.Tensor,      # (batch, heads, seq, d_v)
-    a: torch.Tensor,      # (batch, heads, seq, d_v) - channel-wise gates (0-1)
-    beta: torch.Tensor,   # (batch, heads, seq) - update gate (0-1)
+    q: torch.Tensor,  # (batch, heads, seq, d_qk)
+    k: torch.Tensor,  # (batch, heads, seq, d_qk)
+    v: torch.Tensor,  # (batch, heads, seq, d_v)
+    a: torch.Tensor,  # (batch, heads, seq, d_v) - channel-wise gates (0-1)
+    beta: torch.Tensor,  # (batch, heads, seq) - update gate (0-1)
     scale: float,
 ) -> torch.Tensor:
     """
@@ -96,24 +96,30 @@ class Model(nn.Module):
 
         if use_short_conv:
             self.q_conv = nn.Conv1d(
-                num_heads * head_dim_qk, num_heads * head_dim_qk,
-                kernel_size=conv_kernel_size, groups=num_heads * head_dim_qk,
-                padding=conv_kernel_size - 1
+                num_heads * head_dim_qk,
+                num_heads * head_dim_qk,
+                kernel_size=conv_kernel_size,
+                groups=num_heads * head_dim_qk,
+                padding=conv_kernel_size - 1,
             )
             self.k_conv = nn.Conv1d(
-                num_heads * head_dim_qk, num_heads * head_dim_qk,
-                kernel_size=conv_kernel_size, groups=num_heads * head_dim_qk,
-                padding=conv_kernel_size - 1
+                num_heads * head_dim_qk,
+                num_heads * head_dim_qk,
+                kernel_size=conv_kernel_size,
+                groups=num_heads * head_dim_qk,
+                padding=conv_kernel_size - 1,
             )
             self.v_conv = nn.Conv1d(
-                num_heads * head_dim_v, num_heads * head_dim_v,
-                kernel_size=conv_kernel_size, groups=num_heads * head_dim_v,
-                padding=conv_kernel_size - 1
+                num_heads * head_dim_v,
+                num_heads * head_dim_v,
+                kernel_size=conv_kernel_size,
+                groups=num_heads * head_dim_v,
+                padding=conv_kernel_size - 1,
             )
 
         self.g_proj = nn.Linear(hidden_size, num_heads * head_dim_v, bias=False)
         self.o_norm = nn.LayerNorm(head_dim_v)
-        self.scale = head_dim_qk ** -0.5
+        self.scale = head_dim_qk**-0.5
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
@@ -131,8 +137,12 @@ class Model(nn.Module):
             v = F.silu(v)
 
         # Reshape to (B, H, T, D)
-        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim_qk).transpose(1, 2)
-        k = k.view(batch_size, seq_len, self.num_heads, self.head_dim_qk).transpose(1, 2)
+        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim_qk).transpose(
+            1, 2
+        )
+        k = k.view(batch_size, seq_len, self.num_heads, self.head_dim_qk).transpose(
+            1, 2
+        )
         v = v.view(batch_size, seq_len, self.num_heads, self.head_dim_v).transpose(1, 2)
 
         # Channel-wise gates (B, H, T, d_v)

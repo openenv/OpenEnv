@@ -33,6 +33,7 @@ class Model(nn.Module):
         p = r + (rsnew / rsold) * p
         rsold = rsnew
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -42,7 +43,7 @@ class Model(nn.Module):
         x: torch.Tensor,
         r: torch.Tensor,
         p: torch.Tensor,
-        rsold: torch.Tensor
+        rsold: torch.Tensor,
     ) -> tuple:
         """
         Perform one CG iteration.
@@ -83,6 +84,7 @@ class Model(nn.Module):
 # Problem configuration
 matrix_size = 4096
 
+
 def get_inputs():
     # Create a symmetric positive definite matrix
     # A = Q @ D @ Q.T where D has positive eigenvalues
@@ -99,6 +101,7 @@ def get_inputs():
     rsold = torch.dot(r, r)
 
     return [A, x, r, p, rsold]
+
 
 def get_init_inputs():
     return []

@@ -23,17 +23,17 @@ class Model(nn.Module):
     """
     RGB to YUV color space conversion.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
         # Conversion matrix
-        rgb_to_yuv = torch.tensor([
-            [0.299, 0.587, 0.114],
-            [-0.147, -0.289, 0.436],
-            [0.615, -0.515, -0.100]
-        ], dtype=torch.float32)
+        rgb_to_yuv = torch.tensor(
+            [[0.299, 0.587, 0.114], [-0.147, -0.289, 0.436], [0.615, -0.515, -0.100]],
+            dtype=torch.float32,
+        )
 
-        self.register_buffer('conversion_matrix', rgb_to_yuv)
+        self.register_buffer("conversion_matrix", rgb_to_yuv)
 
     def forward(self, rgb: torch.Tensor) -> torch.Tensor:
         """
@@ -54,10 +54,12 @@ class Model(nn.Module):
 image_height = 1920
 image_width = 1080
 
+
 def get_inputs():
     # RGB image
     rgb = torch.rand(image_height, image_width, 3)
     return [rgb]
+
 
 def get_init_inputs():
     return []

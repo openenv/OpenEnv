@@ -16,7 +16,7 @@ requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
     # install from github
-    "openenv-core[core]>=0.2.1",
+    "openenv>=0.2.2",
     # Environment-specific dependencies
     # Add all dependencies needed for your environment here
     "numpy>=1.19.0",

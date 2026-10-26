@@ -27,10 +27,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # Place seed database where the server expects it
-COPY server/mcp_databases /app/mcp_databases
-
-# Create directory for database files
-RUN mkdir -p /app/mcp_databases
+COPY mcp_databases /app/mcp_databases
 
 # Expose port 8004
 EXPOSE 8004

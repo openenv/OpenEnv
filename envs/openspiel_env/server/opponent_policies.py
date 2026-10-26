@@ -18,7 +18,9 @@ from typing import Any, Protocol
 class OpponentPolicy(Protocol):
     """Protocol for opponent policies."""
 
-    def select_action(self, legal_actions: list[int], observations: dict[str, Any]) -> int:
+    def select_action(
+        self, legal_actions: list[int], observations: dict[str, Any]
+    ) -> int:
         """
         Select an action for the opponent.
 
@@ -35,7 +37,9 @@ class OpponentPolicy(Protocol):
 class RandomOpponent:
     """Random opponent that selects uniformly from legal actions."""
 
-    def select_action(self, legal_actions: list[int], observations: dict[str, Any]) -> int:
+    def select_action(
+        self, legal_actions: list[int], observations: dict[str, Any]
+    ) -> int:
         """Select a random legal action."""
         if not legal_actions:
             raise ValueError("No legal actions available")
@@ -54,7 +58,9 @@ class FixedActionOpponent:
         """
         self.action_selector = action_selector
 
-    def select_action(self, legal_actions: list[int], observations: dict[str, Any]) -> int:
+    def select_action(
+        self, legal_actions: list[int], observations: dict[str, Any]
+    ) -> int:
         """Select a fixed legal action based on selector."""
         if not legal_actions:
             raise ValueError("No legal actions available")

@@ -51,7 +51,7 @@ COLORS_TOOLS = [
             "type": "object",
             "properties": {},
             "required": [],
-            "additionalProperties": False
-        }
+            "additionalProperties": False,
+        },
     }
 ]

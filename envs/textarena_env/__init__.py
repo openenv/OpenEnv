@@ -13,7 +13,7 @@ from .models import (
     TextArenaObservation,
     TextArenaState,
 )
-from .rewards import RewardProvider, build_reward_providers
+from .rewards import build_reward_providers, RewardProvider
 
 __all__ = [
     "TextArenaEnv",

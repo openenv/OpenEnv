@@ -10,8 +10,8 @@ REPL Environment Server Components.
 This module contains the server-side implementation of the REPL environment.
 """
 
-from .repl_environment import REPLEnvironment
 from .python_executor import PythonExecutor
+from .repl_environment import REPLEnvironment
 
 __all__ = [
     "REPLEnvironment",

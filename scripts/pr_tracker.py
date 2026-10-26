@@ -5,12 +5,13 @@ PR Tracker - Fetches PRs that need review using GitHub API.
 This module provides data about open PRs. Claude handles orchestration,
 review logic, and posting reviews.
 
-Usage:
-    # Get PRs updated in the last 6 hours
-    python3 scripts/pr_tracker.py --list --since 6h
+Only PRs where the authenticated user was pinged are listed — i.e. a GitHub
+notification with reason ``mention`` or ``review_requested`` — never every open
+PR in the repo.
 
-    # Get PRs updated since a specific time
-    python3 scripts/pr_tracker.py --list --since 2024-01-13T00:00:00Z
+Usage:
+    # Get PRs you were mentioned / review-requested on in the last 6 hours
+    python3 scripts/pr_tracker.py --list --since 6h
 
     # Get details for a specific PR
     python3 scripts/pr_tracker.py --details 123
@@ -26,7 +27,7 @@ from typing import Optional
 from github import Github, Auth
 
 # Configuration
-DEFAULT_REPO = "meta-pytorch/OpenEnv"
+DEFAULT_REPO = "huggingface/OpenEnv"
 DEFAULT_STATE_FILE = Path.home() / ".openenv-review-state.json"
 
 
@@ -92,63 +93,109 @@ def parse_since(since_str: str) -> datetime:
     )
 
 
+# Notification reasons that mean "the maintainer was pinged on this PR".
+# https://docs.github.com/en/rest/activity/notifications#about-notification-reasons
+REVIEW_REASONS = ("mention", "review_requested")
+
+
 def get_prs_needing_review(
     repo: str = DEFAULT_REPO,
     since: Optional[datetime] = None,
     state_file: Optional[Path] = None,
+    reasons: tuple[str, ...] = REVIEW_REASONS,
 ) -> list[dict]:
     """
-    Get list of PRs that need review.
+    Get open PRs the authenticated user was *pinged* on.
+
+    A PR is returned only when GitHub delivered a notification for it whose
+    ``reason`` is in ``reasons`` (by default ``mention`` or ``review_requested``).
+    This is the whole point of the bot: review PRs where the maintainer was
+    explicitly @-mentioned or added as a reviewer — never every open PR in the
+    repo (the previous behaviour, which spammed unrelated PRs).
 
     Args:
-        repo: Repository name (owner/repo)
-        since: Only return PRs updated after this time
-        state_file: Optional state file for SHA-based tracking (legacy)
+        repo (`str`):
+            Repository name (``owner/repo``). Org-transfer redirects are followed.
+        since (`datetime`, *optional*):
+            Only consider notifications updated after this time.
+        state_file (`Path`, *optional*):
+            When provided, skip PRs whose current head SHA was already reviewed
+            (recorded via :func:`record_review`), so a still-unread ping is not
+            re-reviewed on every run.
+        reasons (`tuple[str, ...]`, *optional*):
+            Notification reasons that trigger a review. Defaults to
+            ``("mention", "review_requested")``.
 
     Returns:
-        List of dicts with PR info:
-        - number: PR number
-        - title: PR title
-        - author: Author username
-        - url: PR URL
-        - head_sha: Current commit SHA
-        - updated_at: Last update time (ISO format)
+        `list[dict]`: One dict per PR with keys ``number``, ``repo``, ``title``,
+        ``author``, ``url``, ``head_sha``, ``updated_at`` and ``reason``.
     """
     gh = _get_github_client()
     repo_obj = gh.get_repo(repo)
+    repo_full = repo_obj.full_name  # canonical name (follows org-transfer redirects)
 
     # Load state for SHA tracking if provided
     repo_state = {}
     if state_file and state_file.exists():
         try:
             state = json.loads(state_file.read_text())
-            repo_state = state.get(repo, {})
+            repo_state = state.get(repo_full, state.get(repo, {}))
         except json.JSONDecodeError:
             pass
 
+    wanted = set(reasons)
+    # Unread notifications only (``all=False``) so handled pings drop off; combined
+    # with ``since`` this is the set of fresh pings since the last run.
+    kwargs = {"all": False}
+    if since is not None:
+        kwargs["since"] = since
+    notifications = gh.get_user().get_notifications(**kwargs)
+
     prs = []
-    for pr in repo_obj.get_pulls(state="open"):
-        if pr.draft:
+    seen: set[int] = set()
+    for note in notifications:
+        # 1. Only act on pings (mention / review_requested) — this is the fix.
+        if note.reason not in wanted:
             continue
-
-        # Filter by update time if 'since' provided
-        if since and pr.updated_at < since:
+        subject = note.subject
+        if subject is None or subject.type != "PullRequest":
             continue
+        # 2. Scope to the target repo (compare canonical full names).
+        if (
+            note.repository is None
+            or note.repository.full_name.lower() != repo_full.lower()
+        ):
+            continue
+        # 3. Subject URL looks like .../repos/<owner>/<repo>/pulls/<number>
+        match = re.search(r"/pulls/(\d+)$", subject.url or "")
+        if not match:
+            continue
+        pr_number = int(match.group(1))
+        if pr_number in seen:
+            continue
+        seen.add(pr_number)
 
-        # If using state file, skip already-reviewed commits
+        pr = repo_obj.get_pull(pr_number)
+        if pr.draft or pr.state != "open":
+            continue
+        # 4. Skip if this exact commit was already reviewed.
         if state_file:
-            pr_state = repo_state.get(str(pr.number), {})
-            if pr_state.get("last_reviewed_sha") == pr.head.sha:
+            if (
+                repo_state.get(str(pr_number), {}).get("last_reviewed_sha")
+                == pr.head.sha
+            ):
                 continue
 
         prs.append(
             {
                 "number": pr.number,
+                "repo": repo_full,
                 "title": pr.title,
                 "author": pr.user.login,
                 "url": pr.html_url,
                 "head_sha": pr.head.sha,
                 "updated_at": pr.updated_at.isoformat(),
+                "reason": note.reason,
             }
         )
 
@@ -244,7 +291,7 @@ def post_review(
 {body}
 
 ---
-*Automated review by Claude Code | [Learn more](https://github.com/meta-pytorch/OpenEnv/blob/main/CLAUDE.md)*"""
+*Automated review by Claude Code | [Learn more](https://github.com/huggingface/OpenEnv/blob/main/CLAUDE.md)*"""
 
     pr.create_review(body=formatted_body, event=event)
 
@@ -257,27 +304,31 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # PRs updated in last 6 hours
+  # PRs you were mentioned / review-requested on in the last 6 hours
   python3 pr_tracker.py --list --since 6h
 
-  # PRs updated in last day
+  # ...in the last day
   python3 pr_tracker.py --list --since 1d
 
-  # PRs updated since specific time
+  # ...since a specific time
   python3 pr_tracker.py --list --since 2024-01-13T00:00:00Z
 
   # Get details for PR #123
   python3 pr_tracker.py --details 123
 """,
     )
-    parser.add_argument("--list", action="store_true", help="List PRs needing review")
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List PRs you were mentioned / review-requested on",
+    )
     parser.add_argument(
         "--details", type=int, metavar="PR", help="Get details for specific PR"
     )
     parser.add_argument(
         "--since",
         type=str,
-        help="Only PRs updated since (e.g., 6h, 1d, 2024-01-13T00:00:00Z)",
+        help="Only pings since (e.g., 6h, 1d, 2024-01-13T00:00:00Z)",
     )
     parser.add_argument(
         "--repo", default=DEFAULT_REPO, help="Repository (default: %(default)s)"

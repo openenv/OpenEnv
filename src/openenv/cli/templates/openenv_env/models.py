@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Data models for the __ENV_TITLE_NAME__ Environment.
@@ -10,9 +6,8 @@ Data models for the __ENV_TITLE_NAME__ Environment.
 The __ENV_NAME__ environment is a simple test environment that echoes back messages.
 """
 
-from pydantic import Field
-
 from openenv.core.env_server.types import Action, Observation
+from pydantic import Field
 
 
 class __ENV_CLASS_NAME__Action(Action):

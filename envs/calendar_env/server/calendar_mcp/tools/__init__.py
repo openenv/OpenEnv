@@ -17,13 +17,13 @@ Each tool corresponds to Calendar API endpoints
 
 # Import calendar tool categories
 from .acl import ACL_TOOLS
-from .calendars import CALENDARS_TOOLS
 from .calendar_list import CALENDAR_LIST_TOOLS
-from .events import EVENTS_TOOLS
+from .calendars import CALENDARS_TOOLS
 from .colors import COLORS_TOOLS
-from .users import USERS_TOOLS
-from .settings import SETTINGS_TOOLS
+from .events import EVENTS_TOOLS
 from .freebusy import FREEBUSY_TOOLS
+from .settings import SETTINGS_TOOLS
+from .users import USERS_TOOLS
 
 # Combine all tools into the main MCP_TOOLS list
 MCP_TOOLS = []
@@ -37,4 +37,6 @@ MCP_TOOLS.extend(ACL_TOOLS)
 MCP_TOOLS.extend(FREEBUSY_TOOLS)
 
 
-print(f"📦 MCP Tools Module Loaded: {len(MCP_TOOLS)} calendar API tools across 8 modules")
+print(
+    f"📦 MCP Tools Module Loaded: {len(MCP_TOOLS)} calendar API tools across 8 modules"
+)

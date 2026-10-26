@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+  <!-- Same scene as the good fixture, but wheels are drawn as bezier path
+       approximations of a circle instead of <circle> elements. This is what
+       most models actually emit, so the geometric scorer must cope. -->
+  <path d="M 162 232 C 162 260.7 138.7 284 110 284 C 81.3 284 58 260.7 58 232 C 58 203.3 81.3 180 110 180 C 138.7 180 162 203.3 162 232 Z" fill="none" stroke="#222" stroke-width="6"/>
+  <path d="M 342 232 C 342 260.7 318.7 284 290 284 C 261.3 284 238 260.7 238 232 C 238 203.3 261.3 180 290 180 C 318.7 180 342 203.3 342 232 Z" fill="none" stroke="#222" stroke-width="6"/>
+  <path d="M 110 232 L 200 232 L 178 162 Z" fill="none" stroke="#c0392b" stroke-width="6"/>
+  <path d="M 178 162 L 262 162 L 200 232" fill="none" stroke="#c0392b" stroke-width="6"/>
+  <path d="M 262 162 L 290 232" fill="none" stroke="#c0392b" stroke-width="6"/>
+  <ellipse cx="188" cy="120" rx="46" ry="33" fill="#fdfdfd" stroke="#333" stroke-width="3"/>
+  <path d="M 224 104 Q 244 84 252 62" fill="none" stroke="#fdfdfd" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="256" cy="54" r="20" fill="#fdfdfd" stroke="#333" stroke-width="3"/>
+  <circle cx="264" cy="48" r="3" fill="#222"/>
+  <path d="M 273 48 L 334 60 L 274 70 Z" fill="#f5b041" stroke="#c47f1a" stroke-width="2"/>
+  <line x1="192" y1="150" x2="206" y2="224" stroke="#e67e22" stroke-width="5"/>
+</svg>

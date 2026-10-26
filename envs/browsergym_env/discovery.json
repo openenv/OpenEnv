@@ -1,0 +1,9 @@
+{
+  "description": "Use browser actions such as click, fill, keyboard input, and scroll to complete web tasks. BrowserGym returns task goals and page observations for browser-agent training and evaluation.",
+  "tags": ["openenv", "rl-environment", "browsergym", "web-automation", "browser-actions"],
+  "representative_queries": [
+    "find a browser environment for web navigation tasks",
+    "train a web agent on form entry and button interaction",
+    "find an OpenEnv adapter for MiniWoB browser tasks"
+  ]
+}

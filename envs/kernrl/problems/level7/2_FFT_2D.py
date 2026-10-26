@@ -14,14 +14,15 @@ Optimization opportunities:
 """
 
 import torch
-import torch.nn as nn
 import torch.fft
+import torch.nn as nn
 
 
 class Model(nn.Module):
     """
     2D Fast Fourier Transform.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -42,9 +43,11 @@ class Model(nn.Module):
 image_height = 2048
 image_width = 2048
 
+
 def get_inputs():
     image = torch.randn(image_height, image_width)
     return [image]
+
 
 def get_init_inputs():
     return []

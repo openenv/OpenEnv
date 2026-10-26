@@ -16,7 +16,6 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from openenv.core.client_types import StepResult
-
 from openenv.core.env_client import EnvClient
 
 from .models import OpenSpielAction, OpenSpielObservation, OpenSpielState
@@ -89,13 +88,14 @@ class OpenSpielEnv(EnvClient[OpenSpielAction, OpenSpielObservation, OpenSpielSta
             opponent_last_action=obs_data.get("opponent_last_action"),
             done=payload.get("done", False),
             reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
 
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict[str, Any]) -> OpenSpielState:

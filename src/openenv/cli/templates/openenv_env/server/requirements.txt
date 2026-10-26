@@ -1,5 +1,5 @@
-openenv[core]>=0.2.0
-fastapi>=0.115.0
+openenv>=0.2.0
+fastapi>=0.116.0
 uvicorn>=0.24.0
 
 

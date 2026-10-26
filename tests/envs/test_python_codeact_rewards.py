@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Test that PythonCodeActEnv properly computes rewards via transform pipeline."""
 
@@ -15,6 +11,9 @@ import pytest
 # Add the project root and src to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+
+# Skip entire module if smolagents is not installed (optional dependency)
+pytest.importorskip("smolagents", reason="smolagents is not installed")
 
 
 from envs.coding_env.models import CodeAction

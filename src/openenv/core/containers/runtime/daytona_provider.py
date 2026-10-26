@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Daytona container provider for running OpenEnv environments in Daytona cloud sandboxes.
@@ -12,14 +8,12 @@ Requires the ``daytona`` SDK: ``pip install daytona>=0.10``
 
 from __future__ import annotations
 
-import json
 import os
 import shlex
 import time
 from typing import Any, Callable, Dict, Optional
 
-import yaml
-
+from ._server_config import parse_dockerfile_cmd, parse_openenv_app_field
 from .providers import ContainerProvider
 
 
@@ -40,6 +34,8 @@ class DaytonaProvider(ContainerProvider):
     def __init__(
         self,
         *,
+        image: Optional[str] = None,
+        env_vars: Optional[Dict[str, str]] = None,
         api_key: Optional[str] = None,
         public: bool = False,
         resources: Optional[Any] = None,
@@ -51,6 +47,11 @@ class DaytonaProvider(ContainerProvider):
     ):
         """
         Args:
+            image: Docker image, snapshot reference, or ``"dockerfile:<path>"``
+                source to use when ``start_container()`` is called without an
+                image.
+            env_vars: Environment variables to use when ``start_container()`` is
+                called without explicit ``env_vars``.
             api_key: Daytona API key. Falls back to ``DAYTONA_API_KEY`` env var.
             public: If True, the sandbox preview is publicly accessible.
             resources: Optional ``daytona.Resources`` instance for CPU/memory.
@@ -71,6 +72,8 @@ class DaytonaProvider(ContainerProvider):
             config_kwargs["target"] = target
 
         self._daytona = Daytona(DaytonaConfig(**config_kwargs))
+        self._image = image
+        self._env_vars = env_vars
         self._public = public
         self._resources = resources
         self._auto_stop_interval = auto_stop_interval
@@ -144,19 +147,7 @@ class DaytonaProvider(ContainerProvider):
 
         Uses PyYAML to handle comments, quotes, and nested keys correctly.
         """
-        try:
-            data = yaml.safe_load(yaml_content) or {}
-        except Exception:
-            return None
-
-        if not isinstance(data, dict):
-            return None
-
-        value = data.get("app")
-        if isinstance(value, str):
-            value = value.strip()
-            return value if value else None
-        return None
+        return parse_openenv_app_field(yaml_content)
 
     @staticmethod
     def _parse_dockerfile_cmd(dockerfile_content: str) -> Optional[str]:
@@ -171,32 +162,7 @@ class DaytonaProvider(ContainerProvider):
         Returns:
             The command as a single string, or ``None`` if no ``CMD`` found.
         """
-        import re
-
-        last_cmd: Optional[str] = None
-        for line in dockerfile_content.splitlines():
-            stripped = line.strip()
-            # Skip comments
-            if stripped.startswith("#"):
-                continue
-            match = re.match(r"CMD\s+(.+)", stripped, flags=re.IGNORECASE)
-            if match:
-                last_cmd = match.group(1).strip()
-
-        if last_cmd is None:
-            return None
-
-        # Exec form: CMD ["executable", "param1", ...]
-        if last_cmd.startswith("["):
-            try:
-                parts = json.loads(last_cmd)
-                if isinstance(parts, list) and all(isinstance(p, str) for p in parts):
-                    return " ".join(parts)
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        # Shell form: CMD executable param1 ...
-        return last_cmd if last_cmd else None
+        return parse_dockerfile_cmd(dockerfile_content)
 
     @staticmethod
     def strip_buildkit_syntax(dockerfile_content: str) -> str:
@@ -349,7 +315,7 @@ class DaytonaProvider(ContainerProvider):
 
     def start_container(
         self,
-        image: str,
+        image: Optional[str] = None,
         port: Optional[int] = None,
         env_vars: Optional[Dict[str, str]] = None,
         **kwargs: Any,
@@ -370,7 +336,8 @@ class DaytonaProvider(ContainerProvider):
             image: Docker image name (e.g. ``"echo-env:latest"``),
                    ``"snapshot:<name>"`` to create from a pre-built snapshot,
                    or ``"dockerfile:<path>"`` returned by
-                   :meth:`image_from_dockerfile`.
+                   :meth:`image_from_dockerfile`. May be omitted when supplied
+                   to the constructor.
             port: Must be ``None`` or ``8000``. Daytona exposes port 8000
                   via its preview proxy; other ports raise ``ValueError``.
             env_vars: Environment variables forwarded to the sandbox.
@@ -386,6 +353,14 @@ class DaytonaProvider(ContainerProvider):
                 "The Daytona preview proxy routes to port 8000 inside the sandbox."
             )
 
+        effective_image = image if image is not None else self._image
+        if effective_image is None:
+            raise ValueError(
+                "DaytonaProvider requires an image. Pass it to the constructor "
+                "or start_container()."
+            )
+        effective_env_vars = self._env_vars if env_vars is None else env_vars
+
         # Resolve the server command (may be None; discovery happens after
         # sandbox creation when we can inspect the filesystem).
         cmd = kwargs.pop("cmd", None) or self._cmd
@@ -395,24 +370,24 @@ class DaytonaProvider(ContainerProvider):
 
         # Build creation params
         create_kwargs: Dict[str, Any] = {}
-        if env_vars:
-            create_kwargs["env_vars"] = env_vars
+        if effective_env_vars:
+            create_kwargs["env_vars"] = effective_env_vars
         if self._public:
             create_kwargs["public"] = True
         if self._auto_stop_interval != 15:
             create_kwargs["auto_stop_interval"] = self._auto_stop_interval
 
-        if image.startswith("snapshot:"):
+        if effective_image.startswith("snapshot:"):
             from daytona import CreateSandboxFromSnapshotParams
 
-            snapshot_name = image[len("snapshot:") :]
+            snapshot_name = effective_image[len("snapshot:") :]
             params = CreateSandboxFromSnapshotParams(
                 snapshot=snapshot_name, **create_kwargs
             )
-        elif image.startswith("dockerfile:"):
+        elif effective_image.startswith("dockerfile:"):
             from daytona import CreateSandboxFromImageParams, Image
 
-            dockerfile_path = image[len("dockerfile:") :]
+            dockerfile_path = effective_image[len("dockerfile:") :]
             meta = self._dockerfile_registry.get(dockerfile_path)
             if meta is None:
                 raise ValueError(
@@ -445,7 +420,7 @@ class DaytonaProvider(ContainerProvider):
         else:
             from daytona import CreateSandboxFromImageParams
 
-            img_kwargs = {"image": image, **create_kwargs}
+            img_kwargs = {"image": effective_image, **create_kwargs}
             if self._resources is not None:
                 img_kwargs["resources"] = self._resources
             params = CreateSandboxFromImageParams(**img_kwargs)

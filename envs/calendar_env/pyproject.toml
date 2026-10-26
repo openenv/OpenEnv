@@ -14,8 +14,7 @@ version = "0.1.0"
 description = "Calendar environment for OpenEnv with MCP tool access"
 requires-python = ">=3.10"
 dependencies = [
-    "openenv-core>=0.2.0",
-    "openenv>=0.1.13",
+    "openenv>=0.2.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.5.0",

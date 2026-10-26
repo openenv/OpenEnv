@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class Model(nn.Module):
     def __init__(self, embed_dim, num_heads):
         """
@@ -26,6 +27,7 @@ class Model(nn.Module):
         x = x.permute(1, 2, 0).view(B, C, H, W)
         return x
 
+
 embed_dim = 128
 num_heads = 4
 batch_size = 2
@@ -33,8 +35,10 @@ num_channels = embed_dim
 image_height = 128
 image_width = 128
 
+
 def get_inputs():
     return [torch.randn(batch_size, num_channels, image_height, image_width)]
+
 
 def get_init_inputs():
     return [embed_dim, num_heads]

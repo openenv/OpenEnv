@@ -19,7 +19,7 @@ FROM python:3.11-slim
 # Set metadata
 LABEL maintainer="OpenEnv Team"
 LABEL description="OpenApp Environment with BrowserGym for UI agent training"
-LABEL org.opencontainers.image.source="https://github.com/meta-pytorch/OpenEnv"
+LABEL org.opencontainers.image.source="https://github.com/huggingface/OpenEnv"
 
 # Set working directory
 WORKDIR /app/env
@@ -72,7 +72,7 @@ WORKDIR /app/env
 COPY . /app/env
 
 # Install OpenApps FIRST to establish openai<2 (required by agentlab)
-# This must happen before openenv-core to avoid version conflict
+# This must happen before openenv to avoid version conflict
 WORKDIR /app
 RUN git clone https://github.com/facebookresearch/OpenApps.git openapps && \
     cd openapps && \
@@ -81,14 +81,17 @@ RUN git clone https://github.com/facebookresearch/OpenApps.git openapps && \
 # Verify OpenApps installation
 RUN python -c "import open_apps; print('✓ OpenApps installed')"
 
-# Install openenv-core from GitHub with --no-deps to avoid openai>=2.7.2 conflict
+# Install openenv from GitHub with --no-deps to avoid openai>=2.7.2 conflict
 # Then install only the server dependencies (no openai needed for server)
-RUN pip install --no-cache-dir --no-deps "openenv-core[core]>=0.2.1" && \
-    pip install --no-cache-dir fastapi pydantic uvicorn requests websockets
+RUN pip install --no-cache-dir --no-deps "openenv>=0.2.2" && \
+    pip install --no-cache-dir fastapi pydantic uvicorn requests websockets fastmcp "beartype>=0.17.2"
 
 # Install openapp_env and remaining dependencies
 WORKDIR /app/env
 RUN pip install --no-cache-dir -e .
+
+# Ensure fastmcp runtime deps are on compatible versions after all installs.
+RUN pip install --no-cache-dir --upgrade "beartype>=0.22.6" "fastmcp>=2.14.5" "fastapi>=0.116.0"
 
 # Verify installation
 RUN python -c "import openapp_env; print('✓ openapp_env installed')" && \

@@ -28,6 +28,7 @@ class Model(nn.Module):
 
     The sparse matrix A is stored in CSR format for efficient row-wise access.
     """
+
     def __init__(self, num_rows: int, num_cols: int):
         super(Model, self).__init__()
         self.num_rows = num_rows
@@ -38,7 +39,7 @@ class Model(nn.Module):
         values: torch.Tensor,
         col_indices: torch.Tensor,
         row_ptrs: torch.Tensor,
-        x: torch.Tensor
+        x: torch.Tensor,
     ) -> torch.Tensor:
         """
         Compute y = A * x using CSR format.
@@ -74,6 +75,7 @@ num_cols = 10000
 avg_nnz_per_row = 50  # ~0.5% density
 total_nnz = num_rows * avg_nnz_per_row
 
+
 def get_inputs():
     # Generate random sparse matrix in CSR format
     # Each row has random number of non-zeros
@@ -102,6 +104,7 @@ def get_inputs():
     x = torch.randn(num_cols)
 
     return [values, col_indices, row_ptrs, x]
+
 
 def get_init_inputs():
     return [num_rows, num_cols]

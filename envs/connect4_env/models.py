@@ -12,10 +12,11 @@ via the OpenEnv interface.
 """
 
 from __future__ import annotations
-from typing import List, Dict, Any
-from pydantic import Field
+
+from typing import Any, Dict, List
 
 from openenv.core.env_server import Action, Observation, State
+from pydantic import Field
 
 
 class Connect4Action(Action):
@@ -25,6 +26,7 @@ class Connect4Action(Action):
     Attributes:
         column: The column index (0 to 6) where the piece will be placed.
     """
+
     column: int
 
 
@@ -39,7 +41,7 @@ class Connect4Observation(Observation):
         done: Whether the game is over.
         reward: Reward for the last action.
     """
-    
+
     board: List[List[int]] = Field(default_factory=list)
     legal_actions: List[int] = Field(default_factory=list)
 
@@ -54,5 +56,6 @@ class Connect4State(State):
         next_player: Whose turn it is (1 or -1).
         step_count: Number of steps taken in the game.
     """
-    board: List[List[int]] = Field(default_factory=lambda: [[0]*7 for _ in range(6)])
+
+    board: List[List[int]] = Field(default_factory=lambda: [[0] * 7 for _ in range(6)])
     next_player: int = 1

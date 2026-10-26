@@ -21,30 +21,39 @@ Usage:
     python -m server.app
 """
 
-try:
-    from openenv_core.env_server.http_server import create_app
-except Exception as e:  # pragma: no cover
-    raise ImportError(
-        "openenv_core is required for the web interface. Install dependencies with '\n"
-        "    uv sync\n'"
-    ) from e
+import inspect
+
+from models import WebSearchAction, WebSearchObservation
+from openenv.core.env_server.http_server import create_app
 
 from .web_search_environment import WebSearchEnvironment
-from models import WebSearchAction, WebSearchObservation
-
-# Create the environment instance
-env = WebSearchEnvironment()
-
-# Create the app with web interface and README integration
-app = create_app(
-    env,
-    WebSearchAction,
-    WebSearchObservation,
-    env_name="websearch_env",
-)
 
 
-def main(host: str = "0.0.0.0", port: int = 8000):
+def _create_websearch_app():
+    """Build app across create_app variants that may expect a factory or an instance."""
+    try:
+        first_param = next(iter(inspect.signature(create_app).parameters.values()))
+        annotation_text = str(first_param.annotation)
+    except (StopIteration, TypeError, ValueError):
+        annotation_text = "typing.Callable"
+
+    expects_instance = (
+        "Environment" in annotation_text and "Callable" not in annotation_text
+    )
+    env_arg = WebSearchEnvironment() if expects_instance else WebSearchEnvironment
+    return create_app(
+        env_arg,
+        WebSearchAction,
+        WebSearchObservation,
+        env_name="websearch_env",
+    )
+
+
+# Create the app with web interface and README integration.
+app = _create_websearch_app()
+
+
+def main():
     """
     Entry point for direct execution via uv run or python -m.
 
@@ -53,17 +62,19 @@ def main(host: str = "0.0.0.0", port: int = 8000):
         uv run --project . server --port 8001
         python -m websearch_env.server.app
 
-    Args:
-        host: Host address to bind to (default: "0.0.0.0")
-        port: Port number to listen on (default: 8000)
-
     For production deployments, consider using uvicorn directly with
     multiple workers:
         uvicorn websearch_env.server.app:app --workers 4
     """
+    import argparse
+
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

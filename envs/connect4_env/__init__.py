@@ -17,7 +17,7 @@ Example:
     >>>
     >>> # Reset and interact
     >>> result = env.reset()
-    >>> result = env.step(Connect4Action(column=2)) 
+    >>> result = env.step(Connect4Action(column=2))
     >>> print(result.reward, result.done)
     >>>
     >>> # Cleanup

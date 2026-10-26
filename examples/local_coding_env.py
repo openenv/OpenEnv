@@ -1,16 +1,12 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
 """
 Simple test showing how users will use CodingEnv.from_docker_image().
 
 This is the simplest possible usage
 """
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -20,20 +16,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from coding_env import CodeAction, CodingEnv
 
 
-def main():
+async def main():
     """Test CodingEnv.from_docker_image()."""
     print("=" * 60)
     print("CodingEnv.from_docker_image() Test")
     print("=" * 60)
     print()
 
+    client = None
     try:
         # This is what users will do - just one line!
         print("Creating client from Docker image...")
         print("  CodingEnv.from_docker_image('coding-env:latest')")
         print()
 
-        client = CodingEnv.from_docker_image("coding-env:latest")
+        client = await CodingEnv.from_docker_image("coding-env:latest")
 
         print("✓ Client created and container started!\n")
 
@@ -43,13 +40,13 @@ def main():
 
         # Reset
         print("\n1. Reset:")
-        result = client.reset()
+        result = await client.reset()
         print(f"   stdout: {result.observation.stdout}")
         print(f"   stderr: {result.observation.stderr}")
         print(f"   exit_code: {result.observation.exit_code}")
 
         # Get initial state
-        state = client.state()
+        state = await client.state()
         print(f"   State: episode_id={state.episode_id}, step_count={state.step_count}")
 
         # Execute some Python code
@@ -63,8 +60,9 @@ def main():
         ]
 
         for i, code in enumerate(code_samples, 1):
-            result = client.step(CodeAction(code=code))
-            print(f"   {i}. Code: {code.replace(chr(10), '\\n')[:50]}...")
+            result = await client.step(CodeAction(code=code))
+            display_code = code.replace("\n", "\\n")[:50]
+            print(f"   {i}. Code: {display_code}...")
             print(f"      → stdout: {result.observation.stdout.strip()}")
             print(f"      → exit_code: {result.observation.exit_code}")
             if result.observation.stderr:
@@ -80,9 +78,10 @@ def main():
         ]
 
         for i, (description, code) in enumerate(error_samples, 1):
-            result = client.step(CodeAction(code=code))
+            result = await client.step(CodeAction(code=code))
+            display_code = code.replace("\n", "\\n")[:40]
             print(f"   {i}. {description}")
-            print(f"      Code: {code.replace(chr(10), '\\n')[:40]}...")
+            print(f"      Code: {display_code}...")
             print(f"      → exit_code: {result.observation.exit_code}")
             if result.observation.stderr:
                 # Truncate long error messages
@@ -93,7 +92,7 @@ def main():
 
         # Check final state
         print("\n4. Check final state:")
-        state = client.state()
+        state = await client.state()
         print(f"   episode_id: {state.episode_id}")
         print(f"   step_count: {state.step_count}")
         print(f"   last_exit_code: {state.last_exit_code}")
@@ -103,7 +102,8 @@ def main():
         print()
 
         print("Cleaning up...")
-        client.close()
+        await client.close()
+        client = None
         print("✓ Container stopped and removed")
         print()
 
@@ -116,10 +116,14 @@ def main():
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
+    finally:
+        if client is not None:
+            await client.close()
 
 
 if __name__ == "__main__":
-    success = main()
+    success = asyncio.run(main())
     exit(0 if success else 1)

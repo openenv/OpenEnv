@@ -16,11 +16,13 @@ import re
 try:
     # In-repo imports
     from openenv.core.env_server.interfaces import Transform
+
     from ..models import JuliaObservation
 except ImportError:
+    from models import JuliaObservation
+
     # Standalone imports
     from openenv.core.env_server.interfaces import Transform
-    from models import JuliaObservation
 
 
 # -------------------------

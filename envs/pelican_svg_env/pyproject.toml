@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-pelican-svg-env"
+version = "0.1.2"
+description = "Pelican SVG Environment for OpenEnv"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn[standard]>=0.24.0",
+    # resvg ships self-contained wheels for manylinux, musllinux, macOS and
+    # Windows, so rasterising needs no system libraries in the image. It is
+    # also deterministic and refuses to resolve external entities or fetch
+    # remote hrefs, which matters when the input is untrusted model output.
+    "resvg-py==0.3.3",
+    "pillow>=10.0.0",
+    "numpy>=1.24.0",
+    # Only needed when the vision judge is enabled.
+    "huggingface-hub>=0.34.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "pelican_svg_env.server.app:main"
+
+[tool.setuptools]
+packages = ["pelican_svg_env", "pelican_svg_env.server"]
+package-dir = { "pelican_svg_env" = ".", "pelican_svg_env.server" = "server" }

@@ -1,0 +1,42 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-terminus-env"
+version = "0.1.0"
+description = "Single-tool E2B-backed coding environment for OpenEnv"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.2.2",
+    "e2b-code-interpreter>=1.0.0",
+    "fastapi>=0.115.0",
+    "fastmcp>=3.0.0",
+    "gradio>=4.0.0",
+    "pydantic>=2.0.0",
+    "requests>=2.31.0",
+    "uvicorn>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "terminus_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["terminus_env", "terminus_env.server"]
+package-dir = { "terminus_env" = ".", "terminus_env.server" = "server" }
+
+[tool.setuptools.package-data]
+terminus_env = ["**/*.txt", "**/*.yaml"]

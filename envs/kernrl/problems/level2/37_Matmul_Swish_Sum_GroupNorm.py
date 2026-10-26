@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
 
+
 class Model(nn.Module):
     """
     A model that performs a matrix multiplication, applies Swish activation, sums with a bias term, and normalizes with GroupNorm.
     """
+
     def __init__(self, in_features, out_features, num_groups, bias_shape):
         super(Model, self).__init__()
         self.matmul = nn.Linear(in_features, out_features)
@@ -24,14 +26,17 @@ class Model(nn.Module):
         x = self.group_norm(x)
         return x
 
+
 batch_size = 128
 in_features = 512
 out_features = 1024
 num_groups = 32
 bias_shape = (out_features,)
 
+
 def get_inputs():
     return [torch.randn(batch_size, in_features)]
+
 
 def get_init_inputs():
     return [in_features, out_features, num_groups, bias_shape]

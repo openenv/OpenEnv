@@ -1,7 +1,8 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
 # Grouped Query Attention (GQA)
 # Used in: Llama 2 70B, Mistral, Llama 3, Gemma, Qwen 2.5, etc.
@@ -40,7 +41,9 @@ class RotaryEmbedding(nn.Module):
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float32) / self.dim))
+        inv_freq = 1.0 / (
+            self.base ** (torch.arange(0, self.dim, 2, dtype=torch.float32) / self.dim)
+        )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     @torch.no_grad()
@@ -127,13 +130,21 @@ class Model(nn.Module):
         value_states = self.v_proj(hidden_states)
 
         # Reshape for multi-head attention
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(bsz, q_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        query_states = query_states.view(
+            bsz, q_len, self.num_heads, self.head_dim
+        ).transpose(1, 2)
+        key_states = key_states.view(
+            bsz, q_len, self.num_kv_heads, self.head_dim
+        ).transpose(1, 2)
+        value_states = value_states.view(
+            bsz, q_len, self.num_kv_heads, self.head_dim
+        ).transpose(1, 2)
 
         # Apply rotary embeddings
         cos, sin = self.rotary_emb(value_states, seq_len=q_len)
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin
+        )
 
         # INEFFICIENT: Expand KV heads to match query heads
         # This is the main optimization target - avoid explicit memory expansion
@@ -141,18 +152,24 @@ class Model(nn.Module):
         value_states = self.repeat_kv(value_states, self.num_key_value_groups)
 
         # Compute attention
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
+        attn_weights = (
+            torch.matmul(query_states, key_states.transpose(2, 3)) * self.softmax_scale
+        )
 
         # Apply causal mask
         causal_mask = torch.triu(
             torch.ones(q_len, q_len, device=hidden_states.device, dtype=torch.bool),
-            diagonal=1
+            diagonal=1,
         )
-        attn_weights = attn_weights.masked_fill(causal_mask, float('-inf'))
+        attn_weights = attn_weights.masked_fill(causal_mask, float("-inf"))
 
         # Softmax and dropout
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_weights = F.dropout(attn_weights, p=self.attention_dropout, training=self.training)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(
+            query_states.dtype
+        )
+        attn_weights = F.dropout(
+            attn_weights, p=self.attention_dropout, training=self.training
+        )
 
         # Attention output
         attn_output = torch.matmul(attn_weights, value_states)

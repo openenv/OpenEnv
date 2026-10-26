@@ -39,7 +39,15 @@ def _alias(name: str) -> None:
     sys.modules[f"{__name__}.{name}"] = importlib.import_module(target)
 
 
-for _child in ("client_types", "containers", "env_server", "env_client", "tools"):
+for _child in (
+    "client_types",
+    "containers",
+    "env_client",
+    "env_server",
+    "rubrics",
+    "tools",
+    "utils",
+):
     try:
         _alias(_child)
     except ModuleNotFoundError:  # pragma: no cover - defensive

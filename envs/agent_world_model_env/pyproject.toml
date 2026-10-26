@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-world-model-env"
+version = "0.1.0"
+description = "Agent World Model Environment for OpenEnv - wraps 1,000 LLM-synthesized environments"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    "requests>=2.31.0",
+    "sqlalchemy>=2.0.41",
+    "huggingface-hub>=0.20.0",
+    "fastapi-mcp==0.4.0",
+    "openai>=1.106.1",
+    "mcp-agent==0.2.6",
+    # Used by the custom Gradio web UI (server/web_ui.py).
+    "gradio>=6.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+server = "agent_world_model_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = [
+    "agent_world_model_env",
+    "agent_world_model_env.server",
+]
+[tool.setuptools.package-dir]
+"agent_world_model_env" = "."
+"agent_world_model_env.server" = "server"

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-helium-browser-env"
+version = "0.1.0"
+description = "A visual Chromium browser environment for OpenEnv using Helium"
+requires-python = ">=3.12"
+dependencies = [
+    "helium==7.0.3",
+    "openenv>=0.7.0",
+]
+
+[project.scripts]
+server = "helium_browser_env.server.app:main"
+helium-browser-hf = "helium_browser_env.hf_sandbox:main"
+
+[tool.setuptools]
+packages = ["helium_browser_env", "helium_browser_env.server"]
+package-dir = { "helium_browser_env" = ".", "helium_browser_env.server" = "server" }
+
+[tool.setuptools.package-data]
+helium_browser_env = ["openenv.yaml"]

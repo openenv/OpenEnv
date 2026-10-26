@@ -17,10 +17,10 @@ This environment allows language models to:
 - Optionally make recursive LLM calls via llm_query() / llm_query_batched()
 
 Example:
-    >>> from repl_env import REPLEnv, REPLAction
+    >>> from repl_env import LocalREPLEnv, REPLAction
     >>>
-    >>> # Start from Docker
-    >>> env = REPLEnv.from_docker_image("repl-env:latest")
+    >>> # Local in-process helper
+    >>> env = LocalREPLEnv()
     >>>
     >>> # Reset with context
     >>> result = env.reset(context="Hello World", task_prompt="Count characters")
@@ -40,21 +40,29 @@ References:
     - Alex Zhang Blog: https://alexzhang13.github.io/blog/2025/rlm/
 """
 
-from .models import REPLAction, REPLObservation, REPLState, CodeBlockResult
 from .client import REPLEnv
+from .local import LocalREPLEnv
+from .models import CodeBlockResult, REPLAction, REPLObservation, REPLState
 from .prompts import (
-    # System prompts
-    RLM_SYSTEM_PROMPT,
-    RLM_SYSTEM_PROMPT_QWEN,
-    # Prompt building
-    QueryMetadata,
     build_rlm_system_prompt,
     build_user_prompt,
-    build_initial_prompt,
     # Parsing utilities
     extract_code_blocks,
     format_observations,
+    # Prompt building
+    QueryMetadata,
+    # System prompts
+    RLM_SYSTEM_PROMPT,
+    RLM_SYSTEM_PROMPT_QWEN,
 )
+from .rubrics import (
+    CodeExecutionRubric,
+    CustomMetricRubric,
+    ExactMatchRubric,
+    FuzzyMatchRubric,
+    REPLRubric,
+)
+from .runner import LocalRLMRunner, RLMRunResult
 
 __all__ = [
     # Models
@@ -64,6 +72,9 @@ __all__ = [
     "CodeBlockResult",
     # Client
     "REPLEnv",
+    "LocalREPLEnv",
+    "LocalRLMRunner",
+    "RLMRunResult",
     # System prompts
     "RLM_SYSTEM_PROMPT",
     "RLM_SYSTEM_PROMPT_QWEN",
@@ -71,8 +82,13 @@ __all__ = [
     "QueryMetadata",
     "build_rlm_system_prompt",
     "build_user_prompt",
-    "build_initial_prompt",
     # Parsing utilities
     "extract_code_blocks",
     "format_observations",
+    # Rubrics
+    "REPLRubric",
+    "ExactMatchRubric",
+    "FuzzyMatchRubric",
+    "CustomMetricRubric",
+    "CodeExecutionRubric",
 ]

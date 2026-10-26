@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+  <!-- Renders fine, has plenty of ink, but is not a drawing of anything. -->
+  <line x1="20" y1="40" x2="380" y2="260" stroke="black" stroke-width="4"/>
+  <line x1="380" y1="40" x2="20" y2="260" stroke="black" stroke-width="4"/>
+  <line x1="200" y1="10" x2="200" y2="290" stroke="black" stroke-width="4"/>
+  <line x1="10" y1="150" x2="390" y2="150" stroke="black" stroke-width="4"/>
+  <rect x="60" y="60" width="90" height="60" fill="none" stroke="black" stroke-width="3"/>
+  <rect x="250" y="180" width="70" height="80" fill="none" stroke="black" stroke-width="3"/>
+</svg>

@@ -5,9 +5,10 @@ Calendar Session Manager - Database session handling for Calendar services using
 import logging
 import os
 from typing import Dict
+
+from database.models import Base
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from database.models import Base
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +65,14 @@ class CalendarSessionManager:
         """Initialize the database with SQLAlchemy models"""
         try:
             engine = self.get_engine(db_id)
-            
+
             # Create all tables
             if create_tables:
                 Base.metadata.create_all(engine)
-            
-            logger.info(f"Calendar database {db_id} initialized successfully with SQLAlchemy")
+
+            logger.info(
+                f"Calendar database {db_id} initialized successfully with SQLAlchemy"
+            )
 
         except Exception as e:
             logger.error(f"Failed to initialize database {db_id}: {e}")
@@ -78,17 +81,22 @@ class CalendarSessionManager:
     def get_database_schema(self) -> Dict:
         """Get the database schema definition dynamically from SQLAlchemy models"""
         from sqlalchemy import inspect
-        
+
         schema = {}
-        
+
         # Get all mapped classes (models) from the Base metadata
         for table_name, table in Base.metadata.tables.items():
-            table_info = {"table_name": table_name, "columns": {}, "foreign_keys": [], "indexes": []}
-            
+            table_info = {
+                "table_name": table_name,
+                "columns": {},
+                "foreign_keys": [],
+                "indexes": [],
+            }
+
             # Process columns
             for column in table.columns:
                 column_def = []
-                
+
                 # Column type
                 column_type = str(column.type)
                 if hasattr(column.type, "python_type"):
@@ -117,21 +125,21 @@ class CalendarSessionManager:
                         column_def.append("DATETIME")
                     else:
                         column_def.append(type_str)
-                
+
                 # Primary key
                 if column.primary_key:
                     column_def.append("PRIMARY KEY")
                     if column.autoincrement:
                         column_def.append("AUTOINCREMENT")
-                
+
                 # Unique constraint
                 if column.unique:
                     column_def.append("UNIQUE")
-                
+
                 # Not null constraint
                 if not column.nullable:
                     column_def.append("NOT NULL")
-                
+
                 # Default value
                 if column.default is not None:
                     if hasattr(column.default, "arg"):
@@ -141,16 +149,18 @@ class CalendarSessionManager:
                             column_def.append(f"DEFAULT '{column.default.arg}'")
                     else:
                         column_def.append(f"DEFAULT '{column.default}'")
-                
+
                 table_info["columns"][column.name] = " ".join(column_def)
-            
+
             # Process foreign keys
             for fk in table.foreign_keys:
                 ref_table = fk.column.table.name
                 ref_column = fk.column.name
                 local_column = fk.parent.name
-                table_info["foreign_keys"].append(f"FOREIGN KEY ({local_column}) REFERENCES {ref_table}({ref_column})")
-            
+                table_info["foreign_keys"].append(
+                    f"FOREIGN KEY ({local_column}) REFERENCES {ref_table}({ref_column})"
+                )
+
             # Process indexes
             for index in table.indexes:
                 index_columns = [col.name for col in index.columns]
@@ -158,7 +168,7 @@ class CalendarSessionManager:
                 table_info["indexes"].append(
                     f"{index_type} INDEX {index.name} ON {table_name} ({', '.join(index_columns)})"
                 )
-            
+
             schema[table_name] = table_info
-        
+
         return schema

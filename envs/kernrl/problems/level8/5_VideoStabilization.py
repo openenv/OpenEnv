@@ -20,6 +20,7 @@ class Model(nn.Module):
     """
     Applies homography transformation to stabilize a frame.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -45,7 +46,7 @@ class Model(nn.Module):
         # Create destination coordinates
         y_coords = torch.arange(H, device=frame.device).float()
         x_coords = torch.arange(W, device=frame.device).float()
-        Y, X = torch.meshgrid(y_coords, x_coords, indexing='ij')
+        Y, X = torch.meshgrid(y_coords, x_coords, indexing="ij")
 
         # Homogeneous coordinates (3, H*W)
         ones = torch.ones_like(X)
@@ -72,8 +73,11 @@ class Model(nn.Module):
         grid_batch = grid.unsqueeze(0)
 
         warped = F.grid_sample(
-            frame_batch, grid_batch,
-            mode='bilinear', padding_mode='zeros', align_corners=True
+            frame_batch,
+            grid_batch,
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=True,
         )
         warped = warped.squeeze(0)
 
@@ -87,18 +91,18 @@ class Model(nn.Module):
 frame_height = 1080
 frame_width = 1920
 
+
 def get_inputs():
     frame = torch.rand(frame_height, frame_width)
     # Small rotation + translation homography
     angle = 0.02  # Small angle
     tx, ty = 5.0, 3.0  # Small translation
     cos_a, sin_a = torch.cos(torch.tensor(angle)), torch.sin(torch.tensor(angle))
-    homography = torch.tensor([
-        [cos_a, -sin_a, tx],
-        [sin_a, cos_a, ty],
-        [0.0, 0.0, 1.0]
-    ])
+    homography = torch.tensor(
+        [[cos_a, -sin_a, tx], [sin_a, cos_a, ty], [0.0, 0.0, 1.0]]
+    )
     return [frame, homography]
+
 
 def get_init_inputs():
     return []

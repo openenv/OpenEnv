@@ -22,6 +22,7 @@ class Model(nn.Module):
 
     Uses a configurable kernel size and sigma.
     """
+
     def __init__(self, kernel_size: int = 15, sigma: float = 3.0):
         super(Model, self).__init__()
         self.kernel_size = kernel_size
@@ -30,7 +31,7 @@ class Model(nn.Module):
 
         # Create Gaussian kernel
         x = torch.arange(kernel_size).float() - kernel_size // 2
-        gaussian_1d = torch.exp(-x**2 / (2 * sigma**2))
+        gaussian_1d = torch.exp(-(x**2) / (2 * sigma**2))
         gaussian_1d = gaussian_1d / gaussian_1d.sum()
 
         # 2D kernel as outer product
@@ -38,7 +39,7 @@ class Model(nn.Module):
         gaussian_2d = gaussian_2d / gaussian_2d.sum()
 
         # Register as buffer (moves with model to device)
-        self.register_buffer('kernel', gaussian_2d.unsqueeze(0).unsqueeze(0))
+        self.register_buffer("kernel", gaussian_2d.unsqueeze(0).unsqueeze(0))
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -79,10 +80,12 @@ class Model(nn.Module):
 image_height = 1920
 image_width = 1080
 
+
 def get_inputs():
     # Grayscale image
     image = torch.rand(image_height, image_width)
     return [image]
+
 
 def get_init_inputs():
     return [15, 3.0]  # kernel_size, sigma

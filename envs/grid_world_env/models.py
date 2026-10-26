@@ -16,7 +16,6 @@ try:
 except ImportError:
     from core.env_server.types import Action, Observation
     from pydantic import Field
-    
 
 
 # --- Action Models ---
@@ -26,8 +25,10 @@ class MoveAction(str, Enum):
     LEFT = "LEFT"
     RIGHT = "RIGHT"
 
+
 class GridWorldAction(Action):
     action: MoveAction = Field(..., description="The direction to move the agent.")
+
 
 # --- Observation Model ---
 class GridWorldObservation(Observation):

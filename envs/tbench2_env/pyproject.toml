@@ -15,22 +15,19 @@ description = "Tbench2 Env environment for OpenEnv"
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
-    # install from github
-    "openenv-core[core]>=0.2.1",
-    "pytest>=8.4.0",
+    "openenv>=0.2.3",
     # Environment-specific dependencies
-    # Add all dependencies needed for your environment here
-    "camel-ai",
+    "camel-ai>=0.2.90",
     # Docker-backed mode (optional, for full TB2.0 compatibility)
-    "docker>=7.0.0",
-     # TOML parsing (tomllib for Python 3.11+, tomli for older versions)
-    "tomli>=2.0.0; python_version < '3.11'",
+    "docker>=7.1.0",
+    # TOML parsing (tomllib for Python 3.11+, tomli for older versions)
+    "tomli>=2.4.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "pytest-cov>=4.0.0",
+    "pytest>=9.0.0",
+    "pytest-cov>=7.0.0",
 ]
 
 [project.scripts]

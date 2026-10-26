@@ -1,0 +1,14 @@
+# Runtime dependencies for the AWM expert-in-the-loop benchmark and runners.
+#
+# The AWM env client and OpenEnv core come from the repo when you run with
+# PYTHONPATH=src:envs, or install them directly:
+#   pip install openenv-core agent-world-model-env
+#
+# Training backends such as TRL/vLLM or Foundry Fine-Tuning are intentionally not
+# required for the benchmark runner.
+
+openai>=1.106.1
+
+# Optional: only needed when using Azure OpenAI with Entra ID auth
+# (AZURE_OPENAI_ENDPOINT set, AZURE_OPENAI_API_KEY unset).
+azure-identity>=1.24.0

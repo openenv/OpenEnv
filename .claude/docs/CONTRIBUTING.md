@@ -121,6 +121,29 @@ When Claude identifies a potential alignment issue, it formats as:
 - **Suggested reviewer**: @[maintainer]
 ```
 
+## Adding or Updating an Environment
+
+When adding a new environment or updating an existing `envs/<name>/README.md`:
+
+1. Write or update `envs/<name>/README.md` — this is the source of truth for the environment's docs page.
+2. Run the sync script to create or refresh the stub in `docs/source/environments/`:
+
+```bash
+python scripts/sync_env_docs.py --fix
+```
+
+3. For a **new** environment, also add manually:
+   - An HTML card in `docs/source/environments.md`
+   - A `local: environments/<slug>` entry in `docs/source/_toctree.yml`
+
+4. Commit the updated stubs along with your other changes.
+
+CI (`check-env-docs` job in `test.yml`) will fail if a README was changed without running `--fix`. To check locally before pushing:
+
+```bash
+python scripts/sync_env_docs.py --check
+```
+
 ## Available Tools
 
 For the full list of available skills, subagents, and recommended plugins, see [CLAUDE.md](../../CLAUDE.md#available-skills).

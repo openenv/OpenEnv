@@ -1,0 +1,27 @@
+{
+  "manifest_schema_version": "1",
+  "name": "posttrain-task-min",
+  "version": "0.1.0",
+  "signature": "task.md",
+  "reward": {
+    "range": [0.0, 1.0],
+    "oracle_tolerance": 0.0,
+    "floor_margin": 0.5,
+    "variance_tolerance": null
+  },
+  "judge": null,
+  "resources": {"cpu": 1.0, "memory_mb": 1024, "disk_mb": 512, "episode_timeout_s": 60.0},
+  "task_distribution": null,
+  "capabilities": {
+    "oracle": {"form": "script", "location": "oracle/solve.sh"},
+    "verifier": {"kind": "script", "entry": "verifier/verify.sh"},
+    "set_state": false,
+    "llm_judged": false,
+    "rubric_tree": false,
+    "task_api": false,
+    "canaries": null,
+    "declared_tools": [],
+    "declared_task_count": {}
+  },
+  "types": {"tags": ["swe"]}
+}

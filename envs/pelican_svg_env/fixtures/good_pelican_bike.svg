@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+  <rect width="400" height="300" fill="#eef4f8"/>
+
+  <!-- wheels -->
+  <circle cx="110" cy="232" r="52" fill="none" stroke="#222" stroke-width="6"/>
+  <circle cx="290" cy="232" r="52" fill="none" stroke="#222" stroke-width="6"/>
+  <circle cx="110" cy="232" r="6" fill="#222"/>
+  <circle cx="290" cy="232" r="6" fill="#222"/>
+  <line x1="110" y1="180" x2="110" y2="284" stroke="#888" stroke-width="2"/>
+  <line x1="58" y1="232" x2="162" y2="232" stroke="#888" stroke-width="2"/>
+  <line x1="290" y1="180" x2="290" y2="284" stroke="#888" stroke-width="2"/>
+  <line x1="238" y1="232" x2="342" y2="232" stroke="#888" stroke-width="2"/>
+
+  <!-- frame -->
+  <line x1="110" y1="232" x2="200" y2="232" stroke="#c0392b" stroke-width="6"/>
+  <line x1="200" y1="232" x2="178" y2="162" stroke="#c0392b" stroke-width="6"/>
+  <line x1="110" y1="232" x2="178" y2="162" stroke="#c0392b" stroke-width="6"/>
+  <line x1="178" y1="162" x2="262" y2="162" stroke="#c0392b" stroke-width="6"/>
+  <line x1="200" y1="232" x2="262" y2="162" stroke="#c0392b" stroke-width="6"/>
+  <line x1="262" y1="162" x2="290" y2="232" stroke="#c0392b" stroke-width="6"/>
+  <line x1="262" y1="162" x2="268" y2="146" stroke="#c0392b" stroke-width="5"/>
+  <line x1="250" y1="146" x2="286" y2="146" stroke="#222" stroke-width="5"/>
+  <circle cx="200" cy="232" r="9" fill="none" stroke="#222" stroke-width="4"/>
+  <line x1="200" y1="232" x2="216" y2="246" stroke="#222" stroke-width="4"/>
+  <rect x="164" y="152" width="30" height="9" rx="4" fill="#222"/>
+
+  <!-- pelican legs -->
+  <line x1="192" y1="150" x2="206" y2="222" stroke="#e67e22" stroke-width="5"/>
+  <line x1="204" y1="150" x2="218" y2="244" stroke="#e67e22" stroke-width="5"/>
+
+  <!-- pelican body -->
+  <ellipse cx="188" cy="120" rx="48" ry="34" fill="#fdfdfd" stroke="#333" stroke-width="3"/>
+  <path d="M 168 112 Q 196 96 224 118 Q 196 138 168 112 Z" fill="#e8e8e8" stroke="#333" stroke-width="2"/>
+  <path d="M 142 128 Q 120 140 132 150 Q 146 146 152 136 Z" fill="#fdfdfd" stroke="#333" stroke-width="2"/>
+
+  <!-- neck and head -->
+  <path d="M 224 104 Q 244 84 252 62" fill="none" stroke="#fdfdfd" stroke-width="20" stroke-linecap="round"/>
+  <path d="M 224 104 Q 244 84 252 62" fill="none" stroke="#333" stroke-width="2" fill-opacity="0"/>
+  <circle cx="256" cy="54" r="21" fill="#fdfdfd" stroke="#333" stroke-width="3"/>
+  <circle cx="264" cy="48" r="3.5" fill="#222"/>
+
+  <!-- beak with pouch -->
+  <path d="M 273 48 L 336 60 L 274 70 Z" fill="#f5b041" stroke="#c47f1a" stroke-width="2"/>
+  <path d="M 274 62 Q 302 92 332 62 Q 304 72 274 62 Z" fill="#f8c471" stroke="#c47f1a" stroke-width="2"/>
+
+  <!-- tail -->
+  <path d="M 140 108 L 108 96 L 142 120 Z" fill="#fdfdfd" stroke="#333" stroke-width="2"/>
+</svg>

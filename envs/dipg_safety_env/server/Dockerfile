@@ -1,35 +1,58 @@
-# Start from a public, official Python image
-FROM python:3.11-slim
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
 
-# Install system dependencies like curl (for the health check)
+ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest
+FROM ${BASE_IMAGE} AS builder
+
+WORKDIR /app
+
+
+COPY . /app/env
+
+WORKDIR /app/env
+
+RUN if ! command -v uv >/dev/null 2>&1; then \
+        curl -LsSf https://astral.sh/uv/install.sh | sh && \
+        mv /root/.local/bin/uv /usr/local/bin/uv && \
+        mv /root/.local/bin/uvx /usr/local/bin/uvx; \
+    fi
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -f uv.lock ]; then \
+        uv sync --frozen --no-install-project --no-editable; \
+    else \
+        uv sync --no-install-project --no-editable; \
+    fi
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -f uv.lock ]; then \
+        uv sync --frozen --no-editable; \
+    else \
+        uv sync --no-editable; \
+    fi
+
+# Final runtime stage
+FROM ${BASE_IMAGE}
+
 WORKDIR /app
 
-# Copy requirements file and install dependencies. This is done in a separate
-# step to leverage Docker's layer caching. Dependencies are only re-installed
-# when the requirements.txt file changes.
-COPY envs/dipg_safety_env/server/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /app/env/.venv /app/.venv
+COPY --from=builder /app/env /app/env
 
-# Set the working directory and PYTHONPATH inside the container
-WORKDIR /app
-ENV PYTHONPATH="/app/src"
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app/env:$PYTHONPATH"
+ENV ENABLE_WEB_INTERFACE=false
 
-# Copy all the application source code into the container
-COPY src/core/ /app/src/core/
-COPY envs/dipg_safety_env/ /app/envs/dipg_safety_env/
-
-# Expose the port the server will run on
 EXPOSE 8000
 
-# Add a robust health check
 HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
-
-# Note: The DIPG_DATASET_PATH must be provided when running this container.
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8000", "envs.dipg_safety_env.server.app:app"]
+CMD ["sh", "-c", "cd /app/env && gunicorn -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 server.app:app"]

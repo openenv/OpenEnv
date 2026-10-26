@@ -23,15 +23,14 @@ class Model(nn.Module):
     """
     Full-search block matching motion estimation.
     """
+
     def __init__(self, block_size: int = 16, search_range: int = 16):
         super(Model, self).__init__()
         self.block_size = block_size
         self.search_range = search_range
 
     def forward(
-        self,
-        current_frame: torch.Tensor,
-        reference_frame: torch.Tensor
+        self, current_frame: torch.Tensor, reference_frame: torch.Tensor
     ) -> tuple:
         """
         Estimate motion vectors between frames.
@@ -56,14 +55,13 @@ class Model(nn.Module):
         # Output motion vectors
         motion_x = torch.zeros(num_blocks_y, num_blocks_x, device=current_frame.device)
         motion_y = torch.zeros(num_blocks_y, num_blocks_x, device=current_frame.device)
-        min_sad = torch.full((num_blocks_y, num_blocks_x), float('inf'), device=current_frame.device)
+        min_sad = torch.full(
+            (num_blocks_y, num_blocks_x), float("inf"), device=current_frame.device
+        )
 
         # Pad reference frame for search
         ref_padded = torch.nn.functional.pad(
-            reference_frame,
-            (sr, sr, sr, sr),
-            mode='constant',
-            value=0
+            reference_frame, (sr, sr, sr, sr), mode="constant", value=0
         )
 
         # For each block
@@ -74,10 +72,10 @@ class Model(nn.Module):
                 cx = bx * bs
 
                 # Extract current block
-                current_block = current_frame[cy:cy+bs, cx:cx+bs]
+                current_block = current_frame[cy : cy + bs, cx : cx + bs]
 
                 # Search window in reference (accounting for padding)
-                best_sad = float('inf')
+                best_sad = float("inf")
                 best_dx, best_dy = 0, 0
 
                 for dy in range(-sr, sr + 1):
@@ -87,7 +85,7 @@ class Model(nn.Module):
                         rx = cx + sr + dx
 
                         # Extract reference block
-                        ref_block = ref_padded[ry:ry+bs, rx:rx+bs]
+                        ref_block = ref_padded[ry : ry + bs, rx : rx + bs]
 
                         # Compute SAD
                         sad = (current_block - ref_block).abs().sum()
@@ -107,11 +105,13 @@ class Model(nn.Module):
 frame_height = 720
 frame_width = 1280
 
+
 def get_inputs():
     # Two consecutive frames
     current_frame = torch.rand(frame_height, frame_width)
     reference_frame = torch.rand(frame_height, frame_width)
     return [current_frame, reference_frame]
+
 
 def get_init_inputs():
     return [16, 16]  # block_size, search_range

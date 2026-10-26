@@ -1,0 +1,175 @@
+name: Publish OpenEnv to TestPyPI
+
+# Requires a TestPyPI Trusted Publisher for:
+# - repository: huggingface/OpenEnv
+# - workflow: publish-testpypi.yml
+# - environment: testpypi
+on:
+  workflow_dispatch:
+    inputs:
+      version_suffix:
+        description: "PEP 440 suffix for the TestPyPI build, for example .dev123 or rc1. Defaults to .dev<run_number><run_attempt>."
+        required: false
+        type: string
+
+
+concurrency:
+  group: openenv-package-publish
+  cancel-in-progress: false
+
+env:
+  PACKAGE_NAME: openenv
+
+permissions: {}
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    name: Build TestPyPI distribution
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Prepare TestPyPI version
+        id: version
+        env:
+          VERSION_SUFFIX: ${{ inputs.version_suffix }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import tomllib
+
+          pyproject = pathlib.Path("pyproject.toml")
+          data = tomllib.loads(pyproject.read_text())
+          current = data["project"]["version"]
+          base = current.split("+", 1)[0]
+          base = re.sub(r"(a|b|rc)\d+$", "", base)
+          base = re.sub(r"\.dev\d+$", "", base)
+
+          suffix = os.environ["VERSION_SUFFIX"].strip()
+          if not suffix:
+              suffix = f".dev{os.environ['GITHUB_RUN_NUMBER']}{os.environ['GITHUB_RUN_ATTEMPT']}"
+
+          if not re.fullmatch(r"(a|b|rc|\.dev)\d+", suffix):
+              raise SystemExit(
+                  "version_suffix must be a PEP 440 pre/dev suffix like "
+                  ".dev123, rc1, a1, or b1"
+              )
+
+          version = f"{base}{suffix}"
+          text = pyproject.read_text()
+          text = re.sub(
+              r'^version\s*=\s*"[^"]+"',
+              f'version = "{version}"',
+              text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          pyproject.write_text(text)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"version={version}", file=output)
+
+          print(f"Prepared TestPyPI version: {version}")
+          PY
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check package metadata
+        run: python -m twine check dist/*
+
+      - name: Smoke-test built wheel
+        run: |
+          python -m venv .pkg-smoke
+          . .pkg-smoke/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          python - <<'PY'
+          import importlib.metadata
+          import openenv
+
+          installed = importlib.metadata.version("openenv")
+          assert openenv.__version__ == installed, (openenv.__version__, installed)
+          print(f"openenv {installed}")
+          PY
+          openenv --help
+
+      - name: Upload TestPyPI distribution artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openenv-${{ steps.version.outputs.version }}-testpypi-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-to-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/openenv/${{ needs.build.outputs.version }}/
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download TestPyPI distribution artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openenv-${{ needs.build.outputs.version }}-testpypi-dist
+          path: dist/
+
+      - name: Publish package distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Verify install from TestPyPI
+        run: |
+          python -m venv .testpypi-verify
+          . .testpypi-verify/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://pypi.org/simple/ dist/*.whl
+          python -m pip uninstall -y openenv
+
+          for attempt in 1 2 3 4 5; do
+            if python -m pip install \
+              --no-deps \
+              --index-url https://test.pypi.org/simple/ \
+              "openenv==${{ needs.build.outputs.version }}"; then
+              break
+            fi
+            echo "Package is not visible on TestPyPI yet; retrying..."
+            sleep 30
+          done
+
+          python - <<'PY'
+          import importlib.metadata
+          import openenv
+
+          expected = "${{ needs.build.outputs.version }}"
+          installed = importlib.metadata.version("openenv")
+          assert installed == expected, (installed, expected)
+          assert openenv.__version__ == expected, (openenv.__version__, expected)
+          print(f"openenv {installed}")
+          PY

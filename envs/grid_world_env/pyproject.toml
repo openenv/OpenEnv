@@ -11,14 +11,14 @@ authors = [
     {name = "Yuv Raj Pant", email = "yuvrajpant5@gmail.com"},
 ]
 dependencies = [
-    "openenv-core[core]>=0.2.1",
+    "openenv>=0.2.2",
     "gymnasium",
     "numpy",
     # Server dependencies copied from echo_env
     "fastapi>=0.115.0",
     "pydantic>=2.0.0",
     "uvicorn>=0.24.0",
-    "requests>=2.31.0",
+    "requests>=2.33.0",
 ]
 
 [project.scripts]

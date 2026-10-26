@@ -1,0 +1,171 @@
+{
+  "$defs": {
+    "ToolDeclaration": {
+      "additionalProperties": false,
+      "properties": {
+        "names": {
+          "items": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "title": "Names",
+          "type": "array"
+        },
+        "protocol": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "source": {
+          "allOf": [
+            {
+              "pattern": "^(?:\\.|(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*(?:/(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*)*)$"
+            },
+            {
+              "not": {
+                "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]"
+              }
+            }
+          ],
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "names",
+        "source"
+      ],
+      "title": "ToolDeclaration",
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/huggingface/OpenEnv/main/src/openenv/discovery/schemas/0.1-draft/declaration.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "agent_tools": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolDeclaration"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "artifact_availability": {
+      "default": "resolvable",
+      "enum": [
+        "resolvable",
+        "external",
+        "unknown"
+      ],
+      "title": "Artifact Availability",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "license": {
+      "anyOf": [
+        {
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License"
+    },
+    "license_source": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "pattern": "^(?:\\.|(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*(?:/(?:[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.[^./\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]|\\.\\.\\.)[^/\\\\\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]*)*)$"
+            },
+            {
+              "not": {
+                "pattern": "[\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]"
+              }
+            }
+          ],
+          "maxLength": 8192,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License Source"
+    },
+    "representative_queries": {
+      "anyOf": [
+        {
+          "items": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "maxItems": 0,
+          "type": "array"
+        },
+        {
+          "items": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "maxItems": 5,
+          "minItems": 2,
+          "type": "array"
+        }
+      ],
+      "title": "Representative Queries"
+    },
+    "tags": {
+      "items": {
+        "maxLength": 8192,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    }
+  },
+  "title": "DiscoveryDeclaration",
+  "type": "object"
+}

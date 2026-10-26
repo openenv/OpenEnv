@@ -1,0 +1,37 @@
+{
+  "schema_version": "1",
+  "suites": {
+    "protocol": [
+      "tests.test_validation.integration.test_served_probe::test_real_session_retains_counter_and_requested_identity",
+      "tests.test_validation.integration.test_served_probe::test_fault_is_visible_in_raw_wire_response[bad_reward]",
+      "tests.test_validation.integration.test_served_probe::test_fault_is_visible_in_raw_wire_response[bad_observation]",
+      "tests.test_validation.integration.test_served_probe::test_fault_is_visible_in_raw_wire_response[missing_done]",
+      "tests.test_validation.integration.test_served_probe::test_fault_is_visible_in_raw_wire_response[bad_state]",
+      "tests.test_validation.integration.test_served_probe::test_failed_start_is_explicit",
+      "tests.test_validation.integration.test_served_probe::test_real_echo_reset_schema_and_unscored_rewards[False]",
+      "tests.test_validation.integration.test_served_probe::test_real_echo_reset_schema_and_unscored_rewards[True]"
+    ],
+    "docker": [
+      "tests.test_validation.integration.test_docker_lifecycle::test_docker_lifecycle_effective_limits_and_owned_cleanup",
+      "tests.test_validation.integration.test_docker_lifecycle::test_docker_unhealthy_startup_removes_container",
+      "tests.test_validation.integration.test_docker_lifecycle::test_docker_exec_timeout_removes_process_tree",
+      "tests.test_validation.integration.test_docker_network::test_no_network_subject_is_served_only_through_the_helper",
+      "tests.test_validation.integration.test_docker_network::test_good_network_policy[public]",
+      "tests.test_validation.integration.test_docker_network::test_good_network_policy[no-network]",
+      "tests.test_validation.integration.test_docker_network::test_network_leak_is_detected_from_measurement",
+      "tests.test_validation.integration.test_docker_network::test_helper_cannot_bridge_subject_egress",
+      "tests.test_validation.integration.test_echo_canary::test_reference_echo_validates_reset_and_unscored_steps",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[good-None]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[slow_step-None]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[bad_reward-runtime.reward_well_formed]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[bad_observation-runtime.observation_schema]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[missing_done-runtime.observation_schema]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[bad_state-runtime.state_contract]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_hung_step_times_out_with_partial_evidence",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_sigint_retains_partial_evidence_and_cleans_up",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_sigterm_retains_partial_evidence_and_cleans_up",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_startup_failure_is_a_finding_and_leaves_no_container",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_skip_build_does_not_invoke_docker"
+    ]
+  }
+}

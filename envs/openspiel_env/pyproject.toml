@@ -15,7 +15,7 @@ description = "OpenSpiel Environment for OpenEnv - integration with DeepMind's g
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv dependencies (required for server functionality)
-    "openenv-core[core]>=0.2.1",
+    "openenv>=0.2.2",
     "fastapi>=0.115.0",
     "pydantic>=2.0.0",
     "uvicorn>=0.24.0",

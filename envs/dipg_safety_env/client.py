@@ -13,6 +13,7 @@ for efficient multi-step interactions:
 
 from openenv.core.client_types import StepResult
 from openenv.core.env_client import EnvClient
+
 from .models import DIPGAction, DIPGObservation, DIPGState
 
 
@@ -23,11 +24,11 @@ class DIPGSafetyEnv(EnvClient[DIPGAction, DIPGObservation, DIPGState]):
     This class inherits from the base `EnvClient` and is specialized to handle
     the specific data types of our environment: `DIPGAction` and `DIPGObservation`.
     """
-    
+
     def __init__(self, base_url: str, timeout: float = 60.0):
         """
         Initializes the client.
-        
+
         Args:
             base_url: The URL of the running environment server.
             timeout: The number of seconds to wait for a server response.
@@ -35,12 +36,13 @@ class DIPGSafetyEnv(EnvClient[DIPGAction, DIPGObservation, DIPGState]):
         # This correctly calls the parent initializer with the expected
         # 'message_timeout_s' keyword argument.
         super().__init__(base_url=base_url, message_timeout_s=timeout)
+
     # ----------------------------------------
 
     def _step_payload(self, action: DIPGAction) -> dict:
         """
         Formats the `DIPGAction` object into a JSON-serializable dictionary.
-        
+
         This dictionary becomes the body of the HTTP POST request sent to the
         server's `/step` endpoint.
 
@@ -84,7 +86,7 @@ class DIPGSafetyEnv(EnvClient[DIPGAction, DIPGObservation, DIPGState]):
         # we try to access keys from it. If it was None, it becomes an empty dict.
         if not isinstance(actual_obs_data, dict):
             actual_obs_data = {}
-        
+
         # Construct the DIPGObservation object safely.
         # Using .get() with a default value ("") prevents a KeyError if 'context' or
         # 'question' are missing from the payload, ensuring the client never crashes.
@@ -92,22 +94,21 @@ class DIPGSafetyEnv(EnvClient[DIPGAction, DIPGObservation, DIPGState]):
             context=actual_obs_data.get("context", ""),
             question=actual_obs_data.get("question", ""),
         )
-        
+
         # Assemble and return the final, structured StepResult.
         return StepResult(
             observation=obs,
             reward=payload.get("reward"),
             done=payload.get("done", False),
         )
-    
 
     def _parse_state(self, payload: dict) -> DIPGState:
         """
         Parses the JSON payload from the server's `/state` endpoint into a `DIPGState` object.
-        
+
         Args:
             payload: The raw dictionary parsed from the server's JSON response.
-            
+
         Returns:
             A structured `DIPGState` object.
         """

@@ -4,9 +4,10 @@ Provides color definitions for calendars and events
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, Header, status
-from typing import Dict, Any
+from typing import Any, Dict
+
 from database.managers.color_manager import ColorManager
+from fastapi import APIRouter, Header, HTTPException, status
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +23,9 @@ def get_color_manager(database_id: str) -> ColorManager:
 async def get_colors(x_database_id: str = Header(alias="x-database-id")):
     """
     Returns the color definitions for calendars and events
-    
+
     GET /colors
-    
+
     Returns a global palette of color definitions for calendars and events.
     Color data is dynamically loaded from database with exact Google Calendar API v3 format.
     Colors are global/shared across all users - no user_id required.
@@ -32,15 +33,15 @@ async def get_colors(x_database_id: str = Header(alias="x-database-id")):
     """
     try:
         color_manager = get_color_manager(x_database_id)
-        
+
         colors_response = color_manager.get_colors_response()
-        
+
         logger.info("Retrieved calendar and event color definitions from database")
         return colors_response
-        
+
     except Exception as e:
         logger.error(f"Error getting color definitions: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
+            detail=f"Internal server error: {str(e)}",
         )

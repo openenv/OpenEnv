@@ -34,11 +34,11 @@ SETTINGS_TOOLS = [
                 "settingId": {
                     "type": "string",
                     "description": "Unique identifier of the setting (e.g., 'timezone')",
-                    "minLength": 1
+                    "minLength": 1,
                 }
             },
-            "required": ["settingId"]
-        }
+            "required": ["settingId"],
+        },
     },
     {
         "name": "list_settings",
@@ -61,11 +61,7 @@ SETTINGS_TOOLS = [
         Status Codes:
           - 200: Success - List of settings returned
           - 500: Internal Server Error""",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "watch_settings",
@@ -126,23 +122,23 @@ SETTINGS_TOOLS = [
                 "id": {
                     "type": "string",
                     "description": "Unique identifier for the watch channel",
-                    "minLength": 1
+                    "minLength": 1,
                 },
                 "type": {
                     "type": "string",
                     "description": "Type of notification channel",
                     "default": "web_hook",
-                    "enum": ["web_hook"]
+                    "enum": ["web_hook"],
                 },
                 "address": {
                     "type": "string",
                     "description": "URL where webhook notifications will be sent",
                     "format": "uri",
-                    "minLength": 1
+                    "minLength": 1,
                 },
                 "token": {
                     "type": "string",
-                    "description": "Optional verification token for webhook security"
+                    "description": "Optional verification token for webhook security",
                 },
                 "params": {
                     "type": "object",
@@ -150,12 +146,12 @@ SETTINGS_TOOLS = [
                     "properties": {
                         "ttl": {
                             "type": "string",
-                            "description": "Time to live in seconds (string)."
+                            "description": "Time to live in seconds (string).",
                         }
-                    }
-                }
+                    },
+                },
             },
-            "required": ["id", "type", "address"]
-        }
+            "required": ["id", "type", "address"],
+        },
     },
 ]

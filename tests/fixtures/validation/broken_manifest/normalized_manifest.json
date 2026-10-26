@@ -1,0 +1,13 @@
+{
+  "manifest_schema_version": "1",
+  "name": "broken-manifest",
+  "signature": "openenv.yaml",
+  "reward": {
+    "range": [1.0, 0.0],
+    "floor_margin": 0.5
+  },
+  "capabilities": {
+    "oracle": null,
+    "set_state": false
+  }
+}

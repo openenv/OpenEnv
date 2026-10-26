@@ -1,0 +1,39 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-dipg-safety-env"
+version = "0.1.0"
+description = "DIPG Safety Environment for OpenEnv - diagnostic safety evaluation"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn[standard]>=0.24.0",
+    "requests>=2.31.0",
+    "wsproto>=1.0.0",
+    "gunicorn>=22.0.0",
+    "fastmcp>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "dipg_safety_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["dipg_safety_env", "dipg_safety_env.server"]
+package-dir = { "dipg_safety_env" = ".", "dipg_safety_env.server" = "server" }

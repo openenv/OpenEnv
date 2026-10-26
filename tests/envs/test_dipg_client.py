@@ -1,5 +1,6 @@
 import os
 import sys
+
 import pytest
 
 # Add the project root to the path for envs imports

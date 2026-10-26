@@ -11,10 +11,10 @@ This module defines the Action, Observation, and State types for traffic
 signal control using SUMO (Simulation of Urban MObility).
 """
 
-from pydantic import Field
 from typing import Dict, List, Optional
 
 from openenv.core.env_server import Action, Observation, State
+from pydantic import Field
 
 
 class SumoAction(Action):

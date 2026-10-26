@@ -23,6 +23,7 @@ class Model(nn.Module):
     For binary images: erodes (shrinks) foreground regions.
     For grayscale: minimum filter within structuring element.
     """
+
     def __init__(self, kernel_size: int = 5):
         super(Model, self).__init__()
         self.kernel_size = kernel_size
@@ -43,10 +44,7 @@ class Model(nn.Module):
 
         # Erosion = min filter = -max(-x)
         eroded = -F.max_pool2d(
-            -x,
-            kernel_size=self.kernel_size,
-            stride=1,
-            padding=self.padding
+            -x, kernel_size=self.kernel_size, stride=1, padding=self.padding
         )
 
         return eroded.squeeze(0).squeeze(0)
@@ -56,10 +54,12 @@ class Model(nn.Module):
 image_height = 1920
 image_width = 1080
 
+
 def get_inputs():
     # Binary image (for morphology)
     image = (torch.rand(image_height, image_width) > 0.5).float()
     return [image]
+
 
 def get_init_inputs():
     return [5]  # kernel_size

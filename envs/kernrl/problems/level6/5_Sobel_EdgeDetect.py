@@ -22,24 +22,25 @@ class Model(nn.Module):
 
     Computes horizontal and vertical gradients, then magnitude.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
         # Sobel kernels
-        sobel_x = torch.tensor([
-            [-1, 0, 1],
-            [-2, 0, 2],
-            [-1, 0, 1]
-        ], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        sobel_x = (
+            torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )
 
-        sobel_y = torch.tensor([
-            [-1, -2, -1],
-            [0, 0, 0],
-            [1, 2, 1]
-        ], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        sobel_y = (
+            torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32)
+            .unsqueeze(0)
+            .unsqueeze(0)
+        )
 
-        self.register_buffer('sobel_x', sobel_x)
-        self.register_buffer('sobel_y', sobel_y)
+        self.register_buffer("sobel_x", sobel_x)
+        self.register_buffer("sobel_y", sobel_y)
 
     def forward(self, image: torch.Tensor) -> tuple:
         """
@@ -74,10 +75,12 @@ class Model(nn.Module):
 image_height = 1920
 image_width = 1080
 
+
 def get_inputs():
     # Grayscale image
     image = torch.rand(image_height, image_width)
     return [image]
+
 
 def get_init_inputs():
     return []

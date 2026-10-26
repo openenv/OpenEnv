@@ -1,0 +1,6 @@
+spec_version: 1
+name: chess_env
+type: space
+runtime: fastapi
+app: chess_env.server.app:app
+port: 8000

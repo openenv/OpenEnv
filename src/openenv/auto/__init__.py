@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 OpenEnv Auto Module
@@ -16,10 +12,10 @@ manual imports:
     >>> from openenv import AutoEnv, AutoAction
     >>>
     >>> # Load environment from installed package or HuggingFace Hub
-    >>> env = AutoEnv.from_name("coding-env")
+    >>> env = AutoEnv.from_env("coding-env")
     >>>
     >>> # Get action class
-    >>> CodeAction = AutoAction.from_name("coding")
+    >>> CodeAction = AutoAction.from_env("coding")
     >>> action = CodeAction(code="print('Hello!')")
 
 Classes:

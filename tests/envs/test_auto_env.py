@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Unit tests for AutoEnv and AutoAction
@@ -28,7 +24,6 @@ from openenv.auto._discovery import (
     reset_discovery,
 )
 from openenv.auto.auto_action import AutoAction
-
 from openenv.auto.auto_env import AutoEnv
 
 
@@ -259,10 +254,53 @@ class TestAutoEnvFromName:
 class TestAutoEnvHubDetection:
     """Test AutoEnv Hub URL detection and handling."""
 
+    def test_documented_echo_space_path(self, mock_discovery, mock_env_info):
+        """Test the canonical Echo Space ID with its explicit runtime URL."""
+        mock_discovery.get_environment_by_name.return_value = mock_env_info
+        mock_client_class = Mock()
+        mock_client_instance = Mock()
+        mock_client_class.return_value = mock_client_instance
+        mock_env_info.get_client_class = Mock(return_value=mock_client_class)
+        base_url = "https://openenv-echo-env.hf.space"
+
+        with (
+            patch("openenv.auto.auto_env.get_discovery", return_value=mock_discovery),
+            patch.object(AutoEnv, "_check_space_availability", return_value=False),
+            patch.object(
+                AutoEnv,
+                "_ensure_package_from_hub",
+                return_value="echo",
+            ) as ensure_package,
+            patch.object(AutoEnv, "_check_server_availability", return_value=True),
+        ):
+            result = AutoEnv.from_env(
+                "openenv/echo_env",
+                base_url=base_url,
+            )
+
+        assert result is mock_client_instance
+        ensure_package.assert_called_once_with(
+            "openenv/echo_env",
+            trust_remote_code=False,
+        )
+        mock_client_class.assert_called_once_with(base_url=base_url, provider=None)
+
     def test_resolve_space_url(self):
         """Test resolving HuggingFace Space URL."""
         url = AutoEnv._resolve_space_url("wukaixingxp/coding-env-test")
         assert url == "https://wukaixingxp-coding-env-test.hf.space"
+
+    @pytest.mark.parametrize(
+        "repo_id, expected",
+        [
+            ("openenv/echo_env", "https://openenv-echo-env.hf.space"),
+            ("openenv/repl_env-0.2.2", "https://openenv-repl-env-0-2-2.hf.space"),
+            ("User/My_Env", "https://user-my-env.hf.space"),
+        ],
+    )
+    def test_resolve_space_url_normalizes_subdomain(self, repo_id, expected):
+        """Space subdomains are lowercase with non-alphanumerics replaced by '-'."""
+        assert AutoEnv._resolve_space_url(repo_id) == expected
 
     def test_resolve_space_url_from_full_url(self):
         """Test resolving from full HuggingFace URL."""
@@ -270,6 +308,46 @@ class TestAutoEnvHubDetection:
             "https://huggingface.co/wukaixingxp/coding-env-test"
         )
         assert url == "https://wukaixingxp-coding-env-test.hf.space"
+
+
+# ============================================================================
+# _is_local_url Tests
+# ============================================================================
+
+
+class TestIsLocalUrl:
+    """Test AutoEnv._is_local_url() uses proper URL parsing, not substring matching."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://localhost:8000",
+            "http://localhost",
+            "http://127.0.0.1:8000",
+            "http://127.0.0.1",
+            "http://127.5.5.5",  # rest of 127.0.0.0/8 loopback range
+            "http://[::1]:8000",  # IPv6 loopback with port
+            "http://[::1]",  # IPv6 loopback bare
+            "http://0.0.0.0:8000",
+            "http://0.0.0.0",
+        ],
+    )
+    def test_local_urls_return_true(self, url):
+        assert AutoEnv._is_local_url(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://localhost.evil.com",  # headline false-positive bug
+            "http://my-127.0.0.1.io",  # 127.0.0.1 as substring in domain
+            "https://example.com",
+            "https://example.com/path?q=localhost",  # only in query string
+            "not-a-url",
+            "",
+        ],
+    )
+    def test_non_local_urls_return_false(self, url):
+        assert AutoEnv._is_local_url(url) is False
 
 
 # ============================================================================
@@ -376,8 +454,9 @@ class TestUvPipDetection:
 
     def test_get_pip_command_falls_back_to_pip(self):
         """Test _get_pip_command returns pip when uv is not available."""
-        from openenv.auto.auto_env import _get_pip_command
         import sys
+
+        from openenv.auto.auto_env import _get_pip_command
 
         with patch("openenv.auto.auto_env._has_uv", return_value=False):
             cmd = _get_pip_command()
@@ -394,8 +473,9 @@ class TestUserConfirmation:
 
     def test_confirm_skipped_with_env_var(self):
         """Test confirmation is skipped when OPENENV_TRUST_REMOTE_CODE is set."""
-        from openenv.auto.auto_env import _confirm_remote_install
         import os
+
+        from openenv.auto.auto_env import _confirm_remote_install
 
         with patch.dict(os.environ, {"OPENENV_TRUST_REMOTE_CODE": "1"}):
             result = _confirm_remote_install("test/repo")
@@ -403,8 +483,9 @@ class TestUserConfirmation:
 
     def test_confirm_skipped_with_env_var_true(self):
         """Test confirmation is skipped when OPENENV_TRUST_REMOTE_CODE=true."""
-        from openenv.auto.auto_env import _confirm_remote_install
         import os
+
+        from openenv.auto.auto_env import _confirm_remote_install
 
         with patch.dict(os.environ, {"OPENENV_TRUST_REMOTE_CODE": "true"}):
             result = _confirm_remote_install("test/repo")
@@ -412,8 +493,9 @@ class TestUserConfirmation:
 
     def test_confirm_returns_false_in_non_interactive(self):
         """Test confirmation returns False in non-interactive mode."""
-        from openenv.auto.auto_env import _confirm_remote_install
         import os
+
+        from openenv.auto.auto_env import _confirm_remote_install
 
         with (
             patch.dict(os.environ, {}, clear=True),
@@ -426,8 +508,9 @@ class TestUserConfirmation:
 
     def test_confirm_prompts_user_when_interactive(self):
         """Test confirmation prompts user in interactive mode."""
-        from openenv.auto.auto_env import _confirm_remote_install
         import os
+
+        from openenv.auto.auto_env import _confirm_remote_install
 
         with (
             patch.dict(os.environ, {}, clear=True),
@@ -440,8 +523,9 @@ class TestUserConfirmation:
 
     def test_confirm_user_declines(self):
         """Test confirmation returns False when user declines."""
-        from openenv.auto.auto_env import _confirm_remote_install
         import os
+
+        from openenv.auto.auto_env import _confirm_remote_install
 
         with (
             patch.dict(os.environ, {}, clear=True),
@@ -1062,8 +1146,8 @@ class TestDockerIntegration:
 
         This test uses GenericEnvClient with skip_install=True for pure MCP environments.
         """
-        from openenv.core.generic_client import GenericEnvClient
         from openenv.core.env_server.mcp_types import CallToolAction
+        from openenv.core.generic_client import GenericEnvClient
 
         # Start Docker container using GenericEnvClient (MCP-first approach)
         env = GenericEnvClient.from_docker_image("echo-env:latest")

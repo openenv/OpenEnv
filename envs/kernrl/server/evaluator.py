@@ -15,29 +15,30 @@ Runs kernels on local GPU with comprehensive profiling:
 All feedback is curated to be actionable for LLM agents.
 """
 
-import os
-import sys
 import json
+import os
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from .profiler import (
+    AssemblyAnalysis,
     GPUProfiler,
-    NsysProfile,
     NcuProfile,
+    NsysProfile,
+    RooflineMetrics,
     SanitizerResult,
     TorchProfile,
-    AssemblyAnalysis,
-    RooflineMetrics,
 )
 
 
 @dataclass
 class CompilationResult:
     """Result of compilation check."""
+
     success: bool
     error: Optional[str] = None
     warnings: list[str] = field(default_factory=list)
@@ -46,6 +47,7 @@ class CompilationResult:
 @dataclass
 class CorrectnessResult:
     """Result of correctness check."""
+
     correct: bool
     max_diff: float = 0.0
     mean_diff: float = 0.0
@@ -63,6 +65,7 @@ class CorrectnessResult:
 @dataclass
 class BenchmarkResult:
     """Result of benchmark."""
+
     baseline_time_us: float = 0.0
     solution_time_us: float = 0.0
     speedup: float = 0.0
@@ -76,12 +79,15 @@ class BenchmarkResult:
 @dataclass
 class EvalResult:
     """Complete evaluation result with all profiling data."""
+
     # Step info
     step: int = 0
     problem_id: str = ""
 
     # Compilation
-    compilation: CompilationResult = field(default_factory=lambda: CompilationResult(success=False))
+    compilation: CompilationResult = field(
+        default_factory=lambda: CompilationResult(success=False)
+    )
 
     # Correctness (only if compiled)
     correctness: Optional[CorrectnessResult] = None
@@ -102,7 +108,7 @@ class EvalResult:
 
     def to_agent_feedback(self) -> str:
         """Format as actionable feedback string for the agent."""
-        lines = [f"{'='*60}", f"EVALUATION RESULT - Step {self.step}", f"{'='*60}"]
+        lines = [f"{'=' * 60}", f"EVALUATION RESULT - Step {self.step}", f"{'=' * 60}"]
 
         # Compilation
         lines.append("\n## COMPILATION")
@@ -115,9 +121,9 @@ class EvalResult:
         else:
             lines.append("Status: FAIL")
             lines.append(f"Error:\n{self.compilation.error}")
-            lines.append(f"\n{'='*60}")
+            lines.append(f"\n{'=' * 60}")
             lines.append(f"REWARD: {self.reward:.3f}")
-            lines.append(f"{'='*60}")
+            lines.append(f"{'=' * 60}")
             return "\n".join(lines)
 
         # Compute Sanitizer (early - shows correctness bugs)
@@ -132,8 +138,12 @@ class EvalResult:
             lines.append(f"Status: {'PASS' if c.correct else 'FAIL'}")
             lines.append(f"  max_diff:    {c.max_diff:.6e}")
             lines.append(f"  mean_diff:   {c.mean_diff:.6e}")
-            lines.append(f"  tolerance:   {c.tolerance:.6e} (atol={c.atol}, rtol={c.rtol})")
-            lines.append(f"  mismatched:  {c.num_mismatched:,}/{c.num_elements:,} ({c.mismatch_percentage:.2f}%)")
+            lines.append(
+                f"  tolerance:   {c.tolerance:.6e} (atol={c.atol}, rtol={c.rtol})"
+            )
+            lines.append(
+                f"  mismatched:  {c.num_mismatched:,}/{c.num_elements:,} ({c.mismatch_percentage:.2f}%)"
+            )
             if c.error:
                 lines.append(f"  Error: {c.error[:200]}")
 
@@ -141,9 +151,15 @@ class EvalResult:
         lines.append("\n## BENCHMARK")
         if self.benchmark:
             b = self.benchmark
-            lines.append(f"  Baseline: {b.baseline_time_us:>8.2f} +/- {b.baseline_std_us:.2f} us")
-            lines.append(f"  Solution: {b.solution_time_us:>8.2f} +/- {b.solution_std_us:.2f} us")
-            lines.append(f"  Speedup:  {b.speedup:.2f}x {'(FASTER)' if b.speedup > 1 else '(SLOWER)'}")
+            lines.append(
+                f"  Baseline: {b.baseline_time_us:>8.2f} +/- {b.baseline_std_us:.2f} us"
+            )
+            lines.append(
+                f"  Solution: {b.solution_time_us:>8.2f} +/- {b.solution_std_us:.2f} us"
+            )
+            lines.append(
+                f"  Speedup:  {b.speedup:.2f}x {'(FASTER)' if b.speedup > 1 else '(SLOWER)'}"
+            )
             if b.error:
                 lines.append(f"  Error: {b.error[:200]}")
         else:
@@ -175,9 +191,9 @@ class EvalResult:
             lines.append(self.assembly.to_agent_summary())
 
         # Final reward
-        lines.append(f"\n{'='*60}")
+        lines.append(f"\n{'=' * 60}")
         lines.append(f"REWARD: {self.reward:.3f}")
-        lines.append(f"{'='*60}")
+        lines.append(f"{'=' * 60}")
 
         return "\n".join(lines)
 
@@ -268,7 +284,9 @@ class LocalGPUEvaluator:
 
             # Step 2: Compute Sanitizer (early - catches memory bugs)
             if self.profiler.enable_sanitizer:
-                runner_path = self._create_runner_script(solution_path, reference_path, tmpdir)
+                runner_path = self._create_runner_script(
+                    solution_path, reference_path, tmpdir
+                )
                 result.sanitizer = self.profiler.run_sanitizer(runner_path, tmpdir)
 
             # Step 3: Correctness check
@@ -298,16 +316,26 @@ class LocalGPUEvaluator:
 
                 # torch.profiler
                 if self.profiler.enable_torch_profiler:
-                    result.torch_profile = self.profiler.run_torch_profiler(solution_path, tmpdir)
+                    result.torch_profile = self.profiler.run_torch_profiler(
+                        solution_path, tmpdir
+                    )
 
                 # Assembly analysis
                 if self.profiler.enable_assembly:
-                    result.assembly = self.profiler.run_assembly_analysis(solution_path, tmpdir)
+                    result.assembly = self.profiler.run_assembly_analysis(
+                        solution_path, tmpdir
+                    )
 
                 # Roofline metrics (needs NCU data)
                 if self.profiler.enable_roofline and result.ncu and result.ncu.success:
-                    benchmark_time = result.benchmark.solution_time_us if result.benchmark else 1000.0
-                    result.roofline = self.profiler.compute_roofline(result.ncu, benchmark_time)
+                    benchmark_time = (
+                        result.benchmark.solution_time_us
+                        if result.benchmark
+                        else 1000.0
+                    )
+                    result.roofline = self.profiler.compute_roofline(
+                        result.ncu, benchmark_time
+                    )
 
         # Calculate reward
         result.reward = self._compute_reward(result)
@@ -527,13 +555,13 @@ except Exception as e:
             except:
                 return CorrectnessResult(
                     correct=False,
-                    error=f"Failed to parse output: {proc.stdout[:500]} {proc.stderr[:500]}"
+                    error=f"Failed to parse output: {proc.stdout[:500]} {proc.stderr[:500]}",
                 )
 
             if "error" in data:
                 return CorrectnessResult(
                     correct=False,
-                    error=f"{data['error']}\n{data.get('traceback', '')[:1000]}"
+                    error=f"{data['error']}\n{data.get('traceback', '')[:1000]}",
                 )
 
             return CorrectnessResult(
@@ -683,7 +711,7 @@ except Exception as e:
             )
 
         except subprocess.TimeoutExpired:
-            return BenchmarkResult(error=f"Benchmark timeout ({self.timeout*2}s)")
+            return BenchmarkResult(error=f"Benchmark timeout ({self.timeout * 2}s)")
         except Exception as e:
             return BenchmarkResult(error=str(e))
 

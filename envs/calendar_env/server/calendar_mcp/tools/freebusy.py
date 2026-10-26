@@ -48,23 +48,23 @@ FREEBUSY_TOOLS = [
             "properties": {
                 "timeMin": {
                     "type": "string",
-                    "description": "Lower bound for the query (RFC3339 timestamp)"
+                    "description": "Lower bound for the query (RFC3339 timestamp)",
                 },
                 "timeMax": {
                     "type": "string",
-                    "description": "Upper bound for the query (RFC3339 timestamp)"
+                    "description": "Upper bound for the query (RFC3339 timestamp)",
                 },
                 "timeZone": {
                     "type": "string",
-                    "description": "Time zone for the query (IANA timezone, default: UTC)"
+                    "description": "Time zone for the query (IANA timezone, default: UTC)",
                 },
                 "groupExpansionMax": {
                     "type": "integer",
-                    "description": "Maximum number of calendars to expand for groups"
+                    "description": "Maximum number of calendars to expand for groups",
                 },
                 "calendarExpansionMax": {
-                    "type": "integer", 
-                    "description": "Maximum number of events to expand for calendars"
+                    "type": "integer",
+                    "description": "Maximum number of events to expand for calendars",
                 },
                 "items": {
                     "type": "array",
@@ -74,15 +74,15 @@ FREEBUSY_TOOLS = [
                         "properties": {
                             "id": {
                                 "type": "string",
-                                "description": "Calendar identifier"
+                                "description": "Calendar identifier",
                             }
                         },
-                        "required": ["id"]
-                    }
-                }
+                        "required": ["id"],
+                    },
+                },
             },
-            "required": ["timeMin", "timeMax", "items"]
-        }
+            "required": ["timeMin", "timeMax", "items"],
+        },
     },
 ]
 
@@ -96,8 +96,8 @@ FREEBUSY_CONCEPTS = {
             "Events with transparency='transparent' do not block time",
             "All-day events block the entire day",
             "Overlapping events are merged into continuous periods",
-            "Event times are clipped to the query time range"
-        ]
+            "Event times are clipped to the query time range",
+        ],
     },
     "time_zone_handling": {
         "description": "How timezones are handled in FreeBusy queries",
@@ -106,18 +106,18 @@ FREEBUSY_CONCEPTS = {
             "All calculations are done in UTC internally",
             "Results are returned in the requested timezone",
             "Event times are converted from their native timezone",
-            "Default timezone is UTC if not specified"
-        ]
+            "Default timezone is UTC if not specified",
+        ],
     },
     "error_handling": {
         "description": "How errors are handled in FreeBusy responses",
         "scenarios": [
             "Calendar not found: Returns error in calendar result",
-            "No access to calendar: Returns error in calendar result", 
+            "No access to calendar: Returns error in calendar result",
             "Invalid time range: Returns 400 Bad Request",
             "Too many calendars: Returns 400 Bad Request",
-            "Internal errors: Calendar marked with backend error"
-        ]
+            "Internal errors: Calendar marked with backend error",
+        ],
     },
     "performance_considerations": {
         "description": "Performance aspects of FreeBusy queries",
@@ -125,9 +125,9 @@ FREEBUSY_CONCEPTS = {
             "Limit time range to reasonable periods (max 366 days)",
             "Limit number of calendars per query (max 50)",
             "Use batch queries for multiple time ranges efficiently",
-            "Consider caching for frequently accessed calendars"
-        ]
-    }
+            "Consider caching for frequently accessed calendars",
+        ],
+    },
 }
 
 
@@ -137,22 +137,22 @@ FREEBUSY_EXAMPLES = {
         "description": "Query busy times for a single calendar today",
         "request": {
             "timeMin": "2024-01-15T00:00:00Z",
-            "timeMax": "2024-01-16T00:00:00Z", 
+            "timeMax": "2024-01-16T00:00:00Z",
             "timeZone": "UTC",
-            "items": [{"id": "primary"}]
-        }
+            "items": [{"id": "primary"}],
+        },
     },
     "multiple_calendars": {
         "description": "Query multiple calendars for the next week",
         "request": {
             "timeMin": "2024-01-15T00:00:00Z",
             "timeMax": "2024-01-22T00:00:00Z",
-            "timeZone": "America/New_York", 
+            "timeZone": "America/New_York",
             "items": [
                 {"id": "primary"},
                 {"id": "work@company.com"},
-                {"id": "team@company.com"}
-            ]
-        }
+                {"id": "team@company.com"},
+            ],
+        },
     },
 }

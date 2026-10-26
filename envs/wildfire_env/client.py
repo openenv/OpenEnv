@@ -1,5 +1,6 @@
 from openenv.core.client_types import StepResult
 from openenv.core.env_client import EnvClient
+
 from .models import WildfireAction, WildfireObservation, WildfireState
 
 
@@ -40,11 +41,11 @@ class WildfireEnv(EnvClient[WildfireAction, WildfireObservation, WildfireState])
 
 
 def render_grid(obs: WildfireObservation) -> str:
-    legend = {0:"⬛", 1:"🟩", 2:"🟥", 3:"🟫", 4:"🟦"}
+    legend = {0: "⬛", 1: "🟩", 2: "🟥", 3: "🟫", 4: "🟦"}
     w, h = obs.width, obs.height
     g = obs.grid
     rows = []
     for y in range(h):
-        rows.append("".join(legend.get(g[y*w+x], "?") for x in range(w)))
+        rows.append("".join(legend.get(g[y * w + x], "?") for x in range(w)))
     meta = f"step={obs.step} wind={obs.wind_dir} hum={obs.humidity:.2f} burning={obs.burning_count} burned={obs.burned_count}"
     return "\n".join(rows + [meta])

@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Unit tests for DaytonaProvider. All tests mock the daytona SDK."""
 
@@ -177,6 +173,31 @@ class TestStartContainer:
         """start_container returns the signed preview URL."""
         url = provider.start_container("echo-env:latest")
         assert url == "https://8000-signed-tok.proxy.daytona.works"
+
+    def test_constructor_image_used_when_start_omits_image(self):
+        """A provider-owned image lets the outer client call start_container()."""
+        provider = DaytonaProvider(
+            api_key="test-key",
+            image="constructor-env:latest",
+            env_vars={"DEBUG": "1"},
+        )
+        url = provider.start_container()
+        assert url.startswith("https://")
+        params, _ = provider._daytona._created[0]
+        assert isinstance(params, _fake_daytona.CreateSandboxFromImageParams)
+        assert params.image == "constructor-env:latest"
+        assert params.env_vars == {"DEBUG": "1"}
+
+    def test_start_image_overrides_constructor_image(self):
+        """Explicit start_container image takes precedence."""
+        provider = DaytonaProvider(api_key="test-key", image="constructor-env:latest")
+        provider.start_container("explicit-env:latest")
+        params, _ = provider._daytona._created[0]
+        assert params.image == "explicit-env:latest"
+
+    def test_requires_image_from_constructor_or_start(self, provider):
+        with pytest.raises(ValueError, match="requires an image"):
+            provider.start_container()
 
 
 # ---------------------------------------------------------------------------

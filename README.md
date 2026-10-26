@@ -1,24 +1,34 @@
-# <img width="35" height="35" alt="image" src="https://github.com/user-attachments/assets/2700a971-e5d6-4036-b03f-2f89c9791609" /> OpenEnv: Agentic Execution Environments
+<img width="1920" height="1080" alt="OpenEnv-banner" src="https://github.com/user-attachments/assets/380f1b86-fc36-44f8-a77b-067773b5012d" />
 
-An e2e framework for creating, deploying and using isolated execution environments for agentic RL training, built using Gymnasium style simple APIs.
+# OpenEnv: Agentic Execution Environments
 
-[![PyPI](https://img.shields.io/pypi/v/openenv?color=blue)](https://pypi.org/project/openenv/)
-[![Discord](https://img.shields.io/badge/Discord-OpenEnv-7289da?style=flat&logo=discord&logoColor=white)](https://discord.gg/YsTYBh6PD9)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/meta-pytorch/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb)
-[![Docs](https://img.shields.io/badge/Docs-Explore-blue?logo=readthedocs&logoColor=white)](https://meta-pytorch.org/OpenEnv/)
+An end-to-end framework for creating, deploying and using isolated execution environments for agentic RL, with a simple Gymnasium-style API.
 
----
+<p align="center">
+    <a href="https://pypi.org/project/openenv/"><img alt="PyPI" src="https://img.shields.io/pypi/v/openenv?color=blue"/></a>
+    <a href="https://github.com/huggingface/OpenEnv/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/License-BSD%203--Clause-blue.svg"/></a>
+    <a href="https://huggingface.co/docs/openenv"><img alt="Docs" src="https://img.shields.io/badge/Docs-Explore-blue?logo=readthedocs&logoColor=white"/></a>
+    <a href="https://huggingface.co/openenv"><img alt="Hugging Face" src="https://img.shields.io/badge/🤗%20Hugging%20Face-OpenEnv-yellow"/></a>
+    <a href="https://discord.gg/YsTYBh6PD9"><img alt="Discord" src="https://img.shields.io/badge/Discord-OpenEnv-7289da?style=flat&logo=discord&logoColor=white"/></a>
+    <a href="https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"/></a>
+</p>
 
-**🚀 Featured Example:** Train LLMs to play BlackJack using [torchforge](https://github.com/meta-pytorch/torchforge) (PyTorch's agentic RL framework): [`examples/grpo_blackjack/`](examples/grpo_blackjack/)
+## What you get
 
-**🔥 GPU Mode Tutorial:** End to end tutorial from [GPU Mode](gpu-mode-tutorial/README.md) blog post.
+- **One API for every environment.** `reset()`, `step()` and `state()`, sync or async, over a WebSocket.
+- **Isolated, deployable environments.** Each environment is a Docker image that runs locally, on a cloud sandbox, or as a [Hugging Face Space](https://huggingface.co/docs/openenv/getting_started/contributing-envs).
+- **40+ ready-to-use environments**, from games and coding sandboxes to browsers, finance and simulators, in the [environment catalog](https://huggingface.co/docs/openenv/environments).
+- **Train with your framework.** TRL, Unsloth, SkyRL, ART, Oumi, torchforge, Miles and more (see [Integrations](#integrations)).
+- **Train real coding agents.** The [Harbor integration](https://huggingface.co/docs/openenv/environments/harbor) runs Claude Code, Codex, OpenCode, mini-swe-agent and other harnesses on Harbor tasks, and captures the exact tokens for RL.
+- **Serve tools to agents.** MCP environments expose their tools to agents over `/mcp` in [production mode](https://huggingface.co/docs/openenv/guides/simulation-vs-production), while training keeps using `step()` and rewards.
+- **Rewards and evals built in.** Compose rewards with [rubrics](https://huggingface.co/docs/openenv/guides/rewards) and evaluate with [Inspect AI](https://huggingface.co/docs/openenv/tutorials/evaluation-inspect).
 
 ## Quick Start
 
-Install the OpenEnv core package:
+Install the OpenEnv package:
 
 ```bash
-pip install openenv-core
+pip install openenv
 ```
 
 Install an environment client (e.g., Echo):
@@ -31,19 +41,24 @@ Then use the environment:
 
 ```python
 import asyncio
-from echo_env import EchoAction, EchoEnv
+from echo_env import CallToolAction, EchoEnv
 
 async def main():
     # Connect to a running Space (async context manager)
     async with EchoEnv(base_url="https://openenv-echo-env.hf.space") as client:
         # Reset the environment
         result = await client.reset()
-        print(result.observation.echoed_message)  # "Echo environment ready!"
+        print(result.observation.metadata["message"])  # "Echo environment ready!"
 
         # Send messages
-        result = await client.step(EchoAction(message="Hello, World!"))
-        print(result.observation.echoed_message)  # "Hello, World!"
-        print(result.reward)  # 1.3 (based on message length)
+        result = await client.step(
+            CallToolAction(
+                tool_name="echo_message",
+                arguments={"message": "Hello, World!"},
+            )
+        )
+        print(result.observation.result["data"])  # "Hello, World!"
+        print(result.reward)
 
 asyncio.run(main())
 ```
@@ -51,331 +66,89 @@ asyncio.run(main())
 **Synchronous usage** is also supported via the `.sync()` wrapper:
 
 ```python
-from echo_env import EchoAction, EchoEnv
+from echo_env import CallToolAction, EchoEnv
 
 # Use .sync() for synchronous context manager
 with EchoEnv(base_url="https://openenv-echo-env.hf.space").sync() as client:
     result = client.reset()
-    result = client.step(EchoAction(message="Hello, World!"))
-    print(result.observation.echoed_message)
+    result = client.step(
+        CallToolAction(
+            tool_name="echo_message",
+            arguments={"message": "Hello, World!"},
+        )
+    )
+    print(result.observation.result["data"])
 ```
 
-For a detailed quick start, check out the [docs page](https://meta-pytorch.org/OpenEnv/quickstart/).
+For a detailed quick start, check out the [docs page](https://huggingface.co/docs/openenv/getting-started).
 
-## OpenEnv on partner platforms:
+## Train an agent
 
-- [Lightning AI Studio](https://lightning.ai/environments?section=featured)
-- [TRL example](https://huggingface.co/docs/trl/openenv)
-- [Unsloth Google Colab](https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/OpenEnv_gpt_oss_(20B)_Reinforcement_Learning_2048_Game.ipynb)
-- [ART example](https://art.openpipe.ai/integrations/openenv-integration)
-- [Oumi example](https://github.com/oumi-ai/oumi/blob/main/notebooks/Oumi%20-%20OpenEnv%20GRPO%20with%20trl.ipynb)
+Any training framework that can call an environment can train on it. [Training with OpenEnv](https://huggingface.co/docs/openenv/guides/training) maps the ways to train and the frameworks that support each one.
 
-## Overview
+- **Environments as tools (white-box).** The trainer runs the multi-turn tool loop and the environment supplies the tools and the reward. Each framework under [Integrations](#integrations) has its own example. With TRL, `GRPOTrainer` takes an `environment_factory`: start with the [Wordle GRPO tutorial](https://huggingface.co/docs/openenv/tutorials/wordle-grpo) or [TRL's OpenEnv guide](https://huggingface.co/docs/trl/openenv).
+- **Real agent harnesses (loop-owning).** The agent runs its own loop, and OpenEnv's [Harbor integration](https://huggingface.co/docs/openenv/environments/harbor) captures every model call as a framework-neutral `TrainingTrace`. TRL's `AsyncGRPOTrainer` trains on those captures today: see [`examples/async_grpo_harbor`](https://github.com/huggingface/trl/tree/main/examples/async_grpo_harbor) and [The ultimate guide to multi-harness RL](https://huggingface.co/spaces/FineEnvs/multi-harness-rl).
 
-OpenEnv provides a standard for interacting with agentic execution environments via simple Gymnasium style APIs - `step()`, `reset()`, `state()`. Users of agentic execution environments can interact with the environment during RL training loops using these simple APIs.
-
-In addition to making it easier for researchers and RL framework writers, we also provide tools for environment creators making it easier for them to create richer environments and make them available over familiar protocols like HTTP and packaged using canonical technologies like docker. Environment creators can use the OpenEnv framework to create environments that are isolated, secure, and easy to deploy and use.
-
-The OpenEnv CLI (`openenv`) provides commands to initialize new environments and deploy them to Hugging Face Spaces.
-
-> ⚠️ **Early Development Warning** OpenEnv is currently in an experimental
-> stage. You should expect bugs, incomplete features, and APIs that may change
-> in future versions. The project welcomes bugfixes, but to make sure things are
-> well coordinated you should discuss any significant change before starting the
-> work. It's recommended that you signal your intention to contribute in the
-> issue tracker, either by filing a new issue or by claiming an existing one.
-
-### RFCs
-
-Below is a list of active and historical RFCs for OpenEnv. RFCs are proposals for major changes or features. Please review and contribute!
-
-- [RFC 001: Baseline API and Interface Specifications](https://github.com/meta-pytorch/OpenEnv/pull/26)
-
-## Architecture
-
-### Component Overview
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Client Application                   │
-│  ┌────────────────┐              ┌──────────────────┐   │
-│  │  EchoEnv       │              │  CodingEnv       │   │
-│  │  (EnvClient)   │              │   (EnvClient)    │   │
-│  └────────┬───────┘              └────────┬─────────┘   │
-└───────────┼───────────────────────────────┼─────────────┘
-            │ WebSocket                     │ WebSocket
-            │ (reset, step, state)          │
-┌───────────▼───────────────────────────────▼─────────────┐
-│              Docker Containers (Isolated)               │
-│  ┌──────────────────────┐    ┌──────────────────────┐   │
-│  │ FastAPI Server       │    │ FastAPI Server       │   │
-│  │   EchoEnvironment    │    │ PythonCodeActEnv     │   │
-│  │ (Environment base)   │    │ (Environment base)   │   │
-│  └──────────────────────┘    └──────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Core Components
-
-#### 1. Web Interface
-
-OpenEnv includes a built-in web interface for interactive environment exploration and debugging. The web interface provides:
-
-- **Two-Pane Layout**: HumanAgent interaction on the left, state observation on the right
-- **Real-time Updates**: WebSocket-based live updates without page refresh
-- **Dynamic Forms**: Automatically generated action forms based on environment Action types
-- **Action History**: Complete log of all actions taken and their results
-
-The web interface is **conditionally enabled** based on environment variables:
-
-- **Local Development**: Disabled by default for lightweight development
-- **Manual Override**: Enable with `ENABLE_WEB_INTERFACE=true`
-
-To use the web interface:
-
-```python
-from openenv.core.env_server import create_web_interface_app
-from your_env.models import YourAction, YourObservation
-from your_env.server.your_environment import YourEnvironment
-
-env = YourEnvironment()
-app = create_web_interface_app(env, YourAction, YourObservation)
-```
-
-When enabled, open `http://localhost:8000/web` in your browser to interact with the environment.
-
-#### 2. Environment (Server-Side)
-Base class for implementing environment logic:
-- **`reset()`**: Initialize a new episode, returns initial `Observation`
-- **`step(action)`**: Execute an `Action`, returns resulting `Observation`
-- **`state()`**: Access episode metadata (`State` with episode_id, step_count, etc.)
-
-#### 3. EnvClient (Client-Side)
-Base class for environment communication:
-- **Async by default**: Use `async with` and `await` for all operations
-- **Sync wrapper**: Call `.sync()` to get a `SyncEnvClient` for synchronous usage
-- Handles WebSocket connections to environment server
-- Contains a utility to spin up a docker container locally for the corresponding environment
-- Type-safe action/observation parsing
-
-#### 4. Container Providers
-Manage container deployment:
-- `LocalDockerProvider`: Run containers on local Docker daemon
-- `KubernetesProvider`: Deploy to K8s clusters (future)
-
-#### 5. Models
-Type-safe data structures:
-- `Action`: Base class for environment actions
-- `Observation`: Base class for environment observations
-- `State`: Episode state tracking
-- `StepResult`: Combines observation, reward, done flag
-
-## Project Structure
-
-### For Environment Creators
-
-Use the CLI to quickly scaffold a new environment:
+## Build your own environment
 
 ```bash
-openenv init my_env
+openenv init my_env       # scaffold an environment
+openenv validate my_env --level static --skip-build   # quick check against the OpenEnv contract
+openenv push my_env       # deploy it to Hugging Face Spaces
 ```
 
-This creates the following structure:
+See [Your First Environment](https://huggingface.co/docs/openenv/guides/first-environment) and [Deploying an Environment](https://huggingface.co/docs/openenv/getting_started/environment-builder). `openenv import` wraps an existing environment from ORS/OpenReward or Verifiers.
 
-```
-my_env/
-├── .dockerignore        # Docker build exclusions
-├── __init__.py           # Export YourAction, YourObservation, YourEnv
-├── models.py             # Define Action, Observation, State dataclasses
-├── client.py             # Implement YourEnv(EnvClient)
-├── README.md             # Document your environment
-├── openenv.yaml          # Environment manifest
-├── pyproject.toml        # Dependencies and package configuration
-├── outputs/              # Runtime outputs (logs, evals) - gitignored
-│   ├── logs/
-│   └── evals/
-└── server/
-    ├── your_environment.py  # Implement YourEnvironment(Environment)
-    ├── app.py               # Create FastAPI app
-    ├── requirements.txt     # Dependencies for Docker (can be generated)
-    └── Dockerfile           # Define container image
-```
+## Environments
 
-#### Dependency Management
+A few to start with:
 
-OpenEnv uses `pyproject.toml` as the primary dependency specification:
+| Environment | What it is |
+|---|---|
+| [Echo](https://huggingface.co/docs/openenv/environments/echo) | Minimal MCP environment, for learning the API and testing a deployment |
+| [Coding](https://huggingface.co/docs/openenv/environments/coding) | Sandboxed Python execution with stdout, stderr and exit codes |
+| [TextArena (Wordle and more)](https://huggingface.co/docs/openenv/environments/textarena) | Text games for multi-turn RL |
+| [OpenSpiel](https://huggingface.co/docs/openenv/environments/openspiel) | Board and card games from DeepMind's OpenSpiel |
+| [BrowserGym](https://huggingface.co/docs/openenv/environments/browsergym) | Web navigation tasks (MiniWoB++, WebArena, ...) |
+| [Harbor](https://huggingface.co/docs/openenv/environments/harbor) | Harbor task datasets through coding-agent harnesses, with token capture for training |
 
-- **Environment-level `pyproject.toml`**: Each environment defines its own dependencies
-- **Root-level `pyproject.toml`**: Contains shared core dependencies (fastapi, pydantic, uvicorn)
-- **Server `requirements.txt`**: Can be auto-generated from `pyproject.toml` for Docker builds
+Browse all of them in the [environment catalog](https://huggingface.co/docs/openenv/environments), or on the [OpenEnv Hub organization](https://huggingface.co/openenv).
 
-**Development Workflow:**
+## Integrations
 
-```bash
-# Install environment in editable mode
-cd my_env
-pip install -e .
+OpenEnv works with a growing ecosystem of RL frameworks and platforms. If your project supports OpenEnv, open a PR to add it here.
 
-# Or using uv (faster)
-uv pip install -e .
+| Framework | Example |
+|---|---|
+| ART | [ART integration](https://art.openpipe.ai/integrations/openenv-integration) |
+| Lightning AI | [Templates](https://lightning.ai/templates?section=featured&query=openenv) |
+| Miles | [Terminal-Bench-2 GRPO](https://github.com/radixark/miles/tree/main/examples/experimental/openenv) |
+| Oumi | [GRPO notebook](https://github.com/oumi-ai/oumi/blob/main/notebooks/Oumi%20-%20OpenEnv%20GRPO%20with%20trl.ipynb) |
+| SkyRL | [SkyRL example](https://skyrl.readthedocs.io/en/latest/examples/openenv.html) |
+| torchforge | [GRPO BlackJack](https://github.com/huggingface/OpenEnv/tree/main/examples/grpo_blackjack) |
+| TorchTitan-RL (TitanRL) | [OpenEnv bridge and Muse Glimmer 30B chess recipe](examples/titanrl_openenv/) for GRPO/DAPO, with a CPU demo and tests |
+| TRL | [OpenEnv guide](https://huggingface.co/docs/trl/openenv) (GRPO with `environment_factory`, and harness training) |
+| Unsloth | [2048 with gpt-oss](https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/OpenEnv_gpt_oss_(20B)_Reinforcement_Learning_2048_Game.ipynb) |
 
-# Run server locally without Docker
-uv run server --host 0.0.0.0 --port 8000
-```
+## Learn more
 
-**Benefits:**
-- ✅ **Client-side extensions**: Modify client classes locally without repo changes
-- ✅ **Better dependency management**: Clear separation between environments
-- ✅ **Flexible workflows**: Use pip, uv, or Docker for different scenarios
-- ✅ **CI/CD ready**: Automated dependency generation and validation
+- [Documentation](https://huggingface.co/docs/openenv): concepts, guides and tutorials
+- [Core Concepts](https://huggingface.co/docs/openenv/guides/concepts) and the [CLI reference](https://huggingface.co/docs/openenv/reference/cli)
+- [Tutorials](https://huggingface.co/docs/openenv/tutorials/index), and the [Zero to Hero tutorial](https://github.com/huggingface/OpenEnv/tree/main/tutorial) from our GPU Mode lecture
+- [FineEnvs](https://github.com/adithya-s-k/FineEnvs): end-to-end projects that build, deploy and train against OpenEnv environments
+- [RFCs](https://github.com/huggingface/OpenEnv/tree/main/rfcs), the proposals behind major changes
+- [Contributing](https://github.com/huggingface/OpenEnv/blob/main/CONTRIBUTING.md): development setup, tests and the PR process
 
-See [`envs/README.md`](envs/README.md) for a complete guide on building environments.
-
-### For Environment Users
-
-To use an environment:
-1. Install the client: `pip install git+https://huggingface.co/spaces/openenv/echo-env`
-2. Import: `from echo_env import EchoAction, EchoEnv`
-3. Use async (recommended) or sync API:
-
-**Async (recommended):**
-```python
-async with EchoEnv(base_url="...") as client:
-    result = await client.reset()
-    result = await client.step(action)
-```
-
-**Sync (via `.sync()` wrapper):**
-```python
-with EchoEnv(base_url="...").sync() as client:
-    result = client.reset()
-    result = client.step(action)
-```
-
-See example scripts in `examples/` directory.
-
-## CLI Commands
-
-The OpenEnv CLI provides commands to manage environments:
-
-- **`openenv init <env_name>`** - Initialize a new environment from template
-- **`openenv push [--repo-id <repo>] [--private]`** - Deploy environment to Hugging Face Spaces
-
-### Quick Start
-
-```bash
-# Create a new environment
-openenv init my_game_env
-
-# Deploy to Hugging Face (will prompt for login if needed)
-cd my_game_env
-openenv push
-```
-
-For detailed options: `openenv init --help` and `openenv push --help`.
-
-## Design Principles
-
-1. **Separation of Concerns**: Clear client-server boundaries
-2. **Type Safety**: Strongly-typed actions, observations, and state
-3. **Container Isolation**: Each environment runs in its own container
-4. **Simple APIs**: Minimal, intuitive interfaces
-
-## Development
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/meta-pytorch/OpenEnv.git
-cd OpenEnv
-
-# Install core package in editable mode
-pip install -e .
-# Or using uv (faster)
-uv pip install -e .
-```
-
-### Running Tests
-
-OpenEnv uses a modular dependency structure: the core package is minimal, and each environment has its own dependencies. This means some tests require environment-specific packages.
-
-```bash
-# Install pytest (required for running tests)
-uv pip install pytest
-
-# Run all tests (skips tests requiring uninstalled dependencies)
-PYTHONPATH=src:envs uv run pytest tests/ -v --tb=short
-
-# Run a specific test file
-PYTHONPATH=src:envs uv run pytest tests/envs/test_echo_environment.py -v
-```
-
-**To run environment-specific tests**, install that environment's dependencies:
-
-```bash
-# Example: Install coding_env with dev dependencies (includes smolagents + pytest)
-uv pip install -e "envs/coding_env[dev]"
-
-# Then run coding_env tests
-PYTHONPATH=src:envs uv run pytest tests/envs/test_python_codeact_rewards.py -v
-```
-
-Tests will be automatically skipped if their required dependencies aren't installed.
-
-## Requirements
-
-- Python 3.10+
-- Docker Desktop or Docker Engine
-- FastAPI >= 0.104.0
-- Uvicorn >= 0.24.0
-- Requests >= 2.25.0
-- Environment-specific dependencies (e.g., smolagents for coding_env)
-
-## Supported RL Tools
-The goal of this project is to support a broad set of open and closed tools to help standardize the agentic RL community. If you have a project that supports OpenEnv environments, please put up a PR to add your tool name along with a link to your documentation.
-
-### torchforge
-See GRPO BlackJack training example: [`examples/grpo_blackjack/`](examples/grpo_blackjack/)
-
-### TRL
-See the [TRL example](https://huggingface.co/docs/trl/openenv) on how to integrate OpenEnv environments with GRPO training.
-
-### Unsloth
-See the 2048 game example based on gpt-oss: [Colab notebook](https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/OpenEnv_gpt_oss_(20B)_Reinforcement_Learning_2048_Game.ipynb)
-
-### SkyRL
-See the [SkyRL example](https://skyrl.readthedocs.io/en/latest/examples/openenv.html) on how to train on OpenEnv environments with SkyRL.
-
-### ART
-See the [ART example](https://art.openpipe.ai/integrations/openenv-integration) on how OpenEnv environments can be used to train models with ART.
-
-### Oumi
-See the [Oumi example](https://github.com/oumi-ai/oumi/blob/main/notebooks/Oumi%20-%20OpenEnv%20GRPO%20with%20trl.ipynb) on how OpenEnv environments can be used to train models with Oumi.
-
-## Example Environments
-
-### Echo Environment
-A simple environment that echoes back messages with metadata. Perfect for:
-- Testing the HTTP server infrastructure
-- Learning the framework basics
-- Verifying container deployment
-
-See: [`envs/echo_env/README.md`](envs/echo_env/README.md)
-
-### Coding Environment
-Executes arbitrary Python code in a sandboxed environment. Features:
-- Safe code execution using smolagents
-- Capture stdout, stderr, and exit codes
-- Persistent execution context within episodes
-- Error handling with detailed messages
-
-See: [`envs/coding_env/README.md`](envs/coding_env/README.md)
+> [!NOTE]
+> OpenEnv is in early development, so APIs may still change. Bug fixes are welcome. For larger changes, open or claim an issue first so the change can be discussed.
 
 ## Community Support & Acknowledgments
-This is an open and community-centric project. If you would like to add your name here, please put up a pull request and tag @jspisak for review. Ty!!
 
-Supporters include: Meta-PyTorch, Hugging Face, [Scaler AI Labs](https://scalerailabs.com), [Patronus AI](https://patronus.ai), [Surge AI](https://surgehq.ai), [LastMile AI](https://www.lastmileai.dev), Unsloth AI, Reflection AI, vLLM, SkyRL (UC-Berkeley), LightningAI, Axolotl AI, Stanford Scaling Intelligence Lab, Mithril, [OpenMined](https://openmined.org/), [Fleet AI](https://fleetai.com), [Halluminate](https://halluminate.ai/), [Turing](https://www.turing.com/), [Scale AI](https://scale.com/) ..
+OpenEnv is governed by a technical committee that coordinates project direction, major technical decisions, RFCs, and release planning through the public issue tracker, pull requests, and RFC process. Current committee members: Meta-PyTorch, Reflection, Unsloth, Modal, Prime Intellect, Nvidia, Mercor, Fleet AI, Microsoft, Hugging Face, RadixArk, and Nebius.
+
+The project is also supported by a broader community of organizations. If you would like to add your project or organization here, please open a pull request for maintainer review.
+
+Supporters include: [Meta-PyTorch](https://github.com/meta-pytorch), [Hugging Face](https://huggingface.co), [Scaler AI Labs](https://scalerailabs.com), [Patronus AI](https://patronus.ai), [Surge AI](https://surgehq.ai), [LastMile AI](https://www.lastmileai.dev), [Unsloth](https://unsloth.ai), [Reflection](https://reflection.ai), [vLLM](https://vllm.ai), [SkyRL](https://skyrl.readthedocs.io) (UC-Berkeley), [Lightning AI](https://lightning.ai), [Axolotl AI](https://github.com/axolotl-ai-cloud/axolotl), [Stanford Scaling Intelligence Lab](https://scalingintelligence.stanford.edu/), [Mithril](https://mithril.ai), [OpenMined](https://openmined.org/), [Fleet AI](https://fleetai.com), [Halluminate](https://halluminate.ai/), [Turing](https://www.turing.com/), [Scale AI](https://scale.com/), [Scorecard](https://www.scorecard.io/), [Snorkel AI](https://snorkel.ai/), [SGLang](https://github.com/sgl-project/sglang), [Miles](https://github.com/radixark/miles), [Nebius](https://nebius.com)
 
 And we'd also like to acknowledge the team at Farama Foundation as the OpenEnv API was heavily inspired by the work you all have done on Gymnasium. Cheers!
 

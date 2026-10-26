@@ -1,0 +1,88 @@
+spec_version: 1
+name: qed_math_env
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
+
+description: >
+  Mathematical proof generation and evaluation environment.
+  Agents receive math problems, submit proofs, and receive LLM-based
+  rubric grading (0-7 scale) with normalized rewards.
+  Answer-mode uses a process-based verifier service for concurrent rollout
+  safety (timeouts, retries, backpressure, worker restart).
+version: "0.1.0"
+
+# Environment configuration defaults (overridable via QEDMathConfig)
+environment:
+  grader_model: gemini-3-pro
+  prompt_name: v1
+  custom_reward_threshold: false
+  discount_factor: 1.0
+  buffer_tokens: 0
+  max_tokens: 0
+  verifier_workers: 4
+  verifier_queue_size: 128
+  verifier_request_timeout_seconds: 5.0
+  verifier_max_retries: 1
+  verifier_strict: true
+  verifier_numeric_precision: 5
+  verifier_float_rounding: 10
+
+# Rubric definition
+rubric:
+  type: llm_judge
+  name: MathProofRubric
+  scale: "0-7"
+  normalization: "score / 7.0"
+  thresholding: "optional (collapses 1-5 → 1)"
+
+# MCP tools exposed by this environment
+tools:
+  - name: get_problem
+    description: Return current problem statement and metadata
+  - name: submit_proof
+    description: Submit a proof for LLM-based rubric grading
+    parameters:
+      - proof (str, required)
+    # output_length_tokens is NOT an MCP parameter. It is injected by the
+    # training harness as an extra field on the HTTP StepRequest body so the
+    # agent cannot influence its own reward-shaping inputs.
+  - name: get_grading_guidelines
+    description: Return the rubric/marking scheme for the current problem
+
+# Verifier metrics emitted per grading call (TrackIO-compatible)
+# These are surfaced in submit_proof observation metadata under
+# "verifier_metrics" and can be forwarded to TrackIO / WandB.
+metrics:
+  verifier:
+    - verifier/rollouts/success
+    - verifier/rollouts/failure
+    - verifier/failures/timeout
+    - verifier/failures/rate_limit
+    - verifier/failures/no_input
+    - verifier/failures/no_score_tag
+    - verifier/failures/all_attempts_failed
+    - verifier/failures/num_retries
+    - verifier/runtime/latency_per_request
+    - verifier/requests/count
+    - verifier/requests/latency_ms
+    - verifier/requests/timeout_count
+    - verifier/requests/error_count
+    - verifier/queue/depth
+    - verifier/cache/hit_rate
+    - verifier/workers/restart_count
+    - verifier/workers/worker_restarted
+    - verifier/workers/heartbeat_lag_ms
+    - verifier/runtime/input_tokens
+    - verifier/runtime/output_tokens
+  reward:
+    - reward/base
+    - reward/shaped
+    - reward/score_raw
+    - reward/overlong_penalty
+  episode:
+    - episode/attempt_number
+    - episode/is_correct
+    - episode/problem_type
+    - episode/dataset_source

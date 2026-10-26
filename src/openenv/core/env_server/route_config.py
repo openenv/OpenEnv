@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 Route configuration utilities for declarative FastAPI route registration.
@@ -30,28 +26,32 @@ class GetEndpointConfig:
     description: str
 
 
+def _make_get_endpoint(
+    handler: Callable[[], BaseModel | dict],
+) -> Callable[[], BaseModel | dict]:
+    """Wrap a sync GET handler in the async endpoint FastAPI expects."""
+
+    async def endpoint() -> BaseModel | dict:
+        return handler()
+
+    return endpoint
+
+
 def register_get_endpoints(app: FastAPI, configs: List[GetEndpointConfig]) -> None:
     """
     Register multiple GET endpoints from configuration.
 
     Args:
-        app: FastAPI application instance
-        configs: List of GET endpoint configurations
+        app ([`~fastapi.FastAPI`]):
+            FastAPI application instance.
+        configs (`List[GetEndpointConfig]`):
+            List of GET endpoint configurations.
     """
     for config in configs:
-        # Capture handler in a closure to avoid non-serializable default parameter
-        def make_endpoint(
-            handler: Callable[[], BaseModel | dict],
-        ) -> Callable[[], BaseModel | dict]:
-            async def endpoint() -> BaseModel | dict:
-                return handler()
-
-            return endpoint
-
         app.get(
             config.path,
             response_model=config.response_model,
             tags=[config.tag],
             summary=config.summary,
             description=config.description,
-        )(make_endpoint(config.handler))
+        )(_make_get_endpoint(config.handler))

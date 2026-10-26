@@ -1,0 +1,14 @@
+# Core (offline demo + tests): tiny char model, no downloads.
+torch>=2.2
+
+# Optional — `--hf MODEL` uses a real Hugging Face tokenizer + model:
+# transformers>=4.44
+
+# Optional — `--live BASE_URL` / capture_episode.py talk to an
+# Agent World Model server. The simplest path is the repo's own env:
+#   uv sync --all-extras
+#   uv pip install torch sqlalchemy fastapi-mcp   # sqlalchemy+fastapi-mcp: AWM sub-envs
+#   PYTHONPATH=src:envs uv run uvicorn \
+#       envs.agent_world_model_env.server.app:app --host 0.0.0.0 --port 8899
+# Or point --live at the hosted Space:
+#   https://chilled-agent-world-model-env.hf.space

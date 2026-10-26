@@ -1,0 +1,4 @@
+torch>=2.2
+transformers>=4.44
+matplotlib>=3.7
+pytest>=7.0

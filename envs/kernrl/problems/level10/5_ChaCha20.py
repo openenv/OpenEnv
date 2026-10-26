@@ -25,23 +25,29 @@ class Model(nn.Module):
     """
     ChaCha20 stream cipher.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
         # ChaCha20 constants "expand 32-byte k"
-        constants = torch.tensor([
-            0x61707865,  # "expa"
-            0x3320646e,  # "nd 3"
-            0x79622d32,  # "2-by"
-            0x6b206574,  # "te k"
-        ], dtype=torch.int64)
-        self.register_buffer('constants', constants)
+        constants = torch.tensor(
+            [
+                0x61707865,  # "expa"
+                0x3320646E,  # "nd 3"
+                0x79622D32,  # "2-by"
+                0x6B206574,  # "te k"
+            ],
+            dtype=torch.int64,
+        )
+        self.register_buffer("constants", constants)
 
     def _rotl(self, x: torch.Tensor, n: int) -> torch.Tensor:
         """Left rotation for 32-bit values."""
         return ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF
 
-    def _quarter_round(self, state: torch.Tensor, a: int, b: int, c: int, d: int) -> torch.Tensor:
+    def _quarter_round(
+        self, state: torch.Tensor, a: int, b: int, c: int, d: int
+    ) -> torch.Tensor:
         """Perform ChaCha20 quarter-round."""
         state = state.clone()
 
@@ -59,7 +65,9 @@ class Model(nn.Module):
 
         return state
 
-    def forward(self, key: torch.Tensor, nonce: torch.Tensor, counter: int = 0) -> torch.Tensor:
+    def forward(
+        self, key: torch.Tensor, nonce: torch.Tensor, counter: int = 0
+    ) -> torch.Tensor:
         """
         Generate 64 bytes of keystream.
 
@@ -108,6 +116,7 @@ def get_inputs():
     key = torch.randint(0, 2**32, (8,), dtype=torch.int64)
     nonce = torch.randint(0, 2**32, (3,), dtype=torch.int64)
     return [key, nonce, 0]
+
 
 def get_init_inputs():
     return []

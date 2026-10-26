@@ -33,10 +33,13 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Starting PR review..."
 
 # Invoke Claude to handle the reviews
 exec claude --print --dangerously-skip-permissions --max-budget-usd 100.00 "
-Review PRs updated in the last 6 hours.
+Review ONLY the PRs I was pinged on in the last 6 hours (i.e. where I was
+@-mentioned or added as a reviewer). Do NOT review PRs I wasn't pinged on.
 
-1. Run: python3 scripts/pr_tracker.py --list --since 6h
-   This returns JSON with open PRs updated in the last 6 hours.
+1. Run: python3 scripts/pr_tracker.py --list --since 6h --use-state
+   This returns JSON for ONLY the open PRs where I have a GitHub notification
+   with reason 'mention' or 'review_requested'. Each item has a 'number',
+   'repo', and 'reason'. If the list is empty, stop — there is nothing to do.
 
 2. For each PR, spawn a subagent (alignment-reviewer) to review it.
    The subagent should:
@@ -44,7 +47,9 @@ Review PRs updated in the last 6 hours.
    - Apply the two-tier review model (Tier 1: bugs/lint, Tier 2: alignment)
    - Determine verdict: approve, comment, or request_changes
 
-3. After each review, use pr_tracker.post_review() to post the GitHub review.
+3. After each review, call pr_tracker.post_review(pr_number, verdict, body) to
+   post it, then pr_tracker.record_review(pr_number, head_sha, verdict) so the
+   same commit is not re-reviewed on the next run.
 
 Run subagent reviews in parallel when possible.
 "

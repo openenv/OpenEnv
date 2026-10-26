@@ -5,17 +5,18 @@ This module provides a generic handler that dynamically calls internal Calendar 
 based on tool configuration. This approach is much more scalable and maintainable.
 """
 
-import httpx
 import json
-import os
 import logging
-from typing import Dict
+import os
 from datetime import datetime
 from pathlib import Path
+from typing import Dict
 
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 def log_tool_response(tool_name, tool_input, result, database_id):
     """Log tool responses to file for debugging"""
@@ -29,13 +30,15 @@ def log_tool_response(tool_name, tool_input, result, database_id):
         logs_dir.mkdir(exist_ok=True)
 
         # Create timestamped log entry
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Include milliseconds
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[
+            :-3
+        ]  # Include milliseconds
         log_entry = {
             "timestamp": timestamp,
             "tool_name": tool_name,
             "database_id": database_id,
             "input": tool_input,
-            "result": result
+            "result": result,
         }
 
         # Append to daily log file
@@ -46,7 +49,7 @@ def log_tool_response(tool_name, tool_input, result, database_id):
         logs = []
         if log_file.exists():
             try:
-                with open(log_file, 'r') as f:
+                with open(log_file, "r") as f:
                     logs = json.load(f)
             except:
                 logs = []
@@ -55,40 +58,50 @@ def log_tool_response(tool_name, tool_input, result, database_id):
         logs.append(log_entry)
 
         # Write back to file
-        with open(log_file, 'w') as f:
+        with open(log_file, "w") as f:
             json.dump(logs, f, indent=2)
 
     except Exception:
         # Don't let logging errors break the tool execution
         pass
 
+
 def get_query_parameters_for_tool(tool_name: str) -> set:
     """
     Automatically determine which parameters should be query parameters
     by inspecting the FastAPI route dependencies and parameters
     """
-    from fastapi.params import Query as QueryParam
     import inspect
+
+    from apis.acl.router import router as acl_router
+    from apis.calendarList.router import router as calendar_list_router
 
     # Import routers to inspect their endpoints
     from apis.calendars.router import router as calendars_router
-    from apis.calendarList.router import router as calendar_list_router
-    from apis.events.router import router as events_router
     from apis.colors.router import router as colors_router
-    from apis.users.router import router as users_router
+    from apis.events.router import router as events_router
     from apis.settings.router import router as settings_router
-    from apis.acl.router import router as acl_router
+    from apis.users.router import router as users_router
+    from fastapi.params import Query as QueryParam
 
     # Check all routes in all routers
-    routers = [calendars_router, calendar_list_router, events_router, colors_router, users_router, settings_router, acl_router]
+    routers = [
+        calendars_router,
+        calendar_list_router,
+        events_router,
+        colors_router,
+        users_router,
+        settings_router,
+        acl_router,
+    ]
 
     for router in routers:
         for route in router.routes:
-            if hasattr(route, 'endpoint') and route.endpoint.__name__ == tool_name:
+            if hasattr(route, "endpoint") and route.endpoint.__name__ == tool_name:
                 query_params = set()
 
                 # Method 1: Check route's dependant (FastAPI's internal parameter analysis)
-                if hasattr(route, 'dependant') and route.dependant:
+                if hasattr(route, "dependant") and route.dependant:
                     for dep in route.dependant.query_params:
                         query_params.add(dep.alias or dep.name)
 
@@ -97,7 +110,7 @@ def get_query_parameters_for_tool(tool_name: str) -> set:
                     sig = inspect.signature(route.endpoint)
                     for param_name, param in sig.parameters.items():
                         # Skip obvious path/header params
-                        if param_name in ['calendarId', 'eventId', 'x_database_id']:
+                        if param_name in ["calendarId", "eventId", "x_database_id"]:
                             continue
 
                         # Check if it has Query() as default or in annotation
@@ -106,12 +119,13 @@ def get_query_parameters_for_tool(tool_name: str) -> set:
                             if isinstance(param.default, QueryParam):
                                 query_params.add(param_name)
                             # Check string representation for Query()
-                            elif 'Query(' in str(param.default):
+                            elif "Query(" in str(param.default):
                                 query_params.add(param_name)
 
                 return query_params
 
     return set()  # Return empty set if tool not found
+
 
 # Internal API base URL (same server) - configurable via environment or .env
 API_PORT = os.getenv("API_PORT", "8004")
@@ -120,28 +134,39 @@ API_BASE_URL = f"http://localhost:{API_PORT}"
 # Import tools from the modular structure
 from calendar_mcp.tools import MCP_TOOLS
 
+
 # Dynamic endpoint mapping based on FastAPI router inspection
 def get_api_endpoint_for_tool(tool_name: str) -> tuple:
     """
     Dynamically determine API endpoint by matching tool name to router function names.
     This eliminates the need for static mapping and ensures consistency.
     """
+    from apis.acl.router import router as acl_router
+    from apis.calendarList.router import router as calendar_list_router
+
     # Import routers to inspect their endpoints
     from apis.calendars.router import router as calendars_router
-    from apis.calendarList.router import router as calendar_list_router
-    from apis.events.router import router as events_router
     from apis.colors.router import router as colors_router
-    from apis.users.router import router as users_router
-    from apis.settings.router import router as settings_router
-    from apis.acl.router import router as acl_router
+    from apis.events.router import router as events_router
     from apis.freebusy.router import router as freebusy_router
+    from apis.settings.router import router as settings_router
+    from apis.users.router import router as users_router
 
     # Check all routes in all routers
-    routers = [calendars_router, calendar_list_router, events_router, colors_router, users_router, settings_router, acl_router, freebusy_router]
+    routers = [
+        calendars_router,
+        calendar_list_router,
+        events_router,
+        colors_router,
+        users_router,
+        settings_router,
+        acl_router,
+        freebusy_router,
+    ]
 
     for router in routers:
         for route in router.routes:
-            if hasattr(route, 'endpoint') and route.endpoint.__name__ == tool_name:
+            if hasattr(route, "endpoint") and route.endpoint.__name__ == tool_name:
                 # Extract method and path (path already includes router prefix)
                 methods = list(route.methods)
                 method = methods[0] if methods else "GET"
@@ -152,8 +177,9 @@ def get_api_endpoint_for_tool(tool_name: str) -> tuple:
     return None
 
 
-
-async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str, user_id: str) -> Dict:
+async def execute_tool_generic(
+    tool_name: str, arguments: Dict, database_id: str, user_id: str
+) -> Dict:
     """
     Generic tool executor that dynamically calls API endpoints based on tool configuration.
     This eliminates the need for individual handler functions.
@@ -168,14 +194,20 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
                 break
 
         if not tool_config:
-            result = {"text": f"Tool configuration not found: {tool_name}", "isError": True}
+            result = {
+                "text": f"Tool configuration not found: {tool_name}",
+                "isError": True,
+            }
             log_tool_response(tool_name, arguments, result, database_id)
             return result
 
         # Get API endpoint dynamically from router inspection
         endpoint_info = get_api_endpoint_for_tool(tool_name)
         if not endpoint_info:
-            result = {"text": f"API endpoint not found for tool: {tool_name}. Check that router function name matches tool name.", "isError": True}
+            result = {
+                "text": f"API endpoint not found for tool: {tool_name}. Check that router function name matches tool name.",
+                "isError": True,
+            }
             log_tool_response(tool_name, arguments, result, database_id)
             return result
 
@@ -189,7 +221,7 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
             missing_param = final_endpoint.replace("ERROR_MISSING_PARAM_", "")
             result = {
                 "text": f"The parameter '{missing_param}' is required and cannot be empty.",
-                "isError": True
+                "isError": True,
             }
             log_tool_response(tool_name, arguments, result, database_id)
             return result
@@ -201,7 +233,7 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
         headers = {
             "Content-Type": "application/json",
             "x-database-id": database_id,
-            "x-user-id": user_id
+            "x-user-id": user_id,
         }
 
         # Add user_id header if present in arguments
@@ -213,20 +245,27 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
         # - Allow nested 'body' field to carry JSON body for non-GET/DELETE methods
         body_data, query_data = prepare_request_data(arguments, api_endpoint, tool_name)
 
-
         # Make HTTP request
         async with httpx.AsyncClient(timeout=30.0) as client:
             if method.upper() == "GET":
                 # For GET requests, use query parameters (combine body_data and query_data)
                 all_query_params = {**body_data, **query_data}
-                response = await client.get(full_url, headers=headers, params=all_query_params)
+                response = await client.get(
+                    full_url, headers=headers, params=all_query_params
+                )
             elif method.upper() == "DELETE":
                 # DELETE requests typically don't have body, but may have query params
-                response = await client.delete(full_url, headers=headers, params=query_data)
+                response = await client.delete(
+                    full_url, headers=headers, params=query_data
+                )
             else:
                 # POST, PUT, PATCH requests with JSON body and optional query params
                 response = await client.request(
-                    method.upper(), full_url, headers=headers, json=body_data, params=query_data
+                    method.upper(),
+                    full_url,
+                    headers=headers,
+                    json=body_data,
+                    params=query_data,
                 )
 
         # Handle response
@@ -235,7 +274,7 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
             result = {
                 "text": f"Operation completed successfully",
                 "status_code": response.status_code,
-                "isError": False
+                "isError": False,
             }
         elif 200 <= response.status_code < 300:
             # Success responses
@@ -244,13 +283,13 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
                 result = {
                     "text": json.dumps(response_data, indent=2),
                     "status_code": response.status_code,
-                    "isError": False
+                    "isError": False,
                 }
             except:
                 result = {
                     "text": f"Operation completed successfully\nStatus: {response.status_code}",
                     "status_code": response.status_code,
-                    "isError": False
+                    "isError": False,
                 }
         else:
             # Error responses: prefer a friendly, contextual message
@@ -291,7 +330,9 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
                             if isinstance(msg, str):
                                 lower = msg.lower()
                                 if lower.startswith("string should have at least"):
-                                    msg = msg.replace("String should have", "must have").replace("string should have", "must have")
+                                    msg = msg.replace(
+                                        "String should have", "must have"
+                                    ).replace("string should have", "must have")
                                 elif lower == "field required":
                                     msg = "is required"
                                 elif lower.startswith("value error"):
@@ -305,7 +346,11 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
                         if lines:
                             friendly_text = "Validation errors:\n" + "\n".join(lines)
                     # Fallback to Google-style error.message
-                    if friendly_text is None and isinstance(error_data.get("error"), dict) and isinstance(error_data["error"].get("message"), str):
+                    if (
+                        friendly_text is None
+                        and isinstance(error_data.get("error"), dict)
+                        and isinstance(error_data["error"].get("message"), str)
+                    ):
                         friendly_text = f"{error_data['error']['message']}"
             except Exception:
                 # Non-JSON error body
@@ -323,7 +368,7 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
                 result = {
                     "text": friendly_text,
                     "status_code": response.status_code,
-                    "isError": True
+                    "isError": True,
                 }
             else:
                 # Fall back to structured error output
@@ -333,13 +378,13 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
                     result = {
                         "text": f"API Error: {json.dumps(error_data, indent=2)}",
                         "status_code": response.status_code,
-                        "isError": True
+                        "isError": True,
                     }
                 except Exception:
                     result = {
                         "text": f"HTTP {response.status_code}: {response.text}",
                         "status_code": response.status_code,
-                        "isError": True
+                        "isError": True,
                     }
 
         # Log the tool response for debugging
@@ -349,15 +394,12 @@ async def execute_tool_generic(tool_name: str, arguments: Dict, database_id: str
     except httpx.RequestError as e:
         result = {
             "text": f"Request Error: {str(e)}\nFull URL: {full_url}",
-            "isError": True
+            "isError": True,
         }
         log_tool_response(tool_name, arguments, result, database_id)
         return result
     except Exception as e:
-        result = {
-            "text": f"Unexpected Error: {str(e)}",
-            "isError": True
-        }
+        result = {"text": f"Unexpected Error: {str(e)}", "isError": True}
         log_tool_response(tool_name, arguments, result, database_id)
         return result
 
@@ -391,7 +433,7 @@ def substitute_path_parameters(endpoint: str, arguments: Dict) -> str:
     import re
 
     # Find all path parameters in the format {paramName}
-    path_params = re.findall(r'\{(\w+)\}', endpoint)
+    path_params = re.findall(r"\{(\w+)\}", endpoint)
 
     result_endpoint = endpoint
     for param in path_params:
@@ -402,7 +444,9 @@ def substitute_path_parameters(endpoint: str, arguments: Dict) -> str:
         elif param + "Id" in arguments and arguments[param + "Id"]:
             # Handle cases like {calendarId} mapped to calendarId argument
             param_value = str(arguments[param + "Id"])
-        elif param.replace("Id", "") in arguments and arguments[param.replace("Id", "")]:
+        elif (
+            param.replace("Id", "") in arguments and arguments[param.replace("Id", "")]
+        ):
             # Handle cases like {calendarId} mapped to calendar argument
             base_param = param.replace("Id", "")
             param_value = str(arguments[base_param])
@@ -416,12 +460,14 @@ def substitute_path_parameters(endpoint: str, arguments: Dict) -> str:
     return result_endpoint
 
 
-def prepare_request_data(arguments: Dict, endpoint: str, tool_name: str) -> tuple[Dict, Dict]:
+def prepare_request_data(
+    arguments: Dict, endpoint: str, tool_name: str
+) -> tuple[Dict, Dict]:
     """Prepare request data by separating body and query parameters"""
     import re
 
     # Find all path parameters
-    path_params = set(re.findall(r'\{(\w+)\}', endpoint))
+    path_params = set(re.findall(r"\{(\w+)\}", endpoint))
 
     # Dynamically get query parameters for this tool by inspecting router
     query_params_for_tool = get_query_parameters_for_tool(tool_name)
@@ -431,7 +477,11 @@ def prepare_request_data(arguments: Dict, endpoint: str, tool_name: str) -> tupl
 
     for key, value in arguments.items():
         # Skip path parameters and their variations
-        if key in path_params or key + "Id" in path_params or key.replace("Id", "") in path_params:
+        if (
+            key in path_params
+            or key + "Id" in path_params
+            or key.replace("Id", "") in path_params
+        ):
             continue
 
         # Decide if this should be query parameter or body parameter

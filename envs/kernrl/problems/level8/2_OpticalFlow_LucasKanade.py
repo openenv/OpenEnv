@@ -24,17 +24,22 @@ class Model(nn.Module):
     """
     Lucas-Kanade optical flow estimation.
     """
+
     def __init__(self, window_size: int = 15):
         super(Model, self).__init__()
         self.window_size = window_size
         self.half_win = window_size // 2
 
         # Sobel kernels for gradients
-        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32)
-        sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32)
+        sobel_x = torch.tensor(
+            [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32
+        )
+        sobel_y = torch.tensor(
+            [[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32
+        )
 
-        self.register_buffer('sobel_x', sobel_x.unsqueeze(0).unsqueeze(0))
-        self.register_buffer('sobel_y', sobel_y.unsqueeze(0).unsqueeze(0))
+        self.register_buffer("sobel_x", sobel_x.unsqueeze(0).unsqueeze(0))
+        self.register_buffer("sobel_y", sobel_y.unsqueeze(0).unsqueeze(0))
 
     def forward(self, frame1: torch.Tensor, frame2: torch.Tensor) -> tuple:
         """
@@ -66,17 +71,23 @@ class Model(nn.Module):
 
         # Pad images
         hw = self.half_win
-        Ix_pad = F.pad(Ix, (hw, hw, hw, hw), mode='reflect')
-        Iy_pad = F.pad(Iy, (hw, hw, hw, hw), mode='reflect')
-        It_pad = F.pad(It, (hw, hw, hw, hw), mode='reflect')
+        Ix_pad = F.pad(Ix, (hw, hw, hw, hw), mode="reflect")
+        Iy_pad = F.pad(Iy, (hw, hw, hw, hw), mode="reflect")
+        It_pad = F.pad(It, (hw, hw, hw, hw), mode="reflect")
 
         # For each pixel
         for y in range(H):
             for x in range(W):
                 # Extract window
-                Ix_win = Ix_pad[y:y+self.window_size, x:x+self.window_size].flatten()
-                Iy_win = Iy_pad[y:y+self.window_size, x:x+self.window_size].flatten()
-                It_win = It_pad[y:y+self.window_size, x:x+self.window_size].flatten()
+                Ix_win = Ix_pad[
+                    y : y + self.window_size, x : x + self.window_size
+                ].flatten()
+                Iy_win = Iy_pad[
+                    y : y + self.window_size, x : x + self.window_size
+                ].flatten()
+                It_win = It_pad[
+                    y : y + self.window_size, x : x + self.window_size
+                ].flatten()
 
                 # Build A^T A and A^T b
                 A00 = (Ix_win * Ix_win).sum()
@@ -99,10 +110,12 @@ class Model(nn.Module):
 frame_height = 240
 frame_width = 320
 
+
 def get_inputs():
     frame1 = torch.rand(frame_height, frame_width)
     frame2 = torch.rand(frame_height, frame_width)
     return [frame1, frame2]
+
 
 def get_init_inputs():
     return [15]  # window_size

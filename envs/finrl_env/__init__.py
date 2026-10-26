@@ -27,7 +27,20 @@ Example:
     >>> print(result.reward)
 """
 
-from .client import FinRLEnv
-from .models import FinRLAction, FinRLObservation
-
 __all__ = ["FinRLEnv", "FinRLAction", "FinRLObservation"]
+
+
+def __getattr__(name: str):
+    if name == "FinRLEnv":
+        from .client import FinRLEnv
+
+        return FinRLEnv
+    if name == "FinRLAction":
+        from .models import FinRLAction
+
+        return FinRLAction
+    if name == "FinRLObservation":
+        from .models import FinRLObservation
+
+        return FinRLObservation
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

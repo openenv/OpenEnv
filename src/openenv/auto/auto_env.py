@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 AutoEnv - Automatic Environment Selection
@@ -22,7 +18,7 @@ Example:
     >>> env = AutoEnv.from_env("coding-env")
     >>>
     >>> # From HuggingFace Hub
-    >>> env = AutoEnv.from_env("meta-pytorch/coding-env")
+    >>> env = AutoEnv.from_env("openenv/coding_env")
     >>>
     >>> # With configuration
     >>> env = AutoEnv.from_env("coding", env_vars={"DEBUG": "1"})
@@ -31,16 +27,19 @@ Example:
 from __future__ import annotations
 
 import importlib
+import ipaddress
 import logging
 import os
 import shutil
 import subprocess
 import sys
-import requests
-from typing import Any, Optional, TYPE_CHECKING, Dict
+from typing import Any, Dict, Optional, TYPE_CHECKING
+from urllib.parse import urlparse
 
-from ._discovery import get_discovery, _is_hub_url
-from openenv.core.utils import run_async_safely
+import requests
+from openenv.core.utils import hf_space_subdomain, run_async_safely
+
+from ._discovery import _is_hub_url, get_discovery
 
 
 if TYPE_CHECKING:
@@ -135,7 +134,7 @@ class AutoEnv:
         >>> env = AutoEnv.from_env("coding-env")
         >>>
         >>> # From HuggingFace Hub
-        >>> env = AutoEnv.from_env("meta-pytorch/coding-env")
+        >>> env = AutoEnv.from_env("openenv/coding_env")
         >>>
         >>> # List available environments
         >>> AutoEnv.list_environments()
@@ -175,9 +174,8 @@ class AutoEnv:
             if len(parts) >= 2:
                 repo_id = f"{parts[-2]}/{parts[-1]}"
 
-        # Convert user/space-name to user-space-name.hf.space
-        space_slug = repo_id.replace("/", "-")
-        return f"https://{space_slug}.hf.space"
+        # Convert user/space_name to user-space-name.hf.space
+        return f"https://{hf_space_subdomain(repo_id)}.hf.space"
 
     @classmethod
     def _is_local_url(cls, url: str) -> bool:
@@ -198,8 +196,18 @@ class AutoEnv:
             >>> AutoEnv._is_local_url("https://example.com")
             False
         """
-        url_lower = url.lower()
-        return "localhost" in url_lower or "127.0.0.1" in url_lower
+        try:
+            hostname = urlparse(url).hostname or ""
+        except Exception:
+            return False
+        if not hostname:
+            return False
+        if hostname in ("localhost", "0.0.0.0"):
+            return True
+        try:
+            return ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            return False
 
     @classmethod
     def _check_server_availability(cls, base_url: str, timeout: float = 2.0) -> bool:
@@ -511,8 +519,8 @@ class AutoEnv:
             name: Environment name or HuggingFace Hub repo ID
                   Examples:
                   - "coding" / "coding-env" / "coding_env"
-                  - "meta-pytorch/coding-env" (Hub repo ID)
-                  - "https://huggingface.co/meta-pytorch/coding-env" (Hub URL)
+                  - "openenv/coding_env" (Hub repo ID)
+                  - "https://huggingface.co/openenv/coding_env" (Hub URL)
             base_url: Optional base URL for HTTP connection
             docker_image: Optional Docker image name (overrides default)
             container_provider: Optional container provider
@@ -542,7 +550,7 @@ class AutoEnv:
             >>> env = AutoEnv.from_env("coding-env")
             >>>
             >>> # From HuggingFace Hub
-            >>> env = AutoEnv.from_env("meta-pytorch/coding-env")
+            >>> env = AutoEnv.from_env("openenv/coding_env")
             >>>
             >>> # With custom Docker image
             >>> env = AutoEnv.from_env("coding", docker_image="my-coding-env:v2")
@@ -791,7 +799,7 @@ class AutoEnv:
 
         Examples:
             >>> env = AutoEnv.from_hub("coding-env")
-            >>> env = AutoEnv.from_hub("meta-pytorch/coding-env")
+            >>> env = AutoEnv.from_hub("openenv/coding_env")
         """
         return cls.from_env(
             name=name,

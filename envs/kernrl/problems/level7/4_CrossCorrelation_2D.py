@@ -20,6 +20,7 @@ class Model(nn.Module):
     """
     2D cross-correlation for template matching.
     """
+
     def __init__(self, template_height: int = 32, template_width: int = 32):
         super(Model, self).__init__()
         self.template_height = template_height
@@ -27,7 +28,7 @@ class Model(nn.Module):
 
         # Random template (in practice, this would be a pattern to find)
         template = torch.randn(1, 1, template_height, template_width)
-        self.register_buffer('template', template)
+        self.register_buffer("template", template)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -55,9 +56,11 @@ class Model(nn.Module):
 image_height = 1024
 image_width = 1024
 
+
 def get_inputs():
     image = torch.randn(image_height, image_width)
     return [image]
+
 
 def get_init_inputs():
     return [32, 32]  # template_height, template_width

@@ -66,34 +66,34 @@ CALENDAR_LIST_TOOLS = [
                     "description": "Maximum number of entries returned. If 0, returns no items.",
                     "minimum": 0,
                     "maximum": 250,
-                    "default": 100
+                    "default": 100,
                 },
                 "minAccessRole": {
                     "type": "string",
                     "description": "Minimum access role filter",
-                    "enum": ["freeBusyReader", "reader", "writer", "owner"]
+                    "enum": ["freeBusyReader", "reader", "writer", "owner"],
                 },
                 "pageToken": {
                     "type": "string",
-                    "description": "Token specifying which result page to return (for pagination)"
+                    "description": "Token specifying which result page to return (for pagination)",
                 },
                 "showDeleted": {
                     "type": "boolean",
                     "description": "Include deleted calendars in results",
-                    "default": False
+                    "default": False,
                 },
                 "showHidden": {
                     "type": "boolean",
                     "description": "Include hidden calendars in results",
-                    "default": False
+                    "default": False,
                 },
                 "syncToken": {
                     "type": "string",
-                    "description": "Token for incremental synchronization (returns only changed entries since last sync)"
-                }
+                    "description": "Token for incremental synchronization (returns only changed entries since last sync)",
+                },
             },
-            "required": []
-        }
+            "required": [],
+        },
     },
     {
         "name": "get_calendar_from_list",
@@ -136,11 +136,11 @@ CALENDAR_LIST_TOOLS = [
                 "calendarId": {
                     "type": "string",
                     "description": "Unique calendar identifier (UUID)",
-                    "minLength": 1
+                    "minLength": 1,
                 }
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "add_calendar_to_list",
@@ -183,42 +183,42 @@ CALENDAR_LIST_TOOLS = [
                 "id": {
                     "type": "string",
                     "description": "Calendar ID to add to user's list (UUID)",
-                    "minLength": 1
+                    "minLength": 1,
                 },
                 "colorRgbFormat": {
                     "type": "boolean",
                     "description": "Query param: if true, allows writing backgroundColor/foregroundColor",
-                    "default": False
+                    "default": False,
                 },
                 "summaryOverride": {
                     "type": "string",
                     "description": "Custom calendar title override",
-                    "maxLength": 255
+                    "maxLength": 255,
                 },
                 "colorId": {
                     "type": "string",
                     "description": "Calendar color ID",
-                    "maxLength": 50
+                    "maxLength": 50,
                 },
                 "backgroundColor": {
                     "type": "string",
                     "description": "Background color (hex format like #FF5733)",
-                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                    "pattern": "^#[0-9A-Fa-f]{6}$",
                 },
                 "foregroundColor": {
-                    "type": "string", 
+                    "type": "string",
                     "description": "Foreground color (hex format like #FFFFFF)",
-                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                    "pattern": "^#[0-9A-Fa-f]{6}$",
                 },
                 "hidden": {
                     "type": "boolean",
                     "description": "Whether calendar is hidden from list",
-                    "default": False
+                    "default": False,
                 },
                 "selected": {
                     "type": "boolean",
                     "description": "Whether calendar is selected in UI",
-                    "default": True
+                    "default": True,
                 },
                 "defaultReminders": {
                     "type": "array",
@@ -229,16 +229,16 @@ CALENDAR_LIST_TOOLS = [
                             "method": {
                                 "type": "string",
                                 "enum": ["email", "popup"],
-                                "description": "Reminder delivery method"
+                                "description": "Reminder delivery method",
                             },
                             "minutes": {
                                 "type": "integer",
                                 "description": "Minutes before event to trigger reminder",
-                                "minimum": 0
-                            }
+                                "minimum": 0,
+                            },
                         },
-                        "required": ["method", "minutes"]
-                    }
+                        "required": ["method", "minutes"],
+                    },
                 },
                 "notificationSettings": {
                     "type": "object",
@@ -254,7 +254,7 @@ CALENDAR_LIST_TOOLS = [
                                     "method": {
                                         "type": "string",
                                         "enum": ["email"],
-                                        "description": "Notification delivery method (only 'email' supported)"
+                                        "description": "Notification delivery method (only 'email' supported)",
                                     },
                                     "type": {
                                         "type": "string",
@@ -263,19 +263,19 @@ CALENDAR_LIST_TOOLS = [
                                             "eventChange",
                                             "eventCancellation",
                                             "eventResponse",
-                                            "agenda"
+                                            "agenda",
                                         ],
-                                        "description": "Notification type"
-                                    }
+                                        "description": "Notification type",
+                                    },
                                 },
-                                "required": ["method", "type"]
-                            }
+                                "required": ["method", "type"],
+                            },
                         }
-                    }
-                }
+                    },
+                },
             },
-            "required": ["id"]
-        }
+            "required": ["id"],
+        },
     },
     {
         "name": "update_calendar_in_list",
@@ -327,42 +327,42 @@ CALENDAR_LIST_TOOLS = [
                 "calendarId": {
                     "type": "string",
                     "description": "Unique calendar identifier (UUID)",
-                    "minLength": 1
+                    "minLength": 1,
                 },
                 "colorRgbFormat": {
                     "type": "boolean",
                     "description": "Query param: if true, allows writing backgroundColor/foregroundColor",
-                    "default": False
+                    "default": False,
                 },
                 "summaryOverride": {
                     "type": "string",
                     "description": "Custom calendar title override",
-                    "maxLength": 255
+                    "maxLength": 255,
                 },
                 "colorId": {
                     "type": "string",
-                    "description": "Calendar color ID", 
-                    "maxLength": 50
+                    "description": "Calendar color ID",
+                    "maxLength": 50,
                 },
                 "backgroundColor": {
                     "type": "string",
                     "description": "Background color (hex format like #FF5733)",
-                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                    "pattern": "^#[0-9A-Fa-f]{6}$",
                 },
                 "foregroundColor": {
                     "type": "string",
                     "description": "Foreground color (hex format like #FFFFFF)",
-                    "pattern": "^#[0-9A-Fa-f]{6}$"
-                },  
+                    "pattern": "^#[0-9A-Fa-f]{6}$",
+                },
                 "hidden": {
                     "type": "boolean",
                     "description": "Whether calendar is hidden from list",
-                    "default": False
+                    "default": False,
                 },
                 "selected": {
                     "type": "boolean",
                     "description": "Whether calendar is selected in UI",
-                    "default": True
+                    "default": True,
                 },
                 "defaultReminders": {
                     "type": "array",
@@ -373,16 +373,16 @@ CALENDAR_LIST_TOOLS = [
                             "method": {
                                 "type": "string",
                                 "enum": ["email", "popup"],
-                                "description": "Reminder delivery method"
+                                "description": "Reminder delivery method",
                             },
                             "minutes": {
                                 "type": "integer",
                                 "description": "Minutes before event to trigger reminder",
-                                "minimum": 0
-                            }
+                                "minimum": 0,
+                            },
                         },
-                        "required": ["method", "minutes"]
-                    }
+                        "required": ["method", "minutes"],
+                    },
                 },
                 "notificationSettings": {
                     "type": "object",
@@ -398,7 +398,7 @@ CALENDAR_LIST_TOOLS = [
                                     "method": {
                                         "type": "string",
                                         "enum": ["email"],
-                                        "description": "Notification delivery method (only 'email' supported)"
+                                        "description": "Notification delivery method (only 'email' supported)",
                                     },
                                     "type": {
                                         "type": "string",
@@ -407,19 +407,19 @@ CALENDAR_LIST_TOOLS = [
                                             "eventChange",
                                             "eventCancellation",
                                             "eventResponse",
-                                            "agenda"
+                                            "agenda",
                                         ],
-                                        "description": "Notification type"
-                                    }
+                                        "description": "Notification type",
+                                    },
                                 },
-                                "required": ["method", "type"]
-                            }
+                                "required": ["method", "type"],
+                            },
                         }
-                    }
-                }
+                    },
+                },
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "replace_calendar_in_list",
@@ -470,42 +470,42 @@ CALENDAR_LIST_TOOLS = [
                 "calendarId": {
                     "type": "string",
                     "description": "Unique calendar identifier (UUID)",
-                    "minLength": 1
+                    "minLength": 1,
                 },
                 "colorRgbFormat": {
                     "type": "boolean",
                     "description": "Query param: if true, allows writing backgroundColor/foregroundColor",
-                    "default": False
+                    "default": False,
                 },
                 "summaryOverride": {
                     "type": "string",
                     "description": "Custom calendar title override",
-                    "maxLength": 255
+                    "maxLength": 255,
                 },
                 "colorId": {
                     "type": "string",
                     "description": "Calendar color ID",
-                    "maxLength": 50
+                    "maxLength": 50,
                 },
                 "backgroundColor": {
                     "type": "string",
                     "description": "Background color (hex format like #FF5733)",
-                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                    "pattern": "^#[0-9A-Fa-f]{6}$",
                 },
                 "foregroundColor": {
                     "type": "string",
                     "description": "Foreground color (hex format like #FFFFFF)",
-                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                    "pattern": "^#[0-9A-Fa-f]{6}$",
                 },
                 "hidden": {
                     "type": "boolean",
                     "description": "Whether calendar is hidden from list",
-                    "default": False
+                    "default": False,
                 },
                 "selected": {
-                    "type": "boolean", 
+                    "type": "boolean",
                     "description": "Whether calendar is selected in UI",
-                    "default": True
+                    "default": True,
                 },
                 "defaultReminders": {
                     "type": "array",
@@ -515,15 +515,15 @@ CALENDAR_LIST_TOOLS = [
                         "properties": {
                             "method": {
                                 "type": "string",
-                                "description": "Reminder delivery method (email, popup). Empty string allowed to clear"
+                                "description": "Reminder delivery method (email, popup). Empty string allowed to clear",
                             },
                             "minutes": {
                                 "type": "integer",
                                 "description": "Minutes before event to trigger reminder",
-                                "minimum": 0
-                            }
-                        }
-                    }
+                                "minimum": 0,
+                            },
+                        },
+                    },
                 },
                 "notificationSettings": {
                     "type": "object",
@@ -538,16 +538,16 @@ CALENDAR_LIST_TOOLS = [
                                 "properties": {
                                     "method": {
                                         "type": "string",
-                                        "description": "Notification delivery method. Empty string allowed to clear"
+                                        "description": "Notification delivery method. Empty string allowed to clear",
                                     },
                                     "type": {
                                         "type": "string",
-                                        "description": "Notification type. Empty string allowed to clear"
-                                    }
-                                }
-                            }
+                                        "description": "Notification type. Empty string allowed to clear",
+                                    },
+                                },
+                            },
                         }
-                    }
+                    },
                 },
                 "conferenceProperties": {
                     "type": "object",
@@ -558,15 +558,19 @@ CALENDAR_LIST_TOOLS = [
                             "description": "The types of conference solutions that are supported for this calendar",
                             "items": {
                                 "type": "string",
-                                "enum": ["eventHangout", "eventNamedHangout", "hangoutsMeet"],
-                                "description": "Conference solution type"
-                            }
+                                "enum": [
+                                    "eventHangout",
+                                    "eventNamedHangout",
+                                    "hangoutsMeet",
+                                ],
+                                "description": "Conference solution type",
+                            },
                         }
-                    }
-                }
+                    },
+                },
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "remove_calendar_from_list",
@@ -600,16 +604,16 @@ CALENDAR_LIST_TOOLS = [
           - 404: Not Found - Calendar not found in user's list
           - 500: Internal Server Error""",
         "inputSchema": {
-            "type": "object", 
+            "type": "object",
             "properties": {
                 "calendarId": {
                     "type": "string",
                     "description": "Unique calendar identifier (UUID)",
-                    "minLength": 1
+                    "minLength": 1,
                 }
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "watch_calendar_list",
@@ -668,24 +672,24 @@ CALENDAR_LIST_TOOLS = [
                 "id": {
                     "type": "string",
                     "description": "Unique channel identifier for this watch",
-                    "minLength": 1
+                    "minLength": 1,
                 },
                 "type": {
                     "type": "string",
                     "description": "Channel type (only web_hook supported; 'webhook' accepted as alias)",
                     "enum": ["web_hook", "webhook"],
-                    "default": "web_hook"
+                    "default": "web_hook",
                 },
                 "address": {
                     "type": "string",
                     "description": "HTTPS URL where notifications will be sent",
                     "format": "uri",
-                    "minLength": 1
+                    "minLength": 1,
                 },
                 "token": {
                     "type": "string",
                     "description": "Verification token for webhook security",
-                    "maxLength": 256
+                    "maxLength": 256,
                 },
                 "params": {
                     "type": "object",
@@ -693,12 +697,12 @@ CALENDAR_LIST_TOOLS = [
                     "properties": {
                         "ttl": {
                             "type": "string",
-                            "description": "Time to live in seconds (string). Server computes expiration = now + ttl"
+                            "description": "Time to live in seconds (string). Server computes expiration = now + ttl",
                         }
-                    }
-                }
+                    },
+                },
             },
-            "required": ["id", "type", "address"]
-        }
-    }
+            "required": ["id", "type", "address"],
+        },
+    },
 ]

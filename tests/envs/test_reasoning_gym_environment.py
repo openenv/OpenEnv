@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Tests for the Reasoning Gym Environment."""
 
@@ -334,8 +330,8 @@ class TestReasoningGymEnvClient:
 
     def test_parse_result(self):
         """Test _parse_result parses server response."""
-        from reasoning_gym_env import ReasoningGymEnv
         from openenv.core.client_types import StepResult
+        from reasoning_gym_env import ReasoningGymEnv
 
         env = ReasoningGymEnv(base_url="http://localhost:8000")
 
@@ -364,8 +360,8 @@ class TestReasoningGymEnvClient:
 
     def test_parse_state(self):
         """Test _parse_state parses state response."""
-        from reasoning_gym_env import ReasoningGymEnv
         from openenv.core.env_server.types import State
+        from reasoning_gym_env import ReasoningGymEnv
 
         env = ReasoningGymEnv(base_url="http://localhost:8000")
 

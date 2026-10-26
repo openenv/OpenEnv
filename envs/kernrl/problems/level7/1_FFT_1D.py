@@ -13,8 +13,8 @@ Optimization opportunities:
 """
 
 import torch
-import torch.nn as nn
 import torch.fft
+import torch.nn as nn
 
 
 class Model(nn.Module):
@@ -23,6 +23,7 @@ class Model(nn.Module):
 
     Computes DFT of complex or real signals.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -42,10 +43,12 @@ class Model(nn.Module):
 # Problem configuration
 signal_length = 1024 * 1024  # 1M samples
 
+
 def get_inputs():
     # Real signal
     signal = torch.randn(signal_length)
     return [signal]
+
 
 def get_init_inputs():
     return []

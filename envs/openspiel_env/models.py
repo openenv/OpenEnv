@@ -11,11 +11,11 @@ This module defines the Action, Observation, and State types for OpenSpiel games
 """
 
 from __future__ import annotations
-from pydantic import Field
 
 from typing import Any, Dict, List, Optional
 
 from openenv.core.env_server import Action, Observation, State
+from pydantic import Field
 
 
 class OpenSpielAction(Action):
@@ -27,6 +27,7 @@ class OpenSpielAction(Action):
         game_name: Name of the OpenSpiel game (e.g., "catch", "tic_tac_toe").
         game_params: Optional game-specific parameters (e.g., {"rows": 8, "columns": 6}).
     """
+
     action_id: int
     game_name: str = "catch"
     game_params: Dict[str, Any] = Field(default_factory=dict)
@@ -48,6 +49,7 @@ class OpenSpielObservation(Observation):
         current_player_id: ID of the current player (-1 for simultaneous, player ID otherwise).
         opponent_last_action: Last action taken by opponent (if available, None otherwise).
     """
+
     info_state: List[float]
     legal_actions: List[int]
     game_phase: str = "playing"
@@ -66,6 +68,7 @@ class OpenSpielState(State):
         game_params: Game-specific parameters.
         num_players: Total number of players in the game.
     """
+
     game_name: str = "catch"
     agent_player: int = 0
     opponent_policy: str = "random"

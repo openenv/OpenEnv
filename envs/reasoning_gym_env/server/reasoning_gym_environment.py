@@ -15,10 +15,9 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 import reasoning_gym
-from reasoning_gym.composite import DatasetSpec
-
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
+from reasoning_gym.composite import DatasetSpec
 
 try:
     from models import ReasoningGymAction, ReasoningGymObservation

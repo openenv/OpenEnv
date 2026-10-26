@@ -1,3 +1,16 @@
+---
+title: kernrl Environment Server
+emoji: ⚡
+colorFrom: yellow
+colorTo: green
+sdk: docker
+pinned: false
+app_port: 8000
+base_path: /web
+tags:
+  - openenv
+---
+
 # kernrl
 
 RL environment for GPU kernel optimization. Train LLM agents to write fast CUDA/Triton kernels.
@@ -27,14 +40,14 @@ Requires: NVIDIA GPU with CUDA toolkit, PyTorch, Triton
 ## Quick Start
 
 ```python
-from openenv.envs.kernrl import kernrl_env, KernelAction
+from kernrl import KernelAction, kernrl_env
 
 # Connect to server
 env = kernrl_env(base_url="http://localhost:8000")
 
 # Start episode
-obs = env.reset(problem_id="L1_23_Softmax")
-print(obs.problem_description)
+result = env.reset(problem_id="L1_23_Softmax")
+print(result.observation.problem_description)
 
 # Submit a kernel
 action = KernelAction(code='''

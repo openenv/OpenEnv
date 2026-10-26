@@ -73,7 +73,9 @@ class Maze:
         -0.75
     )  # penalty for trying to enter an occupied cell or moving out of the maze
 
-    def __init__(self, maze, start_cell=(0, 0), exit_cell=None, rendering=Render.NOTHING):
+    def __init__(
+        self, maze, start_cell=(0, 0), exit_cell=None, rendering=Render.NOTHING
+    ):
         """Create a new maze game.
 
         :param numpy.array maze: 2D array containing empty cells (= 0) and cells occupied with walls (= 1)
@@ -87,7 +89,9 @@ class Maze:
         )  # stop game if accumulated reward is below this threshold
 
         nrows, ncols = self.maze.shape
-        self.cells = [(col, row) for col in range(ncols) for row in range(nrows)]   #(col,row)
+        self.cells = [
+            (col, row) for col in range(ncols) for row in range(nrows)
+        ]  # (col,row)
         self.empty = [
             (col, row)
             for col in range(ncols)
@@ -314,12 +318,12 @@ class Maze:
     def current_cell(self):
         """Return the agent's current cell as (col, row)."""
         return self.__current_cell
-    
+
     @property
     def previous_cell(self):
         """Return the agent's previous cell as (col, row)."""
         return self.__previous_cell
-    
+
     @property
     def status(self):
         """Return the current game status."""

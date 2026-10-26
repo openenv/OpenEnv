@@ -13,18 +13,14 @@ over HTTP.
 
 from typing import Any, Dict
 
+from openenv.core.client_types import StepResult
+from openenv.core.env_client import EnvClient
+from openenv.core.env_server.types import State
+
 # Support both in-repo and standalone imports
 try:
-    # In-repo imports (when running from OpenEnv repository)
-    from openenv.core.client_types import StepResult
-    from openenv.core.env_server.types import State
-    from openenv.core.env_client import EnvClient
     from .models import OpenAppAction, OpenAppObservation
 except ImportError:
-    # Standalone imports (when environment is standalone with openenv-core from pip)
-    from openenv.core.client_types import StepResult
-    from openenv.core.env_server.types import State
-    from openenv.core.env_client import EnvClient
     from openapp_env.models import OpenAppAction, OpenAppObservation
 
 
@@ -114,13 +110,14 @@ class OpenAppEnv(EnvClient[OpenAppAction, OpenAppObservation, State]):
             last_action_error=obs_data.get("last_action_error"),
             done=payload.get("done", False),
             reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
 
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict) -> State:

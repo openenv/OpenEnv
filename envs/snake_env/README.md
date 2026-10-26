@@ -15,6 +15,10 @@ tags:
 
 A multi-agent snake game environment for OpenEnv, based on [marlenv](https://github.com/kc-ml2/marlenv)'s Snake-v1. This environment provides a single-agent interface to the classic snake game where the snake must navigate a grid, eat fruits, and avoid walls and its own body.
 
+![Snake web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/snake.png)
+
+*The `/web` playground after a few steps: the snake, the fruit and one button per move.*
+
 ## Overview
 
 The Snake environment wraps the marlenv Snake-v1 environment to provide a clean OpenEnv-compatible interface. Multiple snakes can battle on a fixed size grid map, but this implementation focuses on single-agent gameplay.
@@ -72,7 +76,7 @@ client.close()
 
 ```bash
 # Install dependencies
-cd src/envs/snake_env
+cd envs/snake_env
 pip install -e .
 
 # Run server
@@ -252,7 +256,7 @@ pip install git+https://github.com/kc-ml2/marlenv.git
 Make sure you're in the correct directory when running the server:
 
 ```bash
-cd src/envs/snake_env
+cd envs/snake_env
 uv run --project . server
 ```
 

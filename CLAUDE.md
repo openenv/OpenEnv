@@ -23,7 +23,7 @@ OpenEnv uses Claude Code as the primary development tool. We follow a two-phase 
 Skills and agents are auto-discovered when you run Claude Code in this repo:
 
 ```bash
-git clone https://github.com/meta-pytorch/OpenEnv
+git clone https://github.com/huggingface/OpenEnv
 cd OpenEnv
 # Install git hooks for the team
 bash .claude/hooks/install.sh
@@ -77,6 +77,8 @@ cd .worktrees/add-feature
 /simplify           →  Refactor (optional)
     ↓
 /pre-submit-pr      →  Validate before PR
+    ↓
+/watch-pr           →  Monitor CI + review (optional)
 ```
 
 ### Skills vs Agents
@@ -95,6 +97,7 @@ Skills are defined in `.claude/skills/` and run inline:
 | [`alignment-review`](.claude/skills/alignment-review/SKILL.md) | "review this code" | Two-tier review (bugs + alignment flags) |
 | [`pre-submit-pr`](.claude/skills/pre-submit-pr/SKILL.md) | "ready for PR?" | Comprehensive PR readiness check |
 | [`rfc-check`](.claude/skills/rfc-check/SKILL.md) | "do I need an RFC?" | Determine if RFC required |
+| [`generate-openenv-env`](.claude/skills/generate-openenv-env/SKILL.md) | "generate an env for textarena" | Build an OpenEnv env from a use case |
 
 **TDD Workflow Skills:**
 
@@ -106,6 +109,7 @@ Skills are defined in `.claude/skills/` and run inline:
 | [`implement`](.claude/skills/implement/SKILL.md) | "/implement" | Make tests pass (Green phase) |
 | [`update-docs`](.claude/skills/update-docs/SKILL.md) | "/update-docs" | Fix stale docs after API changes |
 | [`simplify`](.claude/skills/simplify/SKILL.md) | "/simplify" | Refactor after tests pass |
+| [`watch-pr`](.claude/skills/watch-pr/SKILL.md) | "/watch-pr" | Monitor CI + Greptile review after PR |
 
 ### Available Subagents
 
@@ -174,6 +178,80 @@ Before making changes, understand the design constraints:
 - **Rewards inside environment**: Domain knowledge encapsulated in environment, not external
 - **Client-server separation**: Clients never import from `server/` directory
 
+## Simplicity
+
+OpenEnv values **leanness and simplicity**. Prefer straightforward, inline code over abstractions, helpers or utilities, even at the cost of some generality.
+
+- Do not add layers of indirection (registries, factories, plugin systems) unless an RFC asks for them.
+- Prefer a simple implementation that covers the cases that exist today over a catch-all for every edge case.
+- Do not add defensive code, fallback paths or configuration options "just in case".
+- Avoid `hasattr` and `getattr`. They usually hide overly defensive code or a version check. Drop the conditional, or write the version check explicitly.
+- Keep comments short and about the project, not about the PR that added the code.
+- When in doubt, prefer less code.
+
+## Self-contained environments
+
+Each environment under `envs/` is self-contained: it can be read, changed and deployed on its own.
+
+- No imports across environments. Copy a small helper instead of sharing it.
+- Optional features (web playground drawings, quick actions, extra tools) live in the environment's own files. They must never make adding a new environment harder or add work for environments that do not use them.
+- When the same pattern is copied across environments, keep the copies aligned (names, structure, comments). If you fix one copy, fix the others in the same PR, or open an issue listing them.
+
+## Follow the Hugging Face ecosystem
+
+OpenEnv runs on the Hub and next to `huggingface_hub`, the `hf` CLI, transformers and Gradio. When OpenEnv wraps something these tools already do (uploading, deleting, deploying a Space, auth, caching, repo ids), keep their defaults, flag names and semantics. Do not invent new behavior.
+
+- Before adding or changing Hub-facing behavior, check what `huggingface_hub` and the `hf` CLI do and match it. For example, `openenv push` only deletes remote files with `--delete <pattern>`, like `hf upload --delete`.
+- Mention that comparison in the PR description.
+- If diverging seems necessary, raise it in the issue or PR before implementing it.
+
+## Training framework neutrality
+
+OpenEnv works with any training framework. Docs, examples and APIs must not favor one framework: list integrations in neutral order and keep framework-specific code in examples or in the framework's own repository.
+
+## Docstrings
+
+Docstrings must follow the HF doc-builder format used by the reference API docs. Do **not** use Google, NumPy, or Sphinx styles.
+
+Rules:
+
+* Types appear in backticks inside parentheses: (`str`)
+* Optional parameters are marked with `*optional*`
+* Defaults are written as: `defaults to <value>`
+* When the default is `None`, prefer (`str`, *optional*) instead of (`str` or `None`, *optional*, defaults to `None`)
+* Union types use `or`: `str` or `None`
+* References to classes use the format: [`~openenv.core.EnvClient`]
+* Non-standard headers (`Usage:`, `Note:`, `Class Attributes:`) are not supported — use `Attributes:` or fold text into the description
+* `Examples:` (plural) with a blank line then a fenced ` ```python ``` ` block — no `>>>` prompts
+
+Example:
+
+````python
+def method(self, param1: str, param2: int = 1, param3: float | None = None):
+    """
+    Brief one-line description of what this does.
+
+    Args:
+        param1 (`str`):
+            Description of required param.
+        param2 (`int`, *optional*, defaults to `1`):
+            Description of optional param with default.
+        param3 (`float`, *optional*):
+            Description of optional param without explicit default.
+
+    Returns:
+        `dict` with keys:
+            - `key1` (`list[int]`):
+                Description of this key.
+
+    Examples:
+
+    ```python
+    result = method("hello")
+    ```
+    """
+````
+
 ## Build & Development Commands
 Below are reference commands that you are likely going to use often:
 
@@ -187,15 +265,22 @@ PYTHONPATH=src:envs uv run pytest tests/ -v --tb=short
 # Run a single test file
 PYTHONPATH=src:envs uv run pytest tests/envs/test_echo_environment.py -v
 
-# Lint check (format + rules)
+# Lint check (import sort + format + rules)
+uv run usort check src/ tests/
 uv run ruff format src/ tests/ --check
 uv run ruff check src/ tests/
 
-# Auto-format code
+# Auto-format code (import sort + ruff — matches arc f pipeline)
+uv run usort format src/ tests/
 uv run ruff format src/ tests/
 
-# Build documentation locally
-mkdocs serve --config-file docs/mkdocs.yml
+# Build and preview documentation locally
+doc-builder preview openenv docs/source
+
+# Sync environment doc stubs with their source READMEs (run after updating any envs/*/README.md)
+python scripts/sync_env_docs.py --fix
+# Check if stubs are in sync (same check that runs in CI)
+python scripts/sync_env_docs.py --check
 
 # Build Docker images
 docker build -t openenv-base:latest -f src/openenv/core/containers/images/Dockerfile .
@@ -211,6 +296,7 @@ bash .claude/hooks/lint.sh          # Run ruff format check
 bash .claude/hooks/test.sh          # Run pytest (excludes special envs)
 bash .claude/hooks/check-debug.sh   # Find debug code (print, breakpoint, TODO)
 bash .claude/hooks/post-push-pr.sh  # Validate PR after push (freshness, CI, conflicts)
+bash .claude/hooks/ci-wait.sh <PR>  # Poll CI until checks complete or timeout
 ```
 
 These are automatically invoked by `/alignment-review` and `/pre-submit-pr` skills.

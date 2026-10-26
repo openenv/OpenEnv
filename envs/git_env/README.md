@@ -1,3 +1,16 @@
+---
+title: Git Environment Server
+emoji: 🔀
+colorFrom: red
+colorTo: yellow
+sdk: docker
+pinned: false
+app_port: 8000
+base_path: /web
+tags:
+  - openenv
+---
+
 # Git Environment
 
 A Git server environment using Gitea that provides isolated Git repository management optimized for task-based RL training. Perfect for training agents on Git operations with fast reset capabilities.
@@ -31,7 +44,7 @@ The Git Environment connects to a **shared external Gitea service** for optimal 
 from envs.git_env import GitAction, GitEnv
 
 # Create environment from Docker image
-git_env = GitEnv.from_docker_image("git-env:latest")
+git_env = GitEnv.from_docker_image("git-env:latest").sync()
 
 # Reset environment
 result = git_env.reset()
@@ -76,7 +89,7 @@ docker exec openenv-gitea curl -X POST \
   -u gitea:gitea123 \
   -H 'Content-Type: application/json' \
   -d '{
-    "clone_addr": "https://github.com/meta-pytorch/OpenEnv",
+    "clone_addr": "https://github.com/huggingface/OpenEnv",
     "repo_name": "OpenEnv",
     "repo_owner": "gitea",
     "service": "github"
@@ -177,7 +190,8 @@ docker run \
 
 Then in your training code, environments automatically reset to the configured state.
 
-See [`examples/local_git_env.py`](../../../examples/local_git_env.py) for complete working example.
+See [`examples/local_git_env.py`](../../examples/local_git_env.py) for a complete
+synchronous example that resolves the Docker bootstrap handle with `.sync()`.
 
 ## Project Structure
 

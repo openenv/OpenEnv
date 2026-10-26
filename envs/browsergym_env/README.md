@@ -18,6 +18,10 @@ tags:
 
 BrowserGym is a unified framework for web-based agent tasks that provides access to multiple benchmarks under a single Gymnasium-compatible API. This integration brings the complete training-to-evaluation pipeline for web agents into OpenEnv.
 
+![BrowserGym web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/browsergym.png)
+
+*The `/web` playground on MiniWoB `click-test`: the goal, the page URL and the browser screenshot (screenshots on, 320×240 viewport).*
+
 ## Why BrowserGym?
 
 BrowserGym provides a complete pipeline for developing web agents: train on simple tasks, then evaluate on realistic websites.
@@ -47,7 +51,7 @@ from browsergym_env import BrowserGymEnv, BrowserGymAction
 
 # Create environment for MiniWoB training task
 env = BrowserGymEnv.from_docker_image(
-    "ghcr.io/openenv/browsergym-env:latest",
+    "ghcr.io/huggingface/openenv-browsergym-env:latest",
     environment={
         "BROWSERGYM_BENCHMARK": "miniwob",
         "BROWSERGYM_TASK_NAME": "click-test",  # or "click-button", "click-dialog", etc.
@@ -72,6 +76,12 @@ for episode in range(1000):
 
 env.close()
 ```
+
+## Training with TRL
+
+To train a model on BrowserGym, pass a small environment class to TRL's `GRPOTrainer` through `environment_factory`. Its methods (`click`, `fill`, `send_keys`, `scroll`, `noop`) become the model's tools, and TRL runs the multi-turn loop. The [BrowserGym tutorial](https://huggingface.co/docs/openenv/tutorials/browsergym-harness) walks through it, and TRL's [`examples/grpo_browsergym`](https://github.com/huggingface/trl/tree/main/examples/grpo_browsergym) is the full script, with screenshots for vision-language models.
+
+`browsergym_env.harness.BrowserGymSessionFactory` exposes the same tools to OpenEnv's session runtime, which [`examples/browsergym_harness_eval.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/browsergym_harness_eval.py) uses to evaluate a chat model on BrowserGym.
 
 ### Available Tasks by Benchmark
 
@@ -244,7 +254,7 @@ from envs.browsergym_env import BrowserGymEnv, BrowserGymAction
 
 # Create environment for WebArena evaluation
 env = BrowserGymEnv.from_docker_image(
-    "ghcr.io/openenv/browsergym-env:latest",
+    "ghcr.io/huggingface/openenv-browsergym-env:latest",
     environment={
         "BROWSERGYM_BENCHMARK": "webarena",
         "BROWSERGYM_TASK_NAME": "0",  # Task ID
@@ -543,7 +553,7 @@ python app.py
 browsergym_env/
 ├── __init__.py              # Module exports
 ├── models.py                # Action, Observation, State dataclasses
-├── client.py                # HTTPEnvClient implementation
+├── client.py                # BrowserGymEnv client (EnvClient)
 ├── README.md                # This file
 └── server/
     ├── __init__.py
@@ -560,4 +570,4 @@ browsergym_env/
 - [WebArena Paper](https://arxiv.org/abs/2307.13854)
 - [WebArena Website](https://webarena.dev/)
 - [VisualWebArena Paper](https://jykoh.com/vwa)
-- [OpenEnv Documentation](https://github.com/meta-pytorch/OpenEnv)
+- [OpenEnv Documentation](https://github.com/huggingface/OpenEnv)

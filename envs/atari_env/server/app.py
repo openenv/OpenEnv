@@ -28,14 +28,24 @@ Environment variables:
     ATARI_DIFFICULTY: Game difficulty (optional)
     ATARI_REPEAT_ACTION_PROB: Sticky action probability (default: "0.0")
     ATARI_FRAMESKIP: Frameskip (default: "4")
+    MAX_CONCURRENT_ENVS: Maximum concurrent WebSocket sessions (default: "8")
 """
 
 import os
 
 from openenv.core.env_server import create_app
 
-from ..models import AtariAction, AtariObservation
-from .atari_environment import AtariEnvironment
+# Support both in-repo and standalone imports
+try:
+    # In-repo imports (when running from OpenEnv repository)
+    from ..models import AtariAction, AtariObservation, AtariState
+    from .atari_environment import AtariEnvironment
+except ImportError as e:
+    if "relative import" not in str(e) and "no known parent package" not in str(e):
+        raise
+    # Standalone imports (when running via uvicorn server.app:app)
+    from models import AtariAction, AtariObservation, AtariState
+    from server.atari_environment import AtariEnvironment
 
 # Get configuration from environment variables
 game_name = os.getenv("ATARI_GAME", "pong")
@@ -69,10 +79,21 @@ def create_atari_environment():
 
 # Create the FastAPI app with web interface and README integration
 # Pass the factory function instead of an instance for WebSocket session support
-app = create_app(create_atari_environment, AtariAction, AtariObservation, env_name="atari_env")
+app = create_app(
+    create_atari_environment,
+    AtariAction,
+    AtariObservation,
+    env_name="atari_env",
+    state_cls=AtariState,
+    max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
+)
 
 
-if __name__ == "__main__":
+def main():
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    main()

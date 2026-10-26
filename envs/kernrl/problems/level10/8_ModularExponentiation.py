@@ -29,6 +29,7 @@ class Model(nn.Module):
     Simplified implementation using Python integers converted to tensors.
     Real GPU implementation would use multi-precision arithmetic.
     """
+
     def __init__(self, num_bits: int = 256):
         super(Model, self).__init__()
         self.num_bits = num_bits
@@ -50,10 +51,7 @@ class Model(nn.Module):
         return result
 
     def forward(
-        self,
-        base: torch.Tensor,
-        exponent: torch.Tensor,
-        modulus: torch.Tensor
+        self, base: torch.Tensor, exponent: torch.Tensor, modulus: torch.Tensor
     ) -> torch.Tensor:
         """
         Compute base^exponent mod modulus.
@@ -94,8 +92,10 @@ class Model(nn.Module):
 num_bits = 256  # 256-bit integers
 words_per_int = (num_bits + 63) // 64
 
+
 def get_inputs():
     import random
+
     # Generate random large integers
     base_int = random.randint(2, 2**num_bits - 1)
     exp_int = random.randint(2, 2**num_bits - 1)
@@ -114,6 +114,7 @@ def get_inputs():
     modulus = to_limbs(mod_int)
 
     return [base, exponent, modulus]
+
 
 def get_init_inputs():
     return [num_bits]

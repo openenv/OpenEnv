@@ -1,8 +1,10 @@
-#Integration tests using seed-database API
+# Integration tests using seed-database API
 
-import pytest
 import json
 from unittest.mock import patch
+
+import pytest
+
 
 class TestDatabaseSeeding:
     """Verify database seeding works correctly"""
@@ -11,16 +13,15 @@ class TestDatabaseSeeding:
         """Test that database seeding creates all required tables"""
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
-        
+
         response = client.get(
-            "/api/database-state",
-            headers={"x-database-id": database_id}
+            "/api/database-state", headers={"x-database-id": database_id}
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        
+
         # Verify expected tables with data
         expected_tables = ["users", "calendars", "events", "acls", "scopes"]
         for table in expected_tables:
@@ -31,7 +32,9 @@ class TestDatabaseSeeding:
 class TestMCPFlow:
     """Test MCP protocol flow: Swagger → MCP → Calendar APIs → Database"""
 
-    def test_mcp_vs_direct_api_returns_same_data(self, seeded_database, mcp_request_helper, api_headers):
+    def test_mcp_vs_direct_api_returns_same_data(
+        self, seeded_database, mcp_request_helper, api_headers
+    ):
         """Verify MCP flow returns (same results as direct API call)"""
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
@@ -40,7 +43,7 @@ class TestMCPFlow:
         # Direct API call (what Swagger does)
         direct_response = client.get(
             "/users/me/calendarList?maxResults=100&showDeleted=false&showHidden=false",
-            headers=api_headers(database_id, user_id)
+            headers=api_headers(database_id, user_id),
         )
         assert direct_response.status_code == 200
         direct_data = direct_response.json()
@@ -56,21 +59,19 @@ class TestMCPFlow:
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
         user_id = seeded_database["users"]["alice"]
-        
+
         # Get a calendar ID first
         list_response = client.get(
-            "/users/me/calendarList",
-            headers=api_headers(database_id, user_id)
+            "/users/me/calendarList", headers=api_headers(database_id, user_id)
         )
         calendar_id = list_response.json()["items"][0]["id"]
-        
+
         # Get the calendar details directly
         direct_calendar_response = client.get(
-            f"/calendars/{calendar_id}",
-            headers=api_headers(database_id, user_id)
+            f"/calendars/{calendar_id}", headers=api_headers(database_id, user_id)
         )
         calendar_data_direct = direct_calendar_response.json()
-        
+
         # Trying to make actual HTTP requests
         # Verify the direct API works correctly
         assert calendar_data_direct["id"] == calendar_id
@@ -85,37 +86,35 @@ class TestCalendarAPIs:
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
         user_id = seeded_database["users"]["alice"]
-        
+
         # CREATE
         create_response = client.post(
             "/calendars",
             json={"summary": "Test Calendar", "timeZone": "UTC"},
-            headers=api_headers(database_id, user_id)
+            headers=api_headers(database_id, user_id),
         )
         assert create_response.status_code == 201
         calendar_id = create_response.json()["id"]
-        
+
         # READ
         get_response = client.get(
-            f"/calendars/{calendar_id}",
-            headers=api_headers(database_id, user_id)
+            f"/calendars/{calendar_id}", headers=api_headers(database_id, user_id)
         )
         assert get_response.status_code == 200
         assert get_response.json()["summary"] == "Test Calendar"
-        
+
         # UPDATE
         update_response = client.patch(
             f"/calendars/{calendar_id}",
             json={"summary": "Updated Calendar"},
-            headers=api_headers(database_id, user_id)
+            headers=api_headers(database_id, user_id),
         )
         assert update_response.status_code == 200
         assert update_response.json()["summary"] == "Updated Calendar"
-        
+
         # DELETE
         delete_response = client.delete(
-            f"/calendars/{calendar_id}",
-            headers=api_headers(database_id, user_id)
+            f"/calendars/{calendar_id}", headers=api_headers(database_id, user_id)
         )
         assert delete_response.status_code == 200
 
@@ -128,17 +127,16 @@ class TestCalendarListAPIs:
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
         user_id = seeded_database["users"]["alice"]
-        
+
         response = client.get(
-            "/users/me/calendarList",
-            headers=api_headers(database_id, user_id)
+            "/users/me/calendarList", headers=api_headers(database_id, user_id)
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["kind"] == "calendar#calendarList"
         assert len(data["items"]) > 0
-        
+
         # Verify Alice's calendars are present
         summaries = [item["summary"] for item in data["items"]]
         assert any("Alice" in summary for summary in summaries)
@@ -148,12 +146,11 @@ class TestCalendarListAPIs:
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
         user_id = seeded_database["users"]["alice"]
-        
+
         response = client.get(
-            "/users/me/calendarList/primary",
-            headers=api_headers(database_id, user_id)
+            "/users/me/calendarList/primary", headers=api_headers(database_id, user_id)
         )
-        
+
         assert response.status_code == 200
         assert response.json()["primary"] is True
 
@@ -162,22 +159,23 @@ class TestCalendarListAPIs:
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
         user_id = seeded_database["users"]["alice"]
-        
+
         # Get writable calendar
         list_response = client.get(
-            "/users/me/calendarList",
-            headers=api_headers(database_id, user_id)
+            "/users/me/calendarList", headers=api_headers(database_id, user_id)
         )
         calendars = list_response.json()["items"]
-        writable_cal = next(c for c in calendars if c["accessRole"] in ["writer", "owner"])
-        
+        writable_cal = next(
+            c for c in calendars if c["accessRole"] in ["writer", "owner"]
+        )
+
         # Update settings
         response = client.patch(
             f"/users/me/calendarList/{writable_cal['id']}",
             json={"hidden": True, "selected": False},
-            headers=api_headers(database_id, user_id)
+            headers=api_headers(database_id, user_id),
         )
-        
+
         assert response.status_code == 200
         assert response.json()["hidden"] is True
 
@@ -190,43 +188,36 @@ class TestEventAPIs:
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
         user_id = seeded_database["users"]["alice"]
-        
+
         # Get calendar
         list_response = client.get(
-            "/users/me/calendarList",
-            headers=api_headers(database_id, user_id)
+            "/users/me/calendarList", headers=api_headers(database_id, user_id)
         )
         calendar_id = list_response.json()["items"][0]["id"]
-        
+
         # Create event
         event_data = {
             "summary": "Test Event",
             "description": "Event created during integration test",
-            "start": {
-                "dateTime": "2024-12-01T10:00:00Z",
-                "timeZone": "UTC"
-            },
-            "end": {
-                "dateTime": "2024-12-01T11:00:00Z",
-                "timeZone": "UTC"
-            }
+            "start": {"dateTime": "2024-12-01T10:00:00Z", "timeZone": "UTC"},
+            "end": {"dateTime": "2024-12-01T11:00:00Z", "timeZone": "UTC"},
         }
-        
+
         create_response = client.post(
             f"/calendars/{calendar_id}/events",
             json=event_data,
-            headers=api_headers(database_id, user_id)
+            headers=api_headers(database_id, user_id),
         )
-        
+
         assert create_response.status_code == 201
         event_id = create_response.json()["id"]
-        
+
         # Get event
         get_response = client.get(
             f"/calendars/{calendar_id}/events/{event_id}",
-            headers=api_headers(database_id, user_id)
+            headers=api_headers(database_id, user_id),
         )
-        
+
         assert get_response.status_code == 200
         assert get_response.json()["summary"] == "Test Event"
 
@@ -239,49 +230,48 @@ class TestACLPermissions:
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
         user_id = seeded_database["users"]["alice"]
-        
+
         # Get owner calendar
         list_response = client.get(
-            "/users/me/calendarList",
-            headers=api_headers(database_id, user_id)
+            "/users/me/calendarList", headers=api_headers(database_id, user_id)
         )
         calendars = list_response.json()["items"]
         owner_cal = next(c for c in calendars if c.get("accessRole") == "owner")
-        
+
         # Get ACL list
         acl_response = client.get(
             f"/calendars/{owner_cal['id']}/acl",
-            headers=api_headers(database_id, user_id)
+            headers=api_headers(database_id, user_id),
         )
-        
+
         assert acl_response.status_code == 200
         acls = acl_response.json()
         # ACL response should be a dict with 'items' containing the list of rules
         assert isinstance(acls, dict)
-        assert 'items' in acls
-        assert isinstance(acls['items'], list)
+        assert "items" in acls
+        assert isinstance(acls["items"], list)
         assert any(acl.get("role") == "owner" for acl in acls["items"])
 
     def test_cross_user_isolation(self, seeded_database, api_headers):
         """Test that users can only see their own calendars"""
         client = seeded_database["client"]
         database_id = seeded_database["database_id"]
-        
+
         # Get Alice's calendars
         alice_response = client.get(
             "/users/me/calendarList",
-            headers=api_headers(database_id, seeded_database["users"]["alice"])
+            headers=api_headers(database_id, seeded_database["users"]["alice"]),
         )
-        
+
         # Get Bob's calendars
         bob_response = client.get(
             "/users/me/calendarList",
-            headers=api_headers(database_id, seeded_database["users"]["bob"])
+            headers=api_headers(database_id, seeded_database["users"]["bob"]),
         )
-        
+
         assert alice_response.status_code == 200
         assert bob_response.status_code == 200
-        
+
         # Each user should have their own calendars
         assert len(alice_response.json()["items"]) > 0
         assert len(bob_response.json()["items"]) > 0

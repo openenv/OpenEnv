@@ -14,8 +14,8 @@ version = "0.1.0"
 description = "Echo Environment for OpenEnv - simple test environment that echoes back messages"
 requires-python = ">=3.10"
 dependencies = [
-    # Core OpenEnv dependencies (required for server functionality)
-    "openenv-core[core]>=0.2.1",
+    # Core OpenEnv dependencies (required for server functionality).
+    "openenv>=0.3.1",
     "fastapi>=0.115.0",
     "pydantic>=2.0.0",
     "uvicorn>=0.24.0",
@@ -25,7 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
     "pytest-cov>=4.0.0",
 ]
 

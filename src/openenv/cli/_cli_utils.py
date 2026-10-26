@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """CLI utilities for OpenEnv command-line interface."""
 
@@ -15,19 +11,37 @@ from rich.console import Console
 console = Console()
 
 
+def _extract_hf_username(user_info: object) -> str | None:
+    """Extract a username from the supported Hugging Face whoami shapes."""
+    if isinstance(user_info, dict):
+        return (
+            user_info.get("name")
+            or user_info.get("fullname")
+            or user_info.get("username")
+        )
+
+    return (
+        getattr(user_info, "name", None)
+        or getattr(user_info, "fullname", None)
+        or getattr(user_info, "username", None)
+    )
+
+
 def validate_env_structure(env_dir: Path, strict: bool = False) -> List[str]:
     """
     Validate that the directory follows OpenEnv environment structure.
 
     Args:
-        env_dir: Path to environment directory
-        strict: If True, enforce all optional requirements
+        env_dir (`Path`):
+            Path to the environment directory.
+        strict (`bool`, *optional*, defaults to `False`):
+            If `True`, enforce all optional requirements.
 
     Returns:
-        List of validation warnings (empty if all checks pass)
+        `list` of validation warnings (empty if all checks pass).
 
     Raises:
-        FileNotFoundError: If required files are missing
+        `FileNotFoundError`: If required files are missing.
     """
     warnings = []
 
@@ -36,7 +50,6 @@ def validate_env_structure(env_dir: Path, strict: bool = False) -> List[str]:
         "openenv.yaml",
         "__init__.py",
         "client.py",
-        "models.py",
         "README.md",
     ]
 

@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
 
+
 class Model(nn.Module):
     """
     Simple model that performs RMS Normalization.
     """
+
     def __init__(self, num_features: int, eps: float = 1e-5):
         """
         Initializes the RMSNorm layer.
@@ -28,19 +30,22 @@ class Model(nn.Module):
             torch.Tensor: Output tensor with RMS Normalization applied, same shape as input.
         """
         # Calculate the RMS along the feature dimension
-        rms = torch.sqrt(torch.mean(x ** 2, dim=1, keepdim=True) + self.eps)
+        rms = torch.sqrt(torch.mean(x**2, dim=1, keepdim=True) + self.eps)
 
         # Normalize the input by dividing by the RMS
         return x / rms
+
 
 batch_size = 16
 features = 64
 dim1 = 256
 dim2 = 256
 
+
 def get_inputs():
     x = torch.randn(batch_size, features, dim1, dim2)
     return [x]
+
 
 def get_init_inputs():
     return [features]

@@ -21,6 +21,7 @@ class Model(nn.Module):
     """
     2D median filter for noise removal.
     """
+
     def __init__(self, kernel_size: int = 5):
         super(Model, self).__init__()
         self.kernel_size = kernel_size
@@ -41,7 +42,7 @@ class Model(nn.Module):
         ks = self.kernel_size
 
         # Pad image
-        padded = F.pad(image, (radius, radius, radius, radius), mode='reflect')
+        padded = F.pad(image, (radius, radius, radius, radius), mode="reflect")
 
         # Unfold to get all windows
         # Shape: (H, W, ks, ks)
@@ -64,6 +65,7 @@ import torch.nn.functional as F
 image_height = 512
 image_width = 512
 
+
 def get_inputs():
     # Image with salt-and-pepper noise
     image = torch.rand(image_height, image_width)
@@ -72,6 +74,7 @@ def get_inputs():
     image[noise_mask < 0.05] = 0.0  # Salt
     image[noise_mask > 0.95] = 1.0  # Pepper
     return [image]
+
 
 def get_init_inputs():
     return [5]  # kernel_size

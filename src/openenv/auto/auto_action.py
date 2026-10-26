@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """
 AutoAction - Automatic Action Class Selection
@@ -23,7 +19,7 @@ Example:
     >>> action = CodeAction(code="print('Hello!')")
     >>>
     >>> # From HuggingFace Hub
-    >>> CodeAction = AutoAction.from_env("meta-pytorch/coding-env")
+    >>> CodeAction = AutoAction.from_env("openenv/coding_env")
     >>>
     >>> # Use with AutoEnv
     >>> env = AutoEnv.from_env("coding-env")
@@ -33,9 +29,9 @@ Example:
 from __future__ import annotations
 
 import logging
-from typing import Type, Dict, Any
+from typing import Any, Dict, Type
 
-from ._discovery import get_discovery, _is_hub_url
+from ._discovery import _is_hub_url, get_discovery
 from .auto_env import AutoEnv
 
 logger = logging.getLogger(__name__)
@@ -58,7 +54,7 @@ class AutoAction:
         >>> action = CodeAction(code="print('test')")
         >>>
         >>> # From HuggingFace Hub
-        >>> CodeAction = AutoAction.from_env("meta-pytorch/coding-env")
+        >>> CodeAction = AutoAction.from_env("openenv/coding_env")
         >>> action = CodeAction(code="print('test')")
         >>>
         >>> # Use with AutoEnv for a complete workflow
@@ -94,8 +90,8 @@ class AutoAction:
             name: Environment name or HuggingFace Hub repo ID
                   Examples:
                   - "coding" / "coding-env" / "coding_env"
-                  - "meta-pytorch/coding-env" (Hub repo ID)
-                  - "https://huggingface.co/meta-pytorch/coding-env" (Hub URL)
+                  - "openenv/coding_env" (Hub repo ID)
+                  - "https://huggingface.co/openenv/coding_env" (Hub URL)
             skip_install: If True, skip package installation and return
                 GenericAction class instead. Use this when working with
                 GenericEnvClient to avoid installing remote packages.
@@ -114,7 +110,7 @@ class AutoAction:
             >>> action = CodeAction(code="print('Hello!')")
             >>>
             >>> # From HuggingFace Hub
-            >>> CodeAction = AutoAction.from_env("meta-pytorch/coding-env")
+            >>> CodeAction = AutoAction.from_env("openenv/coding_env")
             >>> action = CodeAction(code="print('Hello!')")
             >>>
             >>> # Skip installation, use GenericAction (for GenericEnvClient)

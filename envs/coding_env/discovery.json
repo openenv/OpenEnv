@@ -1,0 +1,9 @@
+{
+  "description": "Run Python snippets and inspect standard output, standard error, and exit status. Reset starts a fresh code-execution session.",
+  "tags": ["openenv", "rl-environment", "python", "code-execution", "programming"],
+  "representative_queries": [
+    "find an environment for executing Python code actions",
+    "test a coding agent with stdout stderr and exit-code feedback",
+    "find a Python execution environment for agent rollouts"
+  ]
+}

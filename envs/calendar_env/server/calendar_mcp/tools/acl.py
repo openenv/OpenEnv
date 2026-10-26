@@ -4,6 +4,7 @@ ACL Tools Module
 This module contains tools related to ACL.
 Follows Google Calendar API v3 structure for ACL operations.
 """
+
 ACL_TOOLS = [
     {
         "name": "get_acl_rule",
@@ -32,10 +33,10 @@ ACL_TOOLS = [
             "type": "object",
             "properties": {
                 "calendarId": {"type": "string", "minLength": 1},
-                "ruleId": {"type": "string", "minLength": 1}
+                "ruleId": {"type": "string", "minLength": 1},
             },
-            "required": ["calendarId", "ruleId"]
-        }
+            "required": ["calendarId", "ruleId"],
+        },
     },
     {
         "name": "list_acl_rules",
@@ -80,24 +81,24 @@ ACL_TOOLS = [
                     "minimum": 1,
                     "maximum": 250,
                     "default": 100,
-                    "description": "Maximum number of entries returned on one result page"
+                    "description": "Maximum number of entries returned on one result page",
                 },
                 "pageToken": {
                     "type": "string",
-                    "description": "Token specifying which result page to return"
+                    "description": "Token specifying which result page to return",
                 },
                 "showDeleted": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Whether to include deleted ACLs in the result"
+                    "description": "Whether to include deleted ACLs in the result",
                 },
                 "syncToken": {
                     "type": "string",
-                    "description": "Token for incremental synchronization"
-                }
+                    "description": "Token for incremental synchronization",
+                },
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "insert_acl_rule",
@@ -133,19 +134,19 @@ ACL_TOOLS = [
                     "type": "object",
                     "properties": {
                         "type": {"type": "string", "minLength": 1},
-                        "value": {"type": "string", "minLength": 1}
+                        "value": {"type": "string", "minLength": 1},
                     },
-                    "required": ["type"]
+                    "required": ["type"],
                 },
                 "role": {"type": "string", "minLength": 1},
                 "sendNotifications": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Whether to send notifications about the calendar sharing change"
-                }
+                    "description": "Whether to send notifications about the calendar sharing change",
+                },
             },
-            "required": ["calendarId", "scope", "role"]
-        }
+            "required": ["calendarId", "scope", "role"],
+        },
     },
     {
         "name": "update_acl_rule",
@@ -179,19 +180,19 @@ ACL_TOOLS = [
                     "type": "object",
                     "properties": {
                         "type": {"type": "string", "minLength": 1},
-                        "value": {"type": "string", "minLength": 1}
+                        "value": {"type": "string", "minLength": 1},
                     },
-                    "required": ["type"]
+                    "required": ["type"],
                 },
                 "role": {"type": "string", "minLength": 1},
                 "sendNotifications": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Whether to send notifications about the calendar sharing change"
-                }
+                    "description": "Whether to send notifications about the calendar sharing change",
+                },
             },
-            "required": ["calendarId", "ruleId", "scope"]
-        }
+            "required": ["calendarId", "ruleId", "scope"],
+        },
     },
     {
         "name": "patch_acl_rule",
@@ -225,18 +226,18 @@ ACL_TOOLS = [
                     "type": "object",
                     "properties": {
                         "type": {"type": "string"},
-                        "value": {"type": "string"}
-                    }
+                        "value": {"type": "string"},
+                    },
                 },
                 "role": {"type": "string"},
                 "sendNotifications": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Whether to send notifications about the calendar sharing change"
+                    "description": "Whether to send notifications about the calendar sharing change",
                 },
             },
-            "required": ["calendarId", "ruleId"]
-        }
+            "required": ["calendarId", "ruleId"],
+        },
     },
     {
         "name": "delete_acl_rule",
@@ -263,8 +264,8 @@ ACL_TOOLS = [
                 "calendarId": {"type": "string", "minLength": 1},
                 "ruleId": {"type": "string", "minLength": 1},
             },
-            "required": ["calendarId", "ruleId"]
-        }
+            "required": ["calendarId", "ruleId"],
+        },
     },
     {
         "name": "watch_acl",
@@ -313,26 +314,26 @@ ACL_TOOLS = [
                 "calendarId": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Calendar identifier to watch for ACL changes"
+                    "description": "Calendar identifier to watch for ACL changes",
                 },
                 "id": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Unique channel identifier"
+                    "description": "Unique channel identifier",
                 },
                 "type": {
                     "type": "string",
                     "default": "web_hook",
-                    "description": "Channel type (only 'web_hook' supported)"
+                    "description": "Channel type (only 'web_hook' supported)",
                 },
                 "address": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Webhook URL to receive notifications"
+                    "description": "Webhook URL to receive notifications",
                 },
                 "token": {
                     "type": "string",
-                    "description": "Optional token for webhook authentication"
+                    "description": "Optional token for webhook authentication",
                 },
                 "params": {
                     "type": "object",
@@ -340,12 +341,12 @@ ACL_TOOLS = [
                     "properties": {
                         "ttl": {
                             "type": "string",
-                            "description": "Time to live in seconds (string)."
+                            "description": "Time to live in seconds (string).",
                         }
-                    }
-                }
+                    },
+                },
             },
-            "required": ["calendarId", "id", "type", "address"]
-        }
-    }
+            "required": ["calendarId", "id", "type", "address"],
+        },
+    },
 ]

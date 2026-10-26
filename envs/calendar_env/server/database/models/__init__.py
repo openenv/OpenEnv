@@ -2,13 +2,13 @@
 Database models package
 """
 
-from .base import Base
-from .user import User
-from .calendar import Calendar
-from .event import Event, Attendees, Attachment, WorkingLocationProperties
-from .color import Color
-from .settings import Settings
 from .acl import ACLs, Scope
+from .base import Base
+from .calendar import Calendar
+from .color import Color
+from .event import Attachment, Attendees, Event, WorkingLocationProperties
+from .settings import Settings
+from .user import User
 from .watch_channel import WatchChannel
 
 __all__ = [
@@ -23,5 +23,5 @@ __all__ = [
     "Settings",
     "ACLs",
     "Scope",
-    "WatchChannel"
+    "WatchChannel",
 ]

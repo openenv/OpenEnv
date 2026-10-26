@@ -11,12 +11,26 @@ The Chat environment provides a chat-based interface for LLMs with support
 for tokenization and message history management.
 """
 
-from pydantic import Field
-
-import torch
-
 from openenv.core.env_server.interfaces import Message
 from openenv.core.env_server.types import Action, Observation, State
+from pydantic import Field, field_validator
+
+
+def _flatten_tokens(value) -> list[int]:
+    """Coerce nested tensor-like or sequence inputs into a flat token list."""
+    if hasattr(value, "tolist") and callable(value.tolist):
+        value = value.tolist()
+
+    if isinstance(value, tuple):
+        value = list(value)
+
+    if isinstance(value, list):
+        flattened: list[int] = []
+        for item in value:
+            flattened.extend(_flatten_tokens(item))
+        return flattened
+
+    return [int(value)]
 
 
 class ChatAction(Action):
@@ -26,21 +40,22 @@ class ChatAction(Action):
     This interfaces directly with models.
     """
 
-    tokens: torch.Tensor = Field(default_factory=lambda: torch.tensor([]))
+    tokens: list[int] = Field(..., min_length=1)
 
-    def __post_init__(self):
-        """Validate required Fields after initialization."""
-        if self.tokens.numel() == 0:
-            raise ValueError("tokens is required and cannot be empty")
+    @field_validator("tokens", mode="before")
+    @classmethod
+    def _coerce_tokens(cls, value):
+        """Accept either tensors or JSON arrays on the public HTTP surface."""
+        if isinstance(value, (list, tuple)) or hasattr(value, "tolist"):
+            return _flatten_tokens(value)
+        raise TypeError("tokens must be provided as a sequence of token ids")
 
 
 class ChatState(State):
     """State of the ChatEnvironment containing message history."""
 
     history_messages: list[Message] = Field(default_factory=list)
-    history_tokens: list[torch.Tensor] = Field(
-        default_factory=list
-    )  # Same len as messages
+    history_tokens: list[list[int]] = Field(default_factory=list)  # Same len as messages
 
 
 class ChatObservation(Observation):
@@ -60,5 +75,5 @@ class ChatObservation(Observation):
     """
 
     messages: list[Message] = Field(default_factory=list)
-    tokens: torch.Tensor = Field(default_factory=lambda: torch.tensor([]))
+    tokens: list[int] = Field(default_factory=list)
     # Inherited Fields from Observation ABC: reward, done, metadata

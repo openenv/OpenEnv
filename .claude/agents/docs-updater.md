@@ -35,8 +35,8 @@ Bash, Read, Write, Edit, Grep, Glob
 4. **Apply targeted edits** — Minimal changes that update the reference
    to match the new API. Preserve surrounding document structure.
 
-5. **Verify** — Run `mkdocs build --strict 2>&1 | head -50` if docs/
-   files were changed (skip if mkdocs is not installed). For edited .py
+5. **Verify** — Run `cd docs && make html 2>&1 | head -50` if docs/
+   files were changed (skip if sphinx is not installed). For edited .py
    files, run `python -c "import ast; ast.parse(open('<file>').read())"`.
 
 ## Anti-Patterns
@@ -65,6 +65,6 @@ When done, output a structured report:
 - path/to/file.md — reference is historical, skipped
 
 ### Verification
-- mkdocs build: PASS/FAIL/SKIPPED
+- sphinx build: PASS/FAIL/SKIPPED
 - Python parse check: PASS/FAIL (list files)
 ```

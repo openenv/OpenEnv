@@ -16,6 +16,7 @@ Usage:
     python examples/atari_simple.py
 """
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -28,21 +29,20 @@ from atari_env import AtariEnv, AtariAction
 # import envs
 # print(envs.__path__)
 
-def main():
+async def main():
     """Run a simple Atari episode."""
     # Connect to the Atari environment server
     print("Connecting to Atari environment...")
-    env = AtariEnv.from_docker_image("ghcr.io/meta-pytorch/openenv-atari-env:latest")
-    
-   
+    env = await AtariEnv.from_docker_image(
+        "ghcr.io/huggingface/openenv-atari-env:latest"
+    )
+
     try:
         # Reset the environment
         print("\nResetting environment...")
-        result = env.reset()
+        result = await env.reset()
         print(f"Screen shape: {result.observation.screen_shape}")
 
-    
-    
         print(f"Legal actions: {result.observation.legal_actions}")
         print(f"Lives: {result.observation.lives}")
 
@@ -55,9 +55,9 @@ def main():
             # Random action
             action_id = np.random.choice(result.observation.legal_actions)
             action_id = int(action_id)
-            
+
             # Take action
-            result = env.step(AtariAction(action_id=action_id))
+            result = await env.step(AtariAction(action_id=action_id))
 
             episode_reward += result.reward or 0
             steps += 1
@@ -76,8 +76,8 @@ def main():
         print(f"\nTotal episode reward: {episode_reward:.2f}")
 
         # Get environment state
-        state = env.state()
-        print(f"\nEnvironment state:")
+        state = await env.state()
+        print("\nEnvironment state:")
         print(f"  Game: {state.game_name}")
         print(f"  Episode: {state.episode_id}")
         print(f"  Steps: {state.step_count}")
@@ -86,9 +86,9 @@ def main():
     finally:
         # Cleanup
         print("\nClosing environment...")
-        env.close()
+        await env.close()
         print("Done!")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

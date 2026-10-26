@@ -5,15 +5,13 @@ Handles FreeBusy query operations with exact Google API compatibility
 
 import logging
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Header, Query, status, Depends
-from pydantic import ValidationError
-from schemas.freebusy import (
-    FreeBusyQueryRequest,
-    FreeBusyQueryResponse
-)
+
 from database.managers.freebusy_manager import FreeBusyManager
 from database.session_manager import CalendarSessionManager
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from middleware.auth import get_user_context
+from pydantic import ValidationError
+from schemas.freebusy import FreeBusyQueryRequest, FreeBusyQueryResponse
 
 logger = logging.getLogger(__name__)
 
@@ -31,34 +29,34 @@ def get_freebusy_manager(database_id: str) -> FreeBusyManager:
 @router.post("/query", response_model=FreeBusyQueryResponse)
 async def query_freebusy(
     request: FreeBusyQueryRequest,
-    user_context: tuple[str, str] = Depends(get_user_context)
+    user_context: tuple[str, str] = Depends(get_user_context),
 ):
     """
     Returns free/busy information for a set of calendars
-    
+
     POST /freeBusy
     """
     try:
         database_id, user_id = user_context
         freebusy_manager = get_freebusy_manager(database_id)
-        
+
         # Validate request
         if not request.items:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="At least one calendar item is required"
+                detail="At least one calendar item is required",
             )
-        
+
         if len(request.items) > 50:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Maximum 50 calendars allowed per query"
+                detail="Maximum 50 calendars allowed per query",
             )
-        
+
         response = freebusy_manager.query_freebusy(user_id, request)
-        
+
         return response
-        
+
     except ValidationError as e:
         # Handle pydantic validation errors (timezone, schema validation)
         logger.error(f"Schema validation error in FreeBusy query: {e}")
@@ -75,6 +73,7 @@ async def query_freebusy(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error processing FreeBusy query: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                          detail="Internal server error occurred while processing the request")
-
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error occurred while processing the request",
+        )

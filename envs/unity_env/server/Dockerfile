@@ -51,6 +51,7 @@ RUN mkdir -p /root/.mlagents-cache
 
 # Set PYTHONPATH so imports work correctly
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
+ENV UNITY_NO_GRAPHICS=1
 
 # Expose port
 EXPOSE 8000

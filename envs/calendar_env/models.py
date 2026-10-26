@@ -11,7 +11,7 @@ These models define the action and observation types used by the OpenEnv
 integration for the calendar server.
 """
 
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import Field
 
@@ -66,7 +66,9 @@ class MCPObservation(Observation):
     """
 
     success: bool = Field(True, description="Whether the action succeeded")
-    error_message: Optional[str] = Field(None, description="Error message if action failed")
+    error_message: Optional[str] = Field(
+        None, description="Error message if action failed"
+    )
     tools_list: Optional[List[Dict[str, Any]]] = Field(
         None, description="List of available tools (for ListToolsAction)"
     )

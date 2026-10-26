@@ -24,6 +24,7 @@ class Model(nn.Module):
     Each ray tests against a binary BVH tree of AABBs.
     Returns the closest intersection distance (or inf if no hit).
     """
+
     def __init__(self, num_nodes: int = 1023):
         super(Model, self).__init__()
         self.num_nodes = num_nodes  # 2^10 - 1 for 10 levels
@@ -36,7 +37,7 @@ class Model(nn.Module):
         bvh_max: torch.Tensor,
         bvh_left: torch.Tensor,
         bvh_right: torch.Tensor,
-        bvh_is_leaf: torch.Tensor
+        bvh_is_leaf: torch.Tensor,
     ) -> torch.Tensor:
         """
         Traverse BVH for each ray and return closest intersection.
@@ -54,7 +55,7 @@ class Model(nn.Module):
             t_hit: (N,) intersection distances (inf if no hit)
         """
         N = ray_origins.shape[0]
-        t_hit = torch.full((N,), float('inf'), device=ray_origins.device)
+        t_hit = torch.full((N,), float("inf"), device=ray_origins.device)
 
         # Process each ray
         for ray_idx in range(N):
@@ -64,7 +65,7 @@ class Model(nn.Module):
 
             # Stack-based traversal
             stack = [0]  # Start at root
-            closest_t = float('inf')
+            closest_t = float("inf")
 
             while stack:
                 node_idx = stack.pop()
@@ -106,6 +107,7 @@ class Model(nn.Module):
 num_rays = 65536
 num_bvh_nodes = 1023  # Binary tree with 10 levels
 
+
 def get_inputs():
     # Random rays
     ray_origins = torch.randn(num_rays, 3)
@@ -132,7 +134,16 @@ def get_inputs():
             bvh_right[i] = -1
             bvh_is_leaf[i] = True
 
-    return [ray_origins, ray_directions, bvh_min, bvh_max, bvh_left, bvh_right, bvh_is_leaf]
+    return [
+        ray_origins,
+        ray_directions,
+        bvh_min,
+        bvh_max,
+        bvh_left,
+        bvh_right,
+        bvh_is_leaf,
+    ]
+
 
 def get_init_inputs():
     return [num_bvh_nodes]

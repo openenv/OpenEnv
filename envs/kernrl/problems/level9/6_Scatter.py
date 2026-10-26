@@ -21,6 +21,7 @@ class Model(nn.Module):
     """
     Scatter values to indices.
     """
+
     def __init__(self, output_size: int = 1000000):
         super(Model, self).__init__()
         self.output_size = output_size
@@ -45,10 +46,12 @@ class Model(nn.Module):
 num_values = 4 * 1024 * 1024
 output_size = 1000000
 
+
 def get_inputs():
     values = torch.rand(num_values)
     indices = torch.randint(0, output_size, (num_values,))
     return [values, indices]
+
 
 def get_init_inputs():
     return [output_size]

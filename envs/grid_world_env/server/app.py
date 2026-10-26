@@ -10,6 +10,8 @@ Application entry point for the Grid World Environment.
 This module exposes the GridWorldEnvironment via the OpenEnv WebSocket API.
 """
 
+import os
+
 # Import the correct app creation function from the core library
 try:
     from openenv.core.env_server import create_app
@@ -26,16 +28,20 @@ from .grid_world_environment import GridWorldEnvironment
 
 # Create the FastAPI app
 app = create_app(
-    GridWorldEnvironment, 
-    GridWorldAction, 
+    GridWorldEnvironment,
+    GridWorldAction,
     GridWorldObservation,
-    env_name="grid_world_env"
+    env_name="grid_world_env",
+    max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
 )
 
-#--- 3. Add Entry Point ---
+
+# --- 3. Add Entry Point ---
 def main():
-  import uvicorn
-  uvicorn.run(app, host="0.0.0.0", port=8000)
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
 if __name__ == "__main__":
-  main()
+    main()

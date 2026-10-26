@@ -1,4 +1,4 @@
-name: Update HF Collection
+name: Sync HF OpenEnv Collection
 
 on:
   # Run nightly at midnight UTC
@@ -17,38 +17,42 @@ on:
   workflow_dispatch:
 
 jobs:
-  update-collection:
+  sync-global-collection:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
       - name: Install dependencies
         run: |
-          pip install huggingface-hub>=0.20.0
+          pip install "huggingface-hub>=0.24.0"
 
-      - name: Run collection manager
+      - name: Sync global OpenEnv collection
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          python scripts/manage_hf_collection.py
+          python scripts/manage_hf_collection.py \
+            --skip-versioned-collection \
+            --global-scope tagged \
+            --global-collection-title "OpenEnv Environment Hub" \
+            --public-global-collection
 
       - name: Summary
         if: success()
         run: |
-          echo "## Collection Updated ✅" >> $GITHUB_STEP_SUMMARY
+          echo "## OpenEnv Collection Synced ✅" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Successfully ran the collection manager." >> $GITHUB_STEP_SUMMARY
+          echo "Successfully synced the global OpenEnv-tagged space collection." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Details:**" >> $GITHUB_STEP_SUMMARY
           echo "- Scheduled to run daily at midnight UTC" >> $GITHUB_STEP_SUMMARY
-          echo "- Task: Discover and add openenv-tagged Docker Spaces" >> $GITHUB_STEP_SUMMARY
-          echo "- Collection: [openenv/environment-hub](https://huggingface.co/collections/openenv/environment-hub-68f16377abea1ea114fa0743)" >> $GITHUB_STEP_SUMMARY
+          echo "- Task: Discover and add all spaces tagged \`openenv\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Collection title: OpenEnv Environment Hub" >> $GITHUB_STEP_SUMMARY

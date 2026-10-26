@@ -1,8 +1,4 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
 """Tests for async rubric integration with async Environment.
 
@@ -13,9 +9,9 @@ This test file verifies that rubrics work with async environments:
 - Async rubric hooks during environment step
 """
 
-import pytest
 from typing import Any, Optional
 
+import pytest
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
 from openenv.core.rubrics import Rubric

@@ -1,0 +1,9 @@
+{
+  "description": "Single-step reasoning tasks present one question per episode and use dataset-defined answer scoring. Configure seeded question datasets for reproducible reasoning rollouts.",
+  "tags": ["openenv", "rl-environment", "reasoning", "question-answering", "single-step", "procedural-tasks"],
+  "representative_queries": [
+    "find configurable reasoning questions with graded answers",
+    "evaluate answers on seeded procedural reasoning tasks",
+    "find a single-step question-answer environment"
+  ]
+}

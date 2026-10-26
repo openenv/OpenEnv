@@ -1,0 +1,10 @@
+# Server deps (fastapi, uvicorn, pydantic, websockets) come from openenv itself
+
+# Navigation agents dependencies
+numpy==1.26.4
+shapely==2.0.6
+networkx==3.4.2
+
+# CARLA client (installed separately in Dockerfiles via: pip install carla-ue5-api==0.10.0)
+
+# OpenEnv core (installed from GitHub in Dockerfiles)

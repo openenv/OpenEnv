@@ -26,6 +26,7 @@ class Model(nn.Module):
 
     Simplified implementation for kernel optimization practice.
     """
+
     def __init__(self, iterations: int = 1000, dk_len: int = 32):
         super(Model, self).__init__()
         self.iterations = iterations
@@ -49,7 +50,9 @@ class Model(nn.Module):
         # Additional mixing
         for _ in range(4):
             for i in range(32):
-                result[i] = (result[i] ^ result[(i + 17) % 32] + result[(i + 11) % 32]) & 0xFF
+                result[i] = (
+                    result[i] ^ result[(i + 17) % 32] + result[(i + 11) % 32]
+                ) & 0xFF
 
         return result
 
@@ -73,7 +76,9 @@ class Model(nn.Module):
 
         for block_idx in range(num_blocks):
             # First iteration: U_1 = PRF(Password, Salt || INT(i))
-            block_num = torch.tensor([0, 0, 0, block_idx + 1], dtype=torch.int64, device=device)
+            block_num = torch.tensor(
+                [0, 0, 0, block_idx + 1], dtype=torch.int64, device=device
+            )
             U = self._simple_hmac(password, torch.cat([salt, block_num]))
 
             # Accumulator
@@ -85,9 +90,9 @@ class Model(nn.Module):
                 F = self._xor(F, U)
 
             # Store block
-            derived_key[block_idx * 32:(block_idx + 1) * 32] = F
+            derived_key[block_idx * 32 : (block_idx + 1) * 32] = F
 
-        return derived_key[:self.dk_len]
+        return derived_key[: self.dk_len]
 
 
 # Problem configuration
@@ -95,6 +100,7 @@ def get_inputs():
     password = torch.randint(0, 256, (16,), dtype=torch.int64)  # 16-byte password
     salt = torch.randint(0, 256, (16,), dtype=torch.int64)  # 16-byte salt
     return [password, salt]
+
 
 def get_init_inputs():
     return [1000, 32]  # iterations, dk_len

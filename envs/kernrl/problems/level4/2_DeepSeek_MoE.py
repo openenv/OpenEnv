@@ -1,7 +1,8 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
 # DeepSeek-V3 Mixture of Experts (MoE) Layer
 # Source: https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/modeling_deepseek.py
@@ -148,9 +149,15 @@ class Model(nn.Module):
         # Optional shared experts (processed for all tokens)
         if n_shared_experts > 0:
             shared_intermediate = intermediate_size * n_shared_experts
-            self.shared_gate_proj = nn.Linear(hidden_size, shared_intermediate, bias=False)
-            self.shared_up_proj = nn.Linear(hidden_size, shared_intermediate, bias=False)
-            self.shared_down_proj = nn.Linear(shared_intermediate, hidden_size, bias=False)
+            self.shared_gate_proj = nn.Linear(
+                hidden_size, shared_intermediate, bias=False
+            )
+            self.shared_up_proj = nn.Linear(
+                hidden_size, shared_intermediate, bias=False
+            )
+            self.shared_down_proj = nn.Linear(
+                shared_intermediate, hidden_size, bias=False
+            )
         else:
             self.shared_gate_proj = None
 
@@ -176,14 +183,24 @@ class Model(nn.Module):
 
         # Expand tokens to match expert assignments
         # (num_tokens, hidden) -> (num_tokens, top_k, hidden) -> (num_tokens * top_k, hidden)
-        expanded_tokens = hidden_states.unsqueeze(1).expand(-1, self.num_experts_per_tok, -1)
-        expanded_tokens = expanded_tokens.reshape(-1, self.hidden_size)  # (num_tokens * top_k, hidden)
+        expanded_tokens = hidden_states.unsqueeze(1).expand(
+            -1, self.num_experts_per_tok, -1
+        )
+        expanded_tokens = expanded_tokens.reshape(
+            -1, self.hidden_size
+        )  # (num_tokens * top_k, hidden)
 
         # Gather expert weights for each token-expert pair
         # gate_proj[expert_idx]: (intermediate, hidden)
-        selected_gate = self.gate_proj[flat_topk_idx]  # (num_tokens * top_k, intermediate, hidden)
-        selected_up = self.up_proj[flat_topk_idx]      # (num_tokens * top_k, intermediate, hidden)
-        selected_down = self.down_proj[flat_topk_idx]  # (num_tokens * top_k, hidden, intermediate)
+        selected_gate = self.gate_proj[
+            flat_topk_idx
+        ]  # (num_tokens * top_k, intermediate, hidden)
+        selected_up = self.up_proj[
+            flat_topk_idx
+        ]  # (num_tokens * top_k, intermediate, hidden)
+        selected_down = self.down_proj[
+            flat_topk_idx
+        ]  # (num_tokens * top_k, hidden, intermediate)
 
         # Batched expert MLP: down(silu(gate(x)) * up(x))
         # x: (num_tokens * top_k, hidden, 1)
@@ -191,17 +208,25 @@ class Model(nn.Module):
 
         # gate(x): (num_tokens * top_k, intermediate, hidden) @ (num_tokens * top_k, hidden, 1)
         #        = (num_tokens * top_k, intermediate, 1)
-        gate_out = torch.bmm(selected_gate, x).squeeze(-1)  # (num_tokens * top_k, intermediate)
-        up_out = torch.bmm(selected_up, x).squeeze(-1)      # (num_tokens * top_k, intermediate)
+        gate_out = torch.bmm(selected_gate, x).squeeze(
+            -1
+        )  # (num_tokens * top_k, intermediate)
+        up_out = torch.bmm(selected_up, x).squeeze(
+            -1
+        )  # (num_tokens * top_k, intermediate)
 
         # SiLU activation and element-wise multiply
         intermediate = F.silu(gate_out) * up_out  # (num_tokens * top_k, intermediate)
 
         # down projection
-        expert_out = torch.bmm(selected_down, intermediate.unsqueeze(-1)).squeeze(-1)  # (num_tokens * top_k, hidden)
+        expert_out = torch.bmm(selected_down, intermediate.unsqueeze(-1)).squeeze(
+            -1
+        )  # (num_tokens * top_k, hidden)
 
         # Reshape back to (num_tokens, top_k, hidden)
-        expert_out = expert_out.view(num_tokens, self.num_experts_per_tok, self.hidden_size)
+        expert_out = expert_out.view(
+            num_tokens, self.num_experts_per_tok, self.hidden_size
+        )
 
         # Weighted combination: sum over top_k dimension
         # topk_weight: (num_tokens, top_k) -> (num_tokens, top_k, 1)

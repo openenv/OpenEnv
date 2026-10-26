@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenEnv Env Generator"
+  short_description: "Generate OpenEnv environments from use cases"
+  default_prompt: "Use $generate-openenv-env to turn a use case into a complete OpenEnv environment scaffold."

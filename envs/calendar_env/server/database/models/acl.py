@@ -1,8 +1,10 @@
-from datetime import datetime
-from sqlalchemy import Column, String, ForeignKey, Enum, DateTime
-from sqlalchemy.orm import relationship
-from .base import Base
 import enum
+from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, String
+from sqlalchemy.orm import relationship
+
+from .base import Base
 
 
 class AclRole(enum.Enum):
@@ -39,7 +41,9 @@ class ACLs(Base):
 
     id = Column(String, primary_key=True, index=True)
 
-    calendar_id = Column(String, ForeignKey("calendars.calendar_id"), nullable=False, index=True)
+    calendar_id = Column(
+        String, ForeignKey("calendars.calendar_id"), nullable=False, index=True
+    )
     user_id = Column(String, ForeignKey("users.user_id"), nullable=False, index=True)
     scope_id = Column(String, ForeignKey("scopes.id"), nullable=False)
 

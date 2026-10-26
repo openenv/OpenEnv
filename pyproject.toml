@@ -1,60 +1,75 @@
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openenv-core"
-version = "0.2.0"
+name = "openenv"
+version = "0.10.1.dev0"
 description = "A unified framework for reinforcement learning environments"
 readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     # Core shared dependencies - minimal set required for all environments
     # Heavy dependencies (torch, numpy, smolagents, etc.) should be in
     # individual environment pyproject.toml files
-    "fastapi>=0.104.0",
+    "fastapi>=0.116.0",
     "pydantic>=2.0.0",
+    "packaging>=24.2",
+    "typing_extensions>=4.0.0",
     "uvicorn>=0.24.0",
     "requests>=2.25.0",
     # CLI dependencies
     "typer>=0.9.0",
     "rich>=13.0.0",
     "pyyaml>=6.0",
-    "huggingface_hub>=0.20.0",
+    "huggingface_hub>=1.29.0",
     "openai>=2.7.2",
     "tomli>=2.3.0",
     "tomli-w>=1.2.0",
     "websockets>=15.0.1",
     # MCP support
-    "fastmcp>=2.0.0",
+    "fastmcp>=3.0.0,<4.0.0",
     # Web UI dependencies
     "gradio>=4.0.0",
+    "httpx>=0.28.1",
+    "jsonschema>=4.20.0",
 ]
 
 [project.optional-dependencies]
-core = [
-    "fastapi>=0.104.0",
-    "pydantic>=2.0.0",
-    "uvicorn>=0.24.0",
-    "requests>=2.25.0",
-    "websockets>=15.0.1",
-]
-cli = [
-    "typer>=0.9.0",
-    "rich>=13.0.0",
-    "pyyaml>=6.0",
-    "huggingface_hub>=0.20.0",
-    "openai>=2.7.2",
-    "tomli>=2.3.0",
-    "tomli-w>=1.2.0",
-]
-all = [
-    "openenv-core[core]",
-    "openenv-core[cli]",
-]
+# `pip install openenv` includes the full runtime; the extras below are
+# optional integrations.
 daytona = [
     "daytona>=0.136.0",
     "pyyaml>=6.0",
+]
+aca = [
+    # Preview SDK — pin with an upper bound and re-validate on upgrades
+    # (the provider talks to it through a private adapter for exactly this churn).
+    "azure-containerapps-sandbox>=0.1.0b2,<0.2.0",
+    "azure-identity>=1.23.0",
+]
+modal = [
+    "modal>=1.4.0",
+    "pyyaml>=6.0",
+]
+novita = [
+    "novita-sandbox>=2.1.1",
+]
+inspect = [
+    "inspect-ai>=0.3.0",
+]
+harbor = [
+    # Every sandbox backend. Bare `harbor` gives one that lists all 23 backends and can
+    # instantiate none of them: each raises MissingExtraError from its constructor, which
+    # surfaces as a failed rollout rather than as a missing dependency.
+    #
+    # Not `harbor[cloud]`, which is unsatisfiable: it pulls `langsmith[sandbox]`
+    # (websockets>=15) and `tensorlake` (websockets>=13,<14) together.
+    #
+    # Harbor requires Python >= 3.12, so this extra is excluded from the 3.11 CI leg.
+    "harbor[e2b,modal,daytona,gke,ec2,runloop,novita,blaxel,beam,islo,opensandbox,cwsandbox,use-computer,cua]>=0.22.0; python_version >= '3.12'",
 ]
 
 [project.scripts]
@@ -65,10 +80,18 @@ package-dir = {"" = "src"}
 include-package-data = true
 
 [tool.setuptools.package-data]
-"openenv.cli" = ["templates/**/*"]
+"openenv.cli" = ["templates/**/*", "templates/openenv_env/.dockerignore"]
+"openenv.cli.importers" = ["templates/**/*"]
+"openenv.validation" = ["policies/*.json", "schemas/*.json"]
+"openenv.discovery" = ["schemas/**/*.json"]
+"openenv.harbor" = ["ui_assets/*"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["*.pyc", "*.pyo", "__pycache__/*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+exclude = ["*.__pycache__", "*.__pycache__.*"]
 
 [tool.coverage.run]
 omit = [
@@ -95,6 +118,22 @@ markers = [
     "network: Tests that require network access (HuggingFace, etc.)",
     "integration: Integration tests with external resources",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.0",
+    "usort>=1.1.0",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "jsonschema>=4.20.0",
+]
+
+[tool.usort]
+# Disable first_party auto-detection so all non-stdlib imports land in
+# the same "third_party" bucket (the default_category). This matches
+# pyfmt's usort behavior inside arc f, which groups openenv.* and env
+# package imports together without blank-line separators.
+first_party_detection = false
 
 [tool.ruff]
 line-length = 88

@@ -1,26 +1,26 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+# SPDX-License-Identifier: BSD-3-Clause
 
-"""Tests for MCP type definitions."""
+"""Tests for MCP type definitions and deserialization routing."""
 
 import pytest
-from pydantic import ValidationError
-
 from openenv.core.env_server.mcp_types import (
+    CallToolAction,
+    CallToolObservation,
+    ListToolsAction,
+    ListToolsObservation,
+    RESERVED_TOOL_NAMES,
     Tool,
     ToolError,
     ToolErrorType,
-    ListToolsAction,
-    CallToolAction,
-    ListToolsObservation,
-    CallToolObservation,
     WSMCPMessage,
     WSMCPResponse,
-    RESERVED_TOOL_NAMES,
 )
+from openenv.core.env_server.serialization import (
+    deserialize_action,
+    deserialize_action_with_preprocessing,
+)
+from openenv.core.env_server.types import Action
+from pydantic import ValidationError
 
 
 class TestTool:
@@ -187,3 +187,153 @@ class TestReservedToolNames:
     def test_reserved_names_is_frozenset(self):
         """Test that reserved names cannot be modified."""
         assert isinstance(RESERVED_TOOL_NAMES, frozenset)
+
+
+# Deserialization routing regression tests
+
+
+class _DummyEnvAction(Action):
+    """A non-MCP action class used to simulate env-specific action types."""
+
+    value: str = "hello"
+
+
+class TestDeserializeActionMCPRouting:
+    """MCP action types are routed correctly when action_cls is the base Action."""
+
+    def test_list_tools_with_base_action_cls(self):
+        data = {"type": "list_tools"}
+        action = deserialize_action(data, Action)
+        assert isinstance(action, ListToolsAction)
+        assert action.type == "list_tools"
+
+    def test_list_tools_with_call_tool_action_cls(self):
+        data = {"type": "list_tools"}
+        action = deserialize_action(data, CallToolAction)
+        assert isinstance(action, ListToolsAction)
+
+    def test_call_tool_with_base_action_cls(self):
+        data = {"type": "call_tool", "tool_name": "echo", "arguments": {"msg": "hi"}}
+        action = deserialize_action(data, Action)
+        assert isinstance(action, CallToolAction)
+        assert action.tool_name == "echo"
+        assert action.arguments == {"msg": "hi"}
+
+    def test_non_mcp_action_uses_action_cls(self):
+        data = {"value": "world"}
+        action = deserialize_action(data, _DummyEnvAction)
+        assert isinstance(action, _DummyEnvAction)
+        assert action.value == "world"
+
+    def test_call_tool_with_string_arguments_is_rejected_without_preprocessing(self):
+        data = {
+            "type": "call_tool",
+            "tool_name": "echo",
+            "arguments": '{"message": "hello"}',
+        }
+        with pytest.raises(ValidationError):
+            deserialize_action(data, Action)
+
+    def test_invalid_non_mcp_action_raises(self):
+        data = {"nonexistent_field": 123}
+        with pytest.raises(ValidationError):
+            deserialize_action(data, _DummyEnvAction)
+
+
+class TestDeserializeActionNonMCPGuard:
+    """MCP routing does NOT hijack payloads when action_cls is a specific non-MCP class."""
+
+    def test_non_mcp_cls_with_call_tool_type_falls_through(self):
+        data = {"type": "call_tool", "tool_name": "echo", "arguments": {}}
+        with pytest.raises(ValidationError):
+            deserialize_action(data, _DummyEnvAction)
+
+    def test_non_mcp_cls_with_list_tools_type_falls_through(self):
+        data = {"type": "list_tools"}
+        with pytest.raises(ValidationError):
+            deserialize_action(data, _DummyEnvAction)
+
+
+class TestDeserializeWithPreprocessingMCPRouting:
+    """Same MCP routing works in the preprocessing variant, with string argument decoding."""
+
+    def test_list_tools_bypasses_preprocessing(self):
+        data = {"type": "list_tools"}
+        action = deserialize_action_with_preprocessing(data, Action)
+        assert isinstance(action, ListToolsAction)
+
+    @pytest.mark.parametrize("action_cls", [Action, CallToolAction])
+    def test_call_tool_with_dict_arguments(self, action_cls):
+        data = {"type": "call_tool", "tool_name": "solve", "arguments": {"x": 1}}
+        action = deserialize_action_with_preprocessing(data, action_cls)
+        assert isinstance(action, CallToolAction)
+        assert action.tool_name == "solve"
+        assert action.arguments == {"x": 1}
+
+    @pytest.mark.parametrize("action_cls", [Action, CallToolAction])
+    def test_call_tool_with_valid_json_string_arguments(self, action_cls):
+        data = {
+            "type": "call_tool",
+            "tool_name": "echo",
+            "arguments": '{"message": "hello"}',
+        }
+        action = deserialize_action_with_preprocessing(data, action_cls)
+        assert isinstance(action, CallToolAction)
+        assert action.tool_name == "echo"
+        assert action.arguments == {"message": "hello"}
+
+    def test_call_tool_string_preprocessing_does_not_mutate_input(self):
+        data = {
+            "type": "call_tool",
+            "tool_name": "echo",
+            "arguments": '{"message": "hello"}',
+        }
+        deserialize_action_with_preprocessing(data, Action)
+        assert data["arguments"] == '{"message": "hello"}'
+
+    def test_call_tool_with_malformed_json_string_arguments_is_rejected(self):
+        data = {
+            "type": "call_tool",
+            "tool_name": "echo",
+            "arguments": '{"message": "hello"',
+        }
+        with pytest.raises(ValidationError):
+            deserialize_action_with_preprocessing(data, Action)
+
+    def test_call_tool_with_json_array_string_arguments_is_rejected(self):
+        data = {
+            "type": "call_tool",
+            "tool_name": "echo",
+            "arguments": '["hello"]',
+        }
+        with pytest.raises(ValidationError):
+            deserialize_action_with_preprocessing(data, Action)
+
+    def test_call_tool_with_scalar_json_string_arguments_is_rejected(self):
+        data = {
+            "type": "call_tool",
+            "tool_name": "echo",
+            "arguments": '"hello"',
+        }
+        with pytest.raises(ValidationError):
+            deserialize_action_with_preprocessing(data, Action)
+
+    def test_non_mcp_still_preprocessed(self):
+        data = {"value": "test"}
+        action = deserialize_action_with_preprocessing(data, _DummyEnvAction)
+        assert isinstance(action, _DummyEnvAction)
+        assert action.value == "test"
+
+
+class TestDeserializeWithPreprocessingNonMCPGuard:
+    """Preprocessing variant also guards against MCP hijacking."""
+
+    def test_non_mcp_cls_with_call_tool_type_falls_through(self):
+        data = {"type": "call_tool", "tool_name": "echo", "arguments": {}}
+        with pytest.raises(ValidationError):
+            deserialize_action_with_preprocessing(data, _DummyEnvAction)
+
+    def test_non_mcp_cls_with_list_tools_type_falls_through(self):
+        data = {"type": "list_tools"}
+        with pytest.raises(ValidationError):
+            deserialize_action_with_preprocessing(data, _DummyEnvAction)

@@ -13,11 +13,10 @@ with TextArena game environments (e.g., Wordle-v0).
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
 
-
 from openenv.core.env_server.types import Action, Observation, State
+from pydantic import BaseModel, Field
 
 
 class TextArenaMessage(BaseModel):

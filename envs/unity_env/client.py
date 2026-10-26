@@ -188,13 +188,14 @@ class UnityEnv(EnvClient[UnityAction, UnityObservation, UnityState]):
             observation_spec_info=obs_data.get("observation_spec_info", {}),
             done=payload.get("done", False),
             reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
 
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def _parse_state(self, payload: Dict) -> UnityState:
@@ -358,7 +359,11 @@ class UnityEnv(EnvClient[UnityAction, UnityObservation, UnityState]):
         if cwd:
             src_path = str(cwd / "src")
             existing_path = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = f"{src_path}:{cwd}:{existing_path}" if existing_path else f"{src_path}:{cwd}"
+            env["PYTHONPATH"] = (
+                f"{src_path}:{cwd}:{existing_path}"
+                if existing_path
+                else f"{src_path}:{cwd}"
+            )
 
         # Start the server
         cmd = [

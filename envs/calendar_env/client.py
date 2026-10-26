@@ -24,15 +24,18 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TypeVar, Generic
+from typing import Any, Dict, Generic, List, Optional, TYPE_CHECKING, TypeVar
 
 import httpx
+
+if TYPE_CHECKING:
+    from openenv.core.llm_client import LLMClient
 
 try:
     from .models import CalendarAction, CalendarObservation
 except ImportError:
-    from pathlib import Path
     import sys
+    from pathlib import Path
 
     CURRENT_DIR = Path(__file__).resolve().parent
     if str(CURRENT_DIR) not in sys.path:
@@ -47,6 +50,7 @@ class StepResult(Generic[ObsT]):
     observation: ObsT
     reward: Optional[float] = None
     done: bool = False
+    metadata: Optional[Dict[str, Any]] = None
 
 
 logger = logging.getLogger(__name__)
@@ -126,7 +130,9 @@ class CalendarEnv:
 
         return headers
 
-    def _parse_step_result(self, payload: Dict[str, Any]) -> StepResult[CalendarObservation]:
+    def _parse_step_result(
+        self, payload: Dict[str, Any]
+    ) -> StepResult[CalendarObservation]:
         obs_data = payload.get("observation", {})
         observation = CalendarObservation(
             success=obs_data.get("success", True),
@@ -135,12 +141,13 @@ class CalendarEnv:
             tool_result=obs_data.get("tool_result"),
             done=payload.get("done", False),
             reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
+            metadata=payload.get("metadata", obs_data.get("metadata", {})),
         )
         return StepResult(
             observation=observation,
             reward=payload.get("reward"),
             done=payload.get("done", False),
+            metadata=payload.get("metadata"),
         )
 
     def reset(
@@ -174,7 +181,9 @@ class CalendarEnv:
         if not sql_path.exists():
             raise FileNotFoundError(f"SQL file not found: {sql_path}")
         sql_content = sql_path.read_text(encoding="utf-8")
-        return self.reset(database_id=database_id, sql_content=sql_content, context=context)
+        return self.reset(
+            database_id=database_id, sql_content=sql_content, context=context
+        )
 
     def step(
         self,
@@ -234,7 +243,9 @@ class CalendarEnv:
         database_id: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        params = [("verify_queries", q) for q in verify_queries] if verify_queries else None
+        params = (
+            [("verify_queries", q) for q in verify_queries] if verify_queries else None
+        )
         client = self._ensure_client()
         response = client.get(
             f"{self.base_url}/state",
@@ -331,124 +342,13 @@ class ScenarioConfig:
     output_dir: Path = DEFAULT_OUTPUT_DIR
 
 
-class LLMClient:
+class VerifierEngine:
     def __init__(
         self,
-        provider: str,
-        model: str,
-        api_key: str,
-        temperature: float = 0.0,
-        max_tokens: int = 4096,
+        client: CalendarEnv,
+        llm_client: "LLMClient",
+        execution_mode: str = "openenv",
     ):
-        self.provider = provider.lower()
-        self.model = model
-        self.api_key = api_key
-        self.temperature = temperature
-        self.max_tokens = max_tokens
-        self.llm = None
-        self._initialize_llm()
-
-    def _initialize_llm(self) -> None:
-        try:
-            if self.provider == "anthropic":
-                from langchain_anthropic import ChatAnthropic
-
-                self.llm = ChatAnthropic(
-                    model=self.model,
-                    anthropic_api_key=self.api_key,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
-            elif self.provider == "openai":
-                from langchain_openai import ChatOpenAI
-
-                self.llm = ChatOpenAI(
-                    model=self.model,
-                    openai_api_key=self.api_key,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
-            elif self.provider == "google":
-                from langchain_google_genai import ChatGoogleGenerativeAI
-
-                self.llm = ChatGoogleGenerativeAI(
-                    model=self.model,
-                    google_api_key=self.api_key,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
-            else:
-                raise ValueError(f"Unsupported LLM provider: {self.provider}")
-        except ImportError as exc:
-            raise ImportError(
-                f"Missing LangChain provider for {self.provider}. "
-                "Install requirements-client.txt to use scenario runs."
-            ) from exc
-
-    def _clean_json_schema(self, schema: Dict[str, Any]) -> Dict[str, Any]:
-        if not isinstance(schema, dict):
-            return {"type": "object", "properties": {}, "required": []}
-
-        if "oneOf" in schema:
-            for option in schema["oneOf"]:
-                if isinstance(option, dict) and option.get("type") == "object":
-                    schema = option
-                    break
-            else:
-                return {"type": "object", "properties": {}, "required": []}
-
-        if "allOf" in schema:
-            merged_schema = {"type": "object", "properties": {}, "required": []}
-            for sub_schema in schema["allOf"]:
-                if isinstance(sub_schema, dict):
-                    if "properties" in sub_schema:
-                        merged_schema["properties"].update(sub_schema["properties"])
-                    if "required" in sub_schema:
-                        merged_schema["required"].extend(sub_schema["required"])
-            schema = merged_schema
-
-        if "anyOf" in schema:
-            for option in schema["anyOf"]:
-                if isinstance(option, dict) and option.get("type") == "object":
-                    schema = option
-                    break
-            else:
-                return {"type": "object", "properties": {}, "required": []}
-
-        schema.setdefault("type", "object")
-        if schema.get("type") == "object" and "properties" not in schema:
-            schema["properties"] = {}
-        return schema
-
-    def _convert_mcp_tools_to_langchain(
-        self, mcp_tools: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        langchain_tools = []
-        for tool in mcp_tools:
-            input_schema = tool.get(
-                "inputSchema", {"type": "object", "properties": {}, "required": []}
-            )
-            cleaned_schema = self._clean_json_schema(input_schema)
-            langchain_tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool["name"],
-                        "description": tool.get("description", ""),
-                        "parameters": cleaned_schema,
-                    },
-                }
-            )
-        return langchain_tools
-
-    async def invoke_with_tools(self, messages: List[Any], tools: List[Dict[str, Any]]) -> Any:
-        langchain_tools = self._convert_mcp_tools_to_langchain(tools)
-        llm_with_tools = self.llm.bind_tools(langchain_tools)
-        return await llm_with_tools.ainvoke(messages)
-
-
-class VerifierEngine:
-    def __init__(self, client: CalendarEnv, llm_client: LLMClient, execution_mode: str = "openenv"):
         self.client = client
         self.llm_client = llm_client
         self.execution_mode = execution_mode
@@ -503,7 +403,9 @@ class VerifierEngine:
             }
 
         actual_value = self._extract_value_from_sql_result(result)
-        comparison_result = self._compare_values(actual_value, expected_value, comparison_type)
+        comparison_result = self._compare_values(
+            actual_value, expected_value, comparison_type
+        )
 
         return {
             "passed": comparison_result["passed"],
@@ -583,7 +485,10 @@ class VerifierEngine:
 
             query_result = verification_results[0]
             if "error" in query_result:
-                return {"success": False, "error": query_result.get("error", "Query failed")}
+                return {
+                    "success": False,
+                    "error": query_result.get("error", "Query failed"),
+                }
 
             return {"success": True, "result": query_result.get("result", [])}
         except Exception as exc:
@@ -597,7 +502,9 @@ class VerifierEngine:
                 return next(iter(first_row.values()))
         return result_data
 
-    def _compare_values(self, actual: Any, expected: Any, comparison_type: str) -> Dict[str, Any]:
+    def _compare_values(
+        self, actual: Any, expected: Any, comparison_type: str
+    ) -> Dict[str, Any]:
         try:
             if comparison_type == "equals":
                 passed = actual == expected
@@ -608,7 +515,10 @@ class VerifierEngine:
             elif comparison_type == "contains":
                 passed = expected in str(actual)
             else:
-                return {"passed": False, "details": f"Unknown comparison type: {comparison_type}"}
+                return {
+                    "passed": False,
+                    "details": f"Unknown comparison type: {comparison_type}",
+                }
 
             return {
                 "passed": passed,
@@ -630,8 +540,6 @@ class VerifierEngine:
         comparison_prompt: str,
         minimum_score: int,
     ) -> Dict[str, Any]:
-        from langchain_core.messages import SystemMessage, HumanMessage
-
         system_prompt = (
             "You are an evaluator comparing database results with an assistant response. "
             "Return only JSON in this format: "
@@ -645,18 +553,20 @@ class VerifierEngine:
             f"Comparison task:\n{comparison_prompt}"
         )
 
-        response = await self.llm_client.invoke_with_tools(
-            [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
+        response = await self.llm_client.complete_with_tools(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
             [],
         )
 
         try:
-            content = response.content
-            if isinstance(content, list):
-                content = "".join(str(item) for item in content)
-            response_text = str(content)
+            response_text = response.content
             if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0].strip()
+                response_text = (
+                    response_text.split("```json")[1].split("```")[0].strip()
+                )
             judge_result = json.loads(response_text)
             score = int(judge_result.get("score", 0))
             return {
@@ -670,6 +580,8 @@ class VerifierEngine:
 
 class ScenarioRunner:
     def __init__(self, config: ScenarioConfig):
+        from openenv.core.llm_client import create_llm_client
+
         self.config = config
         self.client = CalendarEnv(
             base_url=config.gym_enviornment_url,
@@ -677,14 +589,16 @@ class ScenarioRunner:
             access_token=config.access_token,
             context=config.context,
         )
-        self.llm_client = LLMClient(
+        self.llm_client = create_llm_client(
             config.llm_provider,
             config.llm_model,
             config.llm_api_key,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
         )
-        self.verifier_engine = VerifierEngine(self.client, self.llm_client, config.execution_mode)
+        self.verifier_engine = VerifierEngine(
+            self.client, self.llm_client, config.execution_mode
+        )
         self.available_tools: List[Dict[str, Any]] = []
         self._seed_sql_content: Optional[str] = None
 
@@ -707,16 +621,22 @@ class ScenarioRunner:
                 sql_content=sql_content,
                 database_id=self.config.database_id,
             )
-            self.client.reset(database_id=self.config.database_id, sql_content=sql_content)
+            self.client.reset(
+                database_id=self.config.database_id, sql_content=sql_content
+            )
         else:
-            self.client.reset(database_id=self.config.database_id, sql_content=sql_content)
+            self.client.reset(
+                database_id=self.config.database_id, sql_content=sql_content
+            )
 
     async def initialize(self) -> None:
         self._prepare_database()
         self.available_tools = self.client.list_tools()
         if self.config.restricted_tools:
             self.available_tools = [
-                tool for tool in self.available_tools if tool["name"] not in self.config.restricted_tools
+                tool
+                for tool in self.available_tools
+                if tool["name"] not in self.config.restricted_tools
             ]
 
     async def execute_benchmark(self) -> Dict[str, Any]:
@@ -758,7 +678,9 @@ class ScenarioRunner:
         overall_success = all(v.get("passed") for v in verification_results.values())
 
         total_verifiers = len(verification_results)
-        passed_verifiers = sum(1 for v in verification_results.values() if v.get("passed", False))
+        passed_verifiers = sum(
+            1 for v in verification_results.values() if v.get("passed", False)
+        )
 
         return {
             "run_number": run_number,
@@ -773,17 +695,17 @@ class ScenarioRunner:
                 "total": total_verifiers,
                 "passed": passed_verifiers,
                 "failed": total_verifiers - passed_verifiers,
-                "pass_rate": passed_verifiers / total_verifiers if total_verifiers > 0 else 0.0,
+                "pass_rate": passed_verifiers / total_verifiers
+                if total_verifiers > 0
+                else 0.0,
             },
             "overall_success": overall_success,
         }
 
     async def _execute_task(self) -> Dict[str, Any]:
-        from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
-
-        messages = [
-            SystemMessage(content=self.config.system_prompt),
-            HumanMessage(content=self.config.user_prompt),
+        messages: List[Dict[str, Any]] = [
+            {"role": "system", "content": self.config.system_prompt},
+            {"role": "user", "content": self.config.user_prompt},
         ]
 
         conversation_flow: List[Dict[str, Any]] = []
@@ -791,12 +713,21 @@ class ScenarioRunner:
         tool_results: List[Dict[str, Any]] = []
 
         for iteration in range(self.config.max_iterations):
-            response = await self.llm_client.invoke_with_tools(messages, self.available_tools)
-            messages.append(response)
+            response = await self.llm_client.complete_with_tools(
+                messages, self.available_tools
+            )
+            messages.append(response.to_message_dict())
 
-            tool_calls = self._normalize_tool_calls(response)
+            tool_calls = [
+                {"id": tc.id, "name": tc.name, "args": tc.args}
+                for tc in response.tool_calls
+            ]
             conversation_flow.append(
-                {"type": "ai_message", "content": self._normalize_content(response.content), "tool_calls": tool_calls}
+                {
+                    "type": "ai_message",
+                    "content": response.content,
+                    "tool_calls": tool_calls,
+                }
             )
 
             if not tool_calls:
@@ -818,20 +749,35 @@ class ScenarioRunner:
                     tools_used.append(tool_name)
 
                 tool_results.append(
-                    {"tool_name": tool_name, "arguments": tool_args, "result": tool_result}
+                    {
+                        "tool_name": tool_name,
+                        "arguments": tool_args,
+                        "result": tool_result,
+                    }
                 )
 
-                tool_message = ToolMessage(
-                    content=json.dumps(tool_result.get("result", {})),
-                    tool_call_id=tool_call.get("id", ""),
+                messages.append(
+                    {
+                        "role": "tool",
+                        "content": json.dumps(tool_result.get("result", {})),
+                        "tool_call_id": tool_call.get("id", ""),
+                    }
                 )
-                messages.append(tool_message)
 
                 conversation_flow.append(
-                    {"type": "tool_result", "tool_name": tool_name, "result": tool_result}
+                    {
+                        "type": "tool_result",
+                        "tool_name": tool_name,
+                        "result": tool_result,
+                    }
                 )
 
-        final_response = self._normalize_content(messages[-1].content) if messages else ""
+        # Find the last assistant message (not a tool result).
+        final_response = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                final_response = msg.get("content", "")
+                break
         return {
             "final_response": final_response,
             "conversation_flow": conversation_flow,
@@ -851,43 +797,20 @@ class ScenarioRunner:
 
         for i, verifier in enumerate(self.config.verifiers):
             verifier_name = verifier.get("name") or f"verifier_{i + 1}"
-            verification_results[verifier_name] = await self.verifier_engine.execute_verifier(
+            verification_results[
+                verifier_name
+            ] = await self.verifier_engine.execute_verifier(
                 verifier, model_response, self.config.database_id, self.config.context
             )
 
         return verification_results
 
-    def _normalize_tool_calls(self, response: Any) -> List[Dict[str, Any]]:
-        raw_calls = getattr(response, "tool_calls", None) or []
-        normalized = []
-        for call in raw_calls:
-            if isinstance(call, dict):
-                name = call.get("name")
-                args = call.get("args", {})
-                call_id = call.get("id", "")
-            else:
-                name = getattr(call, "name", None)
-                args = getattr(call, "args", {})
-                call_id = getattr(call, "id", "")
-
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except json.JSONDecodeError:
-                    args = {}
-
-            normalized.append({"id": call_id, "name": name, "args": args})
-        return normalized
-
-    def _normalize_content(self, content: Any) -> str:
-        if isinstance(content, list):
-            return "".join(str(item) for item in content)
-        return str(content)
-
     def _calculate_statistics(self, runs: List[Dict[str, Any]]) -> Dict[str, Any]:
         successful_runs = [r for r in runs if r.get("overall_success")]
         total_runs = len(runs)
-        overall_success_rate = len(successful_runs) / total_runs if total_runs > 0 else 0.0
+        overall_success_rate = (
+            len(successful_runs) / total_runs if total_runs > 0 else 0.0
+        )
         pass_at_1 = 1.0 if runs and runs[0].get("overall_success") else 0.0
 
         total_verifiers_count = 0
@@ -918,11 +841,17 @@ class ScenarioRunner:
             }
 
         verifier_level_pass_rate = (
-            passed_verifiers_count / total_verifiers_count if total_verifiers_count > 0 else 0.0
+            passed_verifiers_count / total_verifiers_count
+            if total_verifiers_count > 0
+            else 0.0
         )
 
-        execution_times = [r.get("execution_time_ms", 0) for r in runs if "execution_time_ms" in r]
-        mean_time = sum(execution_times) / len(execution_times) if execution_times else 0.0
+        execution_times = [
+            r.get("execution_time_ms", 0) for r in runs if "execution_time_ms" in r
+        ]
+        mean_time = (
+            sum(execution_times) / len(execution_times) if execution_times else 0.0
+        )
 
         tool_counts: Dict[str, int] = {}
         for run in runs:
@@ -987,7 +916,11 @@ def _load_scenario_config(
     if not base_url:
         raise ValueError("Missing gym_enviornment_url in scenario config")
 
-    seed_database_file = seed_sql_override if seed_sql_override is not None else config_data.get("seed_database_file", "")
+    seed_database_file = (
+        seed_sql_override
+        if seed_sql_override is not None
+        else config_data.get("seed_database_file", "")
+    )
     seed_mode = seed_mode_override or config_data.get("seed_mode", "reset")
     if seed_mode not in {"reset", "api"}:
         raise ValueError(f"Invalid seed_mode: {seed_mode}")
@@ -995,7 +928,9 @@ def _load_scenario_config(
     required_fields = ["system_prompt", "user_prompt", "llm_provider", "llm_model"]
     missing = [field for field in required_fields if not config_data.get(field)]
     if missing:
-        raise ValueError(f"Missing required fields in scenario config: {', '.join(missing)}")
+        raise ValueError(
+            f"Missing required fields in scenario config: {', '.join(missing)}"
+        )
 
     execution_mode = config_data.get("execution_mode", "openenv")
     if execution_mode != "openenv":
@@ -1013,7 +948,9 @@ def _load_scenario_config(
     llm_model = config_data.get("llm_model")
     llm_api_key = _resolve_api_key(llm_provider, config_data.get("llm_api_key"))
 
-    output_path = Path(output_dir).expanduser().resolve() if output_dir else DEFAULT_OUTPUT_DIR
+    output_path = (
+        Path(output_dir).expanduser().resolve() if output_dir else DEFAULT_OUTPUT_DIR
+    )
     if not output_path.is_absolute():
         output_path = Path(__file__).resolve().parent / output_path
 
@@ -1033,7 +970,9 @@ def _load_scenario_config(
         restricted_tools=config_data.get("restricted_tools", []) or [],
         verifiers=config_data.get("verifiers", []) or [],
         number_of_runs=config_data.get("number_of_runs", 1),
-        reset_database_between_runs=config_data.get("reset_database_between_runs", True),
+        reset_database_between_runs=config_data.get(
+            "reset_database_between_runs", True
+        ),
         temperature=config_data.get("temperature", 0.0),
         max_tokens=config_data.get("max_tokens", 4096),
         max_iterations=config_data.get("max_iterations", 20),
@@ -1044,7 +983,9 @@ def _load_scenario_config(
 
 def _write_scenario_output(result: Dict[str, Any], output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"benchmark_results_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+    filename = (
+        f"benchmark_results_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+    )
     output_path = output_dir / filename
     with output_path.open("w", encoding="utf-8") as file:
         json.dump(result, file, indent=2, default=str)
@@ -1081,7 +1022,9 @@ def main() -> None:
     context = _parse_json_arg(args.context)
 
     if args.scenario:
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+        )
         config = _load_scenario_config(
             config_path=args.scenario,
             base_url_override=args.base_url,

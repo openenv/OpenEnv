@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
 
+
 class Model(nn.Module):
     """
     Model that performs a 3D convolution, applies Softmax, and performs two max pooling operations.
     """
+
     def __init__(self, in_channels, out_channels, kernel_size, pool_kernel_size):
         super(Model, self).__init__()
         self.conv = nn.Conv3d(in_channels, out_channels, kernel_size)
@@ -24,6 +26,7 @@ class Model(nn.Module):
         x = self.pool2(x)
         return x
 
+
 batch_size = 128
 in_channels = 3
 out_channels = 16
@@ -31,8 +34,10 @@ depth, height, width = 16, 32, 32
 kernel_size = 3
 pool_kernel_size = 2
 
+
 def get_inputs():
     return [torch.randn(batch_size, in_channels, depth, height, width)]
+
 
 def get_init_inputs():
     return [in_channels, out_channels, kernel_size, pool_kernel_size]

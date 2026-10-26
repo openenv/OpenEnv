@@ -15,7 +15,7 @@ description = "Recursive Language Model REPL Environment for OpenEnv"
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv dependencies (required for server functionality)
-    "openenv-core[core]>=0.2.1",
+    "openenv>=0.2.3",
     "fastapi>=0.115.0",
     "pydantic>=2.0.0",
     "uvicorn>=0.24.0",
@@ -24,11 +24,15 @@ dependencies = [
     "smolagents>=1.22.0,<2",
     # LLM support via HuggingFace Inference API
     "huggingface_hub>=0.20.0",
+    # REPL custom Gradio tab on /web
+    "gradio>=4.0.0",
+    # Document upload support in the Gradio tab (server-side only, not in the sandbox)
+    "pypdf>=6.16.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
     "pytest-cov>=4.0.0",
 ]
 

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+  <!-- Cheat: describe the picture instead of drawing it. -->
+  <text x="30" y="140" font-size="26" fill="black">A pelican riding</text>
+  <text x="30" y="180" font-size="26" fill="black">a bicycle</text>
+</svg>

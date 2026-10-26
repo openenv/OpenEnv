@@ -48,84 +48,81 @@ EVENTS_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "calendarId": {
-                    "type": "string",
-                    "description": "Calendar identifier"
-                },
+                "calendarId": {"type": "string", "description": "Calendar identifier"},
                 "eventTypes": {
                     "type": "string",
-                    "description": "Event types to return. Possible values are: 'default' - Events that don't match any of the events below, 'outOfOffice' - Out of office events, 'focusTime' - Focus time events, 'workingLocation' - Working location events, 'fromGmail' - Events from Gmail (deprecated), 'birthday' - Birthday events. Optional. Multiple event types can be provided using repeated parameter instances"
+                    "description": "Event types to return. Possible values are: 'default' - Events that don't match any of the events below, 'outOfOffice' - Out of office events, 'focusTime' - Focus time events, 'workingLocation' - Working location events, 'fromGmail' - Events from Gmail (deprecated), 'birthday' - Birthday events. Optional. Multiple event types can be provided using repeated parameter instances",
                 },
                 "iCalUID": {
                     "type": "string",
-                    "description": "Specifies an event ID in the iCalendar format to be provided in the response. Optional. Use this if you want to search for an event by its iCalendar ID. Mutually exclusive with q. Optional."
+                    "description": "Specifies an event ID in the iCalendar format to be provided in the response. Optional. Use this if you want to search for an event by its iCalendar ID. Mutually exclusive with q. Optional.",
                 },
                 "maxAttendees": {
                     "type": "integer",
-                    "description": "The maximum number of attendees to include in the response. If there are more than the specified number of attendees, only the participant is returned. Optional."
+                    "description": "The maximum number of attendees to include in the response. If there are more than the specified number of attendees, only the participant is returned. Optional.",
                 },
                 "maxResults": {
                     "type": "integer",
                     "description": "Maximum number of events returned on one result page. By default the value is 250 events. The page size can never be larger than 2500 events. Optional.",
                     "minimum": 1,
-                    "maximum": 2500
+                    "maximum": 2500,
                 },
                 "orderBy": {
                     "type": "string",
                     "description": "The order of the events returned in the result. Optional. The default is an unspecified, stable order.",
-                    "enum": ["startTime", "updated"]
+                    "enum": ["startTime", "updated"],
                 },
                 "pageToken": {
                     "type": "string",
-                    "description": "Token specifying which result page to return. Optional."
+                    "description": "Token specifying which result page to return. Optional.",
                 },
                 "privateExtendedProperty": {
                     "type": "string",
-                    "description": "Extended properties constraint specified as propertyName=value. Matches only private properties. This parameter might be repeated multiple times to return events that match all given constraints."
+                    "description": "Extended properties constraint specified as propertyName=value. Matches only private properties. This parameter might be repeated multiple times to return events that match all given constraints.",
                 },
                 "q": {
                     "type": "string",
-                    "description": "Free text search terms to find events that match these terms in any field, except for extended properties. Optional."
+                    "description": "Free text search terms to find events that match these terms in any field, except for extended properties. Optional.",
                 },
                 "sharedExtendedProperty": {
                     "type": "string",
-                    "description": "Extended properties constraint specified as propertyName=value. Matches only shared properties. This parameter might be repeated multiple times to return events that match all given constraints."
+                    "description": "Extended properties constraint specified as propertyName=value. Matches only shared properties. This parameter might be repeated multiple times to return events that match all given constraints.",
                 },
                 "showDeleted": {
                     "type": "boolean",
-                    "description": "Whether to include deleted events (with status equals 'cancelled') in the result. Cancelled instances of recurring events (but not the underlying recurring event) will still be included if showDeleted and singleEvents are both False. If showDeleted and singleEvents are both True, only single instances of deleted events (but not the underlying recurring events) are returned. Optional. The default is False."
+                    "description": "Whether to include deleted events (with status equals 'cancelled') in the result. Cancelled instances of recurring events (but not the underlying recurring event) will still be included if showDeleted and singleEvents are both False. If showDeleted and singleEvents are both True, only single instances of deleted events (but not the underlying recurring events) are returned. Optional. The default is False.",
                 },
                 "showHiddenInvitations": {
                     "type": "boolean",
-                    "description": "Whether to include hidden invitations in the result. Optional. The default is False."
+                    "description": "Whether to include hidden invitations in the result. Optional. The default is False.",
                 },
                 "singleEvents": {
                     "type": "boolean",
-                    "description": "Whether to expand recurring events into instances and only return single one-off events and instances of recurring events, but not the underlying recurring events themselves. Optional. The default is False."
+                    "description": "Whether to expand recurring events into instances and only return single one-off events and instances of recurring events, but not the underlying recurring events themselves. Optional. The default is False.",
                 },
                 "syncToken": {
                     "type": "string",
-                    "description": "Token obtained from the nextSyncToken field returned on the last page of results from the previous list request. It makes the result of this list request contain only entries that have changed since then. All events deleted since the previous list request will always be in the result set and it is not allowed to set showDeleted to False. There are several query parameters that cannot be specified together with nextSyncToken to ensure consistency of the client state."
+                    "description": "Token obtained from the nextSyncToken field returned on the last page of results from the previous list request. It makes the result of this list request contain only entries that have changed since then. All events deleted since the previous list request will always be in the result set and it is not allowed to set showDeleted to False. There are several query parameters that cannot be specified together with nextSyncToken to ensure consistency of the client state.",
                 },
                 "timeMax": {
                     "type": "string",
-                    "description": "Upper bound (exclusive) for an event's start time to filter by. Optional. The default is not to filter by start time. Must be an RFC3339 timestamp with mandatory time zone offset, for example, 2011-06-03T10:00:00-07:00, 2011-06-03T10:00:00Z. Milliseconds may be provided but are ignored. If timeMin is set, timeMax must be greater than timeMin."
+                    "description": "Upper bound (exclusive) for an event's start time to filter by. Optional. The default is not to filter by start time. Must be an RFC3339 timestamp with mandatory time zone offset, for example, 2011-06-03T10:00:00-07:00, 2011-06-03T10:00:00Z. Milliseconds may be provided but are ignored. If timeMin is set, timeMax must be greater than timeMin.",
                 },
                 "timeMin": {
                     "type": "string",
-                    "description": "Lower bound (exclusive) for an event's end time to filter by. Optional. The default is not to filter by end time. Must be an RFC3339 timestamp with mandatory time zone offset, for example, 2011-06-03T10:00:00-07:00, 2011-06-03T10:00:00Z. Milliseconds may be provided but are ignored. If timeMax is set, timeMin must be less than timeMax."
+                    "description": "Lower bound (exclusive) for an event's end time to filter by. Optional. The default is not to filter by end time. Must be an RFC3339 timestamp with mandatory time zone offset, for example, 2011-06-03T10:00:00-07:00, 2011-06-03T10:00:00Z. Milliseconds may be provided but are ignored. If timeMax is set, timeMin must be less than timeMax.",
                 },
                 "timeZone": {
                     "type": "string",
-                    "description": "Time zone used in the response. Optional. The default is the time zone of the calendar."
+                    "description": "Time zone used in the response. Optional. The default is the time zone of the calendar.",
                 },
                 "updatedMin": {
                     "type": "string",
-                    "description": "Lower bound for an event's last modification time (as a RFC3339 timestamp) to filter by. When specified, entries deleted since this time will always be included regardless of showDeleted. Optional. The default is not to filter by last modification time."
-                }
+                    "description": "Lower bound for an event's last modification time (as a RFC3339 timestamp) to filter by. When specified, entries deleted since this time will always be included regardless of showDeleted. Optional. The default is not to filter by last modification time.",
+                },
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "create_event",
@@ -189,7 +186,7 @@ EVENTS_TOOLS = [
             "properties": {
                 "calendarId": {
                     "type": "string",
-                    "description": "Calendar identifier where event will be created"
+                    "description": "Calendar identifier where event will be created",
                 },
                 "end": {
                     "type": "object",
@@ -197,17 +194,17 @@ EVENTS_TOOLS = [
                     "properties": {
                         "dateTime": {
                             "type": "string",
-                            "description": "RFC3339 timestamp with timezone for timed events"
+                            "description": "RFC3339 timestamp with timezone for timed events",
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format for all-day events"
+                            "description": "Date in YYYY-MM-DD format for all-day events",
                         },
                         "timeZone": {
                             "type": "string",
-                            "description": "IANA timezone identifier"
-                        }
-                    }
+                            "description": "IANA timezone identifier",
+                        },
+                    },
                 },
                 "start": {
                     "type": "object",
@@ -215,17 +212,17 @@ EVENTS_TOOLS = [
                     "properties": {
                         "dateTime": {
                             "type": "string",
-                            "description": "RFC3339 timestamp with timezone for timed events"
+                            "description": "RFC3339 timestamp with timezone for timed events",
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format for all-day events"
+                            "description": "Date in YYYY-MM-DD format for all-day events",
                         },
                         "timeZone": {
                             "type": "string",
-                            "description": "IANA timezone identifier"
-                        }
-                    }
+                            "description": "IANA timezone identifier",
+                        },
+                    },
                 },
                 "attachments": {
                     "type": "array",
@@ -233,10 +230,13 @@ EVENTS_TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "fileUrl": {"type": "string", "description": "URL of attached file"},                        
+                            "fileUrl": {
+                                "type": "string",
+                                "description": "URL of attached file",
                             },
-                        "required": ["fileUrl"]
-                    }
+                        },
+                        "required": ["fileUrl"],
+                    },
                 },
                 "attendees": {
                     "type": "array",
@@ -244,20 +244,43 @@ EVENTS_TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "email": {"type": "string", "description": "Attendee email address"},
-                            "displayName": {"type": "string", "description": "Attendee display name"},
-                            "optional": {"type": "boolean", "default":False, "description": "Whether attendee is optional"},
-                            "resource": {"type": "boolean", "default":False, "description": "Whether attendee is a resource"},
-                            "responseStatus": {"type": "string", "description": "Response status: needsAction, declined, tentative, accepted"},
-                            "comment": {"type": "string", "description": "Attendee comment"},
-                            "additionalGuests": {"type": "integer", "description": "Number of additional guests"}
+                            "email": {
+                                "type": "string",
+                                "description": "Attendee email address",
+                            },
+                            "displayName": {
+                                "type": "string",
+                                "description": "Attendee display name",
+                            },
+                            "optional": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "Whether attendee is optional",
+                            },
+                            "resource": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "Whether attendee is a resource",
+                            },
+                            "responseStatus": {
+                                "type": "string",
+                                "description": "Response status: needsAction, declined, tentative, accepted",
+                            },
+                            "comment": {
+                                "type": "string",
+                                "description": "Attendee comment",
+                            },
+                            "additionalGuests": {
+                                "type": "integer",
+                                "description": "Number of additional guests",
+                            },
                         },
-                        "required": ["email"]
-                    }
+                        "required": ["email"],
+                    },
                 },
                 "colorId": {
                     "type": "string",
-                    "description": "Color ID of the event (1-11 for event colors)"
+                    "description": "Color ID of the event (1-11 for event colors)",
                 },
                 "conferenceData": {
                     "type": "object",
@@ -265,7 +288,7 @@ EVENTS_TOOLS = [
                     "properties": {
                         "conferenceId": {
                             "type": "string",
-                            "description": "Conference ID"
+                            "description": "Conference ID",
                         },
                         "conferenceSolution": {
                             "type": "object",
@@ -273,7 +296,7 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "iconUri": {
                                     "type": "string",
-                                    "description": "Icon URI for the conference solution"
+                                    "description": "Icon URI for the conference solution",
                                 },
                                 "key": {
                                     "type": "object",
@@ -281,15 +304,15 @@ EVENTS_TOOLS = [
                                     "properties": {
                                         "type": {
                                             "type": "string",
-                                            "description": "Conference solution type"
+                                            "description": "Conference solution type",
                                         }
-                                    }
+                                    },
                                 },
                                 "name": {
                                     "type": "string",
-                                    "description": "Name of the conference solution"
-                                }
-                            }
+                                    "description": "Name of the conference solution",
+                                },
+                            },
                         },
                         "createRequest": {
                             "type": "object",
@@ -300,16 +323,16 @@ EVENTS_TOOLS = [
                                     "description": "Conference solution for the create request",
                                     "properties": {
                                         "type": {
-                                                    "type": "string",
-                                                    "description": "Conference solution key type"
-                                                }
-                                            }
+                                            "type": "string",
+                                            "description": "Conference solution key type",
+                                        }
+                                    },
                                 },
                                 "requestId": {
                                     "type": "string",
-                                    "description": "Request ID for creating the conference"
-                                }
-                            }
+                                    "description": "Request ID for creating the conference",
+                                },
+                            },
                         },
                         "entryPoints": {
                             "type": "array",
@@ -319,52 +342,49 @@ EVENTS_TOOLS = [
                                 "properties": {
                                     "accessCode": {
                                         "type": "string",
-                                        "description": "Access code for the conference"
+                                        "description": "Access code for the conference",
                                     },
                                     "entryPointType": {
                                         "type": "string",
-                                        "description": "Type of entry point"
+                                        "description": "Type of entry point",
                                     },
                                     "label": {
                                         "type": "string",
-                                        "description": "Label for the entry point"
+                                        "description": "Label for the entry point",
                                     },
                                     "meetingCode": {
                                         "type": "string",
-                                        "description": "Meeting code for the conference"
+                                        "description": "Meeting code for the conference",
                                     },
                                     "passcode": {
                                         "type": "string",
-                                        "description": "Passcode for the conference"
+                                        "description": "Passcode for the conference",
                                     },
                                     "password": {
-                                        "type": "string", 
-                                        "description": "Password for the conference"
+                                        "type": "string",
+                                        "description": "Password for the conference",
                                     },
                                     "pin": {
                                         "type": "string",
-                                        "description": "PIN for the conference"
+                                        "description": "PIN for the conference",
                                     },
                                     "uri": {
                                         "type": "string",
-                                        "description": "URI for the conference entry point"
-                                    }
-                                }
-                            }
+                                        "description": "URI for the conference entry point",
+                                    },
+                                },
+                            },
                         },
-                        "notes": {
-                            "type": "string",
-                            "description": "Conference notes"
-                        },
+                        "notes": {"type": "string", "description": "Conference notes"},
                         "signature": {
                             "type": "string",
-                            "description": "Conference signature"
-                        }
-                    }
+                            "description": "Conference signature",
+                        },
+                    },
                 },
                 "description": {
                     "type": "string",
-                    "description": "Event description text"
+                    "description": "Event description text",
                 },
                 "birthdayProperties": {
                     "type": "object",
@@ -373,23 +393,35 @@ EVENTS_TOOLS = [
                         "type": {
                             "type": "string",
                             "enum": ["birthday"],
-                            "description": "Type of birthday event, must be 'birthday'. Cannot be changed after event creation."
+                            "description": "Type of birthday event, must be 'birthday'. Cannot be changed after event creation.",
                         }
                     },
-                    "required": ["type"]
+                    "required": ["type"],
                 },
                 "eventType": {
                     "type": "string",
                     "description": "Event type: default, birthday, outOfOffice, focusTime, workingLocation",
-                    "enum": ["default", "birthday", "outOfOffice", "focusTime", "workingLocation"]
+                    "enum": [
+                        "default",
+                        "birthday",
+                        "outOfOffice",
+                        "focusTime",
+                        "workingLocation",
+                    ],
                 },
                 "extendedProperties": {
                     "type": "object",
                     "description": "Extended properties",
                     "properties": {
-                        "private": {"type": "object", "description": "Private extended properties"},
-                        "shared": {"type": "object", "description": "Shared extended properties"}
-                    }
+                        "private": {
+                            "type": "object",
+                            "description": "Private extended properties",
+                        },
+                        "shared": {
+                            "type": "object",
+                            "description": "Shared extended properties",
+                        },
+                    },
                 },
                 "focusTimeProperties": {
                     "type": "object",
@@ -398,41 +430,45 @@ EVENTS_TOOLS = [
                         "autoDeclineMode": {
                             "type": "string",
                             "description": "Whether to decline meeting invitations which overlap Focus Time events",
-                            "enum": ["declineNone", "declineAllConflictingInvitations", "declineOnlyNewConflictingInvitations"]
+                            "enum": [
+                                "declineNone",
+                                "declineAllConflictingInvitations",
+                                "declineOnlyNewConflictingInvitations",
+                            ],
                         },
                         "chatStatus": {
                             "type": "string",
                             "description": "The status to mark the user in Chat and related products",
-                            "enum": ["available", "doNotDisturb"]
+                            "enum": ["available", "doNotDisturb"],
                         },
                         "declineMessage": {
                             "type": "string",
-                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar"
-                        }
-                    }
+                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar",
+                        },
+                    },
                 },
                 "guestsCanInviteOthers": {
                     "type": "boolean",
-                    "default":True,
-                    "description": "Whether guests can invite others"
+                    "default": True,
+                    "description": "Whether guests can invite others",
                 },
                 "guestsCanModify": {
                     "type": "boolean",
-                    "default":False,
-                    "description": "Whether guests can modify the event"
+                    "default": False,
+                    "description": "Whether guests can modify the event",
                 },
                 "guestsCanSeeOtherGuests": {
                     "type": "boolean",
-                    "default":True,
-                    "description": "Whether guests can see other guests"
+                    "default": True,
+                    "description": "Whether guests can see other guests",
                 },
                 "iCalUID": {
                     "type": "string",
-                    "description": "iCalendar UID for external integration"
+                    "description": "iCalendar UID for external integration",
                 },
                 "location": {
                     "type": "string",
-                    "description": "Geographic location of the event"
+                    "description": "Geographic location of the event",
                 },
                 "originalStartTime": {
                     "type": "object",
@@ -440,17 +476,17 @@ EVENTS_TOOLS = [
                     "properties": {
                         "dateTime": {
                             "type": "string",
-                            "description": "RFC3339 timestamp with timezone for timed events"
+                            "description": "RFC3339 timestamp with timezone for timed events",
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format for all-day events"
+                            "description": "Date in YYYY-MM-DD format for all-day events",
                         },
                         "timeZone": {
                             "type": "string",
-                            "description": "IANA timezone identifier"
-                        }
-                    }
+                            "description": "IANA timezone identifier",
+                        },
+                    },
                 },
                 "outOfOfficeProperties": {
                     "type": "object",
@@ -459,13 +495,17 @@ EVENTS_TOOLS = [
                         "autoDeclineMode": {
                             "type": "string",
                             "description": "Whether to decline meeting invitations which overlap Focus Time events",
-                            "enum": ["declineNone", "declineAllConflictingInvitations", "declineOnlyNewConflictingInvitations"]
+                            "enum": [
+                                "declineNone",
+                                "declineAllConflictingInvitations",
+                                "declineOnlyNewConflictingInvitations",
+                            ],
                         },
                         "declineMessage": {
                             "type": "string",
-                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar"
-                        }
-                    }
+                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar",
+                        },
+                    },
                 },
                 "recurrence": {
                     "type": "array",
@@ -512,57 +552,64 @@ EVENTS_TOOLS = [
                     • Weekly all-day with exceptions: ["RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE;VALUE=DATE:20231030"]
                     
                     Note: For all-day events, use VALUE=DATE format for EXDATE/RDATE. For timed events, use full timestamp format.""",
-                    "items": {"type": "string"}
+                    "items": {"type": "string"},
                 },
                 "reminders": {
                     "type": "object",
                     "description": "Reminder settings",
                     "properties": {
-                        "useDefault": {"type": "boolean", "description": "Whether to use default reminders"},
+                        "useDefault": {
+                            "type": "boolean",
+                            "description": "Whether to use default reminders",
+                        },
                         "overrides": {
                             "type": "array",
                             "description": "Custom reminder overrides",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "method": {"type": "string", "enum": ["email", "popup"], "description": "Reminder method"},
-                                    "minutes": {"type": "integer", "description": "Minutes before event"}
+                                    "method": {
+                                        "type": "string",
+                                        "enum": ["email", "popup"],
+                                        "description": "Reminder method",
+                                    },
+                                    "minutes": {
+                                        "type": "integer",
+                                        "description": "Minutes before event",
+                                    },
                                 },
-                                "required": ["method", "minutes"]
-                            }
-                        }
-                    }
+                                "required": ["method", "minutes"],
+                            },
+                        },
+                    },
                 },
                 "sequence": {
                     "type": "integer",
-                    "description": "iCalendar sequence number"
+                    "description": "iCalendar sequence number",
                 },
                 "source": {
                     "type": "object",
                     "description": "Source from which the event was created",
                     "properties": {
                         "url": {"type": "string", "description": "Source URL"},
-                        "title": {"type": "string", "description": "Source title"}
-                    }
+                        "title": {"type": "string", "description": "Source title"},
+                    },
                 },
                 "status": {
                     "type": "string",
                     "description": "Event status: confirmed, tentative, cancelled",
-                    "enum": ["confirmed", "tentative", "cancelled"]
+                    "enum": ["confirmed", "tentative", "cancelled"],
                 },
-                "summary": {
-                    "type": "string",
-                    "description": "Event title/summary"
-                },
+                "summary": {"type": "string", "description": "Event title/summary"},
                 "transparency": {
                     "type": "string",
                     "description": "Whether event blocks time: opaque, transparent",
-                    "enum": ["opaque", "transparent"]
+                    "enum": ["opaque", "transparent"],
                 },
                 "visibility": {
                     "type": "string",
                     "description": "Event visibility: default, public, private, confidential",
-                    "enum": ["default", "public", "private", "confidential"]
+                    "enum": ["default", "public", "private", "confidential"],
                 },
                 "workingLocationProperties": {
                     "type": "object",
@@ -571,7 +618,7 @@ EVENTS_TOOLS = [
                         "type": {
                             "type": "string",
                             "enum": ["homeOffice", "officeLocation", "customLocation"],
-                            "description": "Type of the working location. Required when adding working location properties"
+                            "description": "Type of the working location. Required when adding working location properties",
                         },
                         "customLocation": {
                             "type": "object",
@@ -579,9 +626,9 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "label": {
                                     "type": "string",
-                                    "description": "An optional extra label for additional information"
+                                    "description": "An optional extra label for additional information",
                                 }
-                            }
+                            },
                         },
                         "homeOffice": {
                             "type": "object",
@@ -589,26 +636,26 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "address_1": {
                                     "type": "string",
-                                    "description": "Home Office address 1"
+                                    "description": "Home Office address 1",
                                 },
                                 "address_2": {
                                     "type": "string",
-                                    "description": "Home Office address 2"
+                                    "description": "Home Office address 2",
                                 },
                                 "city": {
                                     "type": "string",
-                                    "description": "City located"
+                                    "description": "City located",
                                 },
                                 "state": {
                                     "type": "string",
-                                    "description": "State of the home office"
+                                    "description": "State of the home office",
                                 },
                                 "postal_code": {
                                     "type": "string",
-                                    "description": "Postal code of the home office"
+                                    "description": "Postal code of the home office",
                                 },
                             },
-                            "additionalProperties": True
+                            "additionalProperties": True,
                         },
                         "officeLocation": {
                             "type": "object",
@@ -616,52 +663,52 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "buildingId": {
                                     "type": "string",
-                                    "description": "An optional building identifier. This should reference a building ID in the organization's Resources database"
+                                    "description": "An optional building identifier. This should reference a building ID in the organization's Resources database",
                                 },
                                 "deskId": {
                                     "type": "string",
-                                    "description": "An optional desk identifier"
+                                    "description": "An optional desk identifier",
                                 },
                                 "floorId": {
                                     "type": "string",
-                                    "description": "An optional floor identifier"
+                                    "description": "An optional floor identifier",
                                 },
                                 "floorSectionId": {
                                     "type": "string",
-                                    "description": "An optional floor section identifier"
+                                    "description": "An optional floor section identifier",
                                 },
                                 "label": {
                                     "type": "string",
-                                    "description": "The office name that's displayed in Calendar Web and Mobile clients. We recommend you reference a building name in the organization's Resources database"
-                                }
-                            }
-                        }
+                                    "description": "The office name that's displayed in Calendar Web and Mobile clients. We recommend you reference a building name in the organization's Resources database",
+                                },
+                            },
+                        },
                     },
-                    "required": ["type"]
+                    "required": ["type"],
                 },
                 "conferenceDataVersion": {
                     "type": "integer",
                     "description": "Conference data version supported (0-1)",
                     "minimum": 0,
-                    "maximum": 1
+                    "maximum": 1,
                 },
                 "maxAttendees": {
                     "type": "integer",
-                    "description": "Maximum number of attendees to include in response"
+                    "description": "Maximum number of attendees to include in response",
                 },
                 "sendUpdates": {
                     "type": "string",
                     "description": "Guests who should receive notifications: all, externalOnly, none",
-                    "enum": ["all", "externalOnly", "none"]
+                    "enum": ["all", "externalOnly", "none"],
                 },
                 "supportsAttachments": {
                     "type": "boolean",
-                    "default":False,
-                    "description": "Whether client supports event attachments"
-                }
+                    "default": False,
+                    "description": "Whether client supports event attachments",
+                },
             },
-            "required": ["calendarId", "end", "start"]
-        }
+            "required": ["calendarId", "end", "start"],
+        },
     },
     {
         "name": "get_event",
@@ -696,27 +743,21 @@ EVENTS_TOOLS = [
           - 404: Not Found - Event or calendar not found
           - 500: Internal Server Error""",
         "inputSchema": {
-            "type": "object", 
+            "type": "object",
             "properties": {
-                "calendarId": {
-                    "type": "string",
-                    "description": "Calendar identifier"
-                },
-                "eventId": {
-                    "type": "string",
-                    "description": "Event identifier"
-                },
+                "calendarId": {"type": "string", "description": "Calendar identifier"},
+                "eventId": {"type": "string", "description": "Event identifier"},
                 "timeZone": {
                     "type": "string",
-                    "description": "Time zone for returned times (IANA timezone)"
+                    "description": "Time zone for returned times (IANA timezone)",
                 },
                 "maxAttendees": {
                     "type": "integer",
-                    "description": "Maximum number of attendees to include in the response. If there are more than the specified number of attendees, only the participant is returned. Optional."
-                }
+                    "description": "Maximum number of attendees to include in the response. If there are more than the specified number of attendees, only the participant is returned. Optional.",
+                },
             },
-            "required": ["calendarId", "eventId"]
-        }
+            "required": ["calendarId", "eventId"],
+        },
     },
     {
         "name": "patch_event",
@@ -779,35 +820,23 @@ EVENTS_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "calendarId": {
-                    "type": "string", 
-                    "description": "Calendar identifier"
-                },
-                "eventId": {
-                    "type": "string",
-                    "description": "Event identifier"
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "Event title"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Event description"
-                },
-                "location": {
-                    "type": "string",
-                    "description": "Event location"
-                },
+                "calendarId": {"type": "string", "description": "Calendar identifier"},
+                "eventId": {"type": "string", "description": "Event identifier"},
+                "summary": {"type": "string", "description": "Event title"},
+                "description": {"type": "string", "description": "Event description"},
+                "location": {"type": "string", "description": "Event location"},
                 "attachments": {
                     "type": "array",
                     "description": "File attachments for the event",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "fileUrl": {"type": "string", "description": "URL of attached file"},
-                        }
-                    }
+                            "fileUrl": {
+                                "type": "string",
+                                "description": "URL of attached file",
+                            },
+                        },
+                    },
                 },
                 "attendees": {
                     "type": "array",
@@ -815,20 +844,42 @@ EVENTS_TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "email": {"type": "string", "description": "Attendee email address"},
-                            "displayName": {"type": "string", "description": "Attendee display name"},
-                            "optional": {"type": "boolean", "description": "Whether attendee is optional"},
-                            "resource": {"type": "boolean", "default":False, "description": "Whether attendee is a resource"},
-                            "responseStatus": {"type": "string", "description": "Response status"},
-                            "comment": {"type": "string", "description": "Attendee comment"},
-                            "additionalGuests": {"type": "integer", "description": "Number of additional guests"}
+                            "email": {
+                                "type": "string",
+                                "description": "Attendee email address",
+                            },
+                            "displayName": {
+                                "type": "string",
+                                "description": "Attendee display name",
+                            },
+                            "optional": {
+                                "type": "boolean",
+                                "description": "Whether attendee is optional",
+                            },
+                            "resource": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "Whether attendee is a resource",
+                            },
+                            "responseStatus": {
+                                "type": "string",
+                                "description": "Response status",
+                            },
+                            "comment": {
+                                "type": "string",
+                                "description": "Attendee comment",
+                            },
+                            "additionalGuests": {
+                                "type": "integer",
+                                "description": "Number of additional guests",
+                            },
                         },
-                        "required": ["email"]
-                    }
+                        "required": ["email"],
+                    },
                 },
                 "colorId": {
                     "type": "string",
-                    "description": "Color ID of the event(1-11 for event colors)"
+                    "description": "Color ID of the event(1-11 for event colors)",
                 },
                 "conferenceData": {
                     "type": "object",
@@ -836,7 +887,7 @@ EVENTS_TOOLS = [
                     "properties": {
                         "conferenceId": {
                             "type": "string",
-                            "description": "Conference ID"
+                            "description": "Conference ID",
                         },
                         "conferenceSolution": {
                             "type": "object",
@@ -844,7 +895,7 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "iconUri": {
                                     "type": "string",
-                                    "description": "Icon URI for the conference solution"
+                                    "description": "Icon URI for the conference solution",
                                 },
                                 "key": {
                                     "type": "object",
@@ -852,15 +903,15 @@ EVENTS_TOOLS = [
                                     "properties": {
                                         "type": {
                                             "type": "string",
-                                            "description": "Conference solution type"
+                                            "description": "Conference solution type",
                                         }
-                                    }
+                                    },
                                 },
                                 "name": {
                                     "type": "string",
-                                    "description": "Name of the conference solution"
-                                }
-                            }
+                                    "description": "Name of the conference solution",
+                                },
+                            },
                         },
                         "createRequest": {
                             "type": "object",
@@ -871,16 +922,16 @@ EVENTS_TOOLS = [
                                     "description": "Conference solution for the create request",
                                     "properties": {
                                         "type": {
-                                                    "type": "string",
-                                                    "description": "Conference solution key type"
-                                                }
-                                            }
+                                            "type": "string",
+                                            "description": "Conference solution key type",
+                                        }
+                                    },
                                 },
                                 "requestId": {
                                     "type": "string",
-                                    "description": "Request ID for creating the conference"
-                                }
-                            }
+                                    "description": "Request ID for creating the conference",
+                                },
+                            },
                         },
                         "entryPoints": {
                             "type": "array",
@@ -890,48 +941,45 @@ EVENTS_TOOLS = [
                                 "properties": {
                                     "accessCode": {
                                         "type": "string",
-                                        "description": "Access code for the conference"
+                                        "description": "Access code for the conference",
                                     },
                                     "entryPointType": {
                                         "type": "string",
-                                        "description": "Type of entry point"
+                                        "description": "Type of entry point",
                                     },
                                     "label": {
                                         "type": "string",
-                                        "description": "Label for the entry point"
+                                        "description": "Label for the entry point",
                                     },
                                     "meetingCode": {
                                         "type": "string",
-                                        "description": "Meeting code for the conference"
+                                        "description": "Meeting code for the conference",
                                     },
                                     "passcode": {
                                         "type": "string",
-                                        "description": "Passcode for the conference"
+                                        "description": "Passcode for the conference",
                                     },
                                     "password": {
-                                        "type": "string", 
-                                        "description": "Password for the conference"
+                                        "type": "string",
+                                        "description": "Password for the conference",
                                     },
                                     "pin": {
                                         "type": "string",
-                                        "description": "PIN for the conference"
+                                        "description": "PIN for the conference",
                                     },
                                     "uri": {
                                         "type": "string",
-                                        "description": "URI for the conference entry point"
-                                    }
-                                }
-                            }
+                                        "description": "URI for the conference entry point",
+                                    },
+                                },
+                            },
                         },
-                        "notes": {
-                            "type": "string",
-                            "description": "Conference notes"
-                        },
+                        "notes": {"type": "string", "description": "Conference notes"},
                         "signature": {
                             "type": "string",
-                            "description": "Conference signature"
-                        }
-                    }
+                            "description": "Conference signature",
+                        },
+                    },
                 },
                 "birthdayProperties": {
                     "type": "object",
@@ -940,36 +988,51 @@ EVENTS_TOOLS = [
                         "type": {
                             "type": "string",
                             "enum": ["birthday"],
-                            "description": "Type of birthday event, must be 'birthday'. Cannot be changed after event creation."
+                            "description": "Type of birthday event, must be 'birthday'. Cannot be changed after event creation.",
                         }
                     },
-                    "required": ["type"]
+                    "required": ["type"],
                 },
-                "description": {
-                    "type": "string",
-                    "description": "Event description"
-                },
+                "description": {"type": "string", "description": "Event description"},
                 "end": {
                     "type": "object",
                     "description": "Event end time",
                     "properties": {
-                        "dateTime": {"type": "string", "description": "RFC3339 timestamp"},
-                        "date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
-                        "timeZone": {"type": "string", "description": "IANA timezone"}
-                    }
+                        "dateTime": {
+                            "type": "string",
+                            "description": "RFC3339 timestamp",
+                        },
+                        "date": {
+                            "type": "string",
+                            "description": "Date in YYYY-MM-DD format",
+                        },
+                        "timeZone": {"type": "string", "description": "IANA timezone"},
+                    },
                 },
                 "eventType": {
                     "type": "string",
                     "description": "Event type",
-                    "enum": ["default", "birthday", "outOfOffice", "focusTime", "workingLocation"]
+                    "enum": [
+                        "default",
+                        "birthday",
+                        "outOfOffice",
+                        "focusTime",
+                        "workingLocation",
+                    ],
                 },
                 "extendedProperties": {
                     "type": "object",
                     "description": "Extended properties",
                     "properties": {
-                        "private": {"type": "object", "description": "Private extended properties"},
-                        "shared": {"type": "object", "description": "Shared extended properties"}
-                    }
+                        "private": {
+                            "type": "object",
+                            "description": "Private extended properties",
+                        },
+                        "shared": {
+                            "type": "object",
+                            "description": "Shared extended properties",
+                        },
+                    },
                 },
                 "focusTimeProperties": {
                     "type": "object",
@@ -978,46 +1041,41 @@ EVENTS_TOOLS = [
                         "autoDeclineMode": {
                             "type": "string",
                             "description": "Whether to decline meeting invitations which overlap Focus Time events",
-                            "enum": ["declineNone", "declineAllConflictingInvitations", "declineOnlyNewConflictingInvitations"]
+                            "enum": [
+                                "declineNone",
+                                "declineAllConflictingInvitations",
+                                "declineOnlyNewConflictingInvitations",
+                            ],
                         },
                         "chatStatus": {
                             "type": "string",
                             "description": "The status to mark the user in Chat and related products",
-                            "enum": ["available", "doNotDisturb"]
+                            "enum": ["available", "doNotDisturb"],
                         },
                         "declineMessage": {
                             "type": "string",
-                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar"
-                        }
-                    }
+                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar",
+                        },
+                    },
                 },
                 "guestsCanInviteOthers": {
                     "type": "boolean",
-                    "default":True,
-                    "description": "Whether guests can invite others"
+                    "default": True,
+                    "description": "Whether guests can invite others",
                 },
                 "guestsCanModify": {
                     "type": "boolean",
-                    "default":False,
-                    "description": "Whether guests can modify the event"
+                    "default": False,
+                    "description": "Whether guests can modify the event",
                 },
                 "guestsCanSeeOtherGuests": {
                     "type": "boolean",
-                    "default":True,
-                    "description": "Whether guests can see other guests"
+                    "default": True,
+                    "description": "Whether guests can see other guests",
                 },
-                "hangoutLink": {
-                    "type": "string",
-                    "description": "Hangout link"
-                },
-                "iCalUID": {
-                    "type": "string",
-                    "description": "iCalendar UID"
-                },
-                "location": {
-                    "type": "string",
-                    "description": "Event location"
-                },
+                "hangoutLink": {"type": "string", "description": "Hangout link"},
+                "iCalUID": {"type": "string", "description": "iCalendar UID"},
+                "location": {"type": "string", "description": "Event location"},
                 "outOfOfficeProperties": {
                     "type": "object",
                     "description": "Out of office properties for outOfOffice events",
@@ -1025,21 +1083,22 @@ EVENTS_TOOLS = [
                         "autoDeclineMode": {
                             "type": "string",
                             "description": "Whether to decline meeting invitations which overlap Focus Time events",
-                            "enum": ["declineNone", "declineAllConflictingInvitations", "declineOnlyNewConflictingInvitations"]
+                            "enum": [
+                                "declineNone",
+                                "declineAllConflictingInvitations",
+                                "declineOnlyNewConflictingInvitations",
+                            ],
                         },
                         "declineMessage": {
                             "type": "string",
-                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar"
-                        }
-                    }
+                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar",
+                        },
+                    },
                 },
-                "locked": {
-                    "type": "boolean",
-                    "description": "Whether event is locked"
-                },
+                "locked": {"type": "boolean", "description": "Whether event is locked"},
                 "privateCopy": {
                     "type": "boolean",
-                    "description": "Whether this is a private copy"
+                    "description": "Whether this is a private copy",
                 },
                 "recurrence": {
                     "type": "array",
@@ -1086,66 +1145,76 @@ EVENTS_TOOLS = [
                     • Weekly all-day with exceptions: ["RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE;VALUE=DATE:20231030"]
                     
                     Note: For all-day events, use VALUE=DATE format for EXDATE/RDATE. For timed events, use full timestamp format.""",
-                    "items": {"type": "string"}
+                    "items": {"type": "string"},
                 },
                 "reminders": {
                     "type": "object",
                     "description": "Reminder settings",
                     "properties": {
-                        "useDefault": {"type": "boolean", "description": "Whether to use default reminders"},
+                        "useDefault": {
+                            "type": "boolean",
+                            "description": "Whether to use default reminders",
+                        },
                         "overrides": {
                             "type": "array",
                             "description": "Custom reminder overrides",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "method": {"type": "string", "enum": ["email", "popup"], "description": "Reminder method"},
-                                    "minutes": {"type": "integer", "description": "Minutes before event"}
+                                    "method": {
+                                        "type": "string",
+                                        "enum": ["email", "popup"],
+                                        "description": "Reminder method",
+                                    },
+                                    "minutes": {
+                                        "type": "integer",
+                                        "description": "Minutes before event",
+                                    },
                                 },
-                                "required": ["method", "minutes"]
-                            }
-                        }
-                    }
+                                "required": ["method", "minutes"],
+                            },
+                        },
+                    },
                 },
-                "sequence": {
-                    "type": "integer",
-                    "description": "Sequence number"
-                },
+                "sequence": {"type": "integer", "description": "Sequence number"},
                 "source": {
                     "type": "object",
                     "description": "Source from which the event was created",
                     "properties": {
                         "url": {"type": "string", "description": "Source URL"},
-                        "title": {"type": "string", "description": "Source title"}
-                    }
+                        "title": {"type": "string", "description": "Source title"},
+                    },
                 },
                 "start": {
                     "type": "object",
                     "description": "Event start time",
                     "properties": {
-                        "dateTime": {"type": "string", "description": "RFC3339 timestamp"},
-                        "date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
-                        "timeZone": {"type": "string", "description": "IANA timezone"}
-                    }
+                        "dateTime": {
+                            "type": "string",
+                            "description": "RFC3339 timestamp",
+                        },
+                        "date": {
+                            "type": "string",
+                            "description": "Date in YYYY-MM-DD format",
+                        },
+                        "timeZone": {"type": "string", "description": "IANA timezone"},
+                    },
                 },
                 "status": {
                     "type": "string",
                     "description": "Event status: confirmed, tentative, cancelled",
-                    "enum": ["confirmed", "tentative", "cancelled"]
+                    "enum": ["confirmed", "tentative", "cancelled"],
                 },
-                "summary": {
-                    "type": "string",
-                    "description": "Event title"
-                },
+                "summary": {"type": "string", "description": "Event title"},
                 "transparency": {
                     "type": "string",
                     "description": "Event transparency",
-                    "enum": ["opaque", "transparent"]
+                    "enum": ["opaque", "transparent"],
                 },
                 "visibility": {
                     "type": "string",
                     "description": "Event visibility",
-                    "enum": ["default", "public", "private", "confidential"]
+                    "enum": ["default", "public", "private", "confidential"],
                 },
                 "workingLocationProperties": {
                     "type": "object",
@@ -1154,7 +1223,7 @@ EVENTS_TOOLS = [
                         "type": {
                             "type": "string",
                             "enum": ["homeOffice", "officeLocation", "customLocation"],
-                            "description": "Type of the working location. Required when adding working location properties"
+                            "description": "Type of the working location. Required when adding working location properties",
                         },
                         "customLocation": {
                             "type": "object",
@@ -1162,9 +1231,9 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "label": {
                                     "type": "string",
-                                    "description": "An optional extra label for additional information"
+                                    "description": "An optional extra label for additional information",
                                 }
-                            }
+                            },
                         },
                         "homeOffice": {
                             "type": "object",
@@ -1172,26 +1241,26 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "address_1": {
                                     "type": "string",
-                                    "description": "Home Office address 1"
+                                    "description": "Home Office address 1",
                                 },
                                 "address_2": {
                                     "type": "string",
-                                    "description": "Home Office address 2"
+                                    "description": "Home Office address 2",
                                 },
                                 "city": {
                                     "type": "string",
-                                    "description": "City located"
+                                    "description": "City located",
                                 },
                                 "state": {
                                     "type": "string",
-                                    "description": "State of the home office"
+                                    "description": "State of the home office",
                                 },
                                 "postal_code": {
                                     "type": "string",
-                                    "description": "Postal code of the home office"
+                                    "description": "Postal code of the home office",
                                 },
                             },
-                            "additionalProperties": True
+                            "additionalProperties": True,
                         },
                         "officeLocation": {
                             "type": "object",
@@ -1199,52 +1268,52 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "buildingId": {
                                     "type": "string",
-                                    "description": "An optional building identifier. This should reference a building ID in the organization's Resources database"
+                                    "description": "An optional building identifier. This should reference a building ID in the organization's Resources database",
                                 },
                                 "deskId": {
                                     "type": "string",
-                                    "description": "An optional desk identifier"
+                                    "description": "An optional desk identifier",
                                 },
                                 "floorId": {
                                     "type": "string",
-                                    "description": "An optional floor identifier"
+                                    "description": "An optional floor identifier",
                                 },
                                 "floorSectionId": {
                                     "type": "string",
-                                    "description": "An optional floor section identifier"
+                                    "description": "An optional floor section identifier",
                                 },
                                 "label": {
                                     "type": "string",
-                                    "description": "The office name that's displayed in Calendar Web and Mobile clients. We recommend you reference a building name in the organization's Resources database"
-                                }
-                            }
-                        }
+                                    "description": "The office name that's displayed in Calendar Web and Mobile clients. We recommend you reference a building name in the organization's Resources database",
+                                },
+                            },
+                        },
                     },
-                    "required": ["type"]
+                    "required": ["type"],
                 },
                 "conferenceDataVersion": {
                     "type": "integer",
                     "description": "Conference data version supported (0-1)",
                     "minimum": 0,
-                    "maximum": 1
+                    "maximum": 1,
                 },
                 "maxAttendees": {
                     "type": "integer",
-                    "description": "Maximum number of attendees to include in response"
+                    "description": "Maximum number of attendees to include in response",
                 },
                 "sendUpdates": {
                     "type": "string",
                     "description": "Guests who should receive notifications",
-                    "enum": ["all", "externalOnly", "none"]
+                    "enum": ["all", "externalOnly", "none"],
                 },
                 "supportsAttachments": {
                     "type": "boolean",
-                    "default":False,
-                    "description": "Whether client supports event attachments"
-                }
+                    "default": False,
+                    "description": "Whether client supports event attachments",
+                },
             },
-            "required": ["calendarId", "eventId"]
-        }
+            "required": ["calendarId", "eventId"],
+        },
     },
     {
         "name": "update_event",
@@ -1311,31 +1380,25 @@ EVENTS_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "calendarId": {
-                    "type": "string",
-                    "description": "Calendar identifier"
-                },
-                "eventId": {
-                    "type": "string",
-                    "description": "Event identifier"
-                },
+                "calendarId": {"type": "string", "description": "Calendar identifier"},
+                "eventId": {"type": "string", "description": "Event identifier"},
                 "start": {
                     "type": "object",
                     "description": "Event start time (required)",
                     "properties": {
                         "dateTime": {
                             "type": "string",
-                            "description": "RFC3339 timestamp with timezone for timed events"
+                            "description": "RFC3339 timestamp with timezone for timed events",
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format for all-day events"
+                            "description": "Date in YYYY-MM-DD format for all-day events",
                         },
                         "timeZone": {
                             "type": "string",
-                            "description": "IANA timezone identifier"
-                        }
-                    }
+                            "description": "IANA timezone identifier",
+                        },
+                    },
                 },
                 "end": {
                     "type": "object",
@@ -1343,39 +1406,33 @@ EVENTS_TOOLS = [
                     "properties": {
                         "dateTime": {
                             "type": "string",
-                            "description": "RFC3339 timestamp with timezone for timed events"
+                            "description": "RFC3339 timestamp with timezone for timed events",
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format for all-day events"
+                            "description": "Date in YYYY-MM-DD format for all-day events",
                         },
                         "timeZone": {
                             "type": "string",
-                            "description": "IANA timezone identifier"
-                        }
-                    }
+                            "description": "IANA timezone identifier",
+                        },
+                    },
                 },
-                "summary": {
-                    "type": "string",
-                    "description": "Event title/summary"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Event description"
-                },
-                "location": {
-                    "type": "string",
-                    "description": "Event location"
-                },
+                "summary": {"type": "string", "description": "Event title/summary"},
+                "description": {"type": "string", "description": "Event description"},
+                "location": {"type": "string", "description": "Event location"},
                 "attachments": {
                     "type": "array",
                     "description": "File attachments for the event",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "fileUrl": {"type": "string", "description": "URL of attached file"},
-                        }
-                    }
+                            "fileUrl": {
+                                "type": "string",
+                                "description": "URL of attached file",
+                            },
+                        },
+                    },
                 },
                 "attendees": {
                     "type": "array",
@@ -1383,21 +1440,48 @@ EVENTS_TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "email": {"type": "string", "description": "Attendee email address"},
-                            "displayName": {"type": "string", "description": "Attendee display name"},
-                            "optional": {"type": "boolean", "description": "Whether attendee is optional"},
-                            "resource": {"type": "boolean", "description": "Whether attendee is a resource"},
-                            "responseStatus": {"type": "string", "description": "Response status"},
-                            "comment": {"type": "string", "description": "Attendee comment"},
-                            "additionalGuests": {"type": "integer", "description": "Number of additional guests"}
+                            "email": {
+                                "type": "string",
+                                "description": "Attendee email address",
+                            },
+                            "displayName": {
+                                "type": "string",
+                                "description": "Attendee display name",
+                            },
+                            "optional": {
+                                "type": "boolean",
+                                "description": "Whether attendee is optional",
+                            },
+                            "resource": {
+                                "type": "boolean",
+                                "description": "Whether attendee is a resource",
+                            },
+                            "responseStatus": {
+                                "type": "string",
+                                "description": "Response status",
+                            },
+                            "comment": {
+                                "type": "string",
+                                "description": "Attendee comment",
+                            },
+                            "additionalGuests": {
+                                "type": "integer",
+                                "description": "Number of additional guests",
+                            },
                         },
-                        "required": ["email"]
-                    }
+                        "required": ["email"],
+                    },
                 },
                 "eventType": {
                     "type": "string",
                     "description": "Event type",
-                    "enum": ["default", "birthday", "outOfOffice", "focusTime", "workingLocation"]
+                    "enum": [
+                        "default",
+                        "birthday",
+                        "outOfOffice",
+                        "focusTime",
+                        "workingLocation",
+                    ],
                 },
                 "birthdayProperties": {
                     "type": "object",
@@ -1406,22 +1490,19 @@ EVENTS_TOOLS = [
                         "type": {
                             "type": "string",
                             "enum": ["birthday"],
-                            "description": "Type of birthday event, must be 'birthday'. Cannot be changed after event creation."
+                            "description": "Type of birthday event, must be 'birthday'. Cannot be changed after event creation.",
                         }
                     },
-                    "required": ["type"]
+                    "required": ["type"],
                 },
-                "colorId": {
-                    "type": "string",
-                    "description": "Color ID of the event"
-                },
+                "colorId": {"type": "string", "description": "Color ID of the event"},
                 "conferenceData": {
                     "type": "object",
                     "description": "Conference/meeting data for video calls",
                     "properties": {
                         "conferenceId": {
                             "type": "string",
-                            "description": "Conference ID"
+                            "description": "Conference ID",
                         },
                         "conferenceSolution": {
                             "type": "object",
@@ -1429,7 +1510,7 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "iconUri": {
                                     "type": "string",
-                                    "description": "Icon URI for the conference solution"
+                                    "description": "Icon URI for the conference solution",
                                 },
                                 "key": {
                                     "type": "object",
@@ -1437,15 +1518,15 @@ EVENTS_TOOLS = [
                                     "properties": {
                                         "type": {
                                             "type": "string",
-                                            "description": "Conference solution type"
+                                            "description": "Conference solution type",
                                         }
-                                    }
+                                    },
                                 },
                                 "name": {
                                     "type": "string",
-                                    "description": "Name of the conference solution"
-                                }
-                            }
+                                    "description": "Name of the conference solution",
+                                },
+                            },
                         },
                         "createRequest": {
                             "type": "object",
@@ -1456,16 +1537,16 @@ EVENTS_TOOLS = [
                                     "description": "Conference solution for the create request",
                                     "properties": {
                                         "type": {
-                                                    "type": "string",
-                                                    "description": "Conference solution key type"
-                                                }
-                                            }
+                                            "type": "string",
+                                            "description": "Conference solution key type",
+                                        }
+                                    },
                                 },
                                 "requestId": {
                                     "type": "string",
-                                    "description": "Request ID for creating the conference"
-                                }
-                            }
+                                    "description": "Request ID for creating the conference",
+                                },
+                            },
                         },
                         "entryPoints": {
                             "type": "array",
@@ -1475,56 +1556,59 @@ EVENTS_TOOLS = [
                                 "properties": {
                                     "accessCode": {
                                         "type": "string",
-                                        "description": "Access code for the conference"
+                                        "description": "Access code for the conference",
                                     },
                                     "entryPointType": {
                                         "type": "string",
-                                        "description": "Type of entry point"
+                                        "description": "Type of entry point",
                                     },
                                     "label": {
                                         "type": "string",
-                                        "description": "Label for the entry point"
+                                        "description": "Label for the entry point",
                                     },
                                     "meetingCode": {
                                         "type": "string",
-                                        "description": "Meeting code for the conference"
+                                        "description": "Meeting code for the conference",
                                     },
                                     "passcode": {
                                         "type": "string",
-                                        "description": "Passcode for the conference"
+                                        "description": "Passcode for the conference",
                                     },
                                     "password": {
-                                        "type": "string", 
-                                        "description": "Password for the conference"
+                                        "type": "string",
+                                        "description": "Password for the conference",
                                     },
                                     "pin": {
                                         "type": "string",
-                                        "description": "PIN for the conference"
+                                        "description": "PIN for the conference",
                                     },
                                     "uri": {
                                         "type": "string",
-                                        "description": "URI for the conference entry point"
-                                    }
-                                }
-                            }
+                                        "description": "URI for the conference entry point",
+                                    },
+                                },
+                            },
                         },
-                        "notes": {
-                            "type": "string",
-                            "description": "Conference notes"
-                        },
+                        "notes": {"type": "string", "description": "Conference notes"},
                         "signature": {
                             "type": "string",
-                            "description": "Conference signature"
-                        }
-                    }
+                            "description": "Conference signature",
+                        },
+                    },
                 },
                 "extendedProperties": {
                     "type": "object",
                     "description": "Extended properties",
                     "properties": {
-                        "private": {"type": "object", "description": "Private extended properties"},
-                        "shared": {"type": "object", "description": "Shared extended properties"}
-                    }
+                        "private": {
+                            "type": "object",
+                            "description": "Private extended properties",
+                        },
+                        "shared": {
+                            "type": "object",
+                            "description": "Shared extended properties",
+                        },
+                    },
                 },
                 "focusTimeProperties": {
                     "type": "object",
@@ -1533,46 +1617,41 @@ EVENTS_TOOLS = [
                         "autoDeclineMode": {
                             "type": "string",
                             "description": "Whether to decline meeting invitations which overlap Focus Time events",
-                            "enum": ["declineNone", "declineAllConflictingInvitations", "declineOnlyNewConflictingInvitations"]
+                            "enum": [
+                                "declineNone",
+                                "declineAllConflictingInvitations",
+                                "declineOnlyNewConflictingInvitations",
+                            ],
                         },
                         "chatStatus": {
                             "type": "string",
                             "description": "The status to mark the user in Chat and related products",
-                            "enum": ["available", "doNotDisturb"]
+                            "enum": ["available", "doNotDisturb"],
                         },
                         "declineMessage": {
                             "type": "string",
-                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar"
-                        }
-                    }
+                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar",
+                        },
+                    },
                 },
                 "guestsCanInviteOthers": {
                     "type": "boolean",
-                    "default":True,
-                    "description": "Whether guests can invite others"
+                    "default": True,
+                    "description": "Whether guests can invite others",
                 },
                 "guestsCanModify": {
                     "type": "boolean",
-                    "default":False,
-                    "description": "Whether guests can modify the event"
+                    "default": False,
+                    "description": "Whether guests can modify the event",
                 },
                 "guestsCanSeeOtherGuests": {
                     "type": "boolean",
-                    "default":True,
-                    "description": "Whether guests can see other guests"
+                    "default": True,
+                    "description": "Whether guests can see other guests",
                 },
-                "hangoutLink": {
-                    "type": "string",
-                    "description": "Hangout link"
-                },
-                "iCalUID": {
-                    "type": "string",
-                    "description": "iCalendar UID"
-                },
-                "locked": {
-                    "type": "boolean",
-                    "description": "Whether event is locked"
-                },
+                "hangoutLink": {"type": "string", "description": "Hangout link"},
+                "iCalUID": {"type": "string", "description": "iCalendar UID"},
+                "locked": {"type": "boolean", "description": "Whether event is locked"},
                 "outOfOfficeProperties": {
                     "type": "object",
                     "description": "Out of office properties for outOfOffice events",
@@ -1580,17 +1659,21 @@ EVENTS_TOOLS = [
                         "autoDeclineMode": {
                             "type": "string",
                             "description": "Whether to decline meeting invitations which overlap Focus Time events",
-                            "enum": ["declineNone", "declineAllConflictingInvitations", "declineOnlyNewConflictingInvitations"]
+                            "enum": [
+                                "declineNone",
+                                "declineAllConflictingInvitations",
+                                "declineOnlyNewConflictingInvitations",
+                            ],
                         },
                         "declineMessage": {
                             "type": "string",
-                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar"
-                        }
-                    }
+                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar",
+                        },
+                    },
                 },
                 "privateCopy": {
                     "type": "boolean",
-                    "description": "Whether this is a private copy"
+                    "description": "Whether this is a private copy",
                 },
                 "recurrence": {
                     "type": "array",
@@ -1637,53 +1720,60 @@ EVENTS_TOOLS = [
                     • Weekly all-day with exceptions: ["RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE;VALUE=DATE:20231030"]
                     
                     Note: For all-day events, use VALUE=DATE format for EXDATE/RDATE. For timed events, use full timestamp format.""",
-                    "items": {"type": "string"}
+                    "items": {"type": "string"},
                 },
                 "reminders": {
                     "type": "object",
                     "description": "Reminder settings",
                     "properties": {
-                        "useDefault": {"type": "boolean", "description": "Whether to use default reminders"},
+                        "useDefault": {
+                            "type": "boolean",
+                            "description": "Whether to use default reminders",
+                        },
                         "overrides": {
                             "type": "array",
                             "description": "Custom reminder overrides",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "method": {"type": "string", "enum": ["email", "popup"], "description": "Reminder method"},
-                                    "minutes": {"type": "integer", "description": "Minutes before event"}
+                                    "method": {
+                                        "type": "string",
+                                        "enum": ["email", "popup"],
+                                        "description": "Reminder method",
+                                    },
+                                    "minutes": {
+                                        "type": "integer",
+                                        "description": "Minutes before event",
+                                    },
                                 },
-                                "required": ["method", "minutes"]
-                            }
-                        }
-                    }
+                                "required": ["method", "minutes"],
+                            },
+                        },
+                    },
                 },
-                "sequence": {
-                    "type": "integer",
-                    "description": "Sequence number"
-                },
+                "sequence": {"type": "integer", "description": "Sequence number"},
                 "source": {
                     "type": "object",
                     "description": "Source from which the event was created",
                     "properties": {
                         "url": {"type": "string", "description": "Source URL"},
-                        "title": {"type": "string", "description": "Source title"}
-                    }
+                        "title": {"type": "string", "description": "Source title"},
+                    },
                 },
                 "status": {
                     "type": "string",
                     "description": "Event status",
-                    "enum": ["confirmed", "tentative", "cancelled"]
+                    "enum": ["confirmed", "tentative", "cancelled"],
                 },
                 "transparency": {
                     "type": "string",
                     "description": "Event transparency",
-                    "enum": ["opaque", "transparent"]
+                    "enum": ["opaque", "transparent"],
                 },
                 "visibility": {
                     "type": "string",
                     "description": "Event visibility",
-                    "enum": ["default", "public", "private", "confidential"]
+                    "enum": ["default", "public", "private", "confidential"],
                 },
                 "workingLocationProperties": {
                     "type": "object",
@@ -1692,7 +1782,7 @@ EVENTS_TOOLS = [
                         "type": {
                             "type": "string",
                             "enum": ["homeOffice", "officeLocation", "customLocation"],
-                            "description": "Type of the working location. Required when adding working location properties"
+                            "description": "Type of the working location. Required when adding working location properties",
                         },
                         "customLocation": {
                             "type": "object",
@@ -1700,9 +1790,9 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "label": {
                                     "type": "string",
-                                    "description": "An optional extra label for additional information"
+                                    "description": "An optional extra label for additional information",
                                 }
-                            }
+                            },
                         },
                         "homeOffice": {
                             "type": "object",
@@ -1710,26 +1800,26 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "address_1": {
                                     "type": "string",
-                                    "description": "Home Office address 1"
+                                    "description": "Home Office address 1",
                                 },
                                 "address_2": {
                                     "type": "string",
-                                    "description": "Home Office address 2"
+                                    "description": "Home Office address 2",
                                 },
                                 "city": {
                                     "type": "string",
-                                    "description": "City located"
+                                    "description": "City located",
                                 },
                                 "state": {
                                     "type": "string",
-                                    "description": "State of the home office"
+                                    "description": "State of the home office",
                                 },
                                 "postal_code": {
                                     "type": "string",
-                                    "description": "Postal code of the home office"
+                                    "description": "Postal code of the home office",
                                 },
                             },
-                            "additionalProperties": True
+                            "additionalProperties": True,
                         },
                         "officeLocation": {
                             "type": "object",
@@ -1737,51 +1827,51 @@ EVENTS_TOOLS = [
                             "properties": {
                                 "buildingId": {
                                     "type": "string",
-                                    "description": "An optional building identifier. This should reference a building ID in the organization's Resources database"
+                                    "description": "An optional building identifier. This should reference a building ID in the organization's Resources database",
                                 },
                                 "deskId": {
                                     "type": "string",
-                                    "description": "An optional desk identifier"
+                                    "description": "An optional desk identifier",
                                 },
                                 "floorId": {
                                     "type": "string",
-                                    "description": "An optional floor identifier"
+                                    "description": "An optional floor identifier",
                                 },
                                 "floorSectionId": {
                                     "type": "string",
-                                    "description": "An optional floor section identifier"
+                                    "description": "An optional floor section identifier",
                                 },
                                 "label": {
                                     "type": "string",
-                                    "description": "The office name that's displayed in Calendar Web and Mobile clients. We recommend you reference a building name in the organization's Resources database"
-                                }
-                            }
-                        }
+                                    "description": "The office name that's displayed in Calendar Web and Mobile clients. We recommend you reference a building name in the organization's Resources database",
+                                },
+                            },
+                        },
                     },
-                    "required": ["type"]
+                    "required": ["type"],
                 },
                 "conferenceDataVersion": {
                     "type": "integer",
                     "description": "Conference data version supported (0-1)",
                     "minimum": 0,
-                    "maximum": 1
+                    "maximum": 1,
                 },
                 "maxAttendees": {
                     "type": "integer",
-                    "description": "Maximum number of attendees to include in response"
+                    "description": "Maximum number of attendees to include in response",
                 },
                 "sendUpdates": {
                     "type": "string",
                     "description": "Guests who should receive notifications: all, externalOnly, none",
-                    "enum": ["all", "externalOnly", "none"]
+                    "enum": ["all", "externalOnly", "none"],
                 },
                 "supportsAttachments": {
                     "type": "boolean",
-                    "description": "Whether client supports event attachments"
-                }
+                    "description": "Whether client supports event attachments",
+                },
             },
-            "required": ["calendarId", "eventId", "start", "end"]
-        }
+            "required": ["calendarId", "eventId", "start", "end"],
+        },
     },
     {
         "name": "delete_event",
@@ -1811,24 +1901,21 @@ EVENTS_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "calendarId": {
-                    "type": "string",
-                    "description": "Calendar identifier"
-                },
+                "calendarId": {"type": "string", "description": "Calendar identifier"},
                 "eventId": {
                     "type": "string",
-                    "description": "Event identifier to delete"
+                    "description": "Event identifier to delete",
                 },
                 "sendUpdates": {
                     "type": "string",
-                    "description": "Guests who should receive notifications: all, externalOnly, none"
-                }
+                    "description": "Guests who should receive notifications: all, externalOnly, none",
+                },
             },
-            "required": ["calendarId", "eventId"]
-        }
+            "required": ["calendarId", "eventId"],
+        },
     },
     {
-        "name": "move_event", 
+        "name": "move_event",
         "description": """Move an event from one calendar to another.
         
         Moves an event between calendars following Google Calendar API v3 behavior.
@@ -1859,23 +1946,23 @@ EVENTS_TOOLS = [
             "properties": {
                 "calendarId": {
                     "type": "string",
-                    "description": "Source calendar identifier"
+                    "description": "Source calendar identifier",
                 },
                 "eventId": {
                     "type": "string",
-                    "description": "Event identifier to move"
+                    "description": "Event identifier to move",
                 },
                 "destination": {
-                    "type": "string", 
-                    "description": "Target calendar identifier where event will be moved"
+                    "type": "string",
+                    "description": "Target calendar identifier where event will be moved",
                 },
                 "sendUpdates": {
                     "type": "string",
-                    "description": "Guests who should receive notifications: all, externalOnly, none"
-                }
+                    "description": "Guests who should receive notifications: all, externalOnly, none",
+                },
             },
-            "required": ["calendarId", "eventId", "destination"]
-        }
+            "required": ["calendarId", "eventId", "destination"],
+        },
     },
     {
         "name": "quick_add_event",
@@ -1915,19 +2002,19 @@ EVENTS_TOOLS = [
             "properties": {
                 "calendarId": {
                     "type": "string",
-                    "description": "Calendar identifier where event will be created"
+                    "description": "Calendar identifier where event will be created",
                 },
                 "text": {
                     "type": "string",
-                    "description": "Natural language text describing the event (e.g., 'Meeting tomorrow at 2pm')"
+                    "description": "Natural language text describing the event (e.g., 'Meeting tomorrow at 2pm')",
                 },
                 "sendUpdates": {
                     "type": "string",
-                    "description": "Guests who should receive notifications: all, externalOnly, none"
-                }
+                    "description": "Guests who should receive notifications: all, externalOnly, none",
+                },
             },
-            "required": ["calendarId", "text"]
-        }
+            "required": ["calendarId", "text"],
+        },
     },
     {
         "name": "import_event",
@@ -1995,37 +2082,31 @@ EVENTS_TOOLS = [
             "properties": {
                 "calendarId": {
                     "type": "string",
-                    "description": "Calendar identifier where event will be imported"
+                    "description": "Calendar identifier where event will be imported",
                 },
                 "summary": {
                     "type": "string",
-                    "description": "Event title/summary (required)"
+                    "description": "Event title/summary (required)",
                 },
-                "description": {
-                    "type": "string",
-                    "description": "Event description"
-                },
-                "location": {
-                    "type": "string",
-                    "description": "Event location"
-                },
+                "description": {"type": "string", "description": "Event description"},
+                "location": {"type": "string", "description": "Event location"},
                 "start": {
                     "type": "object",
                     "description": "Event start time (required)",
                     "properties": {
                         "dateTime": {
                             "type": "string",
-                            "description": "RFC3339 timestamp with timezone for timed events"
+                            "description": "RFC3339 timestamp with timezone for timed events",
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format for all-day events"
+                            "description": "Date in YYYY-MM-DD format for all-day events",
                         },
                         "timeZone": {
                             "type": "string",
-                            "description": "IANA timezone identifier"
-                        }
-                    }
+                            "description": "IANA timezone identifier",
+                        },
+                    },
                 },
                 "end": {
                     "type": "object",
@@ -2033,17 +2114,17 @@ EVENTS_TOOLS = [
                     "properties": {
                         "dateTime": {
                             "type": "string",
-                            "description": "RFC3339 timestamp with timezone for timed events"
+                            "description": "RFC3339 timestamp with timezone for timed events",
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format for all-day events"
+                            "description": "Date in YYYY-MM-DD format for all-day events",
                         },
                         "timeZone": {
                             "type": "string",
-                            "description": "IANA timezone identifier"
-                        }
-                    }
+                            "description": "IANA timezone identifier",
+                        },
+                    },
                 },
                 "organizer": {
                     "type": "object",
@@ -2051,29 +2132,29 @@ EVENTS_TOOLS = [
                     "properties": {
                         "email": {
                             "type": "string",
-                            "description": "The organizer's email address. Must be a valid email address as per RFC5322."
+                            "description": "The organizer's email address. Must be a valid email address as per RFC5322.",
                         },
                         "displayName": {
                             "type": "string",
-                            "description": "The organizer's name, if available."
-                        }
+                            "description": "The organizer's name, if available.",
+                        },
                     },
-                    "required": ["email"]
+                    "required": ["email"],
                 },
                 "status": {
                     "type": "string",
                     "description": "Event status: confirmed, tentative, cancelled",
-                    "enum": ["confirmed", "tentative", "cancelled"]
+                    "enum": ["confirmed", "tentative", "cancelled"],
                 },
                 "transparency": {
                     "type": "string",
                     "description": "Event transparency: opaque, transparent",
-                    "enum": ["opaque", "transparent"]
+                    "enum": ["opaque", "transparent"],
                 },
                 "visibility": {
                     "type": "string",
                     "description": "Event visibility: default, public, private, confidential",
-                    "enum": ["default", "public", "private", "confidential"]
+                    "enum": ["default", "public", "private", "confidential"],
                 },
                 "attendees": {
                     "type": "array",
@@ -2081,25 +2162,50 @@ EVENTS_TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "email": {"type": "string", "description": "Attendee email address"},
-                            "displayName": {"type": "string", "description": "Attendee display name"},
-                            "optional": {"type": "boolean", "default": False, "description": "Whether attendee is optional"},
-                            "resource": {"type": "boolean", "default": False, "description": "Whether attendee is a resource"},
-                            "responseStatus": {"type": "string", "default": "needsAction", "description": "Response status"},
-                            "comment": {"type": "string", "description": "Attendee comment"},
-                            "additionalGuests": {"type": "integer", "default": 0, "description": "Number of additional guests"}
+                            "email": {
+                                "type": "string",
+                                "description": "Attendee email address",
+                            },
+                            "displayName": {
+                                "type": "string",
+                                "description": "Attendee display name",
+                            },
+                            "optional": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "Whether attendee is optional",
+                            },
+                            "resource": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "Whether attendee is a resource",
+                            },
+                            "responseStatus": {
+                                "type": "string",
+                                "default": "needsAction",
+                                "description": "Response status",
+                            },
+                            "comment": {
+                                "type": "string",
+                                "description": "Attendee comment",
+                            },
+                            "additionalGuests": {
+                                "type": "integer",
+                                "default": 0,
+                                "description": "Number of additional guests",
+                            },
                         },
-                        "required": ["email", "responseStatus"]
-                    }
+                        "required": ["email", "responseStatus"],
+                    },
                 },
                 "attendeesOmitted": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Whether attendees may have been omitted from the event's representation"
+                    "description": "Whether attendees may have been omitted from the event's representation",
                 },
                 "colorId": {
                     "type": "string",
-                    "description": "Color ID of the event (1-11 for event colors)"
+                    "description": "Color ID of the event (1-11 for event colors)",
                 },
                 "recurrence": {
                     "type": "array",
@@ -2146,24 +2252,33 @@ EVENTS_TOOLS = [
                     • Weekly all-day with exceptions: ["RRULE:FREQ=WEEKLY;BYDAY=MO", "EXDATE;VALUE=DATE:20231030"]
                     
                     Note: For all-day events, use VALUE=DATE format for EXDATE/RDATE. For timed events, use full timestamp format.""",
-                    "items": {"type": "string"}
+                    "items": {"type": "string"},
                 },
                 "reminders": {
                     "type": "object",
                     "description": "Event reminders configuration",
                     "properties": {
-                        "useDefault": {"type": "boolean", "description": "Whether to use default reminders"},
+                        "useDefault": {
+                            "type": "boolean",
+                            "description": "Whether to use default reminders",
+                        },
                         "overrides": {
                             "type": "array",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "method": {"type": "string", "enum": ["email", "popup"]},
-                                    "minutes": {"type": "integer", "description": "Minutes before event"}
-                                }
-                            }
-                        }
-                    }
+                                    "method": {
+                                        "type": "string",
+                                        "enum": ["email", "popup"],
+                                    },
+                                    "minutes": {
+                                        "type": "integer",
+                                        "description": "Minutes before event",
+                                    },
+                                },
+                            },
+                        },
+                    },
                 },
                 "attachments": {
                     "type": "array",
@@ -2171,45 +2286,90 @@ EVENTS_TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "fileUrl": {"type": "string", "description": "URL of attached file"}
+                            "fileUrl": {
+                                "type": "string",
+                                "description": "URL of attached file",
+                            }
                         },
-                        "required": ["fileUrl"]
-                    }
+                        "required": ["fileUrl"],
+                    },
                 },
                 "conferenceData": {
                     "type": "object",
                     "description": "Conference data (processed based on conferenceDataVersion)",
                     "properties": {
-                        "createRequest": {"type": "object", "description": "Request to create conference"},
+                        "createRequest": {
+                            "type": "object",
+                            "description": "Request to create conference",
+                        },
                         "entryPoints": {
                             "type": "array",
                             "description": "Conference entry points",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "entryPointType": {"type": "string", "description": "Entry point type (video, phone, sip, more)"},
-                                    "uri": {"type": "string", "description": "URI of the entry point"},
-                                    "label": {"type": "string", "description": "Label for the entry point"},
-                                    "pin": {"type": "string", "description": "PIN to access the conference"},
-                                    "accessCode": {"type": "string", "description": "Access code for the conference"},
-                                    "meetingCode": {"type": "string", "description": "Meeting code for the conference"},
-                                    "passcode": {"type": "string", "description": "Passcode for the conference"},
-                                    "password": {"type": "string", "description": "Password for the conference"}
-                                }
-                            }
+                                    "entryPointType": {
+                                        "type": "string",
+                                        "description": "Entry point type (video, phone, sip, more)",
+                                    },
+                                    "uri": {
+                                        "type": "string",
+                                        "description": "URI of the entry point",
+                                    },
+                                    "label": {
+                                        "type": "string",
+                                        "description": "Label for the entry point",
+                                    },
+                                    "pin": {
+                                        "type": "string",
+                                        "description": "PIN to access the conference",
+                                    },
+                                    "accessCode": {
+                                        "type": "string",
+                                        "description": "Access code for the conference",
+                                    },
+                                    "meetingCode": {
+                                        "type": "string",
+                                        "description": "Meeting code for the conference",
+                                    },
+                                    "passcode": {
+                                        "type": "string",
+                                        "description": "Passcode for the conference",
+                                    },
+                                    "password": {
+                                        "type": "string",
+                                        "description": "Password for the conference",
+                                    },
+                                },
+                            },
                         },
-                        "conferenceSolution": {"type": "object", "description": "Conference solution details"},
-                        "conferenceId": {"type": "string", "description": "Conference ID"},
-                        "signature": {"type": "string", "description": "Conference signature"}
-                    }
+                        "conferenceSolution": {
+                            "type": "object",
+                            "description": "Conference solution details",
+                        },
+                        "conferenceId": {
+                            "type": "string",
+                            "description": "Conference ID",
+                        },
+                        "signature": {
+                            "type": "string",
+                            "description": "Conference signature",
+                        },
+                    },
                 },
                 "extendedProperties": {
                     "type": "object",
                     "description": "Extended properties",
                     "properties": {
-                        "private": {"type": "object", "description": "Private extended properties"},
-                        "shared": {"type": "object", "description": "Shared extended properties"}
-                    }
+                        "private": {
+                            "type": "object",
+                            "description": "Private extended properties",
+                        },
+                        "shared": {
+                            "type": "object",
+                            "description": "Shared extended properties",
+                        },
+                    },
                 },
                 "focusTimeProperties": {
                     "type": "object",
@@ -2218,18 +2378,22 @@ EVENTS_TOOLS = [
                         "autoDeclineMode": {
                             "type": "string",
                             "description": "Whether to decline meeting invitations which overlap Focus Time events",
-                            "enum": ["declineNone", "declineAllConflictingInvitations", "declineOnlyNewConflictingInvitations"]
+                            "enum": [
+                                "declineNone",
+                                "declineAllConflictingInvitations",
+                                "declineOnlyNewConflictingInvitations",
+                            ],
                         },
                         "chatStatus": {
                             "type": "string",
                             "description": "The status to mark the user in Chat and related products",
-                            "enum": ["available", "doNotDisturb"]
+                            "enum": ["available", "doNotDisturb"],
                         },
                         "declineMessage": {
                             "type": "string",
-                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar"
-                        }
-                    }
+                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar",
+                        },
+                    },
                 },
                 "outOfOfficeProperties": {
                     "type": "object",
@@ -2238,13 +2402,17 @@ EVENTS_TOOLS = [
                         "autoDeclineMode": {
                             "type": "string",
                             "description": "Whether to decline meeting invitations which overlap Focus Time events",
-                            "enum": ["declineNone", "declineAllConflictingInvitations", "declineOnlyNewConflictingInvitations"]
+                            "enum": [
+                                "declineNone",
+                                "declineAllConflictingInvitations",
+                                "declineOnlyNewConflictingInvitations",
+                            ],
                         },
                         "declineMessage": {
                             "type": "string",
-                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar"
-                        }
-                    }
+                            "description": "Response message to set if an existing event or new invitation is automatically declined by Calendar",
+                        },
+                    },
                 },
                 "originalStartTime": {
                     "type": "object",
@@ -2252,62 +2420,62 @@ EVENTS_TOOLS = [
                     "properties": {
                         "dateTime": {
                             "type": "string",
-                            "description": "RFC3339 timestamp with timezone for timed events"
+                            "description": "RFC3339 timestamp with timezone for timed events",
                         },
                         "date": {
                             "type": "string",
-                            "description": "Date in YYYY-MM-DD format for all-day events"
+                            "description": "Date in YYYY-MM-DD format for all-day events",
                         },
                         "timeZone": {
                             "type": "string",
-                            "description": "IANA timezone identifier"
-                        }
-                    }
+                            "description": "IANA timezone identifier",
+                        },
+                    },
                 },
                 "source": {
                     "type": "object",
                     "description": "Event source information",
                     "properties": {
                         "url": {"type": "string", "description": "Source URL"},
-                        "title": {"type": "string", "description": "Source title"}
+                        "title": {"type": "string", "description": "Source title"},
                     },
-                    "required": ["url", "title"]
+                    "required": ["url", "title"],
                 },
                 "iCalUID": {
                     "type": "string",
-                    "description": "iCalendar UID for external calendar integration"
+                    "description": "iCalendar UID for external calendar integration",
                 },
                 "sequence": {
                     "type": "integer",
-                    "description": "iCalendar sequence number"
+                    "description": "iCalendar sequence number",
                 },
                 "guestsCanInviteOthers": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Whether attendees can invite others"
+                    "description": "Whether attendees can invite others",
                 },
                 "guestsCanModify": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Whether attendees can modify the event"
+                    "description": "Whether attendees can modify the event",
                 },
                 "guestsCanSeeOtherGuests": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Whether attendees can see other guests"
+                    "description": "Whether attendees can see other guests",
                 },
                 "conferenceDataVersion": {
                     "type": "integer",
-                    "description": "Version number of conference data supported by API client (0 or 1)"
+                    "description": "Version number of conference data supported by API client (0 or 1)",
                 },
                 "supportsAttachments": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Whether API client supports event attachments"
-                }
+                    "description": "Whether API client supports event attachments",
+                },
             },
-            "required": ["calendarId", "start", "end", "iCalUID"]
-        }
+            "required": ["calendarId", "start", "end", "iCalUID"],
+        },
     },
     {
         "name": "get_event_instances",
@@ -2362,51 +2530,48 @@ EVENTS_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "calendarId": {
-                    "type": "string",
-                    "description": "Calendar identifier"
-                },
+                "calendarId": {"type": "string", "description": "Calendar identifier"},
                 "eventId": {
                     "type": "string",
-                    "description": "Recurring event identifier"
+                    "description": "Recurring event identifier",
                 },
                 "maxAttendees": {
                     "type": "integer",
-                    "description": "The maximum number of attendees to include in the response. If there are more than the specified number of attendees, only the participant is returned. Optional."
+                    "description": "The maximum number of attendees to include in the response. If there are more than the specified number of attendees, only the participant is returned. Optional.",
                 },
                 "maxResults": {
                     "type": "integer",
                     "description": "Maximum number of events returned on one result page. By default the value is 250 events. The page size can never be larger than 2500 events. Optional.",
                     "minimum": 1,
-                    "maximum": 2500
+                    "maximum": 2500,
                 },
                 "originalStart": {
                     "type": "string",
-                    "description": "The original start time of the instance in the result. Optional."
+                    "description": "The original start time of the instance in the result. Optional.",
                 },
                 "pageToken": {
                     "type": "string",
-                    "description": "Token specifying which result page to return. Optional."
+                    "description": "Token specifying which result page to return. Optional.",
                 },
                 "showDeleted": {
                     "type": "boolean",
-                    "description": "Whether to include deleted events (with status equals 'cancelled') in the result. Cancelled instances of recurring events will still be included if singleEvents is False. Optional."
+                    "description": "Whether to include deleted events (with status equals 'cancelled') in the result. Cancelled instances of recurring events will still be included if singleEvents is False. Optional.",
                 },
                 "timeMin": {
                     "type": "string",
-                    "description": "Lower bound (inclusive) for an event's end time to filter by. Optional. The default is not to filter by end time. Must be an RFC3339 timestamp with mandatory time zone offset."
+                    "description": "Lower bound (inclusive) for an event's end time to filter by. Optional. The default is not to filter by end time. Must be an RFC3339 timestamp with mandatory time zone offset.",
                 },
                 "timeMax": {
                     "type": "string",
-                    "description": "Upper bound (exclusive) for an event's start time to filter by. Optional. The default is not to filter by start time. Must be an RFC3339 timestamp with mandatory time zone offset."
+                    "description": "Upper bound (exclusive) for an event's start time to filter by. Optional. The default is not to filter by start time. Must be an RFC3339 timestamp with mandatory time zone offset.",
                 },
                 "timeZone": {
                     "type": "string",
-                    "description": "Time zone used in the response. Optional. The default is the time zone of the calendar."
-                }
+                    "description": "Time zone used in the response. Optional. The default is the time zone of the calendar.",
+                },
             },
-            "required": ["calendarId", "eventId"]
-        }
+            "required": ["calendarId", "eventId"],
+        },
     },
     {
         "name": "watch_events",
@@ -2464,23 +2629,17 @@ EVENTS_TOOLS = [
             "properties": {
                 "calendarId": {
                     "type": "string",
-                    "description": "Calendar identifier to watch for changes"
+                    "description": "Calendar identifier to watch for changes",
                 },
-                "id": {
-                    "type": "string",
-                    "description": "Unique channel identifier"
-                },
-                "type": {
-                    "type": "string", 
-                    "description": "Channel type (web_hook)"
-                },
+                "id": {"type": "string", "description": "Unique channel identifier"},
+                "type": {"type": "string", "description": "Channel type (web_hook)"},
                 "address": {
                     "type": "string",
-                    "description": "Webhook URL to receive notifications"
+                    "description": "Webhook URL to receive notifications",
                 },
                 "token": {
                     "type": "string",
-                    "description": "Optional token for webhook authentication"
+                    "description": "Optional token for webhook authentication",
                 },
                 "params": {
                     "type": "object",
@@ -2488,16 +2647,16 @@ EVENTS_TOOLS = [
                     "properties": {
                         "ttl": {
                             "type": "string",
-                            "description": "Time to live in seconds (string)."
+                            "description": "Time to live in seconds (string).",
                         }
-                    }
+                    },
                 },
                 "eventTypes": {
                     "type": "string",
-                    "description": "Event types of resources to watch. Optional. This parameter can be repeated multiple times to watch resources of different types. If unset, returns all event types. Acceptable values are: 'birthday' - Special all-day events with an annual recurrence, 'default' - Regular events, 'focusTime' - Focus time events, 'fromGmail' - Events from Gmail, 'outOfOffice' - Out of office events, 'workingLocation' - Working location events."
-                }
+                    "description": "Event types of resources to watch. Optional. This parameter can be repeated multiple times to watch resources of different types. If unset, returns all event types. Acceptable values are: 'birthday' - Special all-day events with an annual recurrence, 'default' - Regular events, 'focusTime' - Focus time events, 'fromGmail' - Events from Gmail, 'outOfOffice' - Out of office events, 'workingLocation' - Working location events.",
+                },
             },
-            "required": ["calendarId", "id", "type", "address"]
-        }
-    }
+            "required": ["calendarId", "id", "type", "address"],
+        },
+    },
 ]

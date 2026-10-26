@@ -72,15 +72,19 @@ CALENDARS_TOOLS = [
                             "type": "array",
                             "items": {
                                 "type": "string",
-                                "enum": ["eventHangout", "eventNamedHangout", "hangoutsMeet"]
+                                "enum": [
+                                    "eventHangout",
+                                    "eventNamedHangout",
+                                    "hangoutsMeet",
+                                ],
                             },
-                            "description": "Allowed conference solution types"
+                            "description": "Allowed conference solution types",
                         }
-                    }
-                }
+                    },
+                },
             },
-            "required": ["summary"]
-        }
+            "required": ["summary"],
+        },
     },
     {
         "name": "get_calendar",
@@ -117,8 +121,8 @@ CALENDARS_TOOLS = [
                     "minLength": 1,
                 }
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "patch_calendar",
@@ -188,15 +192,19 @@ CALENDARS_TOOLS = [
                             "type": "array",
                             "items": {
                                 "type": "string",
-                                "enum": ["eventHangout", "eventNamedHangout", "hangoutsMeet"]
+                                "enum": [
+                                    "eventHangout",
+                                    "eventNamedHangout",
+                                    "hangoutsMeet",
+                                ],
                             },
-                            "description": "Allowed conference solution types"
+                            "description": "Allowed conference solution types",
                         }
-                    }
-                }
+                    },
+                },
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "update_calendar",
@@ -235,27 +243,27 @@ CALENDARS_TOOLS = [
                 "calendarId": {
                     "type": "string",
                     "description": "Unique calendar identifier (UUID) or the keyword 'primary'",
-                    "minLength": 1
+                    "minLength": 1,
                 },
                 "summary": {
                     "type": "string",
                     "description": "Calendar title (1-255 characters)",
                     "minLength": 1,
-                    "maxLength": 255
+                    "maxLength": 255,
                 },
                 "description": {
                     "type": "string",
                     "description": "Calendar description (max 1000 characters)",
-                    "maxLength": 1000
+                    "maxLength": 1000,
                 },
                 "location": {
                     "type": "string",
                     "description": "Geographic location (max 500 characters)",
-                    "maxLength": 500
+                    "maxLength": 500,
                 },
                 "timeZone": {
                     "type": "string",
-                    "description": "Calendar timezone in IANA format"
+                    "description": "Calendar timezone in IANA format",
                 },
                 "conferenceProperties": {
                     "type": "object",
@@ -265,15 +273,19 @@ CALENDARS_TOOLS = [
                             "type": "array",
                             "items": {
                                 "type": "string",
-                                "enum": ["eventHangout", "eventNamedHangout", "hangoutsMeet"]
+                                "enum": [
+                                    "eventHangout",
+                                    "eventNamedHangout",
+                                    "hangoutsMeet",
+                                ],
                             },
-                            "description": "Allowed conference solution types"
+                            "description": "Allowed conference solution types",
                         }
-                    }
-                }
+                    },
+                },
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "delete_calendar",
@@ -312,8 +324,8 @@ CALENDARS_TOOLS = [
                     "minLength": 1,
                 }
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
     {
         "name": "clear_calendar",
@@ -347,7 +359,7 @@ CALENDARS_TOOLS = [
                     "minLength": 1,
                 }
             },
-            "required": ["calendarId"]
-        }
+            "required": ["calendarId"],
+        },
     },
 ]

@@ -1,0 +1,6 @@
+spec_version: 1
+name: ambiguous-package
+type: env
+runtime: python
+app: server.app:app
+port: 8000

@@ -24,33 +24,55 @@ class Model(nn.Module):
     """
     BLAKE3 hash function (simplified single-chunk version).
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
         # BLAKE3 IV (same as BLAKE2s)
-        IV = torch.tensor([
-            0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
-            0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
-        ], dtype=torch.int64)
-        self.register_buffer('IV', IV)
+        IV = torch.tensor(
+            [
+                0x6A09E667,
+                0xBB67AE85,
+                0x3C6EF372,
+                0xA54FF53A,
+                0x510E527F,
+                0x9B05688C,
+                0x1F83D9AB,
+                0x5BE0CD19,
+            ],
+            dtype=torch.int64,
+        )
+        self.register_buffer("IV", IV)
 
         # Message schedule permutation
-        MSG_SCHEDULE = torch.tensor([
-            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-            [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8],
-            [3, 4, 10, 12, 13, 2, 7, 14, 6, 5, 9, 0, 11, 15, 8, 1],
-            [10, 7, 12, 9, 14, 3, 13, 15, 4, 0, 11, 2, 5, 8, 1, 6],
-            [12, 13, 9, 11, 15, 10, 14, 8, 7, 2, 5, 3, 0, 1, 6, 4],
-            [9, 14, 11, 5, 8, 12, 15, 1, 13, 3, 0, 10, 2, 6, 4, 7],
-            [11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13],
-        ], dtype=torch.long)
-        self.register_buffer('MSG_SCHEDULE', MSG_SCHEDULE)
+        MSG_SCHEDULE = torch.tensor(
+            [
+                [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+                [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8],
+                [3, 4, 10, 12, 13, 2, 7, 14, 6, 5, 9, 0, 11, 15, 8, 1],
+                [10, 7, 12, 9, 14, 3, 13, 15, 4, 0, 11, 2, 5, 8, 1, 6],
+                [12, 13, 9, 11, 15, 10, 14, 8, 7, 2, 5, 3, 0, 1, 6, 4],
+                [9, 14, 11, 5, 8, 12, 15, 1, 13, 3, 0, 10, 2, 6, 4, 7],
+                [11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13],
+            ],
+            dtype=torch.long,
+        )
+        self.register_buffer("MSG_SCHEDULE", MSG_SCHEDULE)
 
     def _rotl(self, x: torch.Tensor, n: int) -> torch.Tensor:
         """Right rotation (BLAKE3 uses right rotation)."""
         return ((x >> n) | (x << (32 - n))) & 0xFFFFFFFF
 
-    def _g(self, state: torch.Tensor, a: int, b: int, c: int, d: int, mx: torch.Tensor, my: torch.Tensor) -> torch.Tensor:
+    def _g(
+        self,
+        state: torch.Tensor,
+        a: int,
+        b: int,
+        c: int,
+        d: int,
+        mx: torch.Tensor,
+        my: torch.Tensor,
+    ) -> torch.Tensor:
         """BLAKE3 G function (mixing function)."""
         state = state.clone()
 
@@ -68,7 +90,9 @@ class Model(nn.Module):
 
         return state
 
-    def _round(self, state: torch.Tensor, m: torch.Tensor, schedule: torch.Tensor) -> torch.Tensor:
+    def _round(
+        self, state: torch.Tensor, m: torch.Tensor, schedule: torch.Tensor
+    ) -> torch.Tensor:
         """One round of mixing."""
         msg = m[schedule]
 
@@ -102,10 +126,10 @@ class Model(nn.Module):
         m = torch.zeros(16, dtype=torch.int64, device=device)
         for i in range(16):
             m[i] = (
-                message[i*4].long() |
-                (message[i*4+1].long() << 8) |
-                (message[i*4+2].long() << 16) |
-                (message[i*4+3].long() << 24)
+                message[i * 4].long()
+                | (message[i * 4 + 1].long() << 8)
+                | (message[i * 4 + 2].long() << 16)
+                | (message[i * 4 + 3].long() << 24)
             )
 
         # Initialize state
@@ -128,10 +152,10 @@ class Model(nn.Module):
         # Convert to bytes
         result = torch.zeros(32, dtype=torch.int64, device=device)
         for i in range(8):
-            result[i*4] = h[i] & 0xFF
-            result[i*4+1] = (h[i] >> 8) & 0xFF
-            result[i*4+2] = (h[i] >> 16) & 0xFF
-            result[i*4+3] = (h[i] >> 24) & 0xFF
+            result[i * 4] = h[i] & 0xFF
+            result[i * 4 + 1] = (h[i] >> 8) & 0xFF
+            result[i * 4 + 2] = (h[i] >> 16) & 0xFF
+            result[i * 4 + 3] = (h[i] >> 24) & 0xFF
 
         return result
 
@@ -140,6 +164,7 @@ class Model(nn.Module):
 def get_inputs():
     message = torch.randint(0, 256, (64,), dtype=torch.int64)
     return [message]
+
 
 def get_init_inputs():
     return []

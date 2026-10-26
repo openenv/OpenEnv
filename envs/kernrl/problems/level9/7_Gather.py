@@ -19,6 +19,7 @@ class Model(nn.Module):
     """
     Gather values from indices.
     """
+
     def __init__(self):
         super(Model, self).__init__()
 
@@ -40,10 +41,12 @@ class Model(nn.Module):
 source_size = 1000000
 num_gathers = 16 * 1024 * 1024
 
+
 def get_inputs():
     source = torch.rand(source_size)
     indices = torch.randint(0, source_size, (num_gathers,))
     return [source, indices]
+
 
 def get_init_inputs():
     return []

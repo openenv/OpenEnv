@@ -2,8 +2,8 @@
 Database session utilities - Simplified session management
 """
 
-from sqlalchemy.orm import Session
 from database.session_manager import CalendarSessionManager
+from sqlalchemy.orm import Session
 
 # Global session manager instance
 _session_manager = CalendarSessionManager()

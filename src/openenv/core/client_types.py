@@ -1,6 +1,6 @@
 # Type definitions for EnvTorch
 from dataclasses import dataclass
-from typing import Generic, Optional, TypeVar
+from typing import Any, Dict, Generic, Optional, TypeVar
 
 # Generic type for observations
 ObsT = TypeVar("ObsT")
@@ -13,11 +13,17 @@ class StepResult(Generic[ObsT]):
     Represents the result of one environment step.
 
     Attributes:
-        observation: The environment's observation after the action.
-        reward: Scalar reward for this step (optional).
-        done: Whether the episode is finished.
+        observation:
+            The environment's observation after the action.
+        reward (`float`, *optional*):
+            Scalar reward for this step.
+        done (`bool`, *optional*, defaults to `False`):
+            Whether the episode is finished.
+        metadata (`dict`, *optional*):
+            Additional metadata returned alongside the observation.
     """
 
     observation: ObsT
     reward: Optional[float] = None
     done: bool = False
+    metadata: Optional[Dict[str, Any]] = None
