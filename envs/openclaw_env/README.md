@@ -22,16 +22,16 @@ from openclaw_env import OpenClawEnv
 # Connect to a running OpenClaw environment
 with OpenClawEnv(base_url="http://localhost:8000") as env:
     env.reset()
-    
+
     # List available tools
     tools = env.list_tools()
     print([t.name for t in tools])
     # ['exec', 'read', 'write', 'edit', 'web_search', 'web_fetch', 'memory_search', 'memory_get']
-    
+
     # Execute a shell command
     result = env.call_tool("exec", command="echo 'Hello from OpenClaw!'")
     print(result)  # {"stdout": "Hello from OpenClaw!\n", "exit_code": 0, ...}
-    
+
     # Create and read a file
     env.call_tool("write", path="hello.txt", content="Hello, World!")
     result = env.call_tool("read", path="hello.txt")
@@ -216,7 +216,7 @@ trainer.train()
 
 ### With torchforge
 
-See [examples/grpo_openclaw/](../../examples/grpo_openclaw/) for a complete training example.
+A complete torchforge training example for OpenClaw is not yet included in this repository.
 
 ## Building Docker Image
 
