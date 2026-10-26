@@ -247,6 +247,8 @@ class SchemaResponse(BaseMessage):
     @model_serializer(mode="wrap")
     def _omit_undeclared_reset_schema(self, handler):
         data = handler(self)
+        if self.reset is None:
+            data.pop("reset", None)
         if self.reset_observation is None:
             data.pop("reset_observation", None)
         return data
