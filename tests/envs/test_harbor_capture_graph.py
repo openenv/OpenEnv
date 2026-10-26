@@ -98,6 +98,25 @@ def test_two_children_of_one_node_are_a_fork():
     assert len(forks[0][1]) == 2
 
 
+def test_equal_length_matches_go_to_the_earliest_arrival():
+    """A retry that sampled the same tokens ties with the original; the original keeps the child."""
+    g = RolloutGraph()
+    g.add_turn(node("p", [1], [2]))
+    first = g.add_turn(node("first", [1, 2, 7], [3]))
+    g.add_turn(node("retry", [1, 2, 7], [3]))
+    child = g.add_turn(node("c", [1, 2, 7, 3, 8], [4]))
+    assert child.parent_id == first.node_id
+
+
+def test_a_longer_sibling_that_diverged_is_skipped_for_the_matching_ancestor():
+    """The longest candidate is tried first, but only an exact prefix may become the parent."""
+    g = RolloutGraph()
+    parent = g.add_turn(node("p", [1], [2, 3]))
+    g.add_turn(node("sibling", [1, 2, 3, 4], [5, 6, 7]))
+    child = g.add_turn(node("c", [1, 2, 3, 9, 9, 9, 9, 9], [8]))
+    assert child.parent_id == parent.node_id
+
+
 def test_an_abandoned_branch_is_discarded_and_the_continued_one_is_not():
     """A retry the agent walked away from must not be trained with the task's reward."""
     g = RolloutGraph()
@@ -109,6 +128,15 @@ def test_an_abandoned_branch_is_discarded_and_the_continued_one_is_not():
     discarded = {n.node_id for n in g.discarded_nodes()}
     assert "dead" in discarded
     assert "live" not in discarded and "live2" not in discarded
+
+
+def test_an_abandoned_first_call_with_the_same_prompt_is_discarded():
+    graph = RolloutGraph()
+    graph.add_turn(node("dead", [1, 2], [3]))
+    graph.add_turn(node("live", [1, 2], [4]))
+    graph.add_turn(node("continued", [1, 2, 4, 5], [6]))
+
+    assert {turn.node_id for turn in graph.discarded_nodes()} == {"dead"}
 
 
 # --- sequences, the actual training rows -------------------------------------

@@ -29,6 +29,7 @@
       "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[bad_state-runtime.state_contract]",
       "tests.test_validation.integration.test_runtime_cli::test_cli_hung_step_times_out_with_partial_evidence",
       "tests.test_validation.integration.test_runtime_cli::test_cli_sigint_retains_partial_evidence_and_cleans_up",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_sigterm_retains_partial_evidence_and_cleans_up",
       "tests.test_validation.integration.test_runtime_cli::test_cli_startup_failure_is_a_finding_and_leaves_no_container",
       "tests.test_validation.integration.test_runtime_cli::test_cli_skip_build_does_not_invoke_docker"
     ]

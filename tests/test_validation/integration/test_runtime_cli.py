@@ -159,6 +159,11 @@ def _verify_bundle(bundle, report):
     return {name: json.loads((bundle / name).read_text()) for name in recorded}
 
 
+def _default_signal_handlers():
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
 def _invoke_cli(
     context,
     tmp_path,
@@ -166,7 +171,7 @@ def _invoke_cli(
     *,
     skip_build=False,
     wait_for_blocked=False,
-    interrupt=False,
+    interrupt=None,
 ):
     artifact_root = Path(os.environ.get("OPENENV_VALIDATION_ARTIFACTS", tmp_path))
     work = artifact_root / "cli" / case
@@ -217,19 +222,24 @@ def _invoke_cli(
                 stdout=stdout,
                 stderr=stderr,
                 start_new_session=True,
+                # Children inherit ignored signals; start the CLI with defaults.
+                preexec_fn=_default_signal_handlers,
             )
             blocked_at = None
             if wait_for_blocked:
                 blocked_at = _wait_for_blocked_step(process, context, work)
-            if interrupt:
+            if interrupt is not None:
                 assert blocked_at is not None, "Signal requires a protocol handshake"
-                process.send_signal(signal.SIGINT)
+                process.send_signal(interrupt)
             process.wait(timeout=15 if blocked_at else 180)
             if blocked_at is not None:
                 elapsed = time.monotonic() - blocked_at
                 (work / "termination.json").write_text(
                     json.dumps(
-                        {"seconds_after_blocked_step": elapsed, "signal": interrupt}
+                        {
+                            "seconds_after_blocked_step": elapsed,
+                            "signal": interrupt.name if interrupt else None,
+                        }
                     )
                     + "\n"
                 )
@@ -371,10 +381,30 @@ def test_cli_sigint_retains_partial_evidence_and_cleans_up(cli_context, tmp_path
     with (cli_context / "Dockerfile").open("a") as stream:
         stream.write("\nENV VALIDATION_FAULT=hung_step\n")
     result, report, checks, artifacts = _invoke_cli(
-        cli_context, tmp_path, "sigint", wait_for_blocked=True, interrupt=True
+        cli_context, tmp_path, "sigint", wait_for_blocked=True, interrupt=signal.SIGINT
     )
     # Recorded check errors fail closed through the existing policy (exit 1).
     # Exit 3 is reserved for an internal error that cannot produce this report.
+    assert result.returncode == 1
+    assert report["verdict"] == "fail"
+    assert checks["runtime.startup"]["status"] == "error"
+    assert "interrupt" in " ".join(checks["runtime.startup"]["evidence"]).lower()
+    assert all(
+        checks[key]["status"] == "skip" for key in IMPLEMENTED - {"runtime.startup"}
+    )
+    _assert_partial_episode(artifacts, "KeyboardInterrupt")
+
+
+def test_cli_sigterm_retains_partial_evidence_and_cleans_up(cli_context, tmp_path):
+    with (cli_context / "Dockerfile").open("a") as stream:
+        stream.write("\nENV VALIDATION_FAULT=hung_step\n")
+    result, report, checks, artifacts = _invoke_cli(
+        cli_context,
+        tmp_path,
+        "sigterm",
+        wait_for_blocked=True,
+        interrupt=signal.SIGTERM,
+    )
     assert result.returncode == 1
     assert report["verdict"] == "fail"
     assert checks["runtime.startup"]["status"] == "error"

@@ -8,6 +8,7 @@ Environment Variables:
     FINQA_TASK: Task name (default: finqa)
 """
 
+import inspect
 import json
 import os
 from typing import Any, Dict
@@ -45,13 +46,21 @@ class FinQACallToolAction(CallToolAction):
         return v
 
 
+# Older openenv-core releases lack these model parameters.
+_create_app_kwargs = (
+    {"reset_observation_cls": Observation}
+    if "reset_observation_cls" in inspect.signature(create_app).parameters
+    else {}
+)
+if "state_cls" in inspect.signature(create_app).parameters:
+    _create_app_kwargs["state_cls"] = FinQAState
+
 app = create_app(
     _env_factory,
     FinQACallToolAction,
     CallToolObservation,
-    reset_observation_cls=Observation,
+    **_create_app_kwargs,
     env_name="finqa_env",
-    state_cls=FinQAState,
 )
 
 

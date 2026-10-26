@@ -46,7 +46,7 @@ from urllib.parse import urlsplit
 
 from .client_types import StateT, StepResult
 from .containers.runtime import LocalDockerProvider, UVProvider
-from .utils import convert_to_ws_url
+from .utils import convert_to_ws_url, hf_space_subdomain
 
 if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
@@ -147,7 +147,17 @@ class _BootstrapResult(Coroutine, Generic[EnvClientT]):
 
     async def _resolve_async(self) -> EnvClientT:
         client = self._consume()
-        await client.connect()
+        try:
+            await client.connect()
+        except asyncio.CancelledError:
+            # _connect_async releases the provider on ordinary failures, but
+            # cancellation bypasses its `except Exception`. No client reaches
+            # the caller, so release the provider here before propagating the
+            # original cancellation. A repeated cancellation or a stop failure
+            # during cleanup must not replace it.
+            with suppress(Exception, asyncio.CancelledError):
+                await client.close()
+            raise
         return client
 
     def _ensure_coro(self) -> "Coroutine[Any, Any, EnvClientT]":
@@ -839,7 +849,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             # Docker mode: pull from HF registry
             docker_provider = provider or LocalDockerProvider()
             tag = provider_kwargs.pop("tag", "latest")
-            image = f"registry.hf.space/{repo_id.replace('/', '-')}:{tag}"
+            image = f"registry.hf.space/{hf_space_subdomain(repo_id)}:{tag}"
             try:
                 base_url = docker_provider.start_container(
                     image, **start_args, **provider_kwargs

@@ -9,10 +9,12 @@ This test file verifies that the Rubric base class supports async operations:
 - Integration with async environments
 """
 
+import asyncio
 from typing import Any
 
 import pytest
 from openenv.core.rubrics.base import Rubric
+from openenv.core.rubrics.containers import RubricDict
 
 
 class AsyncRubric(Rubric):
@@ -246,3 +248,73 @@ class TestBackwardCompatibility:
         rubric = MixedComposite()
         result = await rubric("action", "obs")
         assert result == pytest.approx(0.5)  # (0.3 + 0.7) / 2
+
+
+class FixedSyncRubric(Rubric):
+    """Concrete sync rubric that returns a fixed score."""
+
+    def __init__(self, score: float = 1.0):
+        super().__init__()
+        self.score = score
+
+    def forward(self, action: Any, observation: Any) -> float:
+        return self.score
+
+
+class DispatchRubric(Rubric):
+    """Sync forward() that hands off to an async child, as in the RubricDict
+    dispatch pattern of the rubrics tutorial."""
+
+    def __init__(self):
+        super().__init__()
+        self.games = RubricDict({"pong": AsyncRubric(0.9)})
+
+    def forward(self, action: Any, observation: Any):
+        return self.games["pong"](action, observation)
+
+
+class TestSyncForwardReturningCoroutine:
+    """A sync forward() may return an async child's coroutine; the parent must
+    record the awaited score, not the coroutine."""
+
+    @pytest.mark.asyncio
+    async def test_last_score_is_awaited_score(self):
+        rubric = DispatchRubric()
+
+        assert await rubric("action", "obs") == 0.9
+        assert rubric.last_score == 0.9
+
+    @pytest.mark.asyncio
+    async def test_hooks_see_awaited_score(self):
+        rubric = DispatchRubric()
+        log = []
+
+        async def async_post_hook(r, action, obs, result):
+            log.append(("async_post", result))
+
+        rubric.register_forward_pre_hook(lambda r, a, o: log.append(("pre", None)))
+        rubric.register_forward_hook(lambda r, a, o, res: log.append(("post", res)))
+        rubric.register_forward_hook(async_post_hook)
+
+        await rubric("action", "obs")
+
+        assert log == [("pre", None), ("post", 0.9), ("async_post", 0.9)]
+
+    def test_awaitable_from_sync_context(self):
+        rubric = DispatchRubric()
+
+        assert asyncio.run(rubric("action", "obs")) == 0.9
+        assert rubric.last_score == 0.9
+
+    def test_sync_child_still_returns_float(self):
+        class SyncDispatch(Rubric):
+            def __init__(self):
+                super().__init__()
+                self.games = RubricDict({"pong": FixedSyncRubric(0.4)})
+
+            def forward(self, action, obs):
+                return self.games["pong"](action, obs)
+
+        rubric = SyncDispatch()
+        assert rubric("action", "obs") == 0.4
+        assert rubric.last_score == 0.4
