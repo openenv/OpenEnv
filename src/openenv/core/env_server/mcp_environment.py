@@ -195,6 +195,11 @@ class MCPEnvironment(Environment):
 
         # Track tool schemas for list_tools: {tool_name: {mode: schema}}
         self._mode_tool_schemas = defaultdict(dict)
+        self._mode: Optional[str] = None
+
+    def set_mode(self, mode: Optional[str]) -> None:
+        """Set the active mode ('production' or 'simulation') for mode-aware tools."""
+        self._mode = mode
 
     def _require_mcp_client(self) -> Any:
         """Return MCP client or raise if environment has been closed."""
@@ -496,7 +501,8 @@ class MCPEnvironment(Environment):
             tools_result = await self._async_list_tools()
             tools = []
             for tool in tools_result:
-                if tool.name not in self._mode_tool_schemas:
+                mode_schemas = self._mode_tool_schemas.get(tool.name, {})
+                if _schema_for_mode(mode_schemas, current_mode) is None:
                     tools.append(_tool_from_server_tool(tool))
             for mode_schemas in self._mode_tool_schemas.values():
                 schema = _schema_for_mode(mode_schemas, current_mode)
@@ -519,21 +525,12 @@ class MCPEnvironment(Environment):
         tool_name = action.tool_name
         current_mode = getattr(self, "_mode", None)
 
-        if tool_name in self._mode_tools:
-            mode_info = self._mode_tools[tool_name]
+        mode_info = self._mode_tools.get(tool_name, {})
+        if None in mode_info or current_mode in mode_info:
             if None in mode_info:
                 func = mode_info[None]
             elif current_mode in mode_info:
                 func = mode_info[current_mode]
-            else:
-                return CallToolObservation(
-                    tool_name=tool_name,
-                    result=None,
-                    error=ToolError(
-                        error_type=ToolErrorType.TOOL_NOT_FOUND,
-                        message=f"Tool '{tool_name}' not available in {current_mode} mode",
-                    ),
-                )
             try:
                 if inspect.iscoroutinefunction(func):
                     result = await func(**action.arguments)
