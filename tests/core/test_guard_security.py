@@ -9,13 +9,15 @@
 import itertools
 import json
 import os
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from openenv.core.env_server.http_server import create_fastapi_app
 from openenv.core.env_server.interfaces import Environment
-from openenv.core.env_server.security import _build_security_config
+from openenv.core.env_server.security import _build_security_config, attach_guard
 from openenv.core.env_server.types import Action, Observation, State
 from starlette.websockets import WebSocketDisconnect
 
@@ -186,6 +188,31 @@ def test_guard_initializes_at_startup(monkeypatch, caplog):
     )
     with TestClient(app):
         assert "Redis unavailable during startup initialization" in caplog.text
+
+
+def test_guard_preserves_existing_lifespan_state_and_cleanup(monkeypatch):
+    for name in list(os.environ):
+        if name.startswith("OPENENV_GUARD_"):
+            monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENENV_GUARD_ENABLED", "1")
+    events = []
+    resource = object()
+
+    @asynccontextmanager
+    async def lifespan(app):
+        events.append("startup")
+        try:
+            yield {"resource": resource}
+        finally:
+            events.append("shutdown")
+
+    app = FastAPI(lifespan=lifespan)
+    attach_guard(app)
+    attach_guard(app)
+    with TestClient(app) as client:
+        assert events == ["startup"]
+        assert client.app_state["resource"] is resource
+    assert events == ["startup", "shutdown"]
 
 
 def test_websocket_refused_while_redis_unreachable(monkeypatch):

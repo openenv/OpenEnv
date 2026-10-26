@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 from typing import Any
 
 from starlette import status
@@ -217,7 +218,7 @@ def attach_guard(app: Any) -> None:
         return
     try:
         from guard import SecurityMiddleware
-        from guard.lifespan import make_lifespan
+        from guard.lifespan import guard_startup
     except ImportError as exc:
         raise ImportError(
             "OPENENV_GUARD_ENABLED requires fastapi-guard. "
@@ -229,5 +230,13 @@ def attach_guard(app: Any) -> None:
     app.add_middleware(_WebSocketGuardMiddleware, config=config)
     # Initialize the guard (Redis included) at startup, so a WebSocket-only
     # worker never runs on in-memory state.
-    app.router.lifespan_context = make_lifespan(app.router.lifespan_context)
+    existing_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(app: Any):
+        await guard_startup(app)
+        async with existing_lifespan(app) as state:
+            yield state
+
+    app.router.lifespan_context = lifespan
     app.state.guard_attached = True
