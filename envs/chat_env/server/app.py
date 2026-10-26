@@ -31,13 +31,13 @@ from openenv.core.env_server import create_app
 # Support both in-repo and standalone imports
 try:
     # In-repo imports (when running from OpenEnv repository)
-    from ..models import ChatAction, ChatObservation
+    from ..models import ChatAction, ChatObservation, ChatState
     from .chat_environment import ChatEnvironment
 except ImportError as e:
     if "relative import" not in str(e) and "no known parent package" not in str(e):
         raise
     # Standalone imports (when running via uvicorn server.app:app)
-    from models import ChatAction, ChatObservation
+    from models import ChatAction, ChatObservation, ChatState
     from server.chat_environment import ChatEnvironment
 
 
@@ -83,7 +83,11 @@ def create_chat_environment():
 # Create the FastAPI app with web interface and README integration
 # Pass the factory function instead of an instance for WebSocket session support
 app = create_app(
-    create_chat_environment, ChatAction, ChatObservation, env_name="chat_env"
+    create_chat_environment,
+    ChatAction,
+    ChatObservation,
+    env_name="chat_env",
+    state_cls=ChatState,
 )
 
 

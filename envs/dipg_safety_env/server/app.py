@@ -13,13 +13,13 @@ from openenv.core.env_server import create_app
 # Support both in-repo and standalone imports
 try:
     # In-repo imports (when running from OpenEnv repository)
-    from ..models import DIPGAction, DIPGObservation
+    from ..models import DIPGAction, DIPGObservation, DIPGState
     from .dipg_environment import DIPGEnvironment
 except ImportError as e:
     if "relative import" not in str(e) and "no known parent package" not in str(e):
         raise
     # Standalone imports (when running via uvicorn server.app:app)
-    from models import DIPGAction, DIPGObservation
+    from models import DIPGAction, DIPGObservation, DIPGState
     from server.dipg_environment import DIPGEnvironment
 
 # Get dataset path from environment, falling back to the bundled sample dataset.
@@ -116,7 +116,11 @@ def create_dipg_environment():
 # Create the FastAPI app
 # Pass the factory function instead of an instance for WebSocket session support
 app = create_app(
-    create_dipg_environment, DIPGAction, DIPGObservation, env_name="dipg_safety_env"
+    create_dipg_environment,
+    DIPGAction,
+    DIPGObservation,
+    env_name="dipg_safety_env",
+    state_cls=DIPGState,
 )
 
 

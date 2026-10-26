@@ -39,11 +39,11 @@ try:
     from openenv.core.env_server.http_server import create_app
 
     # In-repo imports
-    from tbench2_env.models import Tbench2Action, Tbench2Observation
+    from tbench2_env.models import Tbench2Action, Tbench2Observation, Tbench2State
 
     from .tbench2_env_environment import Tbench2DockerEnvironment, Tbench2Environment
 except Exception as e:  # pragma: no cover
-    from models import Tbench2Action, Tbench2Observation
+    from models import Tbench2Action, Tbench2Observation, Tbench2State
 
     # Standalone imports (when environment is standalone with openenv from pip)
     from openenv.core.env_server.http_server import create_app
@@ -81,6 +81,7 @@ app = create_app(
     Tbench2Observation,
     env_name="tbench2_env" + _ENV_SUFFIX,
     max_concurrent_envs=max_concurrent,
+    state_cls=Tbench2State,
 )
 
 

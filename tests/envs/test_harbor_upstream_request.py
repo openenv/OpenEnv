@@ -13,9 +13,11 @@ rollout summary.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 upstream = pytest.importorskip("openenv.core.harness.capture.upstream")
+validate_llm = pytest.importorskip("openenv.core.harness.capture.validate_llm")
 dialects = pytest.importorskip("openenv.core.harness.capture.dialects")
 detection = pytest.importorskip("openenv.core.harness.capture.detection")
 
@@ -126,23 +128,141 @@ def test_messages_without_reasoning_are_passed_through_untouched():
 
 
 # --- engine base URL --------------------------------------------------------
+#
+# The OpenAI SDK rule: a base with no path gets `/v1`, a base with a path is already the API root.
+# `http://host:8000/v1` used to become `/v1/v1/models`; a gateway such as Gemini's
+# `/v1beta/openai` used to become `/v1beta/openai/v1/chat/completions` and 404.
+API_BASES = [
+    ("http://localhost:8000", "http://localhost:8000/v1"),
+    ("http://localhost:8000/", "http://localhost:8000/v1"),
+    ("http://host:8000/v1", "http://host:8000/v1"),
+    ("http://host:8000/v1/", "http://host:8000/v1"),
+    ("https://router.huggingface.co/v1", "https://router.huggingface.co/v1"),
+    ("https://gw.example/openai/v1", "https://gw.example/openai/v1"),
+    (
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+    ),
+    (
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+    ),
+    ("https://api.z.ai/api/paas/v4", "https://api.z.ai/api/paas/v4"),
+]
+
+
+def _mock_client(client, seen):
+    def respond(request):
+        seen.append(str(request.url))
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    client._client = httpx.AsyncClient(
+        base_url=client.base_url, transport=httpx.MockTransport(respond)
+    )
+
+
+@pytest.mark.parametrize("given,api_base", API_BASES)
+async def test_upstream_routes_keep_the_provider_base_path(given, api_base):
+    client = upstream.InferenceClient(given, capture_level="text")
+    seen: list[str] = []
+    _mock_client(client, seen)
+    try:
+        await client.list_models()
+        await client.completion({"messages": [{"role": "user", "content": "go"}]})
+    finally:
+        await client.aclose()
+    assert seen == [f"{api_base}/models", f"{api_base}/chat/completions"]
+
+
 @pytest.mark.parametrize(
-    "given",
+    "given,expected",
     [
-        "http://host:8000",
-        "http://host:8000/",
-        "http://host:8000/v1",
-        "http://host:8000/v1/",
+        ("https://api.anthropic.com", "https://api.anthropic.com/v1/messages"),
+        ("https://api.anthropic.com/v1", "https://api.anthropic.com/v1/messages"),
+        # Anthropic's SDK convention: the base excludes `/v1`, so a gateway path is kept and
+        # `/v1/messages` goes after it.
+        (
+            "https://gw.example/api/anthropic",
+            "https://gw.example/api/anthropic/v1/messages",
+        ),
     ],
 )
-def test_engine_base_is_the_root_whichever_form_is_given(given):
-    """Every route this layer builds is `/v1/...`, so a `/v1` base must not double up.
+async def test_anthropic_route_keeps_the_anthropic_base_convention(given, expected):
+    client = upstream.InferenceClient(given, provider="anthropic")
+    seen: list[str] = []
 
-    `http://host:8000/v1` is what an OpenAI SDK wants and what people paste, and it used to make
-    the startup probe request `/v1/v1/models` and report a healthy engine as unreachable.
-    """
-    assert upstream.normalise_engine_base(given) == "http://host:8000"
-    assert upstream.InferenceClient(given).base_url == "http://host:8000"
+    def respond(request):
+        seen.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "m",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
+
+    client._client = httpx.AsyncClient(
+        base_url=client.base_url, transport=httpx.MockTransport(respond)
+    )
+    try:
+        await client.completion(
+            {"model": "m", "messages": [{"role": "user", "content": "go"}]}
+        )
+    finally:
+        await client.aclose()
+    assert seen == [expected]
+
+
+@pytest.mark.parametrize("given,api_base", API_BASES)
+def test_validate_llm_probes_keep_the_provider_base_path(monkeypatch, given, api_base):
+    listed: list[str] = []
+    posted: list[str] = []
+
+    class Listing:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"data": [{"id": "m"}]}'
+
+    def urlopen(request, timeout):
+        listed.append(request.full_url)
+        return Listing()
+
+    def fake_post(url, body, timeout, api_key=None, auth_header="Authorization"):
+        posted.append(url)
+        return {
+            "prompt_token_ids": [1, 2],
+            "choices": [
+                {
+                    "message": {"content": "ok"},
+                    "finish_reason": "stop",
+                    "token_ids": [7],
+                    "logprobs": {"content": [{"logprob": -0.1, "top_logprobs": []}]},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(validate_llm.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(validate_llm, "_post", fake_post)
+    validate_llm.validate_llm(given, "m")
+    assert listed == [f"{api_base}/models"]
+    # The completion, tool and logprobs-mode probes all go to the same route.
+    assert len(posted) > 1
+    assert set(posted) == {f"{api_base}/chat/completions"}
 
 
 # --- capture level: what a provider will actually accept --------------------

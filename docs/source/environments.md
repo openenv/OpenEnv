@@ -137,6 +137,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Helium Browser</div>
+      <p class="text-sm">Chromium browser driven with Helium and Selenium: one typed action per step, a screenshot and the URL back. A small example of the OpenEnv pieces, with a sample agent loop.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/helium_browser" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">KernRL</div>
       <p class="text-sm">RL environment for GPU kernel optimization. Train LLM agents to write fast CUDA/Triton kernels that beat baseline implementations.</p>
       <div class="flex gap-2 mt-3">
@@ -325,6 +332,22 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <div class="flex gap-2 mt-3">
         <a href="https://huggingface.co/spaces/reasoning-core/reasoning-core-openenv/blob/main/README.md" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
         <a href="https://huggingface.co/spaces/reasoning-core/reasoning-core-openenv" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">FineEnvs</div>
+      <p class="text-sm">End-to-end environment projects (LaTeX OCR, watercolour painting, GeoGuessr, multilingual, simulation) with their datasets, models and training runs.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="https://github.com/adithya-s-k/FineEnvs" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/FineEnvs" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">SECOND STRIKE</div>
+      <p class="text-sm">A world war against 42 AI nations with a nuclear doomsday clock: escalation, betrayal and surrender terms, played in lockstep on fixed seeds and scored by the game server with no LLM judge.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="https://github.com/KyleClouthier/secondstrike-openenv/blob/main/README.md" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://github.com/KyleClouthier/secondstrike-openenv" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">💻 Code</a>
       </div>
     </div>
   </div>

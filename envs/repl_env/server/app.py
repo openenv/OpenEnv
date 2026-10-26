@@ -43,11 +43,11 @@ import os
 try:
     from openenv.core.env_server.http_server import create_app
 
-    from ..models import REPLAction, REPLObservation
+    from ..models import REPLAction, REPLObservation, REPLState
     from .gradio_ui import build_repl_gradio_app
     from .repl_environment import REPLEnvironment
 except ImportError:
-    from models import REPLAction, REPLObservation
+    from models import REPLAction, REPLObservation, REPLState
     from openenv.core.env_server.http_server import create_app
     from server.gradio_ui import build_repl_gradio_app
     from server.repl_environment import REPLEnvironment
@@ -113,6 +113,8 @@ if "gradio_builder" in _sig.parameters:
         create_app_kwargs["title_override"] = (
             "OpenEnv REPL — Recursive Language Model playground"
         )
+    if "state_cls" in _sig.parameters:
+        create_app_kwargs["state_cls"] = REPLState
     app = create_app(
         create_repl_environment,
         REPLAction,

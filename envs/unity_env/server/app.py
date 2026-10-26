@@ -28,7 +28,7 @@ try:
     # In-repo imports (when running from OpenEnv repository root)
     from openenv.core.env_server.http_server import create_app
 
-    from ..models import UnityAction, UnityObservation
+    from ..models import UnityAction, UnityObservation, UnityState
     from .unity_environment import UnityMLAgentsEnvironment
 except ImportError:
     # openenv from pip
@@ -43,16 +43,16 @@ except ImportError:
         _parent = str(Path(__file__).parent.parent)
         if _parent not in sys.path:
             sys.path.insert(0, _parent)
-        from models import UnityAction, UnityObservation
+        from models import UnityAction, UnityObservation, UnityState
         from server.unity_environment import UnityMLAgentsEnvironment
     except ImportError:
         try:
             # Package installed as unity_env
-            from unity_env.models import UnityAction, UnityObservation
+            from unity_env.models import UnityAction, UnityObservation, UnityState
             from unity_env.server.unity_environment import UnityMLAgentsEnvironment
         except ImportError:
             # Running from OpenEnv root with envs prefix
-            from envs.unity_env.models import UnityAction, UnityObservation
+            from envs.unity_env.models import UnityAction, UnityObservation, UnityState
             from envs.unity_env.server.unity_environment import UnityMLAgentsEnvironment
 
 # Create the app with web interface
@@ -62,6 +62,7 @@ app = create_app(
     UnityAction,
     UnityObservation,
     env_name="unity_env",
+    state_cls=UnityState,
 )
 
 

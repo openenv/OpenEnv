@@ -34,10 +34,10 @@ from openenv.core.env_server.http_server import create_app
 
 # Support both in-repo and standalone imports
 try:
-    from ..models import MazeAction, MazeObservation
+    from ..models import MazeAction, MazeObservation, MazeState
     from .maze_env_environment import MazeEnvironment
 except ImportError:
-    from models import MazeAction, MazeObservation
+    from models import MazeAction, MazeObservation, MazeState
     from server.maze_env_environment import MazeEnvironment
 
 
@@ -47,6 +47,7 @@ app = create_app(
     MazeAction,
     MazeObservation,
     env_name="maze_env",
+    state_cls=MazeState,
     max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
 )
 

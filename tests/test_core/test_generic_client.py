@@ -17,6 +17,7 @@ Tests cover:
 
 import asyncio
 import os
+import threading
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -590,6 +591,19 @@ class TestGenericEnvClientFromEnv:
             mock_provider.start_container.assert_called_once()
             call_args = mock_provider.start_container.call_args
             assert "registry.hf.space/user-my-env" in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_from_env_with_docker_normalizes_image_name(self, mock_provider):
+        """Registry image names follow the Space subdomain (lowercase, '_' -> '-')."""
+        with patch.object(GenericEnvClient, "connect", new_callable=AsyncMock):
+            await GenericEnvClient.from_env(
+                "openenv/Echo_Env",
+                use_docker=True,
+                provider=mock_provider,
+            )
+
+            image = mock_provider.start_container.call_args[0][0]
+            assert image == "registry.hf.space/openenv-echo-env:latest"
 
     @pytest.mark.asyncio
     async def test_from_env_uv_wait_uses_remaining_context_timeout(self):
@@ -1227,6 +1241,65 @@ class TestSyncEnvClientWrapper:
 
         mock_provider.start_container.assert_called_once_with()
         mock_provider.stop_container.assert_called_once_with()
+
+    def test_failed_sync_child_connect_releases_loop_and_preserves_parent(
+        self, mock_provider, monkeypatch
+    ):
+        loop_threads = []
+        run_loop = SyncEnvClient._run_loop_forever
+
+        def record_loop(client):
+            loop_threads.append((client, threading.current_thread()))
+            run_loop(client)
+
+        monkeypatch.setattr(SyncEnvClient, "_run_loop_forever", record_loop)
+        parent_socket = AsyncMock()
+        parent_socket.state = State.OPEN
+        parent_socket.recv.return_value = (
+            '{"type": "reset_result", "data": {"observation": {"ready": true}, '
+            '"reward": 0.0, "done": false}}'
+        )
+        child_socket = AsyncMock()
+        child_socket.state = State.OPEN
+        connect = AsyncMock(
+            side_effect=[
+                parent_socket,
+                ConnectionRefusedError("server unavailable"),
+                child_socket,
+            ]
+        )
+        try:
+            with patch("openenv.core.env_client.ws_connect", connect):
+                with GenericEnvClient(provider=mock_provider).sync() as parent:
+                    with pytest.raises(Exception) as caught:
+                        parent.new_session()
+
+                    assert parent._child_clients == []
+                    mock_provider.stop_container.assert_not_called()
+                    parent_socket.close.assert_not_awaited()
+                    assert parent.reset().observation == {"ready": True}
+                    assert all(
+                        not thread.is_alive()
+                        for client, thread in loop_threads
+                        if client is not parent
+                    )
+                    assert isinstance(caught.value, ConnectionError)
+                    assert "server unavailable" in str(caught.value)
+
+                    # A later successful child is still owned by the parent.
+                    child = parent.new_session()
+                    assert child.async_client._provider is None
+                    assert parent._child_clients == [child]
+
+            parent_socket.close.assert_awaited_once()
+            child_socket.close.assert_awaited_once()
+            mock_provider.start_container.assert_called_once_with()
+            mock_provider.stop_container.assert_called_once_with()
+            assert all(not thread.is_alive() for _, thread in loop_threads)
+        finally:
+            # Also release orphaned loops when this regression runs on main.
+            for client, _ in loop_threads:
+                client._stop_loop()
 
     def test_sync_close_stops_provider_when_child_close_raises(self, mock_provider):
         """Sync parent cleanup continues when child close fails."""

@@ -490,3 +490,37 @@ def test_write_report_validation_report_only() -> None:
     assert write_report.__annotations__["report"] is ValidationReport
     with pytest.raises(AttributeError):
         write_report({"target": "http://example.com"})  # type: ignore[arg-type]
+
+
+def test_sigterm_during_local_validation_takes_the_interrupt_path(
+    tmp_path: Path,
+) -> None:
+    """SIGTERM during local validation takes the interrupt path."""
+    import os
+    import signal
+    import time
+
+    env_dir = tmp_path / "test_env"
+    _write_minimal_valid_env(env_dir)
+    observed = []
+
+    def outside_handler(signum, frame):
+        # Catches SIGTERM if the CLI does not handle it.
+        observed.append("uncaught SIGTERM")
+
+    def fake_run_validation(*args, **kwargs):
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)
+        except KeyboardInterrupt:
+            observed.append("interrupt")
+        raise RuntimeError("stop after observing the signal")
+
+    previous = signal.signal(signal.SIGTERM, outside_handler)
+    try:
+        with patch("openenv.cli.commands.validate.run_validation", fake_run_validation):
+            runner.invoke(app, ["validate", str(env_dir), "--level", "runtime"])
+        assert observed == ["interrupt"]
+        assert signal.getsignal(signal.SIGTERM) is outside_handler
+    finally:
+        signal.signal(signal.SIGTERM, previous)

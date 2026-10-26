@@ -36,6 +36,8 @@ class Subject:
             The started sandbox; `None` at the static level.
         outputs_dir (`Path`):
             Where trajectory records and replay artifacts are written.
+        network_evidence_json (`str`, *optional*):
+            Provider-measured [`~openenv.validation.runtime.contracts.NetworkEvidence`].
     """
 
     root: Path
@@ -44,6 +46,7 @@ class Subject:
     running: RunningSubject | None
     outputs_dir: Path
     runtime_evidence: RuntimeEvidence | None = None
+    network_evidence_json: str | None = None
 
 
 @runtime_checkable

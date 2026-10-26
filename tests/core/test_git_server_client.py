@@ -2,8 +2,10 @@
 
 """Tests for GitServerClient git configuration."""
 
+import subprocess
 from pathlib import Path
 
+import pytest
 from openenv.core.tools.git_server_client import GitServerClient
 
 
@@ -49,3 +51,36 @@ def test_execute_git_command_keeps_quoted_args(tmp_path, monkeypatch):
     assert code == 0, stderr
     _, stdout, _ = client.execute_git_command("log -1 --format=%s", "repo")
     assert stdout.strip() == "two words"
+
+
+@pytest.mark.parametrize(
+    "gitea_url, password",
+    [
+        ("http://gitea:3000", "p@ss/word#1:%"),
+        ("https://gitea.example.com", "secret"),
+    ],
+)
+def test_stored_credentials_match_gitea_url(tmp_path, monkeypatch, gitea_url, password):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    client = GitServerClient(
+        gitea_url=gitea_url,
+        username="openenv",
+        password=password,
+        workspace_dir=str(tmp_path / "workspace"),
+    )
+
+    # Ask git for the credentials it would send when cloning from the server
+    result = subprocess.run(
+        ["git", "credential", "fill"],
+        input=f"url={gitea_url}/openenv/repo.git\n\n",
+        env={**client._git_env, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": ""},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "username=openenv" in result.stdout.splitlines()
+    assert f"password={password}" in result.stdout.splitlines()

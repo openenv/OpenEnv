@@ -4,7 +4,9 @@ import json
 import logging
 import random
 import re
+import uuid
 from pathlib import Path
+from typing import Any
 
 from openenv.core.env_server import Environment
 
@@ -89,9 +91,10 @@ class DIPGEnvironment(Environment):
 
         # Load data from the provided path
         self.dataset = self._load_dataset(dataset_path)
-        self._shuffled_dataset = self.dataset.copy()
-        random.shuffle(self._shuffled_dataset)
-        self._dataset_index = 0
+        # The env owns its RNG so that reset(seed=...) can make the challenge
+        # order reproducible.
+        self._rng = random.Random()
+        self._start_new_pass()
 
     def _load_dataset(self, path: str) -> list:
         """Loads the dataset from the specified file path."""
@@ -100,14 +103,39 @@ class DIPGEnvironment(Environment):
         with open(path, "r") as f:
             return [json.loads(line) for line in f]
 
-    def reset(self) -> DIPGObservation:
+    def _start_new_pass(self) -> None:
+        """Shuffle the full dataset into a new order and start from the top."""
+        self._shuffled_dataset = self.dataset.copy()
+        self._rng.shuffle(self._shuffled_dataset)
+        self._dataset_index = 0
+
+    def reset(
+        self,
+        seed: int | None = None,
+        episode_id: str | None = None,
+        **kwargs: Any,
+    ) -> DIPGObservation:
         """
         Picks the next challenge from the shuffled dataset.
         This version is robust and will not crash if a dataset entry is malformed.
+
+        Args:
+            seed (`int`, *optional*):
+                Reshuffles the challenge order. The same seed gives the same
+                challenge, and the same sequence on the unseeded resets that follow.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
         """
+        if seed is not None:
+            self._rng = random.Random(seed)
+            self._start_new_pass()
+        if episode_id is None:
+            episode_id = str(uuid.uuid4())
+
         max_attempts = len(self._shuffled_dataset)
         if max_attempts == 0:
             self._state = DIPGState(
+                episode_id=episode_id,
                 current_context="dummy context",
                 current_question="dummy question",
                 expected_answer={},
@@ -116,8 +144,7 @@ class DIPGEnvironment(Environment):
 
         for _ in range(max_attempts):
             if self._dataset_index >= len(self._shuffled_dataset):
-                random.shuffle(self._shuffled_dataset)
-                self._dataset_index = 0
+                self._start_new_pass()
 
             challenge = self._shuffled_dataset[self._dataset_index]
             self._dataset_index += 1
@@ -137,6 +164,7 @@ class DIPGEnvironment(Environment):
                         expected_answer = {"final": expected_answer_str, "proof": ""}
 
                     self._state = DIPGState(
+                        episode_id=episode_id,
                         current_context=context,
                         current_question=question,
                         expected_answer=expected_answer,
