@@ -14,12 +14,22 @@ Redis-backed distributed state (fastapi-guard).
 Health and schema endpoints are excluded from detection checks by default so
 orchestrators can probe the server; global IP allow/block lists are still
 enforced on those paths.
+
+WebSocket connections (`/ws`, `/mcp`, `/harness`, `/ws/ui`) get the same
+checks on the handshake: ban, IP lists, a separate rate-limit bucket and
+penetration detection on the path, query and headers. A refused handshake is
+closed before `accept()`, so the client gets HTTP 403 on the upgrade and no
+socket. Messages on an accepted connection are not screened, for the same
+reason request bodies are not by default.
 """
 
 from __future__ import annotations
 
 import os
 from typing import Any
+
+from starlette.exceptions import WebSocketException
+from starlette.websockets import WebSocket
 
 DEFAULT_EXCLUDED_PATHS = "/health,/schema,/metadata,/docs,/redoc,/openapi.json"
 # Empty by default on purpose: trusting private-range peers would let
@@ -145,6 +155,24 @@ def _build_security_config() -> Any:
     return SecurityConfig(**kwargs)
 
 
+class _WebSocketGuardMiddleware:
+    # SecurityMiddleware is a BaseHTTPMiddleware, which never sees websocket
+    # scopes, so every handshake goes through fastapi-guard's guard_websocket.
+    def __init__(self, app: Any, guard_websocket: Any) -> None:
+        self.app = app
+        self.guard_websocket = guard_websocket
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "websocket":
+            websocket = WebSocket(scope, receive, send)
+            try:
+                await self.guard_websocket(websocket)
+            except WebSocketException as exc:
+                await websocket.close(code=exc.code, reason=exc.reason)
+                return
+        await self.app(scope, receive, send)
+
+
 def attach_guard(app: Any) -> None:
     """Add the fastapi-guard middleware to `app` when enabled via env.
 
@@ -156,7 +184,7 @@ def attach_guard(app: Any) -> None:
     if getattr(app.state, "guard_attached", False):
         return
     try:
-        from guard import SecurityMiddleware
+        from guard import guard_websocket, SecurityMiddleware
     except ImportError as exc:
         raise ImportError(
             "OPENENV_GUARD_ENABLED requires fastapi-guard. "
@@ -164,4 +192,5 @@ def attach_guard(app: Any) -> None:
         ) from exc
 
     app.add_middleware(SecurityMiddleware, config=_build_security_config())
+    app.add_middleware(_WebSocketGuardMiddleware, guard_websocket=guard_websocket)
     app.state.guard_attached = True

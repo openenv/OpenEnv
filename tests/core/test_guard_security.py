@@ -7,14 +7,17 @@
 """Tests for the optional fastapi-guard security middleware wiring."""
 
 import itertools
+import json
 import os
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from openenv.core.env_server.http_server import create_fastapi_app
-from openenv.core.env_server.security import _build_security_config
 from openenv.core.env_server.interfaces import Environment
+from openenv.core.env_server.security import _build_security_config
 from openenv.core.env_server.types import Action, Observation, State
+from starlette.websockets import WebSocketDisconnect
 
 # Rate limiting state in guard-core is process-wide, so every scenario gets
 # its own TEST-NET client IP to stay hermetic.
@@ -72,7 +75,8 @@ async def test_disabled_by_default(monkeypatch):
 
 async def test_enabled_adds_middleware(monkeypatch):
     app = _make_app(monkeypatch, OPENENV_GUARD_ENABLED="1")
-    assert len(app.user_middleware) == 1
+    # SecurityMiddleware for HTTP plus the websocket handshake guard.
+    assert len(app.user_middleware) == 2
     response = await _request(app, "/health")
     assert response.status_code == 200
 
@@ -99,6 +103,50 @@ async def test_ip_lists_enforced_on_excluded_paths(monkeypatch):
     # enforced there too.
     response = await _request(app, "/health", client_ip=blocked)
     assert response.status_code == 403
+
+
+def _ws_reset(app, client_ip):
+    with TestClient(app, client=(client_ip, 50000)) as client:
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_text(json.dumps({"type": "reset", "data": {}}))
+            return websocket.receive_json()["type"]
+
+
+def _ws_refusal_code(app, client_ip, path="/ws"):
+    with TestClient(app, client=(client_ip, 50000)) as client:
+        with pytest.raises(WebSocketDisconnect) as closed:
+            with client.websocket_connect(path):
+                pass
+    return closed.value.code
+
+
+def test_websocket_handshake_refused_for_blocked_ip(monkeypatch):
+    blocked = _unique_ip()
+    app = _make_app(
+        monkeypatch,
+        OPENENV_GUARD_ENABLED="1",
+        OPENENV_GUARD_BLOCKED_IPS=blocked,
+    )
+    for path in ("/ws", "/mcp"):
+        assert _ws_refusal_code(app, blocked, path) == 1008
+    assert _ws_reset(app, _unique_ip()) == "observation"
+
+
+def test_websocket_handshake_is_rate_limited(monkeypatch):
+    ip = _unique_ip()
+    app = _make_app(
+        monkeypatch,
+        OPENENV_GUARD_ENABLED="1",
+        OPENENV_GUARD_RATE_LIMIT="1",
+        OPENENV_GUARD_RATE_LIMIT_AUTO_BAN="0",
+    )
+    assert _ws_reset(app, ip) == "observation"
+    assert _ws_refusal_code(app, ip) == 1008
+
+
+def test_websocket_unguarded_when_disabled(monkeypatch):
+    app = _make_app(monkeypatch, OPENENV_GUARD_BLOCKED_IPS="198.51.100.1")
+    assert _ws_reset(app, "198.51.100.1") == "observation"
 
 
 async def test_full_bundle_mapping(monkeypatch):
