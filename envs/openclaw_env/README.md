@@ -6,7 +6,7 @@ An OpenEnv environment that exposes [OpenClaw](https://github.com/openclaw/openc
 
 OpenClaw is a personal AI assistant framework that provides agents with access to:
 - **File system operations**: Read, write, and edit files
-- **Shell execution**: Run commands in a sandboxed environment
+- **Shell execution**: Run commands inside the deployment container
 - **Web research**: Search and fetch web content
 - **Memory management**: Search and retrieve context from memory files
 
@@ -101,10 +101,8 @@ result = env.call_tool("write", path="src/main.py", content="print('hello')")
 Make precise edits by replacing exact text.
 
 ```python
-result = env.call_tool("edit", 
-    path="config.py",
-    old_string="DEBUG = False",
-    new_string="DEBUG = True"
+result = env.call_tool(
+    "edit", path="config.py", old_string="DEBUG = False", new_string="DEBUG = True"
 )
 # Returns: {"success": True, "replacements": 1, "path": "/workspace/config.py"}
 ```
@@ -197,9 +195,11 @@ result = env.call_tool("memory_get", path="memory/notes.md", from_line=10, lines
 from trl import GRPOTrainer, GRPOConfig
 from openclaw_env import OpenClawEnv
 
+
 # Environment factory
 def env_factory():
     return OpenClawEnv(base_url="http://localhost:8000")
+
 
 config = GRPOConfig(
     # ... training config
@@ -261,7 +261,16 @@ PYTHONPATH=src:envs pytest tests/envs/test_openclaw_environment.py -v
 - **Command restrictions**: Commands run with limited environment variables
 - **File access**: Files are constrained to the workspace directory
 
-For production deployments with real web access, configure the appropriate API keys and security policies.
+The workspace and environment-variable allowlist are not a shell sandbox. `exec`
+retains the server user's filesystem and network permissions, including access to
+other episode directories and any reachable orchestration endpoints. Path checks
+also do not prevent a concurrent process from replacing a symlink after validation.
+
+Run only in a disposable, externally isolated container with no credentials,
+privileged mode, Docker socket, or host filesystem mounts. Restrict network access
+explicitly and isolate the agent process from the orchestration API before using
+untrusted commands. These deployment boundaries are not enforced by this environment;
+container isolation and RFC 005 alignment still require review.
 
 ## License
 

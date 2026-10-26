@@ -26,9 +26,9 @@ Example:
     ...     print(result)
 """
 
-from .client import OpenClawEnv
-
 # Re-export MCP types for convenience
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
+
+from .client import OpenClawEnv
 
 __all__ = ["OpenClawEnv", "CallToolAction", "ListToolsAction"]

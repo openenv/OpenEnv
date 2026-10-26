@@ -35,23 +35,15 @@ Example:
     >>> print(obs.result)
 """
 
-import os
-import re
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-# Support both in-repo and standalone imports
-try:
-    from openenv.core.env_server.mcp_environment import MCPEnvironment
-    from openenv.core.env_server.types import Action, Observation, State
-except ImportError:
-    from openenv.core.env_server.mcp_environment import MCPEnvironment
-    from openenv.core.env_server.types import Action, Observation, State
-
 from fastmcp import FastMCP
+from openenv.core.env_server.mcp_environment import MCPEnvironment
+from openenv.core.env_server.types import Action, Observation, State
 
 
 # Maximum file size to read (50KB)
@@ -72,13 +64,14 @@ class OpenClawEnvironment(MCPEnvironment):
     web tools, and memory management through MCP tools. It's designed
     for training agents on real-world agentic tasks.
 
-    The environment maintains an isolated workspace per episode, allowing
-    safe exploration without affecting the host system.
+    The environment maintains a fresh workspace per episode. A working directory
+    is not a shell sandbox: commands retain the server user's filesystem and
+    network permissions. Run only inside an externally isolated container.
 
     Security:
-    - Commands run in a sandboxed workspace
-    - File operations are restricted to the workspace
-    - Network operations (web_search, web_fetch) are simulated in sandbox mode
+    - File tool paths are restricted to the workspace
+    - Shell commands require external filesystem and network isolation
+    - Web tools return simulated results; shell network access is not restricted
 
     Example:
         >>> from openenv.core.mcp_client import MCPToolClient
@@ -283,7 +276,11 @@ class OpenClawEnvironment(MCPEnvironment):
                     capture_output=True,
                     text=True,
                     timeout=timeout,
-                    env={**os.environ, "HOME": str(env._workspace)},
+                    env={
+                        "HOME": str(env._workspace),
+                        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                        "TERM": "xterm",
+                    },
                 )
 
                 return {
@@ -333,8 +330,8 @@ class OpenClawEnvironment(MCPEnvironment):
                 "query": query,
                 "results": [
                     {
-                        "title": f"Search result {i+1} for: {query}",
-                        "url": f"https://example.com/result{i+1}",
+                        "title": f"Search result {i + 1} for: {query}",
+                        "url": f"https://example.com/result{i + 1}",
                         "snippet": f"This is a simulated search result for '{query}'. "
                         f"In production, this would return real search results.",
                     }
@@ -460,21 +457,11 @@ class OpenClawEnvironment(MCPEnvironment):
         Returns:
             Resolved Path object, constrained to workspace
         """
-        if path is None:
-            return self._workspace
-
-        path_obj = Path(path)
-
-        # If absolute, check if it's within workspace
-        if path_obj.is_absolute():
-            try:
-                path_obj.relative_to(self._workspace)
-                return path_obj
-            except ValueError:
-                # Path is outside workspace, treat as relative
-                return self._workspace / path_obj.name
-        else:
-            return self._workspace / path_obj
+        workspace = self._workspace.resolve()
+        resolved = (workspace / path).resolve() if path is not None else workspace
+        if not resolved.is_relative_to(workspace):
+            raise ValueError("Path is outside workspace")
+        return resolved
 
     def _search_file(self, file_path: Path, query: str) -> List[Dict[str, Any]]:
         """
@@ -491,6 +478,7 @@ class OpenClawEnvironment(MCPEnvironment):
         query_lower = query.lower()
 
         try:
+            file_path = self._resolve_path(str(file_path))
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
 
@@ -537,8 +525,10 @@ class OpenClawEnvironment(MCPEnvironment):
         ep_id = episode_id or str(uuid4())
 
         # Create workspace directory
-        self._workspace = Path(self._workspace_base) / f"openclaw_env_{ep_id[:8]}"
-        self._workspace.mkdir(parents=True, exist_ok=True)
+        Path(self._workspace_base).mkdir(parents=True, exist_ok=True)
+        self._workspace = Path(
+            tempfile.mkdtemp(prefix="openclaw_env_", dir=self._workspace_base)
+        ).resolve()
 
         # Create initial directory structure
         (self._workspace / "memory").mkdir(exist_ok=True)
