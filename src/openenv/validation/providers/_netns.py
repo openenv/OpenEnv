@@ -83,6 +83,12 @@ def icmp():
 deadline = time.monotonic() + wait
 while time.monotonic() < deadline and outcome(tcp)["result"] != "reachable":
     time.sleep(0.2)
+def up(name):
+    # Kernels add down fallback tunnels (gre0, sit0, ...) to every namespace, and
+    # /sys/class/net can hold files such as bonding_masters. Only up links carry traffic.
+    try:
+        with open(f"/sys/class/net/{{name}}/flags") as f: return int(f.read(), 16) & 1
+    except OSError: return False
 def lines(path):
     try:
         with open(path) as f: return f.read().splitlines()
@@ -94,7 +100,7 @@ listening = sorted({{int(f[1].split(":")[1], 16)
     if len(f) > 3 and f[3] == "0A"}})
 print(json.dumps({{
     "namespace": {{
-        "interfaces": sorted(os.listdir("/sys/class/net")),
+        "interfaces": sorted(n for n in os.listdir("/sys/class/net") if up(n)),
         "default_route": any(len(r) > 1 and r[1] == "00000000" for r in routes),
         "ipv6_non_loopback": sum(1 for f in v6 if f and f[-1] != "lo"),
         "listening_ports": listening,
