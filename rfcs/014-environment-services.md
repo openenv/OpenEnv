@@ -177,10 +177,11 @@ The final observation carries `reward`, `metadata["service_spend"]` and `metadat
 | 2026-10-26 | `t0_arithmetic_format` | Qwen3.8 through HF Inference Providers, 25 and 29 turns | open | 1.0 | 1.0, 1.0 | $0.21, $0.34 |
 | 2026-10-27 | `t0_artifact` | script | none | | 1.0 | $0.000167 |
 | 2026-10-27 | `t0_arithmetic_format` | script: SFT on `t4-small`, 333 s | none | 0.94 | 0.93 | $0.041 (`gpu_s` 333) |
+| 2026-10-27 | `t0_arithmetic_format` | Qwen3.8 through HF Inference Providers, 23 turns | none | 1.0 | 1.0 | $0.12 |
 
 Spend is the agent's HF Jobs spend; LLM tokens are not included. Every run ended with no orphaned jobs and `final: true`, and score jobs were not charged to the agent. A run with a `job.write`-only broker token was refused with HTTP 403 when the script upload reached the `jobs-artifacts` bucket (D1).
 
-- **No network.** In the 27 Oct runs the agent's script could not open a socket and ran as an unprivileged uid. CUDA training, DataLoader workers and writing `/data/outputs/` worked as before. Loading the base model from its mount instead of the Hub also cut the score job from about 20 minutes to 140 s.
+- **No network.** In the 27 Oct runs the agent's script could not open a socket and ran as an unprivileged uid. CUDA training, DataLoader workers and writing `/data/outputs/` worked as before. Qwen3.8 loaded the base model from `/base_model` from its first script on; its three failed jobs were its own bugs and one CUDA allocation error, none from the network policy. Loading the base model from its mount instead of the Hub also cut the score job from about 20 minutes to 140 s.
 - **T0 measures plumbing, not training skill.** Qwen3.8 trained on all 10,000 `(a, b)` pairs, so a hidden split of an input space that small hides nothing. Real tasks need inputs that cannot be enumerated, or test data the agent cannot reach.
 - **A failed score job is not a zero.** One Qwen3.8 run scored 1.0 on dev, and its score job printed 1.0 and then hit its timeout; the episode got reward 0. Such episodes now end unscored (`score_failed`), and the evaluator installs CPU-only torch.
 
