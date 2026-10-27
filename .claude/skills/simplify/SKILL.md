@@ -43,13 +43,13 @@ The goal is NOT to add features or change behavior. The goal is to make the code
 - Easier to read
 - Easier to maintain
 - More consistent with project patterns
-- Less duplicated
+- Less code
 
 ## Guidelines
 
 ### Good Simplifications
 
-- Extract helper functions to reduce duplication
+- Inline needless helpers and indirection (see Simplicity in `CLAUDE.md`)
 - Rename variables for clarity
 - Remove dead code
 - Simplify complex conditionals

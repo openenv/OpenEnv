@@ -16,25 +16,15 @@ import logging
 import os
 from uuid import uuid4
 
+from openenv.core.env_server.interfaces import Environment
+from openenv.core.env_server.types import State
+
 # Support both in-repo and standalone imports
 try:
-    # In-repo imports (when running from OpenEnv repository)
-    from openenv.core.env_server.interfaces import Environment
-    from openenv.core.env_server.types import State
-
     from ..models import WebSearchAction, WebSearchObservation
 except ImportError:
-    try:
-        from models import WebSearchAction, WebSearchObservation
+    from models import WebSearchAction, WebSearchObservation
 
-        # Standalone imports when openenv is available.
-        from openenv.core.env_server.interfaces import Environment
-        from openenv.core.env_server.types import State
-    except ImportError:
-        # Backward-compatible standalone imports when only openenv_core is available.
-        from models import WebSearchAction, WebSearchObservation
-        from openenv_core.env_server.interfaces import Environment
-        from openenv_core.env_server.types import State
 from .web_search_tool import WebSearchTool
 
 logger = logging.getLogger(__name__)

@@ -15,7 +15,7 @@ correctness verification, and performance benchmarking.
 import os
 import random
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 # Support both in-repo and standalone imports
@@ -121,6 +121,9 @@ class KernelOptEnvironment(Environment):
 
         # Load problems
         self.problems = self._load_problems()
+        # The env owns its RNG so that reset(seed=...) can make the problem
+        # order reproducible.
+        self._rng = random.Random()
 
         # Episode state
         self._state = KernelState()
@@ -216,16 +219,32 @@ Device: {self.gpu}
             pass
         return f"GPU: {self.gpu}"
 
-    def reset(self, problem_id: Optional[str] = None) -> KernelObservation:
+    def reset(
+        self,
+        problem_id: Optional[str] = None,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> KernelObservation:
         """
         Reset environment and start a new episode.
 
         Args:
-            problem_id: Specific problem to use, or None for random selection
+            problem_id (`str`, *optional*):
+                Specific problem to use. A random problem is chosen when it is not
+                given.
+            seed (`int`, *optional*):
+                Reseeds the problem choice. The same seed gives the same
+                problem, and the same sequence on the unseeded resets that follow.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
 
         Returns:
-            Initial KernelObservation with problem description
+            `KernelObservation`: Initial observation with the problem description.
         """
+        if seed is not None:
+            self._rng = random.Random(seed)
+
         if problem_id:
             self._current_problem = next(
                 (p for p in self.problems if p.id == problem_id), None
@@ -238,10 +257,10 @@ Device: {self.gpu}
             if not self._current_problem:
                 raise ValueError(f"Problem {problem_id} not found")
         else:
-            self._current_problem = random.choice(self.problems)
+            self._current_problem = self._rng.choice(self.problems)
 
         self._state = KernelState(
-            episode_id=str(uuid4()),
+            episode_id=episode_id if episode_id is not None else str(uuid4()),
             step_count=0,
             problem_id=self._current_problem.id,
             turn=0,

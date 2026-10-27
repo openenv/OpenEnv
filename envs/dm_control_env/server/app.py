@@ -21,10 +21,12 @@ Usage:
     uv run --project . server
 """
 
+import os
+
 try:
     from openenv.core.env_server.http_server import create_app
 
-    from ..models import DMControlAction, DMControlObservation
+    from ..models import DMControlAction, DMControlObservation, DMControlState
     from .dm_control_environment import DMControlEnvironment
 except ImportError:
     from openenv.core.env_server.http_server import create_app
@@ -36,16 +38,24 @@ except ImportError:
         _parent = str(Path(__file__).parent.parent)
         if _parent not in sys.path:
             sys.path.insert(0, _parent)
-        from models import DMControlAction, DMControlObservation
+        from models import DMControlAction, DMControlObservation, DMControlState
         from server.dm_control_environment import DMControlEnvironment
     except ImportError:
         try:
-            from dm_control_env.models import DMControlAction, DMControlObservation
+            from dm_control_env.models import (
+                DMControlAction,
+                DMControlObservation,
+                DMControlState,
+            )
             from dm_control_env.server.dm_control_environment import (
                 DMControlEnvironment,
             )
         except ImportError:
-            from envs.dm_control_env.models import DMControlAction, DMControlObservation
+            from envs.dm_control_env.models import (
+                DMControlAction,
+                DMControlObservation,
+                DMControlState,
+            )
             from envs.dm_control_env.server.dm_control_environment import (
                 DMControlEnvironment,
             )
@@ -57,6 +67,8 @@ app = create_app(
     DMControlAction,
     DMControlObservation,
     env_name="dm_control_env",
+    state_cls=DMControlState,
+    max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
 )
 
 

@@ -1,6 +1,6 @@
 # CLI
 
-The `openenv` CLI provides a set of commands for building, validating, and pushing environments to Hugging Face Spaces or a custom Docker registry. For an end-to-end tutorial on building environments with OpenEnv, see the [building an environment](../getting_started/environment-builder) guide.
+The `openenv` CLI provides a set of commands for building, validating, and pushing environments to Hugging Face Spaces or a custom Docker registry. For a walkthrough of building an environment, see [Your First Environment](../guides/first-environment).
 
 ## `openenv init`
 
@@ -51,16 +51,21 @@ supports that capability. Docker validation uses two containers concurrently
 during the fresh-container replay. Both use the same immutable image and are
 removed even if a check fails.
 
-The seven implemented runtime checks cover startup, rewards, observation schemas,
-state continuity, seed control, determinism and emitted trajectory records. Other
-applicable Level 2 checks appear as `SKIP`; they make
+The runtime level implements startup, reward, observation, state, network policy,
+seed control, determinism and emitted trajectory record checks. Other applicable
+Level 2 checks appear as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
 includes the available lower-level checks but does not claim semantic execution.
 `--skip-build` runs declaration checks and skips runtime execution entirely.
-The Docker provider currently supports CPU workloads and `public` network mode;
-unsupported network or GPU requirements skip runtime before building.
+The Docker provider supports CPU workloads in `public` and `no-network` modes;
+`allowlist` and GPU requirements skip runtime before building. A `no-network`
+subject has no network interface: the validator reaches it through a helper that
+shares only its network namespace, built from a digest-pinned validator image
+pulled on first use. `runtime.network_policy` probes a validator-owned sink from
+the subject's namespace and from a control container; a probe counts only when
+the control reaches the sink, and a denial that is not proven is a `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds each episode; a reset or judged step may use
 its remaining budget. Original and replay collection share a 300-second deadline
@@ -202,6 +207,57 @@ accepted, and credentials, query strings and fragments in the URL are rejected:
 pass the key through `OPENAI_API_KEY` instead.
 
 [[autodoc]] openenv.cli.commands.collect.collect
+
+## `openenv harbor`
+
+Runs [Harbor](../environments/harbor) tasks with real coding agents and
+captures the token ids and logprobs of every model call. Requires
+`pip install "openenv[harbor]"` (Python 3.12 or newer).
+
+| Command | What it does |
+|---------|--------------|
+| `openenv harbor info` | Reports the endpoint's capture level and which sandboxes, datasets and harnesses this machine can use. Boots nothing. |
+| `openenv harbor rollout` | Runs one or more rollouts end to end without a server. |
+| `openenv harbor serve` | Serves Harbor tasks over the Task API and MCP, with a UI at `/web`. |
+| `openenv harbor push` | Deploys the same server to a Hugging Face Space. |
+
+```bash
+openenv harbor info --llm-url $LLM --dataset AdithyaSK/data_agent_rl_environment_eval
+
+openenv harbor rollout --llm-url $LLM \
+    --dataset AdithyaSK/data_agent_rl_environment_eval \
+    --task-index 0 --harness opencode --sandbox e2b --out rollout.json
+
+openenv harbor serve --llm-url $LLM --dataset org/train,org/eval
+```
+
+`--llm-url` is any OpenAI-compatible endpoint. Rollouts carry token ids only
+when it returns them (vLLM with `--return-tokens-as-token-ids
+--logprobs-mode processed_logprobs`, or SGLang). `--api-key` defaults to
+`$OPENENV_LLM_API_KEY`. Run `openenv harbor <command> --help` for every flag,
+and see the [Harbor environment page](../environments/harbor#cli-reference)
+for details.
+
+## `openenv catalog` and `openenv discover`
+
+Build a versioned, metadata-only catalog of environments from a Git
+repository, then search it before installing or running anything. See
+[Discover environments before running them](../guides/catalog-discovery).
+
+```bash
+openenv catalog build --repository . \
+    --repository-uri https://github.com/huggingface/OpenEnv.git \
+    --publisher example.org --output catalog.json
+
+openenv discover "client smoke test" --catalog catalog.json
+openenv discover "" --catalog catalog.json --filter license=BSD-3-Clause
+openenv catalog inspect "<identifier from the result>" --catalog catalog.json
+```
+
+`catalog build` reads committed `openenv.yaml` files under `--root` (default
+`envs`) at `--revision` (default `HEAD`). `discover` ranks entries by query
+match (`--limit`, default 20) and `--json` emits the full entries.
+`catalog inspect` prints one entry by its exact identifier.
 
 # API Reference
 

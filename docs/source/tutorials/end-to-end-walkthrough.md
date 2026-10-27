@@ -1,4 +1,4 @@
-# End-to-end OpenEnv walkthrough: train a reasoning agent with GRPO
+# Train a Reasoning Model
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/end_to_end_walkthrough.ipynb)
 
@@ -56,9 +56,9 @@ notebook_login()
 
 ---
 
-## 3. Define the system prompt
+## 3. Define the prompt
 
-The model will be asked to use a single tool, `answer`, to submit its final number. The prompt makes that explicit.
+The model will be asked to use a single tool, `answer`, to submit its final number. The prompt makes that explicit. The environment wrapper below prepends it to every question.
 
 ```python
 prompt = """You are a careful arithmetic assistant.
@@ -79,8 +79,9 @@ Rules:
 The `environment_factory` pattern asks for a Python class that the trainer can instantiate per rollout. It needs:
 
 - An `__init__` that opens a connection to the underlying environment.
-- A `reset(**kwargs)` method that starts a new episode and returns the initial observation as a string (the question, in our case).
+- A `reset(**kwargs)` method that starts a new episode and returns the initial observation as a string (the prompt and question, in our case).
 - One or more *tool methods* — public methods with docstrings — that the trainer auto-discovers and exposes as tools to the model. Each call corresponds to one `env.step` on the underlying environment.
+- A `get_reward()` method that returns the episode's reward. The environment owns the reward, so no separate reward function is needed.
 
 Because Reasoning Gym episodes are **single-step** (one question → one answer → done), the wrapper is small.
 
@@ -133,7 +134,7 @@ class ReasoningGymTrainEnv:
             result = self.client.reset()
         self.reward = 0.0
         self.done = False
-        return result.observation.question
+        return prompt + result.observation.question
 
     def answer(self, answer: str) -> str:
         """Submit the final answer for the current question.
@@ -153,6 +154,9 @@ class ReasoningGymTrainEnv:
         self.reward = float(result.observation.score or 0.0)
         self.done = True
         return f"score={self.reward} correct={result.observation.correct_answer}"
+
+    def get_reward(self) -> float:
+        return self.reward
 ```
 
 > [!NOTE]
@@ -160,44 +164,25 @@ class ReasoningGymTrainEnv:
 
 ### What the trainer does with this class
 
-It helps to picture the runtime loop. At init the trainer creates `gradient_accumulation_steps × per_device_train_batch_size` instances of `ReasoningGymTrainEnv` — these stay alive across optimizer steps. Per generation batch it then does, **for each instance in parallel**:
+It helps to picture the runtime loop. The trainer keeps a pool of `ReasoningGymTrainEnv` instances, one per rollout in a generation batch (`per_device_train_batch_size × gradient_accumulation_steps` with the settings below). Instances are created on first use and reused across batches, so each one keeps its WebSocket session. Per generation batch it then does, **for each rollout in parallel**:
 
-1. `env.reset(**row)` — opens (or reuses) the WebSocket session and returns the question string.
-2. The model is conditioned on that question, generates `num_generations` candidate completions, and the trainer parses any `<tool_call>` blocks out of each.
+1. `env.reset(**row)` starts a new episode and returns the prompt and question, which become the user message.
+2. The model generates a completion, and the trainer parses any `<tool_call>` blocks out of it. Each prompt is rolled out `num_generations` times, on separate instances.
 3. For each parsed call it dispatches to the matching tool method (here, `answer(...)`) and feeds the return value back to the model as a `<tool_response>`.
-4. When the env signals `done=True`, the rollout ends and the trainer reads `env.reward`.
+4. When the rollout ends, the trainer calls `env.get_reward()` to score it.
 5. GRPO computes one advantage per completion (relative to the group's mean reward), updates the policy, and the cycle repeats.
 
-That's why the wrapper only needs three things — a connection in `__init__`, a `reset` that returns the initial obs, and one or more tool methods that update `self.reward`/`self.done`.
+That's why the wrapper only needs four things: a connection in `__init__`, a `reset` that returns the initial observation, one or more tool methods, and a `get_reward` that reads the score back.
 
 ---
 
-## 5. Define the reward function
+## 5. No dataset needed
 
-The reward function receives the list of environment instances after each rollout. Each instance already tracks its own reward (set inside `answer()`), so we just read it back.
-
-```python
-def reward_func(environments, **kwargs) -> list[float]:
-    return [env.reward for env in environments]
-```
+The environment generates every question and returns it from `reset()`, so `GRPOTrainer` doesn't need a `train_dataset`. Without one, `max_steps` sets the length of the run. When your task does come from a dataset, pass it as `train_dataset`: each row's columns are forwarded to `reset(**row)` and its `prompt` is prepended to what `reset()` returns.
 
 ---
 
-## 6. Create the dataset
-
-Each row in the training dataset triggers one rollout episode. The prompt is identical across rows because the *environment* supplies the per-episode question — we're using the dataset purely to control how many episodes the trainer runs.
-
-```python
-from datasets import Dataset
-
-dataset = Dataset.from_dict(
-    {"prompt": [[{"role": "user", "content": prompt}] for _ in range(1000)]}
-)
-```
-
----
-
-## 7. Set the GRPO config
+## 6. Set the GRPO config
 
 These settings mirror the [Wordle GRPO tutorial](wordle-grpo) and are tuned for a single A100 (40 GB). Bigger GPUs can raise `per_device_train_batch_size` and `num_generations`; smaller GPUs should drop to Qwen3-0.6B and shrink `max_completion_length`.
 
@@ -230,16 +215,16 @@ grpo_config = GRPOConfig(
 )
 ```
 
-A few of the choices above worth flagging: `max_steps=150` caps the run before saturation (see *Reading the dashboard* below). `gradient_accumulation_steps=4` keeps the parallel env count at `1 × 4 = 4`, well under the server's default concurrency limit. `save_strategy="no"` skips intermediate checkpoints so the run stays quiet — we push the final model explicitly in section 9. `use_vllm` is left at its default (`False`); enabling it speeds up rollouts on bare-metal but its distributed init breaks under IPython.
+A few of the choices above worth flagging: `max_steps=150` caps the run before saturation (see *Reading the dashboard* below). `gradient_accumulation_steps=4` keeps the environment pool at `1 × 4 = 4` instances, well under the server's default concurrency limit. `save_strategy="no"` skips intermediate checkpoints so the run stays quiet — we push the final model explicitly in section 8. `use_vllm` is left at its default (`False`); enabling it speeds up rollouts on bare-metal but its distributed init breaks under IPython.
 
 > [!NOTE]
 > `chat_template_kwargs={"enable_thinking": False}` disables Qwen3's thinking mode so the model emits tool calls directly instead of reasoning tokens first. For a pure tool-use task like this one that's what you want; for harder math you may benefit from re-enabling it and growing `max_completion_length`.
 
 ---
 
-## 8. Create the `GRPOTrainer` and start training
+## 7. Create the `GRPOTrainer` and start training
 
-`environment_factory=ReasoningGymTrainEnv` is the only piece wiring our wrapper into the training loop.
+`environment_factory=ReasoningGymTrainEnv` is the only piece wiring our wrapper into the training loop. It supplies the prompts, the tools and the reward.
 
 ```python
 from trl import GRPOTrainer
@@ -248,8 +233,6 @@ MODEL_NAME = "Qwen/Qwen3-1.7B"
 
 trainer = GRPOTrainer(
     model=MODEL_NAME,
-    reward_funcs=reward_func,
-    train_dataset=dataset,
     args=grpo_config,
     environment_factory=ReasoningGymTrainEnv,
 )
@@ -261,7 +244,7 @@ trainer.train()
 
 Open the Trackio Space linked in the trainer logs to follow the run live. A healthy GRPO trajectory looks roughly like this:
 
-- **`reward`** climbs from your baseline toward `1.0` over the first ~100 steps. A flat line near 0 means the task is too hard for the base model; a flat line near 1 means it's too easy — adjust `DATASET_CONFIG` in either case.
+- **`reward`** (also logged per source as `rewards/ReasoningGymTrainEnv/mean`) climbs from your baseline toward `1.0` over the first ~100 steps. A flat line near 0 means the task is too hard for the base model; a flat line near 1 means it's too easy — adjust `DATASET_CONFIG` in either case.
 - **`reward_std`** starts moderate and *drops* as the policy converges (most rollouts succeed). Persistent zero means every rollout in the group gives the same score → no advantage signal → no learning. Bump `num_generations` or task difficulty.
 - **`frac_reward_zero_std`** is the fraction of groups where every rollout has the same reward — when it climbs toward 1.0 you've saturated.
 - **`entropy`** stays low while the model is learning. Once `reward` saturates, `entropy` typically rises again: most groups have zero advantage, so the remaining updates come from the few groups that still differ and from optimizer momentum — at that point further training is net-negative. Stop with a kernel interrupt or trust `max_steps`.
@@ -271,7 +254,7 @@ Once training finishes, the model in the running process has been fine-tuned in 
 
 ---
 
-## 9. Publish the trained model to the Hub
+## 8. Publish the trained model to the Hub
 
 `save_strategy="no"` means the trainer didn't write any intermediate checkpoints. Push the final model explicitly so others can reuse it (and so the experiment is reproducible from the Hub):
 
@@ -283,7 +266,7 @@ The repo is derived automatically from `output_dir` (or `hub_model_id` if set in
 
 ---
 
-## 10. Read the training reward delta
+## 9. Read the training reward delta
 
 Every rollout the trainer ran left a `reward` entry in `trainer.state.log_history`. Comparing the first few logged rewards (the model's starting capability) to the last few (after training) gives a clean before/after number — same metric, same distribution, no second eval pass required.
 
@@ -313,7 +296,7 @@ A delta of **+10 to +30 pp** is what you should expect at this difficulty; outsi
 
 ---
 
-## 11. Where to go next
+## 10. Where to go next
 
 - **Swap the dataset.** `chain_sum` is one of ~100 datasets in [Reasoning Gym](https://github.com/open-thought/reasoning-gym) — try `simple_equations`, `letter_counting`, or `propositional_logic` by changing `DATASET_NAME` and re-running the same recipe.
 - **Try a different environment.** The same `environment_factory` shape works for any OpenEnv environment with a small tool surface — browse the [environment catalog](../environments) for ideas.

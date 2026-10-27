@@ -2,10 +2,18 @@
 
 """FastAPI application for the Pelican SVG environment."""
 
+import os
+
 from openenv.core.env_server import create_app
 
-from ..models import PelicanSvgAction, PelicanSvgObservation
-from .pelican_svg_environment import PelicanSvgEnvironment
+from ..models import PelicanSvgAction, PelicanSvgObservation, PelicanSvgState
+from .pelican_svg_environment import _judge_from_env, PelicanSvgEnvironment
+
+# Check the judge configuration once at startup. Environments are built per
+# session, and an error raised there reaches the client only as a generic
+# factory error, so a misconfigured judge would otherwise fail every session
+# without saying why.
+_judge_from_env()
 
 # The class is passed rather than an instance so each WebSocket session gets
 # its own environment and its own sampled task.
@@ -14,6 +22,8 @@ app = create_app(
     PelicanSvgAction,
     PelicanSvgObservation,
     env_name="pelican_svg_env",
+    state_cls=PelicanSvgState,
+    max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
 )
 
 

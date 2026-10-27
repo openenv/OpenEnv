@@ -1,33 +1,47 @@
-# Harbor provider qualification
+# Harbor Qualification
 
-An installed adapter is not evidence that a harness works with a particular model provider. Qualify the actual harness version, model route, sandbox, capture implementation, and task set together.
+An installed adapter is not evidence that a harness works with a given model provider. Qualify the harness version, model route, sandbox, capture implementation and task set together.
 
 ## Evaluation and training capture
 
-Use explicit `purpose="eval"` for evaluation. Hosted OpenAI, native Anthropic, and Hugging Face routes can produce graded evaluation traces without engine token IDs. An eval trace must not export a training contract, even when its endpoint happens to provide token IDs.
+- **`purpose="eval"`**: hosted OpenAI, native Anthropic and Hugging Face routes produce graded evaluation traces without engine token IDs. An eval trace never exports a training contract, even if its endpoint returns token IDs.
+- **`purpose="train"`**: only with a verified token-capable endpoint. Training export keeps engine prompt IDs, sampled completion IDs, processed log probabilities and loss masks. `openenv.harbor.contract.to_trace_entries` rejects evaluation traces and fatal capture findings. Never rebuild token IDs by tokenizing rendered text or fill missing log probabilities with zeros.
 
-Use `purpose="train"` only with a verified token-capable endpoint. Training export preserves engine prompt IDs, sampled completion IDs, processed log probabilities, and loss masks. `openenv.harbor.contract.to_trace_entries` rejects evaluation traces and fatal capture findings. Do not reconstruct token IDs by tokenizing rendered conversation text or fill missing log probabilities with zeros.
+A prompt rewrite can turn one rollout into several training rows without invalidating the sampled tokens. Report rows per rollout, repeated context, retained supervision and downstream weighting separately. Correct capture does not mean an efficient training configuration.
 
-A prompt rewrite may create several training rows from one rollout. That does not by itself make the sampled tokens invalid. Report rows per rollout, repeated context, retained supervision, and downstream weighting separately. Capture correctness does not establish an efficient training configuration.
-
-Native Anthropic requests retain their original signed blocks and supported native metadata. Translation to another harness protocol rejects output semantics that cannot be preserved. The native streaming bridge buffers the upstream response and replays SDK-compatible events; it does not provide upstream first-token streaming latency.
+Native Anthropic requests keep their signed blocks and supported native metadata. Translation to another harness protocol rejects output that can't be preserved. The native streaming bridge buffers the upstream response and replays SDK-compatible events, so there is no upstream first-token latency.
 
 ## Evidence and support tiers
 
-A qualification report has one cell per harness/provider pair. The provider names are `openai`, `anthropic`, `hf`, and `vllm`. Keep capture artifacts and attempt configuration alongside the report, including exact model routes, available revision pins, harness versions, task identities, sampling, and source hashes.
+A qualification report has one cell per harness/provider pair, with providers `openai`, `anthropic`, `hf` and `vllm`. Keep the capture artifacts and attempt configuration next to it: model routes, revision pins, harness versions, task identities, sampling and source hashes.
 
-The report distinguishes:
+| Status | Meaning |
+|--------|---------|
+| `eval_pass` | Completed, graded rollout with captured calls, no fatal capture findings and no training export. A task score of zero is a valid evaluation. An infrastructure failure or missing grade is not. |
+| `capture_and_reader_pass` | Exact capture passed validation and the real training reader kept the expected supervision. |
+| `optimizer_pass` | Current capture artifacts were consumed by a real optimizer diagnostic. Record model revision, input fingerprints, consumed rows, finite losses and finite nonzero gradients, and say whether it was diagnostic replay and whether weight sync was tested. |
+| `failed`, `blocked`, `in_progress`, `not_run` | Kept as is. Never replaced by a pass from a different configuration. |
 
-- `eval_pass`: a completed, graded rollout with captured calls, no fatal capture findings, and no training export. A task score of zero is still a valid evaluation; an infrastructure failure or missing grade is not a benchmark zero.
-- `capture_and_reader_pass`: exact capture passed validation and the real training reader retained the expected supervision.
-- `optimizer_pass`: the current capture artifacts were consumed by a real optimizer diagnostic. Record model revision, input fingerprints, consumed rows, finite losses, and finite nonzero gradients. Explicitly state whether this was diagnostic replay and whether weight synchronization was tested.
-- `failed`, `blocked`, `in_progress`, and `not_run`: retain these outcomes rather than replacing them with a passing result from a different configuration.
+`harness_maturity_rows` derives the tier from validated cells:
 
-`harness_maturity_rows` derives support tiers from validated report cells. Stable requires all three eval profiles and a current-capture optimizer pass on vLLM. Partial or pending support is experimental. Four failed or blocked profiles are unstable for the tested matrix. None of these labels claim universal compatibility or production-scale reliability beyond the recorded coverage.
+- **stable**: `eval_pass` on OpenAI, Anthropic and HF, plus `optimizer_pass` on vLLM.
+- **unstable**: all four profiles `failed` or `blocked`.
+- **experimental**: anything in between (partial or pending).
 
-Set `OPENENV_HARBOR_QUALIFICATION_REPORT` to the report JSON path to display evidence in Gradio. The UI defaults to stable harnesses, provides an experimental opt-in, and excludes unstable harnesses. With no report, adapters are unqualified and require the experimental opt-in. Changing the filter invalidates the prior selection. Recorded results do not certify a newly entered endpoint or automatically pin its harness installation. For profile-specific evidence, the UI passes the recorded profile to the rollout: ACP supports `opencode-1.18.30`; NeMo supports `shell-1.9.0` when the example workflow package is available in the checkout. The selected profile is displayed in the agent label. Profile selection creates a local seam copy and does not mutate the global adapter registry. Programmatic callers can pass `harness_profile=` to `run_rollout` or `build_trial_config`; unknown profiles fail explicitly.
+Tiers describe the recorded coverage only, not universal compatibility or production-scale reliability.
 
-## Recorded qualification: 15 September 2026
+## Using a report in the UI
+
+Set `OPENENV_HARBOR_QUALIFICATION_REPORT` to the report JSON path to show the evidence in the Harbor Gradio UI. The UI offers stable harnesses by default, experimental ones behind an opt-in, and hides unstable ones. Without a report, every adapter is unqualified and needs the opt-in. Recorded results don't certify a newly entered endpoint or pin the harness installation.
+
+Some results apply to a specific profile, which the UI passes to the rollout and shows in the agent label: ACP is qualified with `opencode-1.18.30`, NeMo with `shell-1.9.0` (when the example workflow package is in the checkout). Selecting a profile uses a local seam copy and leaves the global adapter registry unchanged. In code, pass `harness_profile=` to `run_rollout` or `build_trial_config`. Unknown profiles fail.
+
+## Recorded results
+
+The latest recorded qualification, on 15 September 2026, covers 29 adapters on four provider profiles with two tasks per pair. It lists each adapter's tier and per-provider status, the exact models and serving configuration, and the known limitations.
+
+<details>
+<summary>Qualification of 15 September 2026 (click to expand)</summary>
 
 The completed qualification attempted all 29 adapters on four provider profiles, with two fixed tasks per pair (116 pairs). Results are compatibility smoke tests, not benchmark pass@1 scores. “Stable” means passing this recorded coverage; it does not certify arbitrary models, harness upgrades, or production-scale reliability.
 
@@ -74,7 +88,7 @@ There are **14 stable, 9 experimental, and 6 unstable adapters**. A failed pair 
 | trae-agent | experimental | eval_pass | failed | eval_pass | optimizer_pass |
 | vibe | stable | eval_pass | eval_pass | eval_pass | optimizer_pass |
 
-### Scope and known limitations
+**Scope and known limitations**
 
 The optimizer diagnostics consumed 99 current capture rows across 21 adapters using the real `AsyncGRPOTrainer`, with finite losses and finite nonzero gradients. They used a diagnostic advantage of +1 and did not synchronize weights. This establishes capture consumption by the trainer, not reward-normalized learning, long-run stability, or correct weighting when a rollout produces multiple rows. Claude Code and other prompt-rewriting harnesses still need row-budget and weighting checks for a particular training configuration.
 
@@ -84,6 +98,8 @@ Codex, Goose, and NeMo retain HF failures. Antigravity CLI retains OpenAI and An
 
 The final combined regression run passed 567 tests with two skips; native Anthropic SDK streaming replay was also checked separately. Live qualification and optimizer replay used separate services and source snapshots. Updating this documentation or a qualification report does not restart training, change an existing training snapshot, or deploy the adapter changes. A running process continues to use its configured source and services.
 
+</details>
+
 ## Regression and live validation
 
 Run the deterministic Harbor tests from the repository root:
@@ -92,8 +108,11 @@ Run the deterministic Harbor tests from the repository root:
 PYTHONPATH=src:envs python -m pytest tests/envs/test_harbor*.py -q
 ```
 
-These tests cover provider conversion, capture graphs, export masks, reconciliation, routing, lifecycle behavior, and evidence gates. They are not a replacement for live harness execution.
+They cover provider conversion, capture graphs, export masks, reconciliation, routing, lifecycle and evidence gates. They don't replace live harness runs.
 
-For live qualification, use isolated services and immutable source snapshots. Fix the task set and versions before launch; bound sandbox concurrency; save each result before proceeding. Resume by scheduling only missing cases into a new attempt directory, preserving prior failures and provenance. Reusing a capture in optimizer evidence requires its exact source hash and row fingerprint to match; a newer retry must not inherit an older optimizer pass.
+For live qualification:
 
-Some adapters require a separately supplied application, workflow, vision input, or vendor account. Report the missing prerequisite or restriction. Do not substitute a different agent, silently remove observations, relax token checks, or claim success merely because an endpoint is reachable.
+- Use isolated services and immutable source snapshots. Fix the task set and versions before launch, bound sandbox concurrency and save each result before moving on.
+- Resume by scheduling only the missing cases into a new attempt directory, keeping prior failures and provenance.
+- A capture counts as optimizer evidence only if its source hash and row fingerprint match. A newer retry doesn't inherit an older optimizer pass.
+- If an adapter needs a separate application, workflow, vision input or vendor account, report the missing prerequisite. Don't substitute another agent, drop observations, relax token checks or count a reachable endpoint as success.

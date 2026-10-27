@@ -1,3 +1,16 @@
+---
+title: FinRL Environment Server
+emoji: 📈
+colorFrom: green
+colorTo: blue
+sdk: docker
+pinned: false
+app_port: 8000
+base_path: /web
+tags:
+  - openenv
+---
+
 # FinRL Environment
 
 A wrapper around [FinRL](https://github.com/AI4Finance-Foundation/FinRL) stock trading environments that conforms to the OpenEnv specification.

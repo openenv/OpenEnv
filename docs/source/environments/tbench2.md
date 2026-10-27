@@ -65,6 +65,13 @@ docker build -t tbench2-env:latest -f envs/tbench2_env/server/Dockerfile .
 | `action_type` | str | The action type that produced this observation |
 | `info` | dict | Additional metadata |
 
+**Execution budgets in the `reset` observation.** `reset` reports the time budgets that bound a single env op in `info`, so clients can derive per-message deadlines (budget plus margin) instead of guessing:
+
+| Key | Modes | Description |
+|-----|-------|-------------|
+| `verifier_timeout_sec` | local, Docker | Budget for one `evaluate` call: the task's `task.toml` `[verifier].timeout_sec`, else 900. |
+| `command_timeout_s` | local only | Per-command budget for `exec` (`TB2_COMMAND_TIMEOUT_S`). Docker mode has no server-side per-command timeout, so it does not report one. |
+
 ### State
 **Tbench2State**: Server-side state for the task session
 

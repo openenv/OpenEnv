@@ -2,6 +2,7 @@
 
 """Provider cleanup retries must not lose ownership of an allocated resource."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, Mock
 
@@ -95,6 +96,10 @@ def websocket_connect(monkeypatch, ledger):
     mocked_connect = AsyncMock(side_effect=connect)
     monkeypatch.setattr("openenv.core.env_client.ws_connect", mocked_connect)
     return mocked_connect
+
+
+def is_container_provider(ledger):
+    return hasattr(ledger.provider, "start_container")
 
 
 def make_client(client_type, ledger, execution_mode):
@@ -305,7 +310,7 @@ async def test_factory_pending_cleanup_requires_explicit_close(
     bootstrap = GenericEnvClient.from_env(
         "audit/test-environment",
         provider=ledger.provider,
-        use_docker=hasattr(ledger.provider, "start_container"),
+        use_docker=is_container_provider(ledger),
     )
     client = bootstrap.sync() if execution_mode == "sync" else await bootstrap
     try:
@@ -334,3 +339,138 @@ async def test_factory_pending_cleanup_requires_explicit_close(
     finally:
         ledger.stop_error = None
         await invoke(client, execution_mode, "close")
+
+
+@pytest.fixture(params=["from_docker_image", "from_env"])
+def factory(request, ledger):
+    if request.param == "from_docker_image" and not is_container_provider(ledger):
+        pytest.skip("from_docker_image requires a container provider")
+    return request.param
+
+
+def start_factory(factory, ledger, client_type=GenericEnvClient):
+    if factory == "from_docker_image":
+        return client_type.from_docker_image("fixture", provider=ledger.provider)
+    return client_type.from_env(
+        "audit/test-environment",
+        provider=ledger.provider,
+        use_docker=is_container_provider(ledger),
+    )
+
+
+@pytest.fixture
+def pending_websocket_connect(monkeypatch):
+    """Hold the initial WebSocket connection open until the test cancels it."""
+    connecting = asyncio.Event()
+
+    async def connect(*args, **kwargs):
+        connecting.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr("openenv.core.env_client.ws_connect", connect)
+    return connecting
+
+
+def start_factory_task(factory, ledger, client_type=GenericEnvClient):
+    """Resolve a factory in a task, recording the cancellation it raises.
+
+    Python 3.10 drops the cancellation message when `await task` re-raises,
+    so the exception is captured inside the task instead.
+    """
+    raised = []
+
+    async def resolve():
+        try:
+            return await start_factory(factory, ledger, client_type)
+        except asyncio.CancelledError as exc:
+            raised.append(exc)
+            raise
+
+    return asyncio.create_task(resolve()), raised
+
+
+async def cancel_factory_during_connect(factory, ledger, connecting):
+    task, raised = start_factory_task(factory, ledger)
+    await asyncio.wait_for(connecting.wait(), timeout=5)
+    task.cancel("factory cancelled")
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    return task, raised[0]
+
+
+@pytest.mark.asyncio
+async def test_factory_cancelled_during_connect_stops_provider_once(
+    ledger, pending_websocket_connect, factory
+):
+    task, cancellation = await cancel_factory_during_connect(
+        factory, ledger, pending_websocket_connect
+    )
+
+    assert cancellation.args == ("factory cancelled",)
+    assert task.cancelled()
+    assert ledger.events == [("start", 1), ("ready", 1), ("stop", 1)]
+    assert ledger.live_resources == set()
+
+
+@pytest.mark.asyncio
+async def test_factory_cancelled_again_during_cleanup_keeps_original_cancellation(
+    ledger, pending_websocket_connect, factory
+):
+    closing = asyncio.Event()
+
+    class SuspendingCloseClient(GenericEnvClient):
+        async def _close_async(self):
+            # Teardown that suspends, so a second cancel can land inside it.
+            closing.set()
+            try:
+                await asyncio.Future()
+            finally:
+                await super()._close_async()
+
+    task, raised = start_factory_task(factory, ledger, SuspendingCloseClient)
+    await asyncio.wait_for(pending_websocket_connect.wait(), timeout=5)
+    task.cancel("factory cancelled")
+    await asyncio.wait_for(closing.wait(), timeout=5)
+    task.cancel("cancelled during cleanup")
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert raised[0].args == ("factory cancelled",)
+    assert task.cancelled()
+    assert ledger.events == [("start", 1), ("ready", 1), ("stop", 1)]
+    assert ledger.live_resources == set()
+
+
+@pytest.mark.asyncio
+async def test_factory_cancellation_survives_provider_cleanup_failure(
+    ledger, pending_websocket_connect, factory
+):
+    ledger.stop_error = RuntimeError("cleanup failed")
+
+    task, cancellation = await cancel_factory_during_connect(
+        factory, ledger, pending_websocket_connect
+    )
+
+    # Cancellation is not translated into the cleanup error. The caller still
+    # holds the provider and is responsible for the resource left running.
+    assert cancellation.args == ("factory cancelled",)
+    assert task.cancelled()
+    assert ledger.events.count(("stop", 1)) == 1
+    assert ledger.live_resources == {1}
+
+
+@pytest.mark.asyncio
+async def test_factory_connect_failure_stops_provider_once(
+    ledger, monkeypatch, factory
+):
+    connect_error = OSError("connection refused")
+    monkeypatch.setattr(
+        "openenv.core.env_client.ws_connect", AsyncMock(side_effect=connect_error)
+    )
+
+    with pytest.raises(ConnectionError) as caught:
+        await start_factory(factory, ledger)
+
+    assert caught.value.__cause__ is connect_error
+    assert ledger.events == [("start", 1), ("ready", 1), ("stop", 1)]
+    assert ledger.live_resources == set()

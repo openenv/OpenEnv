@@ -1,3 +1,4 @@
+<!-- openenv-source: helium_browser_env -->
 # Helium Browser Environment
 
 This example shows the main pieces of an OpenEnv environment by wrapping a
@@ -11,6 +12,46 @@ behavior. The example does not include an agent, so the OpenEnv parts stay in
 focus.
 
 ![illustrated](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/helium_demo.png)
+
+## How to run the browser agent
+
+The actual browser loop is [browser.py](https://github.com/huggingface/OpenEnv/blob/main/envs/helium_browser_env/browser.py). You can run it with following steps. First publish the environment. Make sure to authenticate yourself with a write token.
+
+```bash
+hf auth login
+openenv push envs/helium_browser_env \
+  --repo-id YOUR_USERNAME/helium-browser-env
+```
+
+The agent uses the token saved by `hf auth login`, or `HF_TOKEN` if it is set.
+Make sure that token can access your inference endpoint. Then deploy the model
+and provide your endpoint.
+
+```bash
+export HELIUM_BROWSER_IMAGE='hf.co/spaces/YOUR_USERNAME/helium-browser-env'
+export BASE_URL='https://YOUR_ENDPOINT.endpoints.huggingface.cloud/v1'
+export MODEL_ID="HF-MODEL-ID" # replace with the model you run endpoint with
+```
+
+Run browser.py loop inside Hugging Face Sandboxes.
+
+```python
+import os
+import runpy
+from openenv.core.containers.runtime.hf_sandbox_provider import HFSandboxProvider
+
+with HFSandboxProvider(
+    image=os.environ["HELIUM_BROWSER_IMAGE"],
+    flavor="cpu-basic",
+    env_vars={"BROWSER_SANDBOX": "hf"},
+) as provider:
+    url = provider.start_container()
+    provider.wait_for_ready(url, timeout_s=300)
+    os.environ["BROWSER_BASE_URL"] = url
+    runpy.run_path("envs/helium_browser_env/browser.py", run_name="__main__")
+```
+
+Rest of this tutorial goes through OpenEnv basics and how to build a multimodal browser agent.
 
 ## How browser agents work
 
@@ -36,7 +77,7 @@ observation.
 
 That loop explains the design choices used later in this example:
 
-- **Typed actions** give OpenEnv a small, validated vocabulary for controlling
+- **Typed actions** give OpenEnv a small, validated set of actions for controlling
   the browser.
 - **A fixed viewport** keeps screenshot pixels and click coordinates aligned.
 - **Real pointer events** let clicks reach visual controls such as overlays and
@@ -52,8 +93,9 @@ decides how to turn an observation into the next `BrowserAction`.
 ## Tasks
 
 Websites always keep on changing so using a regular dataset doesn't work. You can try the samples [in this dataset](https://huggingface.co/datasets/merve/browser-tasks) as they are created late 2026. They are divided into three:
+
 - **Information:** getting an information from a website by browsing it.
-- **Navigation:** navigating a specific part of the website. 
+- **Navigation:** navigating a specific part of the website.
 - **Interaction:** clicking, filtering etc.
 
 ## The OpenEnv pieces
@@ -95,14 +137,40 @@ class BrowserState(State):
     pass
 ```
 
-The action describes what may enter the environment. The observation describes
-what comes back. The state is separate: OpenEnv uses it to report episode
-metadata such as the episode ID and step count without adding those fields to
+Actions are taken by the agent and observations are the result of the actions in the environment. On the other hand, OpenEnv uses state to report episode
+metadata such as the episode ID and step count, without adding those fields to
 every browser observation.
 
-Because these are Pydantic models, validation happens at the boundary. For
-example, a click outside the 800×600 viewport is rejected before browser logic
-runs, and the model validator makes sure a `click` has both coordinates.
+| Operation | Fields | What it does |
+| --- | --- | --- |
+| `click` | `x`, `y` | Clicks one point in the 800×600 browser viewport. |
+| `type` | `text` | Types into the currently focused element. |
+| `key` | `text` | Presses a supported key such as `ENTER`, `TAB`, or `CTRL+A`. |
+| `scroll` | `dy` | Scrolls down for positive values and up for negative values. |
+| `back` | none | Goes back in browser history. |
+| `wait` | none | Waits for the page without performing another action. |
+| `finish` | optional `text` | Ends the episode. |
+
+Click coordinates are browser pixels: `x` is from 0 to 799 and `y` is from 0
+to 599. Scroll values are limited to the range -1200 to 1200.
+
+Supported keys are `ENTER`, `TAB`, `ESCAPE`, `BACKSPACE`, `CTRL+A`, `UP`,
+`DOWN`, `LEFT`, and `RIGHT`.
+
+Every observation contains:
+
+- `screenshot`: the current browser window as a base64-encoded PNG;
+- `url`: the current page URL;
+- `error`: an empty string or a short error code;
+- `done`: whether the episode has ended.
+
+The OpenEnv step result carries a reward of `0` because this example does not
+score browser actions.
+
+The episode ends when it receives `finish`, reaches the configured step limit,
+encounters a renderer timeout, or detects a supported bot-verification page.
+An action error is reported by exception class name so the caller can inspect
+the next screenshot and decide what to do.
 
 ### 2. Implement the environment lifecycle
 
@@ -111,7 +179,8 @@ same roles they would have in a game, simulator, or other environment:
 
 - `reset(...)` starts a new episode and returns its first observation. Here it
   creates a temporary browser profile, opens `start_url`, and takes a
-  screenshot.
+  screenshot. Without `start_url` it opens `BROWSER_START_URL`
+  (default `https://huggingface.co`), so the `/web` playground's Reset works.
 - `step(action)` applies exactly one validated action and returns the next
   observation.
 - `state` exposes the current `BrowserState`, including OpenEnv's episode ID
@@ -154,8 +223,7 @@ class BrowserClient(EnvClient[BrowserAction, BrowserObservation, BrowserState]):
     def _step_payload(self, action):
         return action.model_dump()
 
-    def _parse_result(self, payload):
-        ...
+    def _parse_result(self, payload): ...
 
     def _parse_state(self, payload):
         return BrowserState.model_validate(payload)
@@ -178,112 +246,9 @@ calls `BrowserEnvironment.step()`, and serializes the returned
 `BrowserObservation`. The client then rebuilds a typed `StepResult` containing
 the observation, reward, and `done` flag.
 
-## Files
-
-| File | Purpose |
-| --- | --- |
-| `models.py` | Defines the OpenEnv action, observation, and state contract. |
-| `client.py` | Adapts the OpenEnv client to the environment's typed wire format. |
-| `hf_sandbox.py` | Starts a packaged environment image with OpenEnv's HF Sandbox provider. |
-| `server/helium_browser_environment.py` | Implements OpenEnv's lifecycle while owning Chromium. |
-| `server/desktop.py` | Starts a private X display and sends real pointer clicks with `xdotool`. |
-| `server/app.py` | Gives the environment and its models to OpenEnv's `create_app`. |
-| `server/Dockerfile` | Builds the runnable image with Chromium and its system tools. |
-| `pyproject.toml` | Declares Python dependencies, package layout, and the `server` command. |
-| `uv.lock` | Pins the resolved Python dependency versions for reproducible builds. |
-| `openenv.yaml` | Describes the environment to the OpenEnv CLI. |
-
-## Why the package has both a Dockerfile and an HF Sandbox runner
-
-The Dockerfile and HF Sandbox solve different parts of deployment.
-
-`server/Dockerfile` is the image recipe. It installs Chromium, ChromeDriver,
-Xvfb, and `xdotool`, then installs this Python package. The `server` command
-declared in `pyproject.toml` starts `server/app.py`. This makes the image
-self-contained: a runtime does not have to install browser software or copy
-source files when an episode begins.
-
-`hf_sandbox.py` is a client-side launcher. It asks `HFSandboxProvider` to start
-that already-built image in an isolated HF Sandbox, waits for the OpenEnv
-health endpoint, and connects `BrowserClient`. The Sandbox provides isolation
-and a secure proxy; the image provides the software that runs inside it.
-
-This separation is why `app.py` and `client.py` are both present:
-
-- `server/app.py` runs inside the image and exposes the OpenEnv protocol;
-- `client.py` runs on the caller side and converts typed Python objects to and
-  from that protocol.
-
-The client is not browser automation code. Helium, Selenium, Chromium, and the
-virtual display stay behind the server boundary.
-
-## Package and publish the environment
-
-From the OpenEnv repository root, enter the environment directory:
-
-```sh
-cd envs/helium_browser_env
-```
-
-The usual OpenEnv packaging commands are:
-
-```sh
-openenv build
-openenv push --repo-id <namespace>/helium-browser-env
-```
-
-`openenv build` uses `server/Dockerfile` with the environment directory as its
-build context. `openenv push` publishes the same package as a Hugging Face
-Space. Once the Space image has built, HF Sandboxes can refer to it as
-`hf.co/spaces/<namespace>/helium-browser-env`.
-
-## Run it in an HF Sandbox
-
-`hf_sandbox.py` follows OpenEnv's provider pattern: start a packaged environment
-image in an HF Sandbox, wait for its OpenEnv server, then connect the same typed
-client used with any other OpenEnv deployment.
-
-```python
-import os
-
-from openenv.core.containers.runtime.hf_sandbox_provider import HFSandboxProvider
-
-from helium_browser_env.client import BrowserClient
-from helium_browser_env.models import BrowserAction
-
-with HFSandboxProvider(
-    image=os.environ["HELIUM_BROWSER_IMAGE"],
-    flavor="cpu-basic",
-    env_vars={"BROWSER_SANDBOX": "hf"},
-) as provider:
-    base_url = provider.start_container()
-    provider.wait_for_ready(base_url, timeout_s=300.0)
-
-    with BrowserClient(base_url=base_url).sync() as browser:
-        result = browser.reset(start_url="https://example.com")
-        result = browser.step(BrowserAction(op="scroll", dy=500))
-        print(result.observation.url)
-```
-
-Set `HELIUM_BROWSER_IMAGE` to the image published in the previous section. A
-Hugging Face Space image uses the form `hf.co/spaces/<namespace>/<space>`.
-
-```sh
-export HELIUM_BROWSER_IMAGE=hf.co/spaces/<namespace>/<space>
-uv run helium-browser-hf
-```
-
-The runner also forwards the existing browser settings for the step limit and
-action waits. `BROWSER_SANDBOX=hf` satisfies the environment's safety guard.
-The provider handles the authenticated proxy and destroys the Sandbox when its
-context exits. This is the same lifecycle shown in OpenEnv's
-[HF Sandbox example](https://github.com/huggingface/OpenEnv/blob/main/examples/hf_sandbox_coding_env.py).
-
 ## The OpenEnv loop
 
-Once the server is running, reset the browser to a URL and send one action at a
-time. The local URL below is useful when explaining the OpenEnv protocol on its
-own; the HF Sandbox launcher supplies a proxied URL instead.
+Here's how OpenEnv loop works: once the model server is running, reset the browser to a URL and send one action at a time.
 
 ```python
 from helium_browser_env.client import BrowserClient
@@ -302,72 +267,12 @@ with BrowserClient(base_url="http://localhost:8000").sync() as browser:
     print(observation.screenshot)  # Base64-encoded PNG
 ```
 
-`reset` must receive an HTTP or HTTPS URL without embedded credentials. It
-starts a fresh browser profile, opens the page, and returns the first
+It starts a fresh browser profile, opens the page, and returns the first
 observation. `step` performs one action and returns an OpenEnv `StepResult`.
 The result groups the next observation with the reward and episode termination
-flag, which gives callers the same loop shape across different environments.
+flag.
 
-## Actions
-
-| Operation | Fields | What it does |
-| --- | --- | --- |
-| `click` | `x`, `y` | Clicks one point in the 800×600 browser viewport. |
-| `type` | `text` | Types into the currently focused element. |
-| `key` | `text` | Presses a supported key such as `ENTER`, `TAB`, or `CTRL+A`. |
-| `scroll` | `dy` | Scrolls down for positive values and up for negative values. |
-| `back` | none | Goes back in browser history. |
-| `wait` | none | Waits for the page without performing another action. |
-| `finish` | optional `text` | Ends the episode. |
-
-Click coordinates are browser pixels: `x` is from 0 to 799 and `y` is from 0
-to 599. Scroll values are limited to the range -1200 to 1200.
-
-Supported keys are `ENTER`, `TAB`, `ESCAPE`, `BACKSPACE`, `CTRL+A`, `UP`,
-`DOWN`, `LEFT`, and `RIGHT`.
-
-## Why the viewport is fixed
-
-Chromium runs on a private Xvfb display with an 800×600 viewport. The
-environment waits until the browser reports that exact geometry before it
-opens the requested page. This keeps screenshot coordinates aligned with
-click coordinates.
-
-Clicks go through `xdotool` instead of a DOM selector. They are real pointer
-events, so they interact with overlays, canvas elements, and other visual
-controls in the same coordinate system as the screenshot. Helium handles text,
-keys, scrolling, navigation, and access to the Selenium driver.
-
-Helium stores the active driver globally, and Selenium drivers are not
-thread-safe. The server therefore allows one environment session at a time and
-the environment asks OpenEnv to keep its work on one thread.
-
-## Observations and episode endings
-
-Every observation contains:
-
-- `screenshot`: the current browser window as a base64-encoded PNG;
-- `url`: the current page URL;
-- `error`: an empty string or a short error code;
-- `done`: whether the episode has ended.
-
-The OpenEnv step result carries a reward of `0` because this example does not
-score browser actions.
-
-The episode ends when it receives `finish`, reaches the configured step limit,
-encounters a renderer timeout, or detects a supported bot-verification page.
-An action error is reported by exception class name so the caller can inspect
-the next screenshot and decide what to do.
-
-## Settings
-
-| Environment variable | Default | Accepted values |
-| --- | --- | --- |
-| `BROWSER_MAX_STEPS` | `20` | An integer from 1 to 200. |
-| `BROWSER_ACTION_WAIT_SECONDS` | `1.5` | Seconds from 0 to 10 after ordinary actions. |
-| `BROWSER_EXPLICIT_WAIT_SECONDS` | `3` | Seconds from 0 to 10 for a `wait` action. |
-
-## Boundaries
+## Notes
 
 The environment is designed to run inside its browser sandbox, not against a
 personal desktop browser. Chromium uses a temporary profile for each episode.

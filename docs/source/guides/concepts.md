@@ -1,4 +1,4 @@
-# Concepts
+# Core Concepts
 
 OpenEnv follows a client-server model inspired by Gymnasium's simple API.
 Agents send structured actions to isolated environments and receive
@@ -11,18 +11,21 @@ observations, rewards, and episode status in return.
 +-----------------+                        +-----------------+
 ```
 
+To build one step by step, follow [Your First Environment](first-environment.md).
+
 ## Key Abstractions
 
 ### Environment
 
 An **Environment** is an isolated execution context where your agent can take
-actions and receive observations. Environments usually run as servers and expose
-a standard API.
+actions and receive observations. It subclasses `Environment` and implements
+`reset()`, `step()` and the `state` property. It runs inside a server, which
+creates one instance per client session.
 
 ### Action
 
 An **Action** is a structured command that your agent sends to the environment.
-Each environment defines its own action schema.
+Each environment defines its own action schema as a subclass of `Action`.
 
 ```python
 from coding_env import CodeAction
@@ -33,29 +36,36 @@ action = CodeAction(code="print('Hello!')")
 ### Observation
 
 An **Observation** is the response from the environment after taking an action.
-It contains the current state visible to your agent.
+It contains the current state visible to your agent. Every observation carries
+`done` and `reward` fields, so `step()` returns an observation, not a tuple.
 
 ```python
 result = client.step(action)
 print(result.observation.stdout)  # "Hello!"
 ```
 
+### State
+
+The **State** is the episode's bookkeeping on the server side: at least
+`episode_id` and `step_count`. Clients read it with `state()`.
+
 ### StepResult
 
-A **StepResult** bundles together everything returned from a step:
+A **StepResult** bundles together everything the client gets back from a step:
 
 - `observation`: what the agent can see
 - `reward`: numeric reward signal for training
 - `done`: whether the episode has ended
 - `metadata`: additional metadata returned alongside the observation
 
-### Rubric
+### Reward and Rubric
 
-A **Rubric** is a composable unit of reward computation that lives inside the
-environment. Rubrics can be combined with `WeightedSum`, `Gate`, and
-`Sequential`; use LLM judges for subjective criteria; and handle delayed rewards
-with `TrajectoryRubric`. See the [Rubrics tutorial](../tutorials/rubrics.md)
-for the full API.
+Rewards are computed **inside the environment**, not by external code. A
+**Rubric** is a composable unit of reward computation passed to the environment.
+Rubrics can be combined with `WeightedSum`, `Gate`, and `Sequential`, use LLM
+judges for subjective criteria, and handle delayed rewards with
+`TrajectoryRubric`. See [Rewards](rewards.md) and the
+[Rubrics tutorial](../tutorials/rubrics.md).
 
 ### Client
 
@@ -102,109 +112,15 @@ See the [Runtime Providers guide](runtime-providers.md) for the available provid
 
 ## Environment Anatomy
 
-Every OpenEnv environment consists of:
-
-```
-my_env/
-├── openenv.yaml               # Manifest file
-├── __init__.py                # Exports the client and models
-├── client.py                  # Client class
-├── models.py                  # Action and Observation types
-├── pyproject.toml             # Package metadata
-├── README.md                  # Documentation (and the Space card)
-└── server/
-    ├── app.py                 # FastAPI app built with create_app
-    ├── my_env_environment.py  # The Environment: reset() and step()
-    └── Dockerfile             # Container definition
-```
-
-`openenv init my_env` generates this layout.
-
-### The Manifest (openenv.yaml)
-
-```yaml
-spec_version: 1
-name: my_env
-version: 0.1.0
-type: space
-runtime: fastapi
-app: server.app:app
-port: 8000
-validation:
-  reward:
-    range: [0.0, 1.0]
-  capabilities:
-    verifier:
-      kind: reward_channel
-```
-
-`openenv init` writes the full manifest, including the resource limits checked by `openenv validate`. The client, action and observation classes are found by naming convention (`MyEnv`, `MyAction`, `MyObservation`), so the manifest doesn't list them.
-
-### Models (Pydantic)
-
-Custom `Action`, `Observation`, and `State` types subclass the base classes from `openenv.core.env_server.types` — not `pydantic.BaseModel` directly. The base `Observation` already carries `done` and `reward` fields, which `step()` populates; `Action` and `State` add metadata plumbing used by the server.
-
-```python
-from openenv.core.env_server.types import Action, Observation, State
-
-
-class MyAction(Action):
-    command: str
-    args: list[str] = []
-
-
-class MyObservation(Observation):
-    output: str
-    success: bool
-
-
-class MyState(State):
-    history: list[str] = []
-```
-
-### Environment Class
-
-Environments subclass the abstract `Environment[ActT, ObsT, StateT]` base and implement `reset`, `step`, and the `state` property. Reward and termination are carried on the returned observation — they are **not** a tuple return value.
-
-```python
-from openenv.core.env_server.interfaces import Environment
-
-
-class MyEnvironment(Environment[MyAction, MyObservation, MyState]):
-    def reset(self, seed=None, episode_id=None, **kwargs) -> MyObservation:
-        ...
-
-    def step(self, action: MyAction, timeout_s=None, **kwargs) -> MyObservation:
-        ...
-
-    @property
-    def state(self) -> MyState:
-        ...
-```
-
-### Server (FastAPI)
-
-Use `create_app` from `openenv.core.env_server` to wrap the environment as a FastAPI application. Pass the environment **class** (used as a factory so each WebSocket session gets its own instance) along with the action and observation types:
-
-```python
-from openenv.core.env_server import create_app
-
-app = create_app(
-    MyEnvironment,
-    MyAction,
-    MyObservation,
-    env_name="my_env",
-)
-```
-
-This is what the environment's `server/app.py` entry point typically does — see `envs/echo_env/server/app.py` for a minimal real example.
-
-### Rewards via the Rubric
-
-Rewards are computed **inside the environment**, not by external code. The base `Environment` accepts an optional `rubric` on `__init__` — pass it to `super().__init__(rubric=...)`, call `self._reset_rubric()` from `reset`, and `self._apply_rubric(action, observation)` from `step` (or `_apply_rubric_async` from `step_async`). The [Rubrics tutorial](../tutorials/rubrics.md) covers the composable API end-to-end.
+An environment is a Python package with a manifest (`openenv.yaml`), the
+models, the client, and a `server/` folder with the environment, the FastAPI app
+built with `create_app`, and a Dockerfile. The client, action and observation
+classes are found by naming convention (`MyEnv`, `MyAction`, `MyObservation`),
+so the manifest doesn't list them. `openenv init my_env` generates this layout.
+[Your First Environment](first-environment.md) goes through each file.
 
 ## Next Steps
 
+- [Your First Environment](first-environment.md)
 - [Getting Started](../getting-started.md)
 - [Auto-discovery](auto-discovery.md)
-- [Your first environment](first-environment.md)

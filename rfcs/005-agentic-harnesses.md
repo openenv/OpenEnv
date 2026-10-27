@@ -2,6 +2,7 @@
 
 **Status**: In Review
 **Created**: 2026-02-16
+**Revised**: 2026-10-07, reconciled with the implementation merged in [#1097](https://github.com/huggingface/OpenEnv/pull/1097), [#1098](https://github.com/huggingface/OpenEnv/pull/1098), [#1099](https://github.com/huggingface/OpenEnv/pull/1099) and [#1100](https://github.com/huggingface/OpenEnv/pull/1100)
 **Authors**: @Darktex
 **RFC ID**: 005
 
@@ -11,7 +12,11 @@ This RFC defines how OpenEnv integrates with external **agentic harnesses**—sy
 
 We propose a **wrapping pattern**: OpenEnv's container provides the filesystem and sandbox, the harness runs inside it, and any additional environment MCP tools are injected into the harness before the session starts. In production mode, OpenEnv gets out of the way and lets clients talk directly to the harness with streaming events. In simulation mode, the training loop retains episode control—each `step()` is one conversational turn, and the harness maintains context across turns within an episode.
 
-OpenClaw is the first concrete integration to validate the pattern.
+Concrete adapters live outside core. See [Implementation Status](#implementation-status).
+
+### What changed in this revision
+
+The runtime this RFC proposed is on `main` (`src/openenv/core/harness/`). This revision updates the text to match the code, and [Open Questions](#open-questions) lists what the implementation left open.
 
 ---
 
@@ -152,7 +157,7 @@ flowchart LR
         end
     end
 
-    Client -->|"MCP / HTTP"| Proxy
+    Client -->|"WebSocket /harness"| Proxy
     Proxy -->|"delegates"| ReactLoop
     ReactLoop --> Tools
 
@@ -209,22 +214,24 @@ class HarnessConfig(BaseModel):
 
     # Timeouts
     startup_timeout_s: float = 30.0
-    session_timeout_s: float = 600.0   # Max time for a single session/episode
+    session_timeout_s: float = 600.0   # Max time for a single conversational turn
 
     # LLM configuration (harness-specific)
     model: Optional[str] = None        # Override the harness's default model
     api_key_env_var: Optional[str] = None  # Env var name for LLM API key
 ```
 
-#### HarnessAdapter (Abstract Base)
+#### AgenticHarnessAdapter (Abstract Base)
 
 Adapters handle harness-specific lifecycle details. Each harness gets its own adapter.
+
+The class is named `AgenticHarnessAdapter` because `openenv.core.harness` also hosts the trainer-side rollout layer, whose `HarnessAdapter` drives a whole episode in one call. Both layers are importable from `openenv.core.harness`.
 
 ```python
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
-class HarnessAdapter(ABC):
+class AgenticHarnessAdapter(ABC):
     """Abstract adapter for a specific harness implementation.
 
     Subclass this to integrate a new harness (OpenClaw, Claude Code, etc.).
@@ -234,6 +241,9 @@ class HarnessAdapter(ABC):
     Each send_message() call is one conversational turn—the harness does its
     ReAct loop and returns when it has a response for the user.
     """
+
+    # The harness's built-in tool names, so injected tools can be renamed on conflict.
+    BUILTIN_TOOL_NAMES: frozenset[str] = frozenset()
 
     def __init__(self, config: HarnessConfig):
         self.config = config
@@ -250,11 +260,13 @@ class HarnessAdapter(ABC):
 
     @abstractmethod
     async def stop(self) -> None:
-        """Stop the harness process and clean up resources."""
+        """Stop the harness process and clean up resources. Must be idempotent."""
         ...
 
     @abstractmethod
-    async def inject_tools(self, tools: list[ToolDefinition]) -> None:
+    async def inject_tools(
+        self, tools: list[Tool], bridge_url: Optional[str] = None
+    ) -> None:
         """Inject MCP tool definitions into the harness configuration.
 
         This is called BEFORE start() so the harness discovers the tools
@@ -262,11 +274,11 @@ class HarnessAdapter(ABC):
         CLI flags, environment variable, etc.).
 
         Args:
-            tools: List of MCP tool definitions to inject.
+            tools: Conflict-resolved MCP tool definitions to inject.
+            bridge_url: URL of the MCP bridge that serves them.
         """
         ...
 
-    @abstractmethod
     async def send_message(self, message: str) -> HarnessResponse:
         """Send a message to the harness and get the response.
 
@@ -284,6 +296,8 @@ class HarnessAdapter(ABC):
         Returns:
             HarnessResponse containing the text response and turn events.
         """
+        # Concrete: drains send_message_streaming() and builds the response
+        # from its TURN_COMPLETE event, raising HarnessError if there is none.
         ...
 
     @abstractmethod
@@ -313,6 +327,8 @@ class HarnessAdapter(ABC):
         """Check if the harness process is still running."""
         ...
 ```
+
+Adapters signal failures with `HarnessError` and its subclasses `HarnessStartupError`, `HarnessNotRunningError` and `HarnessTurnTimeoutError`. For CLI harnesses, `HarnessProcess` manages a long-lived subprocess with line-based stdio that works across event loops.
 
 #### Trajectory and Event Format
 
@@ -344,7 +360,7 @@ class HarnessEvent(BaseModel):
     # TOOL_RESULT:   {"tool_name": "...", "result": "...", "error": null}
     # TEXT_OUTPUT:    {"text": "..."}
     # ERROR:         {"message": "...", "recoverable": bool}
-    # TURN_COMPLETE: {"response": "..."}
+    # TURN_COMPLETE: {"response": "...", "done": bool}  (done is optional)
 
 class HarnessResponse(BaseModel):
     """Complete response from a single conversational turn."""
@@ -367,166 +383,120 @@ class HarnessEnvironment(MCPEnvironment):
 
     In simulation mode:
     - reset() starts a fresh harness process and conversation
-    - step(message) sends one user message, harness does its ReAct loop
-      for that turn, and returns the response as an observation
+    - step(HarnessAction(message)) runs one conversational turn and returns
+      the response as an observation
+    - ListToolsAction and CallToolAction keep their MCP routing, so the
+      orchestrator can inspect and call domain tools directly
     - Multiple step() calls form a multi-turn conversation
     - The training loop controls episode boundaries
     - done is set when the harness signals task completion
 
-    In production mode:
-    - Clients connect directly to the harness
-    - OpenEnv handles session management and tool injection
-    - No step/reset API (standard production mode behavior)
+    In production mode, `/harness` streams turns straight to the adapter
+    (see Production Mode: Getting Out of the Way).
+
+    Constructing the environment starts nothing. Each instance owns one
+    adapter, so a server factory must build a fresh adapter per instance
+    (SUPPORTS_CONCURRENT_SESSIONS is False).
     """
 
-    def __init__(
-        self,
-        adapter: HarnessAdapter,
-        mcp: Optional[FastMCP] = None,  # Additional env-specific MCP tools
-        rubric: Optional[Rubric] = None,
-    ):
-        if mcp is not None:
-            super().__init__(mcp)
+    def __init__(self, adapter, mcp=None, rubric=None, transform=None):
+        # Without `mcp`, an empty FastMCP server is used and nothing is injected.
+        super().__init__(mcp or FastMCP("harness-env-tools"), transform=transform)
         self.adapter = adapter
         self.rubric = rubric
-        self._state = State(episode_id=None, step_count=0)
         self._trajectory: list[HarnessEvent] = []
 
-    async def reset_async(
-        self,
-        seed: Optional[int] = None,
-        episode_id: Optional[str] = None,
-    ) -> Observation:
-        """Reset: stop any running harness, start a fresh conversation."""
-        # Stop existing session if any
-        if await self.adapter.is_alive():
-            await self.adapter.stop()
-
-        # Inject environment MCP tools into harness
-        if hasattr(self, '_mcp_server') and self._mcp_server is not None:
-            tools = await self._get_tool_definitions()
-            await self.adapter.inject_tools(tools)
-
-        # Start fresh harness process
-        await self.adapter.start(
-            working_directory=self.adapter.config.working_directory
+    async def reset_async(self, seed=None, episode_id=None, **kwargs) -> Observation:
+        """Stop any running harness and start a fresh conversation."""
+        await self.adapter.stop()
+        # Mode-specific tools are not injected: the bridge cannot serve them.
+        tools = resolve_tool_conflicts(
+            await self._collect_injectable_tools(), self.adapter.BUILTIN_TOOL_NAMES
+        )
+        bridge_url = None
+        if tools:
+            # Loopback MCP server for the tools, under their injected names.
+            self._bridge = HarnessMCPBridge(...)
+            bridge_url = self._bridge.start()
+        await self.adapter.inject_tools(tools, bridge_url)
+        await self.adapter.start(self.adapter.config.working_directory)
+        ...  # new episode state, empty trajectory, rubric reset
+        return Observation(
+            done=False,
+            reward=0.0,
+            metadata={"episode_id": ..., "injected_tools": [t.name for t in tools]},
         )
 
-        self._state = State(
-            episode_id=episode_id or str(uuid4()),
-            step_count=0,
-        )
-        self._trajectory = []
+    async def _run_turn(self, action: HarnessAction, timeout_s=None) -> Observation:
+        """One conversational turn, bounded by `session_timeout_s`."""
+        try:
+            response = await asyncio.wait_for(
+                self.adapter.send_message(action.message),
+                timeout_s or self.adapter.config.session_timeout_s,
+            )
+        except (asyncio.TimeoutError, HarnessTurnTimeoutError):
+            # Stops the harness and returns done=True with error_type "turn_timeout"
+            return await self._terminal_error_observation(..., "turn_timeout")
+        except HarnessError:
+            return await self._terminal_error_observation(..., "harness_crashed")
 
-        if self.rubric:
-            await self._reset_rubric_async()
-
-        return Observation(done=False, reward=0.0, metadata={})
-
-    async def step_async(self, action: Action) -> Observation:
-        """Send one message to the harness, get one turn's response.
-
-        Each step() is one conversational turn. The harness does its
-        internal ReAct loop (LLM calls, tool invocations, etc.) and
-        returns when it has a response for the user.
-        """
-        message = self._extract_message(action)
-
-        # Run one conversational turn (harness does its ReAct loop)
-        harness_response = await self.adapter.send_message(message)
-
-        # Accumulate trajectory across turns
-        self._trajectory.extend(harness_response.events)
-        self._state.step_count += 1
-
-        # Build observation
+        self._trajectory.extend(response.events)
         obs = Observation(
-            done=harness_response.done,
+            done=response.done,
             reward=0.0,
             metadata={
-                "response": harness_response.response,
-                "turn_events": harness_response.events,
-                "turn_number": self._state.step_count,
+                "response": response.response,
+                "turn_events": events_to_metadata(response.events),  # JSON dicts
+                "turn_number": ...,
             },
         )
-
-        # Apply rubric if configured
-        if self.rubric:
+        if self.rubric is not None:
             obs.reward = await self._apply_rubric_async(action, obs)
-
-        return obs
+        return self._apply_transform(obs)
 
     def close(self):
-        """Clean up harness process."""
-        import asyncio
-        if self.adapter:
-            asyncio.get_event_loop().run_until_complete(self.adapter.stop())
+        """Stop the harness and the bridge, from sync or async callers."""
+        run_async_safely(...)
 
     @property
     def trajectory(self) -> list[HarnessEvent]:
         """Full trajectory across all turns in this episode."""
-        return self._trajectory
+        return list(self._trajectory)
 ```
 
 ### MCP Tool Injection
 
 When an OpenEnv environment has its own MCP tools (e.g., a domain-specific database query tool), these need to be made available to the harness alongside its built-in tools. The injection mechanism is harness-specific:
 
-**OpenClaw example**: OpenClaw reads MCP configuration from a config file. Before starting OpenClaw, we write the environment's MCP tools to this config:
+`HarnessEnvironment` serves the environment's tools on a `HarnessMCPBridge`: a streamable HTTP MCP server on `127.0.0.1`, inside the environment's own process, started on `reset()` and stopped with the episode. Tools renamed by conflict resolution are served under their new names. The adapter receives the bridge's URL in `inject_tools()` and points the harness at it, for example in the harness's MCP config file:
 
 ```python
-class OpenClawAdapter(HarnessAdapter):
-    async def inject_tools(self, tools: list[ToolDefinition]) -> None:
-        """Write MCP server config for OpenClaw to discover."""
-        mcp_config = {
-            "mcpServers": {
-                "openenv": {
-                    "command": "openenv-mcp-bridge",
-                    "args": ["--port", str(self._mcp_bridge_port)],
-                }
-            }
-        }
-        config_path = (
+class MyHarnessAdapter(AgenticHarnessAdapter):
+    async def inject_tools(self, tools: list[Tool], bridge_url: Optional[str] = None) -> None:
+        """Write an MCP server config the harness reads at startup."""
+        mcp_config = {"mcpServers": {"openenv": {"type": "http", "url": bridge_url}}}
+        config_path = Path(
             self.config.mcp_config_path
-            or f"{self.config.working_directory}/.openclaw/mcp.json"
+            or f"{self.config.working_directory}/.my-harness/mcp.json"
         )
-        Path(config_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(config_path).write_text(json.dumps(mcp_config))
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(json.dumps(mcp_config))
 ```
-
-The MCP bridge is a small process that runs inside the container and exposes the environment's tools as a standard MCP server that the harness can connect to.
 
 ### Tool Name Conflict Resolution
 
-The harness may have built-in tools whose names collide with environment MCP tools. Strategy:
+The harness may have built-in tools whose names collide with environment MCP tools. `resolve_tool_conflicts(env_tools, harness_builtin_tools, prefix="env_")` handles them:
 
-1. **Detection**: At injection time, compare environment tool names against known harness built-in tools
-2. **Namespacing**: Environment tools are prefixed with `env_` if a conflict is detected (e.g., `read_file` becomes `env_read_file`)
-3. **Error on ambiguity**: If the same tool name appears with different schemas, raise a configuration error rather than silently overriding
-
-```python
-def resolve_tool_conflicts(
-    env_tools: list[ToolDefinition],
-    harness_builtin_tools: list[str],
-) -> list[ToolDefinition]:
-    """Detect and resolve tool name conflicts."""
-    resolved = []
-    for tool in env_tools:
-        if tool.name in harness_builtin_tools:
-            # Prefix to avoid collision
-            resolved.append(tool.model_copy(
-                update={"name": f"env_{tool.name}"}
-            ))
-        else:
-            resolved.append(tool)
-    return resolved
-```
+1. **Reserved names**: environment tools named after orchestration controls (`RESERVED_TOOL_NAMES`) are rejected
+2. **Duplicates**: two environment tools with the same name are rejected
+3. **Namespacing**: environment tools whose names collide with the adapter's `BUILTIN_TOOL_NAMES` get the `env_` prefix (e.g., `read_file` becomes `env_read_file`)
+4. **Error on ambiguity**: if a prefixed name is still taken, it raises a configuration error rather than silently overriding
 
 ### Session Isolation
 
 Each harness session runs in isolation:
 
-1. **Container isolation**: Each `HarnessEnvironment` instance gets its own container (existing OpenEnv pattern, one env = one trajectory)
+1. **Container isolation**: Each `HarnessEnvironment` instance gets its own container (existing OpenEnv pattern, one env = one trajectory). `HarnessEnvironment` sets `SUPPORTS_CONCURRENT_SESSIONS = False`, so a server runs one harness session at a time
 2. **Process isolation**: The harness runs as a subprocess within the container
 3. **Filesystem isolation**: The harness's working directory is unique per session
 4. **State isolation**: `reset()` kills the harness process and starts a fresh one
@@ -538,6 +508,8 @@ This aligns with the existing "one env = one trajectory" invariant—no multiple
 The "agent inside environment" pattern creates a new trust boundary that must be carefully enforced. The harness subprocess runs inside the container and must **not** have access to OpenEnv's orchestration API.
 
 **Network isolation**: The harness subprocess must not be able to reach the HTTP/WebSocket port that exposes `reset()`, `step()`, and `state()`. In Docker-based deployments, this is enforced by not exposing the orchestration port inside the container's network namespace—the orchestration API binds to the host network, while the harness runs inside the container. For non-Docker deployments, adapters should use process-level network restrictions (e.g., `unshare --net`) or firewall rules.
+
+*Status:* core does not enforce this. The tool bridge listens on `127.0.0.1` in the same network namespace as the server, so a harness that can open connections can reach both. Today the boundary rests on the harness's own tool configuration, for example a harness started with no shell or network tools. See [Open Questions](#open-questions).
 
 **MCP tool scoping**: The MCP bridge that exposes environment tools to the harness must be carefully scoped. Only domain-specific tools should be injected. The following must **never** be exposed to the harness:
 - Orchestration controls (`reset`, `step`, `state`, `close` — already protected by `RESERVED_TOOL_NAMES`)
@@ -605,7 +577,7 @@ The harness model changes what "trajectory" and "step" mean. This table clarifie
 | **Step count** | Number of actions taken | Number of conversational turns |
 | **Observation** | Result of one tool call | Harness's response after completing its internal ReAct loop |
 
-**Implications for rubric authors**: When writing rubrics for harness environments, `forward(action, observation)` receives the full turn's response in `observation.metadata["response"]` and the internal events in `observation.metadata["turn_events"]`. The rubric can score based on the response quality, the tools used, or any combination. The `env.trajectory` property provides the full event history across all turns.
+**Implications for rubric authors**: When writing rubrics for harness environments, `forward(action, observation)` receives the full turn's response in `observation.metadata["response"]` and the internal events in `observation.metadata["turn_events"]`, as JSON dicts (`HarnessEvent.model_dump(mode="json")`). The rubric can score based on the response quality, the tools used, or any combination. The `env.trajectory` property provides the full event history across all turns.
 
 **Implications for training loops**: A training loop that counts "steps" is counting conversational turns, not individual tool invocations. If per-tool-call granularity is needed for analysis, iterate over `turn_events` in each observation's metadata.
 
@@ -626,44 +598,15 @@ In production mode, time is always real—the harness runs continuously and resp
 
 ### Production Mode: Getting Out of the Way
 
-In production mode, the harness is the primary interface:
+In production mode, the harness is the primary interface. `create_fastapi_app(env_factory, HarnessAction, Observation, mode="production")` registers a `/harness` WebSocket when the factory produces a `HarnessEnvironment`:
 
-```python
-class HTTPEnvServer:
-    def register_routes(self, app, mode=ServerMode.SIMULATION):
-        if mode == ServerMode.PRODUCTION:
-            if isinstance(self._env_factory(), HarnessEnvironment):
-                # Route to the harness with streaming
-                self._register_harness_proxy_routes(app)
-            else:
-                # Standard production mode (existing behavior)
-                self._register_production_routes(app)
+1. Each connection gets its own session, within the server's session capacity. Connecting runs `reset_async()`, which starts the harness and injects the tools, and the server answers with a `session_started` frame.
+2. Each client frame `{"type": "message", "content": "..."}` runs one turn. The server streams the adapter's `HarnessEvent` frames as they happen, ending with `turn_complete`.
+3. A malformed frame gets a recoverable `protocol_error` frame, and the connection stays usable.
+4. A turn is bounded by `session_timeout_s`. A timeout, a dead harness or a turn without `TURN_COMPLETE` ends the session with a terminal `error` event. Adapter exceptions are not forwarded, since they can contain credentials or subprocess output.
+5. Disconnecting destroys the session and stops the harness.
 
-    def _register_harness_proxy_routes(self, app):
-        """In production, proxy client connections to the harness."""
-        @app.websocket("/harness")
-        async def harness_ws(websocket: WebSocket):
-            await websocket.accept()
-
-            # Create environment + start harness
-            env = self._env_factory()
-            await env.reset_async()
-
-            try:
-                while True:
-                    data = await websocket.receive_text()
-                    # Stream events as they happen
-                    async for event in env.adapter.send_message_streaming(data):
-                        await websocket.send_text(event.model_dump_json())
-            finally:
-                env.close()
-                await websocket.close()
-
-        # Keep /health and /metadata
-        self._register_health_routes(app)
-```
-
-The existing `/mcp` endpoint continues to work for environments without harnesses. The new `/harness` endpoint is only registered when a `HarnessEnvironment` is detected. The WebSocket streams `HarnessEvent` objects as they happen, matching how harnesses naturally stream output to a terminal.
+The route calls the adapter's `send_message_streaming()` directly, so production turns skip `HarnessEnvironment`'s turn logic: no rubric, no trajectory and no step count. `/health` and `/metadata` stay available. `/ws` and `/mcp` are also still registered in production mode (see [Open Questions](#open-questions)).
 
 **Architectural note**: The `/harness` endpoint introduces a third interface pattern alongside MCP (agent tools) and HTTP (orchestration). RFC 001 defines two interfaces with two purposes; the `/harness` endpoint is a specialization of the production MCP interface for the case where the agent lives *inside* the environment. This is not a general-purpose agent-hosting pattern—it is specifically for environments that wrap an external harness process. Non-harness environments continue to use the existing `/mcp` endpoint in production. If this pattern proves useful beyond harnesses (e.g., for other agent-in-the-loop architectures), it should be generalized in a dedicated RFC.
 
@@ -673,7 +616,7 @@ This is entirely opt-in:
 
 - `HarnessEnvironment` is a new class; existing `MCPEnvironment` and `Environment` subclasses are unchanged
 - No changes to existing endpoints, types, or interfaces
-- `HarnessConfig` and `HarnessAdapter` are new additions
+- `HarnessConfig` and `AgenticHarnessAdapter` are new additions
 - The `/harness` endpoint is only registered when a `HarnessEnvironment` is the env factory
 
 ---
@@ -683,14 +626,14 @@ This is entirely opt-in:
 ### Example 1: OpenClaw Multi-Turn Training
 
 ```python
-from openenv.harnesses import HarnessConfig, HarnessEnvironment, HarnessAction
-from openenv.harnesses.openclaw import OpenClawAdapter
+from openenv.core.harness import HarnessAction, HarnessConfig, HarnessEnvironment
+
+from my_adapters import OpenClawAdapter  # illustrative adapter
 
 # Configure the harness
 config = HarnessConfig(
     name="openclaw",
     command=["openclaw", "run"],
-    transport=HarnessTransport.STDIO,
     model="claude-sonnet-4-20250514",
     api_key_env_var="ANTHROPIC_API_KEY",
     session_timeout_s=300.0,
@@ -767,18 +710,17 @@ class ChessEnvironment(MCPEnvironment):
 
 ```python
 # In production, the harness is exposed directly
-app = FastAPI()
-server = HTTPEnvServer(
-    env_factory=lambda: HarnessEnvironment(
-        adapter=OpenClawAdapter(config),
-        mcp=domain_tools_mcp,
-    ),
-    action_cls=TaskAction,
-    observation_cls=Observation,
-)
-server.register_routes(app, mode=ServerMode.PRODUCTION)
+from openenv.core.env_server.http_server import create_fastapi_app
 
-# Clients connect to /harness endpoint and talk to OpenClaw directly
+app = create_fastapi_app(
+    # A fresh adapter per environment instance
+    lambda: HarnessEnvironment(adapter=OpenClawAdapter(config), mcp=domain_tools_mcp),
+    HarnessAction,
+    Observation,
+    mode="production",
+)
+
+# Clients connect to the /harness WebSocket and talk to OpenClaw directly
 # OpenEnv handles session management and tool injection transparently
 ```
 
@@ -788,9 +730,21 @@ server.register_routes(app, mode=ServerMode.PRODUCTION)
 
 1. **Trajectory format**: We define a standard `HarnessEvent` schema (see Trajectory and Event Format section). Concrete adapters map their native formats to this schema. The event types cover the common denominator across harnesses (LLM calls, tool calls, text output). Harness-specific metadata goes in the `data` dict.
 
-2. **Intermediate observability**: Harnesses already stream to a terminal. We surface this via `send_message_streaming()` which yields `HarnessEvent` objects. The production WebSocket endpoint streams these events directly to clients. In simulation, the orchestrator can consume the stream or use the blocking `send_message()` which collects all events into a `HarnessResponse`.
+2. **Intermediate observability**: Harnesses already stream to a terminal. We surface this via `send_message_streaming()` which yields `HarnessEvent` objects. The production WebSocket endpoint streams these events directly to clients. In simulation, the orchestrator can consume the stream or use `send_message()`, which the base class implements by collecting all events into a `HarnessResponse`.
 
 3. **Multi-turn episodes**: Each `step()` is one conversational turn. The harness maintains context across turns. Multiple `step()` calls form a conversation. The harness can signal `done` but the orchestrator controls episode boundaries via `reset()`. This matches how humans interact with harnesses and enables multi-turn training.
+
+## Open Questions
+
+The implementation left these open. Each is a decision for this RFC.
+
+1. **The environment's own step after a turn.** The rubric runs as soon as the harness answers. An environment that adds its own step between turns, such as a simulated user replying to the harness, has no hook for it. It has to override the private `_run_turn`, run that step and apply the rubric again ([#1291](https://github.com/huggingface/OpenEnv/pull/1291) does this for τ²-bench's simulated customer). A public async hook called inside `_run_turn`, before the rubric, would remove the override and run the rubric once.
+2. **Turn logic in production.** Should production turns go through the environment, so rubrics, the trajectory and a subclass's turn logic run there too (for example through the hook above)?
+3. **`/ws` and `/mcp` in production.** Should production stop registering them for harness environments, so clients cannot reset, step or call domain tools around the harness, or should this RFC allow them?
+4. **Network isolation.** How should the Harness Security Boundary be enforced: a separate network namespace for the harness, or sandbox providers such as `ACASandboxProvider.deny_all_egress()`? Until it is, harness environments rely on the harness's own tool configuration for the agent isolation and network access [security invariants](../.claude/docs/INVARIANTS.md#security-invariants).
+5. **A client for `/harness`.** There is no `HarnessEnvClient`, so clients speak the WebSocket protocol by hand, and `env.trajectory` is not reachable remotely.
+6. **Token capture.** `LLM_REQUEST` and `LLM_RESPONSE` events are defined but nothing captures tokens through this path, so it is an evaluation path. Training a harness's policy goes through the capture layer of [RFC 006](./006-agentic-rl-harness-interception.md).
+7. **Naming.** Should the rollout layer be renamed (e.g., `RolloutDriver`, as [#1097](https://github.com/huggingface/OpenEnv/pull/1097) proposed), so this adapter can take the plain name `HarnessAdapter`?
 
 ## Future Work (Out of Scope)
 
@@ -799,37 +753,15 @@ server.register_routes(app, mode=ServerMode.PRODUCTION)
 
 ---
 
-## Implementation Plan
+## Implementation Status
 
-### PR 1: This RFC
-Submit for review and approval.
-
-### PR 2: Foundation Types
-- `HarnessConfig` (Pydantic model)
-- `HarnessAdapter` (ABC with streaming)
-- `HarnessEnvironment` (extends `MCPEnvironment`, multi-turn)
-- `HarnessTransport` enum
-- `HarnessEvent`, `HarnessEventType`, `HarnessResponse` (trajectory types)
-- `HarnessAction` (action type for sending messages)
-- Tool conflict resolution utilities
-- Unit tests for all types
-
-### PR 3: Core Implementation
-- Harness process management (subprocess lifecycle)
-- MCP tool injection bridge
-- Session management in HTTPEnvServer
-- Production mode routing for harness environments
-- Integration tests
-
-### PR 4: OpenClaw Adapter
-- `OpenClawAdapter` implementation
-- OpenClaw-specific configuration
-- End-to-end test (may require mocking OpenClaw)
-
-### PR 5: Documentation & Polish
-- User-facing documentation
-- Edge case handling (crash recovery, timeouts)
-- Example environment using a harness
+| Planned PR | Status |
+|---|---|
+| PR 1: this RFC | [#387](https://github.com/huggingface/OpenEnv/pull/387), merged |
+| PR 2: foundation types (`HarnessConfig`, the adapter ABC, events, `HarnessAction`, tool conflict resolution) | [#1097](https://github.com/huggingface/OpenEnv/pull/1097) (package split) and [#1098](https://github.com/huggingface/OpenEnv/pull/1098), merged |
+| PR 3: core implementation (`HarnessEnvironment`, `HarnessProcess`, the MCP bridge, production routing) | [#1100](https://github.com/huggingface/OpenEnv/pull/1100) and [#1099](https://github.com/huggingface/OpenEnv/pull/1099) (bridge shutdown), merged |
+| PR 4: OpenClaw adapter | not in core ([#389](https://github.com/huggingface/OpenEnv/pull/389) is open) |
+| PR 5: documentation and an example | [#1291](https://github.com/huggingface/OpenEnv/pull/1291), merged: a Claude Code adapter and a τ²-bench evaluation recipe, with a tutorial |
 
 ---
 
@@ -840,5 +772,5 @@ Submit for review and approval.
 - RFC 002: OpenEnv Framework Spec
 - RFC 003: MCP Support
 - RFC 004: Rubric System
-- [OpenClaw](https://github.com/anthropics/openclaw): Agentic harness by Anthropic
+- [OpenClaw](https://github.com/openclaw/openclaw): open-source agentic harness
 - [Model Context Protocol](https://modelcontextprotocol.io/): MCP specification

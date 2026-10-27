@@ -2,7 +2,17 @@
 
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Generic, Optional, Protocol, TYPE_CHECKING, TypeVar
+from typing import (
+    Any,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    Protocol,
+    Tuple,
+    TYPE_CHECKING,
+    TypeVar,
+)
 
 from typing_extensions import TypedDict
 
@@ -420,6 +430,37 @@ class Environment(ABC, Generic[ActT, ObsT, StateT]):
                     await result
             else:
                 self.rubric.reset()
+
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """
+        HTML that draws an observation in the web interface at `/web`.
+
+        Override it to show the environment's state (a board, a page, a plot).
+        The default draws nothing and the interface lists the observation's fields.
+
+        Args:
+            observation (`dict`):
+                The serialized observation, as returned by `reset()` or `step()`,
+                plus top-level `reward` and `done`.
+        """
+        return None
+
+    def web_actions(
+        self, observation: Dict[str, Any]
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """
+        One-click actions for the web interface at `/web`, as `(label, action)` pairs.
+
+        Override it when the valid actions are known from the observation (the legal
+        moves of a game). Each action is the dict `step()` receives. The default
+        offers none and the interface shows the action's form only.
+
+        Args:
+            observation (`dict`):
+                The serialized observation, as returned by `reset()` or `step()`,
+                plus top-level `reward` and `done`.
+        """
+        return []
 
     def close(self) -> None:
         """Clean up resources used by the environment.

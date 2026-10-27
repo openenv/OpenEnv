@@ -9,6 +9,5 @@ Use them when you want to see how external evaluation or training workflows can 
 If you are looking for the standard OpenEnv patterns first, start here instead:
 
 - `docs/source/index.md`
-- `docs/source/auto_getting_started/` in the rendered docs site
-- `docs/source/mcp-environment-lifecycle.md`
-- `docs/source/simulation-vs-production.md`
+- `docs/source/getting-started.md`
+- `docs/source/guides/simulation-vs-production.md`

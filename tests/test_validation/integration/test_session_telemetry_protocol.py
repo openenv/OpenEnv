@@ -169,6 +169,29 @@ def read(ws, capability):
     )
 
 
+@pytest.mark.parametrize("invalid_action", [{}, {"value": -1}])
+def test_failed_operation_marks_subject_record_incomplete(monkeypatch, invalid_action):
+    class FailingStep(SessionEnv):
+        def step(self, action):
+            if action.value < 0:
+                raise RuntimeError("step failed")
+            return super().step(action)
+
+    with (
+        TestClient(app_for(monkeypatch, FailingStep)) as client,
+        client.websocket_connect("/ws") as ws,
+    ):
+        capability = authorize(ws)
+        exchange(ws, {"type": "reset", "data": {"seed": 1}})
+        exchange(ws, {"type": "step", "data": {"value": 0.5}})
+        assert exchange(ws, {"type": "step", "data": invalid_action})["type"] == "error"
+        assert exchange(ws, {"type": "state"})["type"] == "state"
+        trajectory = read(ws, capability)["data"]["trajectory"]
+        assert trajectory["complete"] is False
+        assert trajectory["reason"] == "Session operation failed"
+        assert len(trajectory["records"]) == 2
+
+
 @pytest.mark.parametrize(
     "env,accepted",
     [

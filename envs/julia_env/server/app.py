@@ -48,11 +48,11 @@ try:
     # In-repo imports (when running from OpenEnv repository)
     from openenv.core.env_server.http_server import create_app
 
-    from ..models import JuliaAction, JuliaObservation
+    from ..models import JuliaAction, JuliaObservation, JuliaState
     from .julia_codeact_env import JuliaCodeActEnv
     from .julia_executor import JuliaExecutor
 except ImportError:
-    from models import JuliaAction, JuliaObservation
+    from models import JuliaAction, JuliaObservation, JuliaState
 
     # Standalone imports (when environment is standalone)
     from openenv.core.env_server.http_server import create_app
@@ -165,6 +165,7 @@ app = create_app(
     JuliaObservation,
     env_name="julia_env",
     max_concurrent_envs=MAX_WORKERS,
+    state_cls=JuliaState,
 )
 
 

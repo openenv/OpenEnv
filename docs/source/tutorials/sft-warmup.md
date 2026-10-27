@@ -1,4 +1,4 @@
-# Collecting rollouts with OpenEnv for supervised training
+# Collect Rollouts for SFT
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/sft_warmup.ipynb)
 
@@ -125,7 +125,8 @@ N_EPISODES = 300
 
 `openenv collect` runs the teacher model inside the environment and records every episode — the
 environment's `step()` reward is written alongside the messages, so filtering by correctness requires
-no additional scoring code.
+no additional scoring code. By default it drops rollouts with a negative reward (`--keep-losses` keeps
+them). Reasoning Gym scores a wrong answer `0.0`, so wrong answers are kept here and filtered in section 6.
 
 ```python
 import json, shlex
@@ -153,7 +154,7 @@ OpenAI-compatible server (vLLM, TGI, Ollama) and pass the model id it serves:
 openenv collect reasoning_gym:chain_sum \
   --base-url https://sergiopaniego-reasoning-gym.hf.space \
   --llm-endpoint http://localhost:8000 \
-  --model Qwen/Qwen3-1.7B \
+  --model Qwen/Qwen3-8B \
   --num-episodes 300 \
   --output-dir ./rollouts
 ```
@@ -203,8 +204,9 @@ rollouts = [to_qwen3_messages(r) for r in raw_rollouts]
 
 ## 6. Filter the dataset
 
-Keep only episodes where the teacher answered correctly. The environment's reward signal does the
-labelling — no manual annotation needed.
+Keep only episodes where the teacher answered correctly. `openenv collect` already dropped negative
+rewards, and this filter also removes the wrong answers, which score `0.0`. The environment's reward
+signal does the labelling — no manual annotation needed.
 
 ```python
 correct = [r for r in rollouts if r["reward"] == 1.0]
@@ -417,7 +419,7 @@ environment's scorer to award any credit.
 
 The SFT checkpoint is ready to use as the starting model for GRPO. In the
 [end-to-end walkthrough](end-to-end-walkthrough),
-change one line in section 8:
+change one line in section 7:
 
 ```python
 # Before (cold-start from the base model):
@@ -437,5 +439,6 @@ batch and the reward curve will climb immediately — no cold-start stall.
 - **Different environments.** The same pipeline — teacher collects → filter → SFT → GRPO — applies to
   any OpenEnv environment. Swap `reasoning_gym_env` and the `answer` tool definition for your env's
   tool surface.
-- **Larger teacher.** `gpt-5` or `claude-opus-4` as teacher will yield higher-quality examples,
-  especially for tasks where `gpt-5-mini` struggles.
+- **Larger teacher.** A stronger model, such as `claude-opus-5-5` (`--provider anthropic`) or
+  `Qwen/Qwen3-32B` served behind `--llm-endpoint`, yields higher-quality examples on tasks where
+  `gpt-5-mini` struggles.

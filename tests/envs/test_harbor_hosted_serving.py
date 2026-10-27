@@ -97,6 +97,30 @@ def test_mounted_capture_answers_under_the_prefix():
     assert "unknown API key" in response.json()["error"]["message"]
 
 
+def test_harbor_app_serves_its_own_state_class(monkeypatch):
+    """Harbor's package-backed app must retain custom state fields over HTTP."""
+    from fastapi.testclient import TestClient
+    from openenv.harbor.environment import HarborEnvironment
+    from openenv.harbor.models import HarborState
+
+    monkeypatch.setenv("ENABLE_WEB_INTERFACE", "false")
+    monkeypatch.setattr(HarborService, "_instance", None)
+    # build_app configures these class attributes; restore the previous config afterward.
+    for name in ("_datasets", "_llm_url", "_model", "_llm"):
+        monkeypatch.setattr(HarborEnvironment, name, getattr(HarborEnvironment, name))
+
+    app = serving.build_app(datasets=[], llm_url=UNUSED_LLM)
+    with TestClient(app) as client:
+        schema = client.get("/schema")
+        state = client.get("/state")
+
+    assert schema.status_code == state.status_code == 200
+    expected_fields = set(HarborState.model_fields)
+    assert expected_fields <= set(schema.json()["state"]["properties"])
+    assert expected_fields <= set(state.json())
+    assert state.json()["llm_url"] == UNUSED_LLM
+
+
 def test_a_failed_forwarder_does_not_leave_the_capture_server_running(monkeypatch):
     """A half-started service poisons every later attempt.
 

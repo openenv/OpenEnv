@@ -32,7 +32,7 @@ Deployment options:
 
 Version pinning:
   --openenv-version <ref>          Pin OpenEnv git refs to this tag/ref
-                                   (default: project version from pyproject.toml)
+                                   (default: latest vX.Y.Z release tag, else main)
 
 Collection update:
   --collection-namespace <owner>   Collection owner namespace (default: openenv)
@@ -96,9 +96,12 @@ SPACE_REPO_OVERRIDE="${SPACE_REPO_OVERRIDE:-}"
 SPACE_SUFFIX="${SPACE_SUFFIX:-}"
 STAGING_DIR="hf-staging"
 HUB_TAG="openenv"
-DEFAULT_OPENENV_VERSION=$(awk -F'"' '/^[[:space:]]*version[[:space:]]*=[[:space:]]*"/ { print $2; exit }' pyproject.toml 2>/dev/null || true)
+# Latest stable release tag reachable from HEAD (vX.Y.Z -> X.Y.Z, skipping
+# pre-releases like vX.Y.Zrc1); the pyproject version on main is an untagged .devN.
+DEFAULT_OPENENV_VERSION=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*[!0-9.]*' 2>/dev/null || true)
+DEFAULT_OPENENV_VERSION="${DEFAULT_OPENENV_VERSION#v}"
 if [ -z "$DEFAULT_OPENENV_VERSION" ]; then
-    DEFAULT_OPENENV_VERSION="0.2.0"
+    DEFAULT_OPENENV_VERSION="main"
 fi
 OPENENV_VERSION="${OPENENV_VERSION:-$DEFAULT_OPENENV_VERSION}"
 OPENENV_GIT_REF="${OPENENV_GIT_REF:-}"
@@ -154,7 +157,8 @@ resolve_openenv_git_ref() {
     fi
 
     for candidate in "$requested_ref" "v${requested_ref#v}"; do
-        resolved=$(git ls-remote --heads --tags "$repo_url" "$candidate" 2>/dev/null || true)
+        # Full ref names: a bare pattern also tail-matches branches like testpypi/0.8.0.
+        resolved=$(git ls-remote "$repo_url" "refs/tags/$candidate" "refs/heads/$candidate" 2>/dev/null || true)
         if [ -n "$resolved" ]; then
             printf "%s" "$candidate"
             return
@@ -614,25 +618,16 @@ create_readme() {
     local space_repo="$3"
     local readme_source="envs/$env_name/README.md"
     local output_readme="$stage_dir/README.md"
-    local env_class="Env"
-
-    case "$env_name" in
-        echo_env) env_class="EchoEnv" ;;
-        coding_env) env_class="CodingEnv" ;;
-        chat_env) env_class="ChatEnv" ;;
-        atari_env) env_class="AtariEnv" ;;
-        openspiel_env) env_class="OpenSpielEnv" ;;
-    esac
+    # Client class: the first class in client.py that subclasses EnvClient or MCPToolClient.
+    local env_class
+    env_class=$(awk '/^class /{name=$2; sub(/[(:].*/,"",name); hdr=1} hdr && /(EnvClient|MCPToolClient)/{print name; exit} hdr && /:[[:space:]]*$/{hdr=0}' "envs/$env_name/client.py" 2>/dev/null)
+    # Space host: https://<owner>-<name>.hf.space, lowercased, with "/", "_" and "." replaced by "-".
+    local space_url
+    space_url="https://$(printf "%s" "$space_repo" | tr '[:upper:]' '[:lower:]' | tr '/_.' '---').hf.space"
 
     if head -n 1 "$readme_source" | grep -q '^---$'; then
-        local closing_line
-        closing_line=$(grep -n '^---$' "$readme_source" | sed -n '2p' | cut -d: -f1)
-
-        if [ -z "$closing_line" ]; then
-            error "Could not parse README front matter for $env_name"
-        fi
-
-        head -n "$closing_line" "$readme_source" > "$output_readme"
+        # The env's own text comes first: the web interface reads its first paragraph.
+        cat "$readme_source" > "$output_readme"
         cat >> "$output_readme" << README_EOF
 
 ## Hugging Face Space Deployment
@@ -642,16 +637,25 @@ This Space is built from OpenEnv environment \`$env_name\`.
 - Space URL: \`https://huggingface.co/spaces/$space_repo\`
 - OpenEnv pinned ref: \`$OPENENV_VERSION\`
 - Hub tag: \`$HUB_TAG\`
+README_EOF
+        # The snippet needs anonymous access, so private Spaces skip it.
+        if [ -n "$env_class" ] && [ "$PRIVATE" = false ]; then
+            cat >> "$output_readme" << README_EOF
 
 ### Connecting from Code
 
-\`\`\`python
-from envs.$env_name import $env_class
+\`\`\`bash
+pip install git+https://huggingface.co/spaces/$space_repo
+\`\`\`
 
-env = $env_class(base_url="https://huggingface.co/spaces/$space_repo")
+\`\`\`python
+from $env_name import $env_class
+
+with $env_class(base_url="$space_url").sync() as env:
+    result = env.reset()
 \`\`\`
 README_EOF
-        tail -n "+$((closing_line + 1))" "$readme_source" >> "$output_readme"
+        fi
     else
         cat > "$output_readme" << README_EOF
 ---

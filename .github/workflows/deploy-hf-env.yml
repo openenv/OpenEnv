@@ -9,10 +9,10 @@ on:
         type: string
         default: ""
       openenv_version:
-        description: "Release version used for suffix and pinning (e.g. 0.2.1)"
+        description: "Release version used for suffix and pinning (e.g. 0.2.1; empty means latest vX.Y.Z release tag)"
         required: false
         type: string
-        default: "0.2.0"
+        default: ""
       hf_namespace:
         description: "Hugging Face namespace"
         required: false
@@ -47,6 +47,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -67,27 +69,32 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           ENVS_CSV_INPUT: ${{ github.event.inputs.envs_csv }}
+          OPENENV_VERSION: ${{ github.event.inputs.openenv_version }}
+          HF_NAMESPACE_INPUT: ${{ github.event.inputs.hf_namespace }}
+          COLLECTION_NAMESPACE_INPUT: ${{ github.event.inputs.collection_namespace }}
+          PRIVATE_INPUT: ${{ github.event.inputs.private }}
+          SKIP_COLLECTION_INPUT: ${{ github.event.inputs.skip_collection }}
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
         run: |
           set -euo pipefail
           chmod +x scripts/prepare_hf_deployment.sh
 
           cmd=(scripts/prepare_hf_deployment.sh
-            --hf-namespace "${{ github.event.inputs.hf_namespace }}"
-            --openenv-version "${{ github.event.inputs.openenv_version }}"
-            --collection-namespace "${{ github.event.inputs.collection_namespace }}"
+            --hf-namespace "$HF_NAMESPACE_INPUT"
+            --collection-namespace "$COLLECTION_NAMESPACE_INPUT"
           )
 
-          if [ "${{ github.event.inputs.private }}" = "true" ]; then
+          if [ "$PRIVATE_INPUT" = "true" ]; then
             cmd+=(--private)
           else
             cmd+=(--public)
           fi
 
-          if [ "${{ github.event.inputs.skip_collection }}" = "true" ]; then
+          if [ "$SKIP_COLLECTION_INPUT" = "true" ]; then
             cmd+=(--skip-collection)
           fi
 
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN_INPUT" = "true" ]; then
             cmd+=(--dry-run)
           fi
 
