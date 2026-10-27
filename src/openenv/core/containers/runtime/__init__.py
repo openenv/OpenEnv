@@ -5,7 +5,6 @@
 from .providers import (
     ContainerProvider,
     DockerSwarmProvider,
-    KubernetesProvider,
     LocalDockerProvider,
     RuntimeProvider,
 )
@@ -20,7 +19,6 @@ __all__ = [
     "ContainerProvider",
     "DockerSwarmProvider",
     "LocalDockerProvider",
-    "KubernetesProvider",
     "RuntimeProvider",
     "UVProvider",
 ]

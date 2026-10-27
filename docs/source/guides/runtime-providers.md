@@ -61,8 +61,7 @@ is a one-line change.
 | `ModalProvider` | Modal sandboxes | `pip install openenv[modal]` | ✅ |
 | `NovitaSandboxProvider` | Novita AI sandboxes | `pip install openenv[novita]` | ✅ |
 | `HFSandboxProvider` | Hugging Face sandboxes (billed as HF Jobs) | core | ✅ |
-
-A `KubernetesProvider` is planned but not available yet.
+| `KubernetesProvider` | Kubernetes cluster | `pip install openenv[kubernetes]` | ✅ |
 
 Cloud-provider SDKs are optional extras, imported lazily, so installing core
 OpenEnv pulls in no cloud SDK. The core providers (`LocalDockerProvider`,
@@ -237,8 +236,22 @@ Full example: [`examples/hf_sandbox_coding_env.py`](https://github.com/huggingfa
 
 ### KubernetesProvider
 
-🚧 Not yet implemented. The class exists as a placeholder for the planned
-Kubernetes backend.
+Runs one environment as one Pod and one Service in an existing namespace.
+Install with `pip install openenv[kubernetes]`. The returned URL is the
+in-cluster Service DNS name over `http://{name}.{namespace}:{port}`, which Pod
+DNS search expands under `svc.<cluster-domain>`. `ModalProvider` and
+`ACASandboxProvider` still require `https://`. Use this provider from a trainer
+in the same cluster; it does not create a namespace, Deployment, Ingress, or
+port-forward.
+
+```python
+from openenv.core.containers.runtime.kubernetes_provider import KubernetesProvider
+
+provider = KubernetesProvider(namespace="openenv")
+base_url = provider.start_container("echo-env:latest")
+provider.wait_for_ready(base_url)
+provider.stop_container()
+```
 
 ### LocalDockerProvider
 

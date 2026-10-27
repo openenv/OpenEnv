@@ -1,359 +1,145 @@
-# Play Wordle with GRPO
+# Train a Wordle Agent: SFT, then GRPO
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/trl/blob/main/examples/grpo_wordle/grpo_wordle.ipynb)
+This tutorial trains [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) to play [Wordle](https://en.wikipedia.org/wiki/Wordle) against the OpenEnv TextArena environment. The model starts out unable to win a single game. A short supervised warmup teaches it the game, and in our run GRPO then doubled its wins and removed most of its invalid guesses. Every step runs on one GPU, and the whole pipeline costs about $6 on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs).
 
-![trl banner](https://huggingface.co/datasets/trl-lib/documentation-images/resolve/main/trl_banner_dark.png)
+![Base model, SFT and SFT + GRPO playing the same 30 words](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/wordle-progress.gif)
 
+| Model | Wins on 30 words | Guesses per win | Invalid guesses |
+|---|---|---|---|
+| [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) | 0/30 | - | 24 |
+| + SFT ([model](https://huggingface.co/openenv/Qwen3-1.7B-Wordle-SFT)) | 10/30 | 3.2 | 41 |
+| + SFT + GRPO ([model](https://huggingface.co/openenv/Qwen3-1.7B-Wordle-SFT-GRPO)) | 20/30 | 4.1 | 3 |
 
-With [**Transformers Reinforcement Learning (TRL)**](https://github.com/huggingface/trl), you can train a model that learns to **play Wordle**, a word-guessing game, through interaction and reinforcement.
+These numbers come from our run, with one training run per step, evaluated greedily on the same 30 words ([`secrets30.txt`](https://github.com/openenv/OpenEnv/blob/main/examples/wordle/secrets30.txt)). Thirty words is a small sample and training is not deterministic, so a new run will land a few wins away. Two SFT runs with the same recipe won 10 and 13 games, for example. Expect the same ordering (base, SFT, then SFT + GRPO clearly ahead) rather than the exact numbers.
 
-- [TRL GitHub Repository](https://github.com/huggingface/trl) -- star us to support the project!
-- [Official TRL Examples](https://huggingface.co/docs/trl/example_overview)
-- [Community Tutorials](https://huggingface.co/docs/trl/community_tutorials)
-- [OpenEnv](https://github.com/huggingface/OpenEnv)
+The GRPO run used an earlier version of the invalid-move penalty, which missed the invalid move that ends a game, and capped rollouts at six tool rounds, including invalid warnings. The current `grpo.py` counts terminal invalid moves and allows up to 12 tool rounds and 12 submissions, while the environment still ends games after six legal guesses. The reported results have not been regenerated with this corrected budget.
 
+The 30 words come from the 156 nouns TextArena draws its secrets from, the same list used for the SFT games and during GRPO. So the table measures how well each model plays the words of this environment. We did not test words outside that list.
 
-An **agentic environment** is a setting where a model can take actions, observe outcomes, and adjust its behavior based on feedback, similar to how humans learn from trial and error.
-In this case, the agent interacts with the **Wordle** environment through the [**OpenEnv**](https://github.com/huggingface/OpenEnv) framework, which standardizes multi-agent and RL-style text environments.
+Watch all three play any of the 30 words in the [Wordle Arena](https://huggingface.co/spaces/openenv/wordle-arena) Space, and see the training curves on [Trackio](https://huggingface.co/spaces/openenv/wordle-runs). The scripts are in [`examples/wordle`](https://github.com/openenv/OpenEnv/tree/main/examples/wordle).
 
-[Wordle](https://en.wikipedia.org/wiki/Wordle) is a popular word puzzle where the player must guess a secret five-letter word within six tries.
-After each guess, feedback indicates whether each letter is:
-- **GREEN (G)**: Correct and in the right position
-- **YELLOW (Y)**: Present but in the wrong position
-- **GRAY (X)**: Not in the word
+## What you need
 
-This feedback loop makes Wordle a perfect environment for **RL with LLMs**, where the goal is to maximize the probability of guessing the correct word efficiently.
+| Step | Script | Hardware | Time | Cost |
+|---|---|---|---|---|
+| 1. Generate SFT data | `generate_sft_data.py` | Laptop CPU | 10 s | $0 |
+| 2. SFT warmup | `sft.py` | 1x A100 80GB (`a100-large`) | 7 min | $0.30 |
+| 3. GRPO | `grpo.py` | 1x A100 80GB (`a100-large`) | 2 h 15 min | $5.60 |
+| 4. Evaluate and make the GIF | `evaluate.py`, `make_gif.py` | Laptop (Apple silicon) or any GPU | 20 min for three models | $0 |
 
+Times and costs are from our runs, at the `a100-large` price on Hugging Face Jobs ($2.50/h), and include the time to install packages and load the model. You need a Hugging Face account with a payment method for Jobs, and [uv](https://docs.astral.sh/uv/). The scripts pin their dependencies (`trl==1.16.0`, `openenv==0.10.0`, vLLM 0.31), so `uv run` and `hf jobs uv run` install the same versions used here.
 
-We'll fine-tune a model using **GRPO** (Group Relative Policy Optimization) via TRL.
-Using `environment_factory`, the trainer automatically handles:
-1. Creating environment instances for each rollout.
-2. Generating model completions and parsing tool calls.
-3. Stepping through the environment with the model's actions.
-4. Collecting rewards and managing the interaction loop.
+## 1. Play the environment
 
-This means you only need to define the environment class and reward function -- the trainer takes care of the rest.
-
-
-## Install dependencies
-
-We'll start by installing **TRL** (with vLLM support), the **OpenEnv** Wordle environment, and **trackio** for logging.
-
-```bash
-pip install -Uq trl[vllm] git+https://huggingface.co/spaces/openenv/wordle trackio
-```
-
-### Log in to Hugging Face
-
-Log in to your **Hugging Face** account to save your fine-tuned model, track your experiment results directly on the Hub or access gated models. You can find your **access token** on your [account settings page](https://huggingface.co/settings/tokens).
-
-```python
-from huggingface_hub import notebook_login
-
-notebook_login()
-```
-
-## Define the system prompt
-
-This prompt instructs the model on how to play Wordle. It includes the game rules, feedback format, and importantly, tells the model to use the `guess` tool to submit guesses. The `environment_factory` pattern uses tool calling to interact with the environment, so the model needs to know which tool to call.
-
-```python
-prompt = """You are an expert Wordle solver with deep knowledge of English vocabulary, letter frequency patterns, and optimal guessing strategies.
-
-Follow these rules to play Wordle:
-
-1. The target is a 5-letter English word
-2. You have 6 attempts to guess the correct word
-3. After each guess, you receive color-coded feedback:
-   - GREEN (G): Letter is correct and in the correct position
-   - YELLOW (Y): Letter is in the word but in the wrong position
-   - GRAY (X): Letter is not in the word at all
-4. All guesses must be valid 5-letter English words
-5. You cannot reuse a word you've already guessed
-6. Use the tool `guess` to make a guess.
-"""
-```
-
-## Define the environment
-
-The `WordleEnv` class wraps the OpenEnv TextArena Wordle environment into the interface expected by `environment_factory`.
-
-When you pass `environment_factory=WordleEnv` to the trainer, it will:
-1. Create a new `WordleEnv()` instance for each rollout episode.
-2. Call `reset()` to start a new game (returns the initial observation or `None`).
-3. Automatically generate model completions, parse tool calls, and invoke the corresponding methods (e.g., `guess(...)`).
-4. Repeat until the environment signals `done=True` or the max completion length is reached.
-
-The environment exposes its public methods as tools. Any public method (other than `reset`) with a docstring is automatically discovered and exposed as a callable tool. Here, the `guess` method lets the model submit a Wordle guess and receive feedback.
-
-For this example, we connect to the hosted environment at [openenv/wordle](https://huggingface.co/spaces/openenv/wordle).
-For production use, we recommend duplicating the Space to your own account or running it locally via Docker, as the hosted versions have limited concurrency.
-
-For more information, refer to the [TRL-OpenEnv documentation](https://huggingface.co/docs/trl/main/en/openenv).
+The Wordle environment runs as a Space, [`openenv/wordle`](https://huggingface.co/spaces/openenv/wordle). Open its playground to play a game by hand, or connect from Python:
 
 ```python
 from textarena_env import TextArenaAction, TextArenaEnv
 
-
-class WordleEnv:
-    def __init__(self):
-        self.client = TextArenaEnv(base_url="https://openenv-wordle.hf.space")
-
-    def reset(self, **kwargs) -> None | str:
-        result = self.client.reset()
-        # The game returns cumulative feedback each turn (new text appended at the end), so
-        # we store the previous full response and slice out only the newly appended part.
-        self._last_full_feedback = result.observation.messages[0].content
-        self.reward = 0.0
-        self.done = False
-        return self._last_full_feedback
-
-    def guess(self, guess: str) -> str:
-        """
-        Make a guess in the Wordle environment.
-
-        Args:
-            guess: The guessed word, formatted as '[abcde]'
-
-        Returns:
-            The feedback message from the environment.
-        """
-        if self.done:
-            raise ValueError("Game over.")
-        result = self.client.step(TextArenaAction(message=guess))
-        _full_feedback = result.observation.messages[0].content
-        # Just take the new feedback since the last guess
-        feedback = _full_feedback[len(self._last_full_feedback):]
-        self._last_full_feedback = _full_feedback
-        # Penalize invalid moves
-        if "You attempted an invalid move" in feedback:
-            self.reward = 0.0
-        else:
-            self.reward = result.reward
-        self.done = result.done
-        return feedback
+with TextArenaEnv(base_url="https://openenv-wordle.hf.space").sync() as env:
+    result = env.reset()
+    print(result.observation.messages[0].content)
+    result = env.step(TextArenaAction(message="[crane]"))
+    print(result.observation.messages[0].content)
 ```
 
-## Define the reward function
+Install the client with `pip install "openenv-textarena @ git+https://github.com/openenv/OpenEnv.git@v0.10.0#subdirectory=envs/textarena_env"`.
 
-The reward function receives the list of environment instances after each episode completes. Since the `WordleEnv` tracks its own reward (updated after each `guess` call), we simply read it out.
+Each guess returns the feedback for every letter: `G` (right letter, right spot), `Y` (in the word, wrong spot) and `X` (not in the word). A repeated word or a word that isn't English is an invalid move. The first one is a warning, and a second one in the same turn ends the game. A win ends with `Congratulations! You guessed the word correctly!`, and a loss shows the secret word.
 
-This is much simpler than defining multiple reward functions manually -- the environment already knows the game outcome.
+The environment's own reward is `1.0` for a win. A lost game scores (greens + half the yellows) / 5 for its last guess. A game that never reaches its end scores `0`.
+
+## 2. Why start with SFT
+
+Training Qwen3-1.7B with GRPO directly does not work well, for two reasons we saw in practice:
+
+- **The base model almost never wins.** It always opens with `apple` and soon repeats a word, so it wins around 2-3% of games while sampling. GRPO learns from the difference between good and bad games in a group, and with almost no wins there is little to learn from. A 25-step run from the base model stayed at a 2-5% win rate.
+- **The environment reward can be gamed.** A game only scores once it ends, and a win pays the same after 1 guess or 6. With Qwen3's long thinking, the easiest way to score more was to think less and use all 6 guesses. In one run, reasoning dropped from 7,000 to 2,300 tokens in 13 steps while the reward fell below where it started.
+
+So the recipe starts with a short SFT on well-played games, which teaches the format and a reasonable strategy. GRPO then trains against the environment, with a reward that pays for winning fast, and fixes what the SFT model still gets wrong.
+
+## 3. Generate the SFT data
+
+`generate_sft_data.py` plays 1,000 games with a solver, against the same environment class the Space runs (in-process, so it takes seconds). Each turn the solver keeps the words that fit all the feedback so far and picks the guess that splits them best, and writes a short reasoning before each guess:
+
+```text
+ARISE gave X X X Y Y: A gray, R gray, I gray, S yellow, E yellow.
+In the word but misplaced: E (not position 5), S (not position 4). Ruled out: A, I, R.
+Words that fit: SLEEP, SHEEP, SMELL, STEEL, SHELF, and more.
+SHEEP fits the clues and its letters split the remaining options best, so I'll guess it.
+```
+
+Each game is stored as a tool-calling conversation: the user prompt, then one assistant turn per guess (the reasoning as `reasoning_content` and a call to the `guess` tool), each followed by the environment feedback. This is the same format TRL renders during GRPO, so the SFT model plays exactly the way RL will train it.
+
+```bash
+uv run generate_sft_data.py --games 1000 --push-to-hub <user>/wordle-tool-calls-sft
+```
+
+The dataset used here is [`openenv/wordle-tool-calls-sft`](https://huggingface.co/datasets/openenv/wordle-tool-calls-sft). TextArena draws the secret from 156 common nouns, so the solver wins every game, in 2.7 guesses on average.
+
+## 4. SFT warmup
+
+`sft.py` fine-tunes Qwen3-1.7B on those games for one epoch (63 steps), training only the assistant turns:
+
+```bash
+hf jobs uv run --flavor a100-large --timeout 1h --secrets HF_TOKEN sft.py \
+    --dataset <user>/wordle-tool-calls-sft --hub-model-id <user>/Qwen3-1.7B-Wordle-SFT
+```
+
+In our run the loss went from 4.2 to 0.09. Keep the trainable weights in fp32, with bf16 mixed-precision compute. When we loaded the weights in bf16 for training, the model came out clearly worse (final loss 0.21), because bf16 weights lose the small updates. The script sets `model_init_kwargs={"dtype": "float32"}` explicitly (also the default in TRL 1.16.0) and keeps `bf16=True` for compute. It casts the weights to bf16 after training, just before the final upload.
+
+## 5. GRPO
+
+`grpo.py` starts from the SFT model and trains it against the environment with TRL's `GRPOTrainer` and `environment_factory`. The environment class exposes one tool, `guess`, and keeps what the reward needs:
 
 ```python
-def reward_func(environments, **kwargs) -> list[float]:
-    return [env.reward for env in environments]
+def reward_win(environments, **kwargs):
+    return [1.0 + 0.5 * (1 - env.num_guesses / 6) if env.won else 0.0 for env in environments]
+
+def reward_partial(environments, **kwargs):
+    return [0.0 if env.won else 0.1 * env.best_greens for env in environments]
+
+def reward_invalid(environments, **kwargs):
+    return [-0.1 * env.invalid_moves for env in environments]
 ```
 
-## Create the dataset
+- A win pays more the faster it comes (1.42 in one guess, 1.0 in six).
+- A loss pays for the best guess of the game, whether or not the game reached its end.
+- Each invalid move costs 0.1.
 
-We create a dataset with repeated prompts to control the number of training episodes.
-Each entry triggers one rollout episode during training. The prompt is formatted as a chat message.
+TRL logs the three terms separately, so `rewards/reward_win/mean` follows the wins (each one weighted by how fast it came).
 
-```python
-from datasets import Dataset
+Each step plays 4 prompts x 16 games (64 games) with thinking on, and runs 150 steps at a constant learning rate of 1e-6 (in an earlier run with a linear decay to 0, the reward was still rising when the learning rate ran out):
 
-dataset = Dataset.from_dict({"prompt": [[{"role": "user", "content": prompt}] for _ in range(3000)]})
+```bash
+hf jobs uv run --flavor a100-large --timeout 4h --secrets HF_TOKEN grpo.py \
+    --model <user>/Qwen3-1.7B-Wordle-SFT --hub-model-id <user>/Qwen3-1.7B-Wordle-SFT-GRPO \
+    --env-url https://<user>-wordle.hf.space
 ```
 
-## Set GRPO Config
+Every game is one environment session, so the environment must accept 64 at once. [Duplicate the `openenv/wordle` Space](https://huggingface.co/spaces/openenv/wordle?duplicate=true) and set the `MAX_CONCURRENT_ENVS=64` variable on your copy, rather than training against the shared Space. A private copy works too, since the script sends your token.
 
-Next, we define the **GRPOConfig**, which controls all key training parameters.
-This configuration specifies how the model interacts with vLLM, manages memory, and logs results.
+![Reward during GRPO](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/wordle-grpo-reward.png)
 
-Note the `chat_template_kwargs={"enable_thinking": False}` parameter -- this disables Qwen3's thinking mode so the model responds directly with tool calls instead of generating internal reasoning tokens first.
+In our run, the reward (averaged over 10 steps) went from about 0.37 to about 0.58, with a lot of noise from step to step. Most of the gain came from more wins and fewer invalid moves, while the reasoning stayed around 500 tokens per game and entropy stayed stable. A new run will give different numbers, but it should show the same trend.
 
-```python
-from trl import GRPOConfig
+## 6. Evaluate and make the GIF
 
-model_name = "Qwen/Qwen3-1.7B"
-output_dir = "wordle-grpo-Qwen3-1.7B"
+`evaluate.py` plays a model greedily and saves every game. With `--secrets`, it runs the environment in-process and sets the secret word itself, so every model plays the same words:
 
-grpo_config = GRPOConfig(
-    # Training schedule / optimization
-    num_train_epochs=1,
-    learning_rate=1e-6,
-    gradient_accumulation_steps=64,
-    per_device_train_batch_size=1,
-    warmup_steps=10,
-    optim="adamw_torch",
-    max_grad_norm=1.0,
-
-    # GRPO configuration
-    num_generations=2,
-    max_completion_length=1024,
-    log_completions=True,
-    num_completions_to_print=2,
-    chat_template_kwargs={"enable_thinking": False},
-
-    # vLLM configuration
-    use_vllm=True,
-    vllm_mode="colocate",
-    vllm_gpu_memory_utilization=0.15,
-    vllm_max_model_length=3072,
-
-    # Logging / reporting
-    output_dir=output_dir,
-    report_to="trackio",
-    trackio_space_id=output_dir,
-    logging_steps=1,
-    save_steps=10,
-    save_total_limit=1,
-
-    # Memory optimization
-    gradient_checkpointing=True,
-
-    # Hub integration
-    push_to_hub=True,
-)
+```bash
+uv run evaluate.py --model <user>/Qwen3-1.7B-Wordle-SFT-GRPO --thinking --max-new-tokens 512 \
+    --secrets "$(cat secrets30.txt)" --out grpo.jsonl
+uv run make_gif.py base.jsonl sft.jsonl grpo.jsonl --labels "Qwen3-1.7B" "+ SFT" "+ SFT + GRPO" --out progress.gif
 ```
 
-## Create the `GRPOTrainer` and start training
+The base model runs without thinking (`--max-new-tokens 256`). With thinking it writes thousands of tokens per guess, which is slow on a laptop and, in our tests, didn't help it win.
 
-Now we initialize the `GRPOTrainer` with `environment_factory=WordleEnv`.
+## Run it in Colab
 
-This tells the trainer to automatically handle the entire interaction loop:
-- It creates a `WordleEnv` instance for each episode.
-- It generates model completions, parses tool calls (like `guess`), and steps through the environment.
-- It collects rewards and manages the `tool_mask` (which tokens are model-generated vs environment-generated) automatically.
+The [notebook](https://colab.research.google.com/github/openenv/OpenEnv/blob/main/examples/wordle/wordle.ipynb) runs the same pipeline. On a free T4 it loads the published models and plays them against each other, and launches SFT and GRPO on Hugging Face Jobs. On an A100 (Colab Pro) it can train in the notebook itself.
 
-No need to write a custom `rollout_func` or manage tokenization manually.
+## Going further
 
-```python
-from trl import GRPOTrainer
-
-trainer = GRPOTrainer(
-    model=model_name,
-    reward_funcs=reward_func,
-    train_dataset=dataset,
-    args=grpo_config,
-    environment_factory=WordleEnv,
-)
-```
-
-Show memory stats before training
-
-```python
-import torch
-
-gpu_stats = torch.cuda.get_device_properties(0)
-start_gpu_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
-max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
-
-print(f"GPU = {gpu_stats.name}. Max memory = {max_memory} GB.")
-print(f"{start_gpu_memory} GB of memory reserved.")
-```
-
-And train!
-
-```python
-trainer_stats = trainer.train()
-```
-
-Show memory stats after training
-
-```python
-used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
-used_memory_for_training = round(used_memory - start_gpu_memory, 3)
-used_percentage = round(used_memory / max_memory * 100, 3)
-training_memory_percentage = round(used_memory_for_training / max_memory * 100, 3)
-
-print(f"{trainer_stats.metrics['train_runtime']} seconds used for training.")
-print(f"{round(trainer_stats.metrics['train_runtime']/60, 2)} minutes used for training.")
-print(f"Peak reserved memory = {used_memory} GB.")
-print(f"Peak reserved memory for training = {used_memory_for_training} GB.")
-print(f"Peak reserved memory % of max memory = {used_percentage} %.")
-print(f"Peak reserved memory for training % of max memory = {training_memory_percentage} %.")
-```
-
-## Save and push to Hub
-
-```python
-trainer.save_model(output_dir)
-trainer.push_to_hub()
-```
-
-## Load the fine-tuned model and run inference
-
-Now let's test our fine-tuned model by loading it and playing a game of Wordle.
-We use the same `WordleEnv` class to interact with the environment, and generate model responses with standard Transformers inference.
-
-```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-model_name = "sergiopaniego/wordle-grpo-Qwen3-1.7B"  # Replace with your HF username or organization
-
-fine_tuned_model = AutoModelForCausalLM.from_pretrained(model_name, dtype="float32", device_map="auto")
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-```
-
-```python
-import json
-
-
-def play_wordle(model, tokenizer):
-    env = WordleEnv()
-    initial_observation = env.reset()
-
-    print("Initial observation:")
-    print(initial_observation)
-    print()
-
-    messages = [{"role": "user", "content": prompt}]
-    if initial_observation:
-        messages.append({"role": "user", "content": initial_observation})
-
-    for turn in range(6):
-        if env.done:
-            break
-
-        prompt_text = tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=False,
-            enable_thinking=False,
-        )
-        model_inputs = tokenizer([prompt_text], return_tensors="pt").to(model.device)
-        generated_ids = model.generate(**model_inputs, max_new_tokens=512)
-        output_ids = generated_ids[0][len(model_inputs.input_ids[0]):]
-        generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
-
-        print(f"Turn {turn + 1} - Model output: {generated_text}")
-
-        # Try to parse tool call from the generated text
-        try:
-            # Try to extract a guess from tool call format or bracket format
-            if "guess" in generated_text:
-                # Parse JSON tool call
-                start = generated_text.index("{")
-                end = generated_text.rindex("}") + 1
-                args = json.loads(generated_text[start:end])
-                if "arguments" in args:
-                    args = args["arguments"]
-                guess_word = args.get("guess", "")
-            else:
-                # Fallback: extract from brackets [word]
-                import re
-                match = re.search(r"\[([a-zA-Z]{5})\]", generated_text)
-                guess_word = match.group(1) if match else generated_text.strip()[:5]
-
-            feedback = env.guess(f"[{guess_word}]")
-            print(f"         Guess: {guess_word} | Reward: {env.reward}")
-            print(f"         Feedback: {feedback.strip()}")
-            print()
-
-            messages.append({"role": "assistant", "content": generated_text})
-            messages.append({"role": "user", "content": feedback})
-        except Exception as e:
-            print(f"         Error: {e}")
-            break
-
-    print(f"Game finished! Final reward: {env.reward}")
-    print(f"Done: {env.done}")
-```
-
-Let's play the game!
-
-```python
-play_wordle(fine_tuned_model, tokenizer)
-```
+- The [SFT warmup tutorial](sft-warmup) shows the same idea with rollouts collected from a stronger model.
+- Training against a larger model (Qwen3-4B), more games per step or a richer SFT reasoning (listing every remaining candidate) are the next things to try for a higher win rate.
