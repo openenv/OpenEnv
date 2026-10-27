@@ -51,25 +51,32 @@ caller's `HF_TOKEN` into the job.
 
 A job that can reach the internet can download a model already trained for the
 task, or the evaluation's own test data. So agent jobs get their inputs as
-read-only mounts and run without network access:
+read-only mounts, which the broker checks and the episode records, and run
+without network access:
 
 - The task's base model is mounted at `/base_model`, at a pinned revision.
 - Each dataset in `datasets` is mounted at `/datasets/<repo_id>`, at its current
   revision. It must be public and ungated, and not on the task's denylist. The
   broker looks it up without its token, so the token can't open private repos.
 - Packages from `dependencies` and the script's PEP 723 header are installed
-  before the script runs, from PyPI wheels only (`no-build = true`), so no
-  package code runs while the job still has network access. URLs and git
-  dependencies are refused. Other settings in the script's header are ignored.
+  into a fresh venv before the script runs, from PyPI wheels only. Installing a
+  wheel runs none of its code, so no package code runs while the job still has
+  network access. URLs and git dependencies are refused. Other settings in the
+  script's header are ignored.
+
+Mounts and wheels narrow what a job can fetch, but a public dataset or a PyPI
+wheel can still hold weights or test data. Tasks whose test data is public also
+need a contamination check after the run.
 
 HF Jobs has no egress control, and its containers can't create network
 namespaces or firewall rules. So the broker sends
 [`server/job_launcher.py`](https://github.com/huggingface/OpenEnv/blob/main/envs/posttrain_env/server/job_launcher.py) as the job's script, with the
-agent's script embedded. Once uv has installed the packages, the launcher
-installs a seccomp filter that refuses every socket except `AF_UNIX`, and
-io_uring and cross-process memory access; systemd's `RestrictAddressFamilies=`
-works the same way. It then switches to uid 65534 and runs the agent's script
-with `HF_HUB_OFFLINE=1`. The filter can't be removed and covers every child
+agent's script and packages embedded. Once it has installed the packages, the
+launcher installs a seccomp filter that refuses every socket except `AF_UNIX`,
+and io_uring and cross-process memory access; systemd's
+`RestrictAddressFamilies=` works the same way. It then closes inherited file
+descriptors, switches to a uid no other process in the job uses, and runs the
+agent's script with `HF_HUB_OFFLINE=1`. The filter can't be removed and covers every child
 process. If any step fails, the script doesn't run. Training on a single GPU,
 DataLoader workers and writing `/data/outputs/` work under the filter;
 `torch.distributed` over localhost TCP does not.
@@ -169,6 +176,17 @@ with PostTrainEnv(base_url="http://localhost:8000", message_timeout_s=3600).sync
 plays a whole episode with an LLM through any OpenAI-compatible endpoint,
 Hugging Face Inference Providers by default. The agent's API key is its own;
 it never needs the broker's token.
+
+## Known gaps
+
+- The server has no authentication of its own: anyone who can reach it can
+  start episodes and spend its budget. Keep it on localhost or a private network.
+- Job folders stay in the `jobs-artifacts` bucket, and the size of what a job
+  writes there is not capped or charged to the budget.
+- `max_steps` and the time limit are checked in `step`; a client calling the
+  MCP endpoint directly bypasses them, though not the budget.
+- `torch.distributed` over localhost TCP is blocked in agent jobs, so tasks use
+  single-GPU flavors.
 
 ## Tests
 

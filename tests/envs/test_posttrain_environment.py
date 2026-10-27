@@ -8,6 +8,7 @@ and spend nothing.
 
 from __future__ import annotations
 
+import ast
 import base64
 import ctypes.util
 import dataclasses
@@ -57,10 +58,12 @@ class FakeHfApi:
         # Applied the first time a job with this role label is inspected.
         self.on_inspect = {}
         self.datasets = {
-            "open/data": SimpleNamespace(sha="abc123", gated=False),
-            "gated/data": SimpleNamespace(sha="def456", gated="auto"),
+            "open/data": SimpleNamespace(id="open/data", sha="abc123", gated=False),
+            "gated/data": SimpleNamespace(id="gated/data", sha="def456", gated="auto"),
         }
         self.dataset_lookups = []
+        # Raise from the next run_uv_job call after the job was created.
+        self.fail_after_create = False
 
     def whoami(self):
         return {"name": "operator"}
@@ -92,9 +95,21 @@ class FakeHfApi:
             mount_path="/data",
             read_only=False,
         )
-        return SimpleNamespace(
+        info = SimpleNamespace(
             id=job_id, volumes=(kwargs["volumes"] or []) + [artifacts]
         )
+        self.jobs[job_id].update(labels=kwargs["labels"], info=info)
+        if self.fail_after_create:
+            self.fail_after_create = False
+            raise ConnectionError("read timed out")
+        return info
+
+    def list_jobs(self, *, labels, namespace):
+        return [
+            job["info"]
+            for job in self.jobs.values()
+            if labels.items() <= job["labels"].items()
+        ]
 
     def inspect_job(self, *, job_id, namespace):
         job = self.jobs[job_id]
@@ -139,10 +154,11 @@ def score_line(score, **extra):
 
 
 def launched(run):
-    """Return the agent script embedded in a launcher job, and the job's PEP 723 header."""
-    encoded = re.search(r'^AGENT_SCRIPT = "([^"]*)"', run["script"], re.M).group(1)
-    header = run["script"].split("# ///\n", 1)[0]
-    return base64.b64decode(encoded).decode(), header
+    """Return the agent script and requirements embedded in a launcher job."""
+    script = run["script"]
+    encoded = re.search(r'^AGENT_SCRIPT = "([^"]*)"', script, re.M).group(1)
+    requirements = re.search(r"^REQUIREMENTS = (.*)$", script, re.M).group(1)
+    return base64.b64decode(encoded).decode(), ast.literal_eval(requirements)
 
 
 @pytest.fixture
@@ -216,6 +232,8 @@ class TestSubmitJobs:
         assert run["namespace"] == "operator"
         assert run["flavor"] == "cpu-basic"
         assert run["timeout"] == "10m"
+        request = run["labels"].pop("openenv-request")
+        assert len(request) == 32
         assert run["labels"] == {
             "openenv-env": "posttrain_env",
             "openenv-episode": "ep1",
@@ -227,15 +245,16 @@ class TestSubmitJobs:
 
     def test_script_runs_in_the_launcher_with_wheel_only_dependencies(self, env, api):
         env.reset(task_id="t0_artifact")
-        script = (
-            '# /// script\n# dependencies = ["torch==2.14.1"]\n# ///\nprint("hi")\n'
-        )
+        script = '# /// script\r\n# dependencies = ["torch==2.14.1"]\r\n# ///\r\n'
         submit_job(env, script=script, dependencies=["numpy>=2"])
         run = api.runs[0]
-        agent_script, header = launched(run)
+        agent_script, requirements = launched(run)
         assert agent_script == script
-        assert '# dependencies = ["torch==2.14.1", "numpy>=2"]' in header
-        assert "# no-build = true" in header
+        assert requirements == ["torch==2.14.1", "numpy>=2"]
+        # The launcher's own header installs nothing: it installs the
+        # requirements itself, from wheels, before the filter.
+        assert "# dependencies = []" in run["script"]
+        assert '"--no-build"' in run["script"]
         assert run["dependencies"] == []
         assert "install_filter()" in run["script"]
         compile(run["script"], "launcher.py", "exec")
@@ -246,6 +265,7 @@ class TestSubmitJobs:
             (["pkg @ https://example.com/pkg.whl"], "print(1)"),
             (["git+https://github.com/owner/repo"], "print(1)"),
             (["numpy; nonsense"], "print(1)"),
+            (['foo; python_version == "3.1\n0"'], "print(1)"),
             (["numpy"] * 21, "print(1)"),
             ([], "# /// script\n# dependencies = [\n# ///\nprint(1)\n"),
             ([], '# /// script\n# dependencies = ["x @ file:///etc/passwd"]\n# ///\n'),
@@ -280,7 +300,8 @@ class TestSubmitJobs:
         assert api.dataset_lookups == [("open/data", False)]
 
     @pytest.mark.parametrize(
-        "dataset", ["gated/data", "private/data", "denied/data", "../data", "data"]
+        "dataset",
+        ["gated/data", "private/data", "denied/data", "old/name", "../data", "data"],
     )
     def test_gated_missing_denied_and_malformed_datasets_are_refused(
         self, env, api, monkeypatch, dataset
@@ -289,7 +310,9 @@ class TestSubmitJobs:
             TASKS["t0_artifact"], denied_datasets=("Denied/Data",)
         )
         monkeypatch.setitem(TASKS, "t0_artifact", task)
-        api.datasets["denied/data"] = SimpleNamespace(sha="x", gated=False)
+        denied = SimpleNamespace(id="denied/data", sha="x", gated=False)
+        # "old/name" is the denied repo's former id, which redirects to it.
+        api.datasets.update({"denied/data": denied, "old/name": denied})
         env.reset(task_id="t0_artifact")
         data, _ = call(
             env,
@@ -479,7 +502,7 @@ class TestEvaluation:
             [SCORE_MARKER + json.dumps([0.5])],
         ],
     )
-    def test_missing_or_out_of_range_scores_count_as_invalid(self, env, api, logs):
+    def test_missing_or_malformed_scores_are_evaluator_errors(self, env, api, logs):
         env.reset(task_id="t0_artifact")
         job = self._finished_job(env, api)
         evaluation, _ = call(env, "dev_evaluate", job_id=job["job_id"])
@@ -487,7 +510,7 @@ class TestEvaluation:
         # A missing score line is re-read a few times in case the logs lag.
         for _ in range(MAX_RESULT_READS):
             data, _ = call(env, "jobs_status", job_id=evaluation["job_id"])
-        assert data["result"]["status"] == "invalid"
+        assert data["result"]["status"] == "error"
         assert data["result"]["score"] == 0.0
 
 
@@ -512,9 +535,11 @@ class TestSubmitEpisode:
         score_run = api.runs[-1]
         assert score_run["labels"]["openenv-role"] == "score"
         assert score_run["env"]["POSTTRAIN_SPLIT"] == "test"
-        assert score_run["env"]["POSTTRAIN_SEED"] == str(
-            posttrain_environment.TEST_SEED
-        )
+        # The hidden seed is a secret, not part of the job's visible spec.
+        assert "POSTTRAIN_SEED" not in score_run["env"]
+        assert score_run["secrets"] == {
+            "POSTTRAIN_SEED": str(posttrain_environment.TEST_SEED)
+        }
         assert api.jobs[straggler["job_id"]]["cancel_requested"]
         end = obs.metadata["episode_end"]
         assert end["reason"] == "submitted"
@@ -560,6 +585,15 @@ class TestSubmitEpisode:
         data, obs = call(env, "submit", job_id=job["job_id"])
         assert data["result"] == {"status": "failed", "score": 0.0}
         assert obs.done is True
+        assert obs.reward is None
+        assert obs.metadata["episode_end"]["reason"] == "score_failed"
+
+    def test_score_job_without_a_score_line_ends_the_episode_unscored(self, env, api):
+        env.reset(task_id="t0_artifact")
+        job = self._finished(env, api)
+        api.on_inspect["score"] = {"stage": "COMPLETED", "running_secs": 10}
+        data, obs = call(env, "submit", job_id=job["job_id"])
+        assert data["result"]["status"] == "error"
         assert obs.reward is None
         assert obs.metadata["episode_end"]["reason"] == "score_failed"
 
@@ -669,8 +703,9 @@ class TestFailureHandling:
         assert data["state"] == "cancelled"
         assert data["cost_usd"] == 0.0
 
+    @pytest.mark.parametrize("error", [http_error(409), ConnectionError("reset")])
     def test_a_failing_cancel_call_does_not_stop_the_others(
-        self, env, api, monkeypatch
+        self, env, api, monkeypatch, error
     ):
         env.reset(task_id="t0_artifact")
         first, second = submit_job(env), submit_job(env)
@@ -678,13 +713,23 @@ class TestFailureHandling:
 
         def flaky_cancel(*, job_id, namespace):
             if job_id == first["job_id"]:
-                raise http_error(409)
+                raise error
             cancel(job_id=job_id, namespace=namespace)
 
         monkeypatch.setattr(api, "cancel_job", flaky_cancel)
         with pytest.raises(RuntimeError, match=first["job_id"]):
             env.reset(task_id="t0_artifact")
         assert api.jobs[second["job_id"]]["stage"] == "CANCELED"
+
+    def test_job_created_by_a_failed_call_is_still_tracked(self, env, api):
+        env.reset(task_id="t0_artifact")
+        api.fail_after_create = True
+        job = submit_job(env, timeout_minutes=10)
+        assert job["job_id"] == "job0"
+        assert len(api.runs) == 1
+        assert job["remaining_usd"] == pytest.approx(0.05 - 10 * CPU_BASIC / 1e6)
+        env.reset(task_id="t0_artifact")
+        assert api.jobs["job0"]["stage"] == "CANCELED"
 
     def test_orphans_are_retried_until_hf_confirms_them(self, env, api):
         env.reset(task_id="t0_artifact")

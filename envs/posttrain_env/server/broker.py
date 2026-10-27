@@ -7,10 +7,10 @@ started with `run_uv_job` and explicit flavor, namespace, timeout and labels,
 and with no secrets. A `job.write` token passed into a job could start further
 jobs that skip this ledger, so the broker never passes one in.
 
-Agent scripts run inside `job_launcher.py`, which cuts the job's network
-access before the script starts. Dependencies are installed first, from wheels
-only, and inputs come as read-only mounts: the task's base model and the public
-datasets the agent asks for.
+Agent scripts run inside `job_launcher.py`, which installs their dependencies
+from wheels and cuts the job's network access before the script starts. Inputs
+come as read-only mounts: the task's base model and the public datasets the
+agent asks for.
 
 Money is tracked in integer micro-USD. A job reserves its worst case (the
 flavor's per-minute rate times its timeout) before it starts, and settles at
@@ -28,6 +28,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from huggingface_hub import Volume
 from huggingface_hub.errors import HfHubHTTPError, HFValidationError
@@ -246,7 +247,7 @@ class Broker:
 
         The script runs without network access, inside `job_launcher.py`. Its
         dependencies, from `dependencies` and its PEP 723 header, are installed
-        from wheels first. Each of `datasets` is mounted read-only at
+        from wheels before that. Each of `datasets` is mounted read-only at
         `/datasets/<repo_id>`, next to `volumes`.
         """
         if idempotency_key and idempotency_key in self._idempotency:
@@ -288,7 +289,7 @@ class Broker:
     @staticmethod
     def _requirements(script: str, dependencies: list[str]) -> list[str]:
         """Merge the script's PEP 723 dependencies with `dependencies`; packages only, no URLs."""
-        match = SCRIPT_BLOCK.search(script)
+        match = SCRIPT_BLOCK.search(script.replace("\r\n", "\n"))
         if match:
             content = "".join(
                 line[2:] if line.startswith("# ") else line[1:]
@@ -311,7 +312,8 @@ class Broker:
         for dependency in dependencies:
             try:
                 requirement = Requirement(str(dependency))
-            except InvalidRequirement:
+            # packaging raises SyntaxError for some malformed markers.
+            except (InvalidRequirement, SyntaxError):
                 raise BrokerError(
                     "invalid_dependency", f"{dependency!r} is not a valid requirement"
                 )
@@ -355,10 +357,15 @@ class Broker:
                     "dataset_not_allowed",
                     f"{repo_id} is not a public, ungated dataset on the Hub",
                 )
+            # A renamed repo's old id redirects to the new one.
+            if info.id.lower() in denied_ids:
+                raise BrokerError(
+                    "dataset_not_allowed", f"{repo_id} is not allowed in this task"
+                )
             volumes.append(
                 Volume(
                     type="dataset",
-                    source=repo_id,
+                    source=info.id,
                     revision=info.sha,
                     mount_path=f"{DATASETS_MOUNT}/{repo_id}",
                     read_only=True,
@@ -368,21 +375,18 @@ class Broker:
 
     @staticmethod
     def _launcher_script(script: str, requirements: list[str]) -> str:
-        """Embed `script` in the launcher, with `requirements` installed from wheels only."""
-        header = [
-            "# /// script",
-            '# requires-python = ">=3.10"',
-            f"# dependencies = {json.dumps(requirements)}",
-            "#",
-            "# [tool.uv]",
-            "# no-build = true",
-            "# ///",
-        ]
+        """Embed `script` and `requirements` in the launcher."""
         encoded = base64.b64encode(script.encode()).decode()
-        launcher = LAUNCHER.read_text().replace(
-            'AGENT_SCRIPT = ""', f'AGENT_SCRIPT = "{encoded}"', 1
+        launcher = LAUNCHER.read_text()
+        for placeholder, value in (
+            ('AGENT_SCRIPT = ""', f'AGENT_SCRIPT = "{encoded}"'),
+            ("REQUIREMENTS: list[str] = []", f"REQUIREMENTS = {requirements!r}"),
+        ):
+            launcher = launcher.replace(placeholder, value, 1)
+        header = (
+            '# /// script\n# requires-python = ">=3.10"\n# dependencies = []\n# ///\n'
         )
-        return "\n".join(header) + "\n" + launcher
+        return header + launcher
 
     def evaluate(
         self,
@@ -393,6 +397,7 @@ class Broker:
         flavor: str,
         timeout_minutes: int,
         env: dict[str, str],
+        secrets: dict[str, str] | None = None,
         volumes: list[Volume] | None = None,
     ) -> Job:
         """Run an evaluator job on `source`'s artifact, mounted read-only at `/model`, next to `volumes`."""
@@ -418,6 +423,7 @@ class Broker:
             reservation=reservation,
             dependencies=[],
             env=env,
+            secrets=secrets,
             volumes=[model, *(volumes or [])],
         )
         job.source_job_id = source.job_id
@@ -433,6 +439,7 @@ class Broker:
         reservation: int,
         dependencies: list[str],
         env: dict[str, str] | None = None,
+        secrets: dict[str, str] | None = None,
         volumes: list[Volume] | None = None,
     ) -> Job:
         # run_uv_job uploads a local script to the namespace's jobs-artifacts
@@ -441,22 +448,34 @@ class Broker:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / f"{role}.py"
             path.write_text(script)
-            info = self._api.run_uv_job(
-                script=str(path),
-                dependencies=dependencies,
-                env=env or {},
-                secrets={},
-                flavor=flavor,
-                timeout=f"{timeout_minutes}m",
-                labels={
-                    "openenv-env": "posttrain_env",
-                    "openenv-episode": self.episode_id,
-                    "openenv-role": role,
-                },
-                volumes=volumes,
-                namespace=self.namespace,
-                resource_group_id=self.resource_group_id,
-            )
+            request = uuid4().hex
+            try:
+                info = self._api.run_uv_job(
+                    script=str(path),
+                    dependencies=dependencies,
+                    env=env or {},
+                    secrets=secrets or {},
+                    flavor=flavor,
+                    timeout=f"{timeout_minutes}m",
+                    labels={
+                        "openenv-env": "posttrain_env",
+                        "openenv-episode": self.episode_id,
+                        "openenv-role": role,
+                        "openenv-request": request,
+                    },
+                    volumes=volumes,
+                    namespace=self.namespace,
+                    resource_group_id=self.resource_group_id,
+                )
+            except Exception:
+                # The job can exist although the call failed, e.g. on a read
+                # timeout. Track it rather than leave it running unbudgeted.
+                found = self._api.list_jobs(
+                    labels={"openenv-request": request}, namespace=self.namespace
+                )
+                info = next(iter(found), None)
+                if info is None:
+                    raise
         artifacts = [
             v
             for v in info.volumes or []
@@ -525,11 +544,7 @@ class Broker:
             except (ValueError, KeyError, TypeError):
                 score = -1.0
             if not 0.0 <= score <= 1.0:
-                return {
-                    "status": "invalid",
-                    "score": 0.0,
-                    "feedback": "malformed score",
-                }
+                return {"status": "error", "score": 0.0, "feedback": "malformed score"}
             metrics = result.get("metrics")
             return {
                 "status": str(result.get("status", "ok")),
@@ -542,7 +557,7 @@ class Broker:
         if job.result_reads < MAX_RESULT_READS:
             return None
         return {
-            "status": "invalid",
+            "status": "error",
             "score": 0.0,
             "feedback": "evaluator printed no score",
         }
@@ -579,7 +594,8 @@ class Broker:
         for job in live:
             if job.state == "orphaned":
                 job.state, job.settled = "cancelling", False
-            with suppress(HfHubHTTPError):
+            # Best effort: the Hub client's network errors vary by version.
+            with suppress(Exception):
                 self.cancel(job, reason)
         deadline = time.monotonic() + timeout_s
         while (
@@ -588,7 +604,7 @@ class Broker:
         ):
             time.sleep(poll_s)
             for job in live:
-                with suppress(HfHubHTTPError):
+                with suppress(Exception):
                     self.refresh(job)
         orphaned = []
         for job in live:

@@ -15,7 +15,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "uvicorn>=0.24.0",
     # Jobs, job artifact buckets and volume mounts.
-    "huggingface_hub>=1.29.0",
+    "huggingface_hub>=2.3.0",
     # Checks the requirements agents pass to their jobs.
     "packaging>=23.0",
 ]

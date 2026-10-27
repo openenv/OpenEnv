@@ -2,18 +2,19 @@
 
 """Run the agent's script in its HF Job without network access.
 
-The broker sends this file as the job's script, with the agent's script
-embedded below and the agent's dependencies in its PEP 723 header. uv installs
-them, wheels only, before any of the agent's code exists on disk. Then, still
-as root, the launcher:
+The broker sends this file as the job's script, with the agent's script and
+requirements embedded below. As root, the launcher:
 
-1. lets an unprivileged user read the installed environment and gives it
-   `/data/outputs`;
-2. installs a seccomp filter that refuses every socket except `AF_UNIX`, and
+1. installs the requirements into a fresh venv, from wheels only. Installing a
+   wheel runs none of its code; its `.pth` files and modules first run when the
+   agent's script starts, under the filter;
+2. gives an unprivileged uid `/data/outputs`;
+3. installs a seccomp filter that refuses every socket except `AF_UNIX`, and
    io_uring, which can open sockets without calling `socket()`, and the calls
    that read or write another process's memory;
-3. drops to uid 65534 and runs the agent's script. As root the script could
-   still write the unfiltered uv parent's `/proc/<pid>/mem`.
+4. closes inherited file descriptors, drops to that uid and runs the agent's
+   script. As root the script could still write the unfiltered uv parent's
+   `/proc/<pid>/mem`.
 
 HF Jobs containers have no `CAP_NET_ADMIN` and cannot create namespaces, but
 any process may filter its own system calls; systemd's
@@ -32,8 +33,11 @@ import sys
 from pathlib import Path
 
 AGENT_SCRIPT = ""  # base64, filled in by the broker
-NOBODY = 65534
+REQUIREMENTS: list[str] = []  # filled in by the broker
+# Used by no other process in the job, so the script can't reach an unfiltered one.
+AGENT_UID = 10000
 WORKDIR = Path("/tmp/posttrain")
+VENV = WORKDIR / "venv"
 OUTPUTS = Path("/data/outputs")
 SCMP_ACT_ALLOW = 0x7FFF0000
 SCMP_ACT_EACCES = 0x00050000 | errno.EACCES
@@ -60,18 +64,14 @@ class ArgCmp(ctypes.Structure):
     ]
 
 
-def open_environment() -> None:
-    """Let uid 65534 read the interpreter and packages uv installed under the home directory."""
-    home = Path.home()
-    paths = {Path(p).resolve() for p in (*sys.path, sys.prefix) if p}
-    paths.add(Path(sys.executable).resolve().parent)
-    for path in paths:
-        if not path.is_dir() or not path.is_relative_to(home):
-            continue
-        subprocess.run(["chmod", "-R", "o+rX", str(path)], check=True)
-        for parent in path.parents:
-            if parent.is_relative_to(home):
-                parent.chmod(parent.stat().st_mode | 0o001)
+def install_requirements() -> None:
+    """Install `REQUIREMENTS` from PyPI wheels into `VENV`, without running their code."""
+    uv = ["uv", "--no-config", "--quiet"]
+    subprocess.run([*uv, "venv", "--python", sys.executable, str(VENV)], check=True)
+    if REQUIREMENTS:
+        python = str(VENV / "bin" / "python")
+        install = [*uv, "pip", "install", "--python", python, "--no-build"]
+        subprocess.run([*install, *REQUIREMENTS], check=True)
 
 
 def install_filter() -> None:
@@ -115,23 +115,23 @@ def main() -> None:
         WORKDIR.mkdir(mode=0o755, exist_ok=True)
         script = WORKDIR / "job.py"
         script.write_bytes(base64.b64decode(AGENT_SCRIPT))
+        install_requirements()
         home = WORKDIR / "home"
         home.mkdir(exist_ok=True)
         OUTPUTS.mkdir(parents=True, exist_ok=True)
         for path in (home, OUTPUTS):
-            os.chown(path, NOBODY, NOBODY)
-        open_environment()
+            os.chown(path, AGENT_UID, AGENT_UID)
         install_filter()
+        os.closerange(3, os.sysconf("SC_OPEN_MAX"))
         os.setgroups([])
-        os.setgid(NOBODY)
-        os.setuid(NOBODY)
+        os.setgid(AGENT_UID)
+        os.setuid(AGENT_UID)
     except Exception as e:
-        sys.exit(
-            f"posttrain launcher: {type(e).__name__}: {e}. The script did not run."
-        )
+        sys.exit(f"posttrain launcher failed, the script did not run: {e!r}")
     os.chdir(home)
     env = {**os.environ, "HOME": str(home), "HF_HUB_OFFLINE": "1"}
-    os.execve(sys.executable, [sys.executable, str(script)], env)
+    python = str(VENV / "bin" / "python")
+    os.execve(python, [python, str(script)], env)
 
 
 if __name__ == "__main__":

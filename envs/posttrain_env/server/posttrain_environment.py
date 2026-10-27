@@ -461,21 +461,22 @@ class PostTrainEnvironment(MCPEnvironment):
     def _evaluate(self, job_id: str, role: str):
         task = self._task
         source = self._broker.refresh(self._broker.get(job_id))
-        split, seed = (
-            ("dev", task.dev_seed) if role == "dev_eval" else ("test", TEST_SEED)
-        )
+        env = {"POSTTRAIN_EXPECTED": self._nonce, "HF_HUB_OFFLINE": "1"}
+        # The hidden seed goes as a secret, so it doesn't show in the job's spec.
+        if role == "dev_eval":
+            env |= {"POSTTRAIN_SPLIT": "dev", "POSTTRAIN_SEED": str(task.dev_seed)}
+            secrets = {}
+        else:
+            env |= {"POSTTRAIN_SPLIT": "test"}
+            secrets = {"POSTTRAIN_SEED": str(TEST_SEED)}
         return self._broker.evaluate(
             source,
             role=role,
             script_path=task.eval_script_path,
             flavor=task.eval_flavor,
             timeout_minutes=task.eval_timeout_minutes,
-            env={
-                "POSTTRAIN_SPLIT": split,
-                "POSTTRAIN_SEED": str(seed),
-                "POSTTRAIN_EXPECTED": self._nonce,
-                "HF_HUB_OFFLINE": "1",
-            },
+            env=env,
+            secrets=secrets,
             volumes=task.volumes(),
         )
 
@@ -498,9 +499,13 @@ class PostTrainEnvironment(MCPEnvironment):
             "submitted", self._cancel_timeout_s, self._poll_s
         )
         self._done = True
-        # A score job that did not run to the end is the grader's fault, not the
-        # agent's: the episode ends unscored, and a missing reward is not zero.
-        scored = score_job.state == "succeeded"
+        # A score job that did not run to the end, or printed no valid score, is
+        # the grader's fault, not the agent's: the episode ends unscored, and a
+        # missing reward is not zero.
+        scored = score_job.state == "succeeded" and result["status"] not in (
+            "error",
+            "timeout",
+        )
         self._reward = result["score"] if scored else None
         self._end = {
             "reason": "submitted" if scored else "score_failed",
