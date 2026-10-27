@@ -2143,6 +2143,12 @@ all schema information needed to interact with the environment.
                             await websocket.send_text(response.model_dump_json())
 
                         except ValidationError as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": "Invalid message",
@@ -2152,6 +2158,12 @@ all schema information needed to interact with the environment.
                             )
                             await websocket.send_text(error_resp.model_dump_json())
                         except Exception as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": str(e),
