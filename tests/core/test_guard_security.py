@@ -230,6 +230,20 @@ def test_websocket_refused_while_redis_unreachable(monkeypatch):
         assert client.get("/health").status_code == 503
 
 
+def test_passive_mode_admits_while_redis_unreachable(monkeypatch, caplog):
+    ip = _unique_ip()
+    app = _make_app(
+        monkeypatch,
+        OPENENV_GUARD_ENABLED="1",
+        OPENENV_GUARD_PASSIVE_MODE="1",
+        OPENENV_GUARD_REDIS_URL="redis://127.0.0.1:1",
+    )
+    assert _ws_reset(app, ip) == "observation"
+    assert "would be refused" in caplog.text
+    with TestClient(app, client=(ip, 50000)) as client:
+        assert client.get("/health").status_code == 200
+
+
 async def test_full_bundle_mapping(monkeypatch):
     for name in list(os.environ):
         if name.startswith("OPENENV_GUARD_"):
@@ -244,6 +258,7 @@ async def test_full_bundle_mapping(monkeypatch):
     monkeypatch.setenv("OPENENV_GUARD_LOG_FILE", "guard.log")
     config = _build_security_config()
     assert config.passive_mode is True
+    assert config.redis_fail_open is True
     assert config.enforce_https is True
     assert config.security_headers["enabled"] is True
     assert config.blocked_countries == frozenset({"RU"})

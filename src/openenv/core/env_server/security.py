@@ -20,10 +20,13 @@ checks on the handshake: ban, IP lists, a separate rate-limit bucket and
 penetration detection on the path, query and headers. A refused handshake is
 closed before `accept()`, so the client gets HTTP 403 on the upgrade and no
 socket. Messages on an accepted connection are not screened, for the same
-reason request bodies are not by default. In passive mode a handshake that
-would be refused is logged and accepted. With Redis configured, the guard
+reason request bodies are not by default. With Redis configured, the guard
 initializes at startup; while Redis is unreachable a handshake is closed with
-1013, as an HTTP request gets 503.
+1013 and HTTP requests are refused.
+
+In passive mode a request or handshake that would be refused is logged and let
+through, and so is one that arrives while Redis is unreachable (fastapi-guard's
+`redis_fail_open`), at startup or later.
 """
 
 from __future__ import annotations
@@ -71,6 +74,7 @@ def _env_bool(name: str, *, default: bool = False) -> bool:
 def _build_security_config() -> Any:
     from guard import SecurityConfig
 
+    passive_mode = _env_bool("OPENENV_GUARD_PASSIVE_MODE")
     kwargs: dict[str, Any] = {
         "enable_rate_limiting": True,
         "rate_limit": int(os.environ.get("OPENENV_GUARD_RATE_LIMIT", "100")),
@@ -108,7 +112,9 @@ def _build_security_config() -> Any:
         "exclude_paths": _env_list(
             "OPENENV_GUARD_EXCLUDED_PATHS", DEFAULT_EXCLUDED_PATHS
         ),
-        "passive_mode": _env_bool("OPENENV_GUARD_PASSIVE_MODE"),
+        "passive_mode": passive_mode,
+        # Passive mode lets requests through during a Redis outage too.
+        "redis_fail_open": passive_mode,
         "custom_log_file": os.environ.get("OPENENV_GUARD_LOG_FILE") or None,
         "log_format": os.environ.get("OPENENV_GUARD_LOG_FORMAT", "text"),
         "security_headers": (
@@ -178,14 +184,13 @@ class _WebSocketGuardMiddleware:
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "websocket":
             websocket = WebSocket(scope, receive, send)
-            if not await self._redis_ready(scope["app"]):
-                # The HTTP side answers 503 until Redis is reachable.
-                await websocket.close(
-                    code=status.WS_1013_TRY_AGAIN_LATER,
-                    reason="Service temporarily unavailable",
-                )
-                return
             try:
+                if not await self._redis_ready(scope["app"]):
+                    # The HTTP side refuses too until Redis is reachable.
+                    raise WebSocketException(
+                        code=status.WS_1013_TRY_AGAIN_LATER,
+                        reason="Service temporarily unavailable",
+                    )
                 await self.guard_websocket(websocket)
             except WebSocketException as exc:
                 if not self.config.passive_mode:
