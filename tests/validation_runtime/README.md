@@ -55,8 +55,8 @@ telemetry, container identity and cleanup outcome. A process-only provider expli
 skips fresh-container determinism. Subject-emitted records are compared with the
 independently collected wire trace.
 
-The Docker suite contains 33 required cases: three provider lifecycle tests,
-five network-policy tests, 24 CLI fault/control cases, and one real `echo_env`
+The Docker suite contains 34 required cases: three provider lifecycle tests,
+six network-policy tests, 24 CLI fault/control cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
 validator-owned sink and verify the isolated namespace and helper. The slow-step
 case completes a tool call taking more than five seconds within the declared
