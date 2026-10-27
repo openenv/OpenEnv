@@ -92,6 +92,8 @@ Units are `usd`, `gpu_s`, `cpu_s`, `tokens`, `calls` and `jobs`, in base units. 
 
 **Jobs.** Tools return a handle. States are `queued → running → succeeded | failed | cancelled`, plus `cancelling` while a cancel is pending and `orphaned` when the provider does not confirm one in time. An orphaned job is settled at its full reservation, keeps `final: false` and blocks the next `reset` with an error, because it may still be running and billing. `reset`, `close`, `submit`, the step limit and the time limit cancel the episode's live jobs. Submissions take an idempotency key; a retry with the same key returns the same job and makes no second reservation.
 
+**Network.** Agent jobs run without network access. A job that can reach the internet can download a model already trained for the task, or the evaluation's own test data; [PostTrainBench](https://arxiv.org/abs/2603.08640) reports both. Inputs come as read-only mounts instead: the task's base model at a pinned revision, and the public, ungated Hub datasets the agent names, at their current revision, minus a per-task denylist. Packages are installed before the agent's code runs, from wheels only, so no package code runs while the job still has network access. HF Jobs has no egress control, and its containers can't create network namespaces or firewall rules (we checked on `cpu-basic` and `a10g-small`). So `posttrain_env` runs the agent's script inside a launcher that installs a seccomp filter refusing every socket except `AF_UNIX`, and io_uring and cross-process memory access, then drops to an unprivileged uid; systemd's `RestrictAddressFamilies=` works the same way. On hosts the operator controls, openenvd's `openshell` backend (RFC 009) gives the same `egress_control` guarantee with a network namespace. A denylist only catches the known copies of a test set, so tasks whose test data is public also need a contamination check after the run.
+
 **Evaluator.** Two endpoints. `dev_evaluate` runs on the public dev split, is rate-limited and charged to the agent, and returns at most five metrics and short feedback. `score` runs on the hidden split as a grader-only job and is the reward. Both run the environment's evaluator script as their own job, with the artifact under test mounted read-only. The evaluator prints one `POSTTRAIN_SCORE {"score": ...}` line; anything else, including a score outside [0, 1], counts as `invalid` with score 0. The evaluator takes only data from the artifact, never code or anything that shapes the evaluator's own input: `t0_arithmetic_format` loads safetensors weights into the base model's config, with the base tokenizer and chat template at a pinned revision, since a chat template could compute the answer into the prompt. Its dependencies are pinned too, so scores don't change with a new release, and as a CPU job it installs CPU-only torch. A score job that fails, times out or is cancelled ends the episode unscored (`reward` is `None`, `episode_end.reason` is `score_failed`): the fault is the grader's, and RFC 013 treats a missing reward as missing, not zero.
 
 **Artifacts.** An artifact is the output folder of a succeeded job, exposed as `openenv-artifact://<episode>/<job>/outputs` with each file's path, size and content hash. Graders mount the folder read-only; nothing is copied through the agent.
@@ -131,6 +133,7 @@ Units are `usd`, `gpu_s`, `cpu_s`, `tokens`, `calls` and `jobs`, in base units. 
 ### Not allowed
 
 - Raw provider keys in the agent sandbox or in agent jobs.
+- Network access from agent jobs.
 - Grading in the agent's sandbox or jobs.
 - Reward writes the agent can reach.
 - Passing the broker's token into jobs.
@@ -165,18 +168,25 @@ The final observation carries `reward`, `metadata["service_spend"]` and `metadat
 
 ## Prototype results
 
-`envs/posttrain_env` runs this design on HF Jobs. Its unit tests replace HF Jobs with an in-memory fake, with no network access. Two live runs on 2026-10-16:
+`envs/posttrain_env` runs this design on HF Jobs. Its unit tests replace HF Jobs with an in-memory fake, with no network access. Live runs:
 
-| Task | Agent job | Dev eval | Hidden-split reward | Rollout spend |
-|---|---|---|---|---|
-| `t0_artifact` | `cpu-basic`, 4 s | 1.0 | 1.0 | $0.000334 |
-| `t0_arithmetic_format` | SFT of SmolLM2-135M-Instruct, `t4-small`, 333 s | 0.94 | 0.95 | $0.041 (`gpu_s` 333) |
+| Date | Task | Driver | Agent jobs' network | Dev eval | Reward | Rollout spend |
+|---|---|---|---|---|---|---|
+| 2026-10-16 | `t0_artifact` | script | open | 1.0 | 1.0 | $0.000334 |
+| 2026-10-16 | `t0_arithmetic_format` | script: SFT on `t4-small`, 333 s | open | 0.94 | 0.95 | $0.041 (`gpu_s` 333) |
+| 2026-10-26 | `t0_arithmetic_format` | Qwen3.8 through HF Inference Providers, 25 and 29 turns | open | 1.0 | 1.0, 1.0 | $0.21, $0.34 |
+| 2026-10-27 | `t0_artifact` | script | none | | 1.0 | $0.000167 |
+| 2026-10-27 | `t0_arithmetic_format` | script: SFT on `t4-small`, 333 s | none | 0.94 | 0.93 | $0.041 (`gpu_s` 333) |
 
-Both runs ended with no orphaned jobs and `final: true`. The score jobs were not charged to the agent. A run with a `job.write`-only broker token was refused with HTTP 403 when the script upload reached the `jobs-artifacts` bucket (D1).
+Spend is the agent's HF Jobs spend; LLM tokens are not included. Every run ended with no orphaned jobs and `final: true`, and score jobs were not charged to the agent. A run with a `job.write`-only broker token was refused with HTTP 403 when the script upload reached the `jobs-artifacts` bucket (D1).
+
+- **No network.** In the 27 Oct runs the agent's script could not open a socket and ran as uid 65534. CUDA training, DataLoader workers and writing `/data/outputs/` worked as before. Loading the base model from its mount instead of the Hub also cut the score job from about 20 minutes to 140 s.
+- **T0 measures plumbing, not training skill.** Qwen3.8 trained on all 10,000 `(a, b)` pairs, so a hidden split of an input space that small hides nothing. Real tasks need inputs that cannot be enumerated, or test data the agent cannot reach.
+- **A failed score job is not a zero.** One Qwen3.8 run scored 1.0 on dev, and its score job printed 1.0 and then hit its timeout; the episode got reward 0. Such episodes now end unscored (`score_failed`), and the evaluator installs CPU-only torch.
 
 ## Plan
 
-1. **This PR**: the RFC and `envs/posttrain_env`, with no core changes. Two T0 tasks: `t0_artifact` checks the plumbing for a fraction of a cent; `t0_arithmetic_format` is a real SFT task with a hidden test split.
+1. **This PR**: the RFC and `envs/posttrain_env`, with no core changes and no network in agent jobs. Two T0 tasks: `t0_artifact` checks the plumbing for a fraction of a cent; `t0_arithmetic_format` is a real SFT task with a hidden test split.
 2. **Core types**: manifest, ledger, job and artifact models outside `server/`; the reserved-name prefix rule for `jobs_`; cleanup that surfaces cancel failures (`_cleanup_session_resources` swallows errors today) and the idle reaper on when services are declared.
 3. **openenvd integration** (RFC 009): credential custody, token exchange, the grader zone, and MCP Tasks after the RFC 003 amendment.
 
