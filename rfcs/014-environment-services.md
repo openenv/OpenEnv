@@ -37,22 +37,23 @@ Environments answer five questions ad hoc:
 
 - Hosting services. Brokers wrap existing ones (HF Jobs first).
 - Profiles beyond batch job and evaluator in v1 (see [Future Work](#future-work)).
-- Changing `/mcp` in this RFC. The move to MCP 2026-07-28 is a later RFC 003 amendment (decision 4).
+- Changing `/mcp` or the core types in this RFC.
 
 ## Design
 
 ### Architecture Overview
 
 ```
-agent sandbox ──MCP tools──▶ environment / openenvd (per env)
- (no credentials)               ledger · artifacts · audit · token exchange
-                                     │ broker credential, audience-bound
-                                     ▼
-                          shared brokers: jobs (HF Jobs) · eval
-grader ◀── artifact handles + score jobs ──┘
+agent ──MCP tools──▶ environment server = broker (holds the HF token)
+ (no credentials)       ledger · job handles · artifacts
+                              │ run_uv_job, no secrets
+                              ▼
+                        HF Jobs: agent jobs (no network) · dev_evaluate · score
+                              │
+               score job ◀────┘ artifact mounted read-only; its score is the reward
 ```
 
-Without openenvd (RFC 009), the environment server is the broker, as in `posttrain_env`. With openenvd, the daemon holds the broker credential as a backend credential and the environment only sees run tokens.
+In v1 the environment server is the broker, as in `posttrain_env`. Moving the credential to openenvd (RFC 009) is later work.
 
 ### Core Abstractions
 
@@ -73,11 +74,11 @@ budget: {usd: 3.0, scope: rollout}
 | Profile | Examples | Adds to the contract |
 |---|---|---|
 | batch job | HF Jobs; later Modal, Slurm, render farms | job handle, worst-case reservation, cancel, orphans |
-| evaluator | held-out model eval, kernel timing | `dev_evaluate` vs `score`, exclusive hardware, cache |
+| evaluator | held-out model eval, kernel timing | `dev_evaluate` vs `score`; exclusive hardware and caching for timing (not in the prototype) |
 
-**Budget ledger.** Money is integer micro-USD. Before a job starts the broker reserves its worst case, the flavor's per-minute price times the job's timeout, and refuses the job with a typed `budget_exhausted` error if it does not fit. When the job ends the reservation is replaced by the real cost, the per-minute price times the minutes the job ran, rounded up to whole minutes as HF Jobs bills. Budgets are per rollout and set by the orchestrator, so every rollout in a GRPO group faces the same limit. The agent sees its remaining budget as data, never as reward. The ledger is the broker's estimate; the provider's bill is authoritative, and a provider-side cap is the backstop (see Credentials).
+**Budget ledger.** Money is integer micro-USD. Before a job starts the broker reserves its worst case, the flavor's per-minute price times the job's timeout, and refuses the job with a typed `budget_exhausted` error if it does not fit. When the job ends the reservation is replaced by the real cost, the per-minute price times the minutes the job ran, rounded up to whole minutes as HF Jobs bills. Budgets are per rollout and set by the orchestrator, so every rollout in a GRPO group faces the same limit. The agent sees its remaining budget as data, never as reward. The ledger is the broker's estimate; the provider's bill is authoritative, and a provider-side cap is the backstop (D1).
 
-Every observation carries a stable spend entry. It is for accounting and for planning budgets and concurrency, never a sampling weight: dividing a task's sampling weight by its cost would starve expensive, hard tasks. RFC 013's sampler never reads the environment; the trainer reads this entry from the final observation and can report one value per rollout as `costs` to `update(task, rewards, costs)`.
+Every observation carries a stable spend entry. It is for accounting, and for budgets, concurrency and rollout allocation, never a sampling weight: dividing a task's sampling weight by its cost would starve expensive, hard tasks. RFC 013's sampler never reads the environment; the trainer reads this entry from the final observation and can report one value per rollout as `costs` to `update(task, rewards, costs)`. RFC 013 takes costs for every group or for none, so an episode that ends unscored still reports its spend.
 
 ```python
 obs.metadata["service_spend"] = {
@@ -88,13 +89,13 @@ obs.metadata["service_spend"] = {
 }
 ```
 
-Units are `usd`, `gpu_s`, `cpu_s`, `tokens`, `calls` and `jobs`, in base units. `jobs` counts agent jobs and `calls` counts dev evaluations. Grader evaluations are not charged to the agent.
+v1 reports `usd`, `gpu_s`, `jobs` and `calls`. `jobs` counts agent jobs and `calls` counts dev evaluations. Grader evaluations are not charged to the agent.
 
 **Jobs.** Tools return a handle. States are `queued → running → succeeded | failed | cancelled`, plus `cancelling` while a cancel is pending and `orphaned` when the provider does not confirm one in time. An orphaned job is settled at its full reservation, keeps `final: false` and blocks the next `reset` with an error, because it may still be running and billing. `reset`, `close`, `submit`, the step limit and the time limit cancel the episode's live jobs. Submissions take an idempotency key; a retry with the same key returns the same job and makes no second reservation.
 
-**Network.** Agent jobs run without network access. A job that can reach the internet can download a model already trained for the task, or the evaluation's own test data; [PostTrainBench](https://arxiv.org/abs/2603.08640) reports both. Inputs come as read-only mounts instead: the task's base model at a pinned revision, and the public, ungated Hub datasets the agent names, at their current revision, minus a per-task denylist. Packages are installed into a fresh venv before the agent's code runs, from wheels only; installing a wheel runs none of its code, so no package code runs while the job still has network access. HF Jobs has no egress control, and its containers can't create network namespaces or firewall rules (we checked on `cpu-basic` and `a10g-small`). So `posttrain_env` runs the agent's script inside a launcher that installs a seccomp filter refusing every socket except `AF_UNIX`, and io_uring and cross-process memory access, then closes inherited file descriptors and drops to a uid no other process in the job uses; systemd's `RestrictAddressFamilies=` works the same way. On hosts the operator controls, openenvd's `openshell` backend (RFC 009) gives the same `egress_control` guarantee with a network namespace. This narrows what a job can fetch to declared, recorded inputs, but it doesn't make them clean: a public dataset or a PyPI wheel can still hold weights or test data, and a denylist only catches known copies. Tasks whose test data is public also need a contamination check after the run.
+**Network.** Agent jobs run without network access. A job that can reach the internet can download a model already trained for the task, or the evaluation's own test data; [PostTrainBench](https://arxiv.org/abs/2603.08640) reports both. Inputs come as read-only mounts instead: the task's base model at a pinned revision, and the public, ungated Hub datasets the agent names, at their current revision, minus a per-task denylist. Packages are installed into a fresh venv from wheels only, which runs none of their code, before the agent's code runs. HF Jobs has no egress control, and its containers can't create network namespaces or firewall rules (checked on `cpu-basic` and `a10g-small`). So `posttrain_env` runs the agent's script inside a launcher that installs a seccomp filter refusing every socket except `AF_UNIX`, and io_uring and cross-process memory access, then closes inherited file descriptors and drops to a uid no other process in the job uses; systemd's `RestrictAddressFamilies=` works the same way. This limits a job to declared, recorded inputs, but doesn't make them clean: a public dataset or a PyPI wheel can still hold weights or test data. Tasks whose test data is public also need a contamination check after the run.
 
-**Evaluator.** Two endpoints. `dev_evaluate` runs on the public dev split, is rate-limited and charged to the agent, and returns at most five metrics and short feedback. `score` runs on the hidden split as a grader-only job and is the reward. Both run the environment's evaluator script as their own job, with the artifact under test mounted read-only. The evaluator prints one `POSTTRAIN_SCORE {"score": ...}` line; anything else, including a score outside [0, 1], counts as `invalid` with score 0. The evaluator takes only data from the artifact, never code or anything that shapes the evaluator's own input: `t0_arithmetic_format` loads safetensors weights into the base model's config, with the base tokenizer and chat template at a pinned revision, since a chat template could compute the answer into the prompt. Its dependencies are pinned too, so scores don't change with a new release, and as a CPU job it installs CPU-only torch. A score job that fails, times out or is cancelled ends the episode unscored (`reward` is `None`, `episode_end.reason` is `score_failed`): the fault is the grader's, and RFC 013 treats a missing reward as missing, not zero.
+**Evaluator.** Two endpoints. `dev_evaluate` runs on the public dev split, is rate-limited and charged to the agent, and returns at most five metrics and short feedback. `score` runs on the hidden split as a grader-only job and is the reward; the hidden split's seed reaches it as a secret. Both run the environment's evaluator script as their own job, with the artifact under test mounted read-only. The evaluator prints one `POSTTRAIN_SCORE {"score": ...}` line; a checkpoint it can't use scores 0 as `invalid`. The evaluator takes only data from the artifact, never code or anything that shapes the evaluator's own input: `t0_arithmetic_format` loads safetensors weights into the base model's config, with the base tokenizer, chat template and generation settings from the base model mount, since a chat template could compute the answer into the prompt. Its dependencies are pinned too, so scores don't change with a new release. A score job that fails, times out, is cancelled or prints no valid score ends the episode unscored (`reward` is `None`, `episode_end.reason` is `score_failed`): the fault is the grader's, and RFC 013's `update` takes `None` for a rollout the environment did not score, which samplers leave out rather than count as zero.
 
 **Artifacts.** An artifact is the output folder of a succeeded job, exposed as `openenv-artifact://<episode>/<job>/outputs` with each file's path, size and content hash. Graders mount the folder read-only; nothing is copied through the agent.
 
@@ -102,16 +103,16 @@ Units are `usd`, `gpu_s`, `cpu_s`, `tokens`, `calls` and `jobs`, in base units. 
 
 #### D1. The broker is the only credential holder
 
-- **Chosen approach**: The broker starts jobs with `HfApi.run_uv_job`, with explicit flavor, namespace, timeout and labels and an empty `secrets` map. It never runs `hf jobs uv run`, whose script header can pull the caller's `HF_TOKEN` into the job and set the namespace; the Python API [ignores that header](https://github.com/huggingface/huggingface_hub/blob/bb2ef7579c3d2dc2eb49b16ccf15a070fe5b7023/src/huggingface_hub/hf_api.py#L12665-L12668).
+- **Chosen approach**: The broker starts jobs with `HfApi.run_uv_job`, with explicit flavor, namespace, timeout and labels. Agent jobs get an empty `secrets` map. It never runs `hf jobs uv run`, whose script header can [request secrets that resolve from the caller's environment](https://github.com/huggingface/huggingface_hub/blob/841c22b46cdc25b55a2bfb1c2ad97f418162c282/src/huggingface_hub/cli/jobs.py#L311-L323), `HF_TOKEN` included, and set the namespace; the Python API [ignores that header](https://github.com/huggingface/huggingface_hub/blob/841c22b46cdc25b55a2bfb1c2ad97f418162c282/src/huggingface_hub/hf_api.py#L12901-L12902).
 - **Rationale**: A fine-grained token with only `job.write` cannot touch repos, but a job holding it can start further jobs that skip the broker's budget checks (verified on HF Jobs). So the token never enters a job.
 - **Broker token**: "Start and manage Jobs" plus write access to the namespace's `jobs-artifacts` bucket. A `job.write`-only token is refused (HTTP 403) when the broker uploads the job script to that bucket.
-- **Backstop**: HF tokens carry no spend cap. Billing broker jobs to a Resource Group with a Jobs spend limit (Enterprise) caps the total; over the limit, HF rejects new jobs and cancels running ones.
+- **Backstop**: A token has no spend limit of its own; spend limits are set on a [Resource Group](https://huggingface.co/docs/hub/en/enterprise-resource-groups) (Enterprise). Billing broker jobs to a group with a Jobs spend limit caps the total; over the limit, HF refuses new jobs and cancels running ones.
 
 #### D2. Artifacts move through the HF Jobs artifacts bucket
 
 - **Chosen approach**: Follow `run_uv_job`'s own convention. It uploads the script to the namespace's private `jobs-artifacts` bucket and mounts that job's folder read-write at `/data`. Jobs write outputs to `/data/outputs/`. Evaluator jobs mount `<folder>/outputs` read-only at `/model`.
 - **Rationale**: No token inside the job, no extra repository, and HF's existing behaviour. Content hashes come from the bucket listing (Xet hashes).
-- **Trade-offs**: Every agent job and evaluation creates a bucket folder; cleanup follows the bucket's retention.
+- **Trade-offs**: Every agent job and evaluation creates a bucket folder; cleanup follows the bucket's retention, and what a job writes there is neither capped nor charged to the budget.
 
 #### D3. Tool names use an underscore prefix
 
@@ -127,8 +128,6 @@ Units are `usd`, `gpu_s`, `cpu_s`, `tokens`, `calls` and `jobs`, in base units. 
 
 1. **Long-running services and GRPO.** A service runs live at train time only if it finishes within the trainer's staleness window; for example, TRL's experimental `AsyncGRPOTrainer` drops samples more than [`max_staleness`](https://github.com/huggingface/trl/blob/0dcd18c48bf7e63b49a23da0cb030b0a93a2f39f/trl/experimental/async_grpo/async_grpo_config.py#L126-L128) weight updates old (default 4). Slower services declare a stand-in and the real service runs only at eval. Post-training tasks are multi-hour episodes, so their near-term use is evaluation.
 2. **HF Spaces.** No services on Spaces for now. A Space gives no isolation guarantee, so it must not hold a broker credential.
-3. **Shared brokers are operator-run services outside the environment**, with the standing of RFC 009's backend gateways. The orchestrator's run config lists each broker's URL and expected TLS identity; that registration is the trust anchor. The daemon exchanges its broker credential for per-rollout tokens bound to one broker ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693), [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)); brokers are MCP resource servers ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728)) that enforce a hard cap per token. This follows RSIGym, LiteLLM virtual keys and OpenMLE Sandbox.
-4. **Transport targets MCP 2026-07-28**, which [removes protocol sessions](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/86f6e0c675afea9a8f233e09b6faf566b126086c/docs/specification/2026-07-28/changelog.mdx) in favour of server-minted handles passed as arguments ([SEP-2567](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2567)). That matches `openenv/session/create` and the job handles above. The upgrade adds `server/discover`, per-request protocol versions, `resultType`, the `Mcp-Method`/`Mcp-Name` headers and cacheable `tools/list`, and enables the [Tasks extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2663). It comes later as a backward-compatible RFC 003 amendment; v1 jobs do not need it.
 
 ### Not allowed
 
@@ -137,7 +136,6 @@ Units are `usd`, `gpu_s`, `cpu_s`, `tokens`, `calls` and `jobs`, in base units. 
 - Grading in the agent's sandbox or jobs.
 - Reward writes the agent can reach.
 - Passing the broker's token into jobs.
-- Judges reading unescaped trajectories.
 - Building on MCP sampling or payment protocols; MCP has no official cost or payment extension.
 
 ## Examples
@@ -187,9 +185,9 @@ Spend is the agent's HF Jobs spend; LLM tokens are not included. Every run ended
 
 ## Plan
 
-1. **This PR**: the RFC and `envs/posttrain_env`, with no core changes and no network in agent jobs. Two T0 tasks: `t0_artifact` checks the plumbing for a fraction of a cent; `t0_arithmetic_format` is a real SFT task with a hidden test split.
+1. **This PR**: the RFC and `envs/posttrain_env`, with no core changes and no network in agent jobs. Two T0 tasks that check the plumbing: `t0_artifact` for a fraction of a cent, and `t0_arithmetic_format`, a small SFT task with a hidden test split.
 2. **Core types**: manifest, ledger, job and artifact models outside `server/`; the reserved-name prefix rule for `jobs_`; cleanup that surfaces cancel failures (`_cleanup_session_resources` swallows errors today) and the idle reaper on when services are declared.
-3. **openenvd integration** (RFC 009): credential custody, token exchange, the grader zone, and MCP Tasks after the RFC 003 amendment.
+3. **openenvd integration** (RFC 009): credential custody and the grader zone.
 
 ## Future Work
 
@@ -208,11 +206,11 @@ Profiles added when an environment needs one:
 | artifact registry | HF Hub push | write-scoped credentials, provenance |
 | peer agent | A2A | budget passed down to the peer (#779) |
 
-Also: audit records keyed to `(episode, step, tool_call_id)` as OpenTelemetry GenAI/MCP spans, signed checkpoints (OpenSSF model signing), and exclusive-hardware leases for timing evaluators.
+Also: shared brokers outside the environment with per-rollout tokens ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) token exchange), the MCP 2026-07-28 transport through an RFC 003 amendment, audit records keyed to `(episode, step, tool_call_id)` as OpenTelemetry GenAI/MCP spans, signed checkpoints (OpenSSF model signing), and exclusive-hardware leases for timing evaluators.
 
 ## Related
 
 - RFC 009 openenvd (#1053, #1354, #1355): the base for credential custody and the grader zone.
-- RFC 013 task sampling (#1256): reports `service_spend` as cost, not as a sampling weight.
-- RFC 003: the MCP 2026-07-28 amendment. RFC 004: `score` feeds rubrics. RFC 005/006: LLM proxying is the future model-call profile. RFC 008: contract checks for declared services, plus #1357's adversarial panel. RFC 012: separate-verifier precedent.
+- RFC 013 task sampling (#1256): `service_spend` is one source of the trainer's `costs`, never a sampling weight; an unscored episode's `None` reward is left out of the sampler's estimates.
+- RFC 004: `score` feeds rubrics. RFC 005/006: LLM proxying is the future model-call profile. RFC 008: contract checks for declared services, plus #1357's adversarial panel. RFC 012: separate-verifier precedent.
 - Issues: #898, #1026, #1232, #1299, #1357, #779.
