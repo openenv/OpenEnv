@@ -194,6 +194,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Fraud Triage</div>
+      <p class="text-sm">Sequential risk decisions on synthetic transactions, with asymmetric rewards for catching fraud and avoiding false positives.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/fraud_triage" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">Grid World</div>
       <p class="text-sm">Simple 5×5 grid world RL testbed and step-by-step guide for building new OpenEnv environments from scratch.</p>
       <div class="flex gap-2 mt-3">
