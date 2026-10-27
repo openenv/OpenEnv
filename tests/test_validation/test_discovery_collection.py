@@ -297,10 +297,11 @@ def test_socket_failure_keeps_discovery_error_and_fails_replay(monkeypatch):
                     "error": {
                         "code": -32603,
                         "message": "Environment does not support MCP",
+                        "data": None,
                     },
                 },
             },
-            "fail",
+            "skip",
         ),
         (
             {
@@ -344,3 +345,74 @@ def test_tool_discovery_distinguishes_unsupported_from_failures(
     if status == "skip":
         assert evidence.tools_error is None
         assert result.evidence == ["unsupported capability: tool_discovery"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "none",
+        "internal",
+        "near_message",
+        "auth",
+        "wrong_code",
+        "string_code",
+        "wrong_id",
+        "boolean_id",
+        "version",
+        "envelope",
+        "result",
+        "error_data",
+    ],
+)
+def test_legacy_non_mcp_reply_is_an_exact_exception(monkeypatch, tmp_path, mutation):
+    from dataclasses import replace
+
+    from openenv.core.env_server.mcp_types import JsonRpcErrorCode, JsonRpcResponse
+    from openenv.validation.graders.runtime.discovery import (
+        ToolDeclarationAccuracyGrader,
+    )
+    from test_runtime_discovery import subject
+
+    # Non-MCP tools/list in 7ab2ceaa^ uses this exact response constructor.
+    rpc = JsonRpcResponse.error_response(
+        JsonRpcErrorCode.INTERNAL_ERROR,
+        "Environment does not support MCP",
+        request_id=1,
+    ).model_dump()
+    reply = {"type": "mcp", "data": rpc}
+    if mutation == "internal":
+        rpc["error"]["message"] = "Internal error"
+    elif mutation == "near_message":
+        rpc["error"]["message"] += " temporarily"
+    elif mutation == "auth":
+        rpc["error"]["message"] = "Unauthorized"
+    elif mutation == "wrong_code":
+        rpc["error"]["code"] = -32000
+    elif mutation == "string_code":
+        rpc["error"]["code"] = "-32603"
+    elif mutation == "wrong_id":
+        rpc["id"] = 2
+    elif mutation == "boolean_id":
+        rpc["id"] = True
+    elif mutation == "version":
+        rpc["jsonrpc"] = "1.0"
+    elif mutation == "envelope":
+        reply["type"] = "error"
+    elif mutation == "result":
+        rpc["result"] = {"tools": []}
+    elif mutation == "error_data":
+        rpc["error"]["data"] = {"reason": "internal failure"}
+    evidence, _ = collect(monkeypatch, DiscoveryConnection(reply), collect_tools=True)
+    measured = subject(tmp_path)
+    measured.manifest.capabilities.declared_tools = []
+    result = ToolDeclarationAccuracyGrader().run(
+        replace(measured, runtime_evidence=evidence)
+    )
+    assert result.status.value == ("skip" if mutation == "none" else "fail")
+    assert evidence.tools_json is None
+    assert evidence.failure_reason is None and len(evidence.exchanges) == 4
+    if mutation == "none":
+        assert evidence.tools_error is None
+        assert result.evidence == ["unsupported capability: tool_discovery"]
+    else:
+        assert evidence.tools_error and evidence.tools_unavailable is None

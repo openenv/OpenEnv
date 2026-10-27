@@ -278,3 +278,55 @@ def test_explicit_unsupported_opening_names_missing_capability(monkeypatch):
         "step",
         "state",
     ]
+
+
+@pytest.mark.parametrize(
+    "grader_name", ["RubricIntrospectableGrader", "RewardAttributionGrader"]
+)
+@pytest.mark.parametrize(
+    "case",
+    ["old_core", "refusal", "internal", "malformed", "rubric_error", "bad_snapshot"],
+)
+def test_legacy_rubric_availability_keeps_errors_distinct(
+    monkeypatch, tmp_path, grader_name, case
+):
+    from dataclasses import replace
+
+    from openenv.validation.graders.runtime import discovery
+    from test_runtime_discovery import subject, telemetry
+
+    options = {}
+    if case in {"old_core", "refusal", "internal"}:
+        code = {
+            "old_core": "UNKNOWN_TYPE",
+            "refusal": "VALIDATION_ERROR",
+            "internal": "INTERNAL_ERROR",
+        }[case]
+        options["opening_reply"] = json.dumps(
+            {
+                "type": "error",
+                "data": {
+                    "code": code,
+                    "message": "Validation unavailable or unauthorized",
+                },
+            }
+        )
+    elif case == "malformed":
+        options["opening_reply"] = "not JSON"
+    elif case == "rubric_error":
+        snapshot = telemetry()
+        # This exact server message is emitted for exceptions, not missing support.
+        snapshot["rubric_error"] = "Rubric introspection unavailable"
+        snapshot["rubric"] = []
+        options["snapshot"] = snapshot
+    else:
+        options["snapshot"] = {"schema_version": 1, "rubric": "unavailable"}
+    evidence = collect(monkeypatch, **options)
+    result = getattr(discovery, grader_name)().run(
+        replace(subject(tmp_path), runtime_evidence=evidence)
+    )
+    assert result.status.value == ("skip" if case == "old_core" else "fail")
+    assert evidence.failure_reason is None and len(evidence.exchanges) == 4
+    if case == "old_core":
+        assert result.evidence == ["unsupported capability: session_telemetry"]
+        assert evidence.telemetry_error is None
