@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-tau2-env"
+version = "0.1.0"
+description = "τ²-bench for OpenEnv: customer-service conversations with an LLM-simulated user, tools, and a policy"
+# τ²-bench requires Python 3.12+.
+requires-python = ">=3.12"
+dependencies = [
+    "openenv>=0.6.0",
+    "fastapi>=0.115.0",
+    "fastmcp>=3.0.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    "loguru>=0.7.0",
+    "markdown-it-py>=3.0.0",
+    # "Sign in with Hugging Face" on a Space (Gradio's OAuth: the `gradio[oauth]` extra's two).
+    "authlib>=1.3",
+    "itsdangerous>=2.1",
+    # τ²-bench is not on PyPI (the `tau2` package there is unrelated), so it is pinned to a commit.
+    "tau2[gym] @ git+https://github.com/sierra-research/tau2-bench@5bfa7e37b36656b37dc6d022156be6563c1007f3",
+    # `import tau2` needs it, but τ²-bench only lists it under its `voice` extra.
+    "websockets>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+server = "tau2_env.server.app:main"
+
+[tool.setuptools]
+packages = ["tau2_env", "tau2_env.server"]
+package-dir = { "tau2_env" = ".", "tau2_env.server" = "server" }
+
+[tool.setuptools.package-data]
+"tau2_env.server" = ["assets/*"]

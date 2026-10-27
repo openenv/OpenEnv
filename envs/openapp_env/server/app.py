@@ -21,26 +21,15 @@ Usage:
     uv run --project . server
 """
 
+from openenv.core.env_server.http_server import create_app
+
 # Support both in-repo and standalone imports
 try:
-    # In-repo imports (when running from OpenEnv repository)
-    from openenv.core.env_server.http_server import create_app
-
     from ..models import OpenAppAction, OpenAppObservation
     from .openapp_environment import OpenAppEnvironment
 except ImportError:
-    try:
-        from openapp_env.models import OpenAppAction, OpenAppObservation
-        from openapp_env.server.openapp_environment import OpenAppEnvironment
-
-        # Standalone imports when openenv is available.
-        from openenv.core.env_server.http_server import create_app
-    except ImportError:
-        from openapp_env.models import OpenAppAction, OpenAppObservation
-        from openapp_env.server.openapp_environment import OpenAppEnvironment
-
-        # Backward-compatible standalone imports when only openenv_core is available.
-        from openenv_core.env_server.http_server import create_app
+    from openapp_env.models import OpenAppAction, OpenAppObservation
+    from openapp_env.server.openapp_environment import OpenAppEnvironment
 
 # Create the app with web interface and README integration
 # Pass the class (factory) instead of an instance for WebSocket session support

@@ -10,6 +10,8 @@ Application entry point for the Grid World Environment.
 This module exposes the GridWorldEnvironment via the OpenEnv WebSocket API.
 """
 
+import os
+
 # Import the correct app creation function from the core library
 try:
     from openenv.core.env_server import create_app
@@ -30,6 +32,7 @@ app = create_app(
     GridWorldAction,
     GridWorldObservation,
     env_name="grid_world_env",
+    max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
 )
 
 

@@ -1,4 +1,4 @@
-# Contributing to Hugging Face
+# Contributing Environments
 
 OpenEnv environments are designed to be shared. The `openenv` CLI provides first-class
 commands for publishing, forking, and contributing to environments hosted as
@@ -30,7 +30,7 @@ The `openenv` CLI will also prompt you to log in automatically if you haven't al
 
 ## 1. Push a New Environment to the Hub
 
-Once you've [built an environment](environment-builder.md), publishing it to a Hugging Face Space is a single command.
+Once you've [built an environment](../guides/first-environment.md), publishing it to a Hugging Face Space is a single command.
 
 ```bash
 # Push the env at '.' to the hub with config in openenv.yaml
@@ -185,7 +185,7 @@ openenv push --repo-id openenv/echo_env --create-pr
 
 ## Next Steps
 
-- [Build your own environment from scratch](environment-builder.md)
+- [Build your own environment from scratch](../guides/first-environment.md)
 - [Customize the web UI](../guides/customizing-web-ui.md)
 - [Browse available environments](../environments.md)
-- [End-to-end tutorial](../tutorials/openenv-tutorial.md)
+- [Hello World](../tutorials/openenv-tutorial.md)

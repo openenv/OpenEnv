@@ -272,6 +272,6 @@ Before shipping a dataset-backed environment:
 ## Related Reading
 
 - [Concepts](concepts.md)
-- [RL Training](rl-integration.md)
+- [Training with OpenEnv](training.md)
 - [Core API](../reference/core.md)
 - [CLI reference](../reference/cli.md)

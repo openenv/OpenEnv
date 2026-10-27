@@ -178,6 +178,37 @@ Before making changes, understand the design constraints:
 - **Rewards inside environment**: Domain knowledge encapsulated in environment, not external
 - **Client-server separation**: Clients never import from `server/` directory
 
+## Simplicity
+
+OpenEnv values **leanness and simplicity**. Prefer straightforward, inline code over abstractions, helpers or utilities, even at the cost of some generality.
+
+- Do not add layers of indirection (registries, factories, plugin systems) unless an RFC asks for them.
+- Prefer a simple implementation that covers the cases that exist today over a catch-all for every edge case.
+- Do not add defensive code, fallback paths or configuration options "just in case".
+- Avoid `hasattr` and `getattr`. They usually hide overly defensive code or a version check. Drop the conditional, or write the version check explicitly.
+- Keep comments short and about the project, not about the PR that added the code.
+- When in doubt, prefer less code.
+
+## Self-contained environments
+
+Each environment under `envs/` is self-contained: it can be read, changed and deployed on its own.
+
+- No imports across environments. Copy a small helper instead of sharing it.
+- Optional features (web playground drawings, quick actions, extra tools) live in the environment's own files. They must never make adding a new environment harder or add work for environments that do not use them.
+- When the same pattern is copied across environments, keep the copies aligned (names, structure, comments). If you fix one copy, fix the others in the same PR, or open an issue listing them.
+
+## Follow the Hugging Face ecosystem
+
+OpenEnv runs on the Hub and next to `huggingface_hub`, the `hf` CLI, transformers and Gradio. When OpenEnv wraps something these tools already do (uploading, deleting, deploying a Space, auth, caching, repo ids), keep their defaults, flag names and semantics. Do not invent new behavior.
+
+- Before adding or changing Hub-facing behavior, check what `huggingface_hub` and the `hf` CLI do and match it. For example, `openenv push` only deletes remote files with `--delete <pattern>`, like `hf upload --delete`.
+- Mention that comparison in the PR description.
+- If diverging seems necessary, raise it in the issue or PR before implementing it.
+
+## Training framework neutrality
+
+OpenEnv works with any training framework. Docs, examples and APIs must not favor one framework: list integrations in neutral order and keep framework-specific code in examples or in the framework's own repository.
+
 ## Docstrings
 
 Docstrings must follow the HF doc-builder format used by the reference API docs. Do **not** use Google, NumPy, or Sphinx styles.

@@ -702,7 +702,7 @@ class EventManager:
 
         from database.models.event import Attachment
 
-        # Vaidate attachment file url
+        # Validate attachment file url
         self._validate_attachment_file_url(attachments_data)
 
         for attachment_data in attachments_data:
@@ -2684,7 +2684,7 @@ class EventManager:
                 elif hasattr(db_event, field) and value is not None and value != {}:
                     # Only set attribute if value is not None and not empty dict to avoid null constraint violations
                     setattr(db_event, field, value)
-            # Incremenet event versioning
+            # Increment event versioning
             try:
                 db_event.sequence += 1
             except:

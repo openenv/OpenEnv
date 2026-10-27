@@ -14,14 +14,8 @@ for training and evaluating UI agents that interact with various apps
 
 from typing import Any, Dict, List, Optional
 
+from openenv.core.env_server.types import Action, Observation
 from pydantic import Field
-
-# Support both in-repo and standalone imports
-try:
-    from openenv_core.env_server.types import Action, Observation
-except ImportError:
-    # Fallback for in-repo layouts that only expose openenv.*
-    from openenv.core.env_server.types import Action, Observation
 
 
 class OpenAppAction(Action):

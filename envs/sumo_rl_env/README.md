@@ -1,3 +1,16 @@
+---
+title: SUMO-RL Environment Server
+emoji: 🚦
+colorFrom: green
+colorTo: red
+sdk: docker
+pinned: false
+app_port: 8000
+base_path: /web
+tags:
+  - openenv
+---
+
 # SUMO-RL Environment
 
 Integration of traffic signal control with the OpenEnv framework via SUMO (Simulation of Urban MObility) and SUMO-RL.

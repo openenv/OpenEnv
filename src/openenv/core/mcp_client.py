@@ -114,6 +114,7 @@ class MCPClientBase(EnvClient[Any, Observation, State]):
         provider: Optional[Any] = None,
         mode: Optional[str] = None,
         max_message_size_mb: float = 100.0,
+        headers: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize MCP client.
@@ -138,6 +139,9 @@ class MCPClientBase(EnvClient[Any, Observation, State]):
                 `MCPClientBase` did not forward it, so no MCP client could raise it — an environment
                 whose tool returns a large result closed the connection with `1009 message too big`
                 and there was no way to ask for more from the client side.
+            headers (`dict[str, str]`, *optional*):
+                Extra HTTP headers sent with every request, e.g.
+                `{"Authorization": f"Bearer {hf_token}"}` for a private Hugging Face Space.
         """
         # MCPClientBase defaults to production mode, but allow override for validation
         if mode is None:
@@ -160,6 +164,7 @@ class MCPClientBase(EnvClient[Any, Observation, State]):
             provider=provider,
             mode=mode,
             max_message_size_mb=max_message_size_mb,
+            headers=headers,
         )
         self._tools_cache: Optional[List[Tool]] = None
         self.use_production_mode = self._mode == "production"
@@ -194,7 +199,7 @@ class MCPClientBase(EnvClient[Any, Observation, State]):
         if self._http_client is None:
             import httpx
 
-            self._http_client = httpx.AsyncClient()
+            self._http_client = httpx.AsyncClient(headers=self._headers)
         return self._http_client
 
     async def _production_mcp_request(

@@ -59,7 +59,7 @@ python free_roam_navigation.py --model gpt-5.2 --run-all
 
 # Use Hugging Face Space
 python free_roam_navigation.py --model gpt-5.2 \
-  --base-url https://sergiopaniego-carla-env-test.hf.space
+  --base-url https://sergiopaniego-carla-env.hf.space
 ```
 
 ### Autopilot Navigation (No LLM)
@@ -79,7 +79,7 @@ python autopilot_navigation.py --scenario free-roam-traffic \
 
 # Use Hugging Face Space
 python autopilot_navigation.py --scenario maze-1 \
-  --base-url https://sergiopaniego-carla-env-test.hf.space
+  --base-url https://sergiopaniego-carla-env.hf.space
 ```
 
 **Behaviors:** `cautious` (slow, safe), `normal` (balanced), `aggressive` (fast, overtakes)

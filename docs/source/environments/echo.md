@@ -3,6 +3,8 @@
 
 A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
 
+Try it on the [`openenv/echo_env`](https://huggingface.co/spaces/openenv/echo_env) Space, or connect a client to `https://openenv-echo-env.hf.space`.
+
 ## Quick Start
 
 The simplest way to use the Echo environment is through the `EchoEnv` class. The client is **async by default**:

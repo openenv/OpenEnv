@@ -68,6 +68,7 @@ def subject(tmp_path, *, snapshot=None, reward=0.75, **fields):
     evidence = SimpleNamespace(
         tools_json=json.dumps({"tools": [{"name": "echo"}]}),
         tools_error=None,
+        tools_unavailable=None,
         tasks_json=json.dumps(
             {
                 "splits": [{"name": "train"}],
@@ -78,6 +79,7 @@ def subject(tmp_path, *, snapshot=None, reward=0.75, **fields):
         tasks_error=None,
         telemetry_json=json.dumps(telemetry() if snapshot is None else snapshot),
         telemetry_error=None,
+        telemetry_unavailable=None,
         failure_reason=None,
         exchanges=(
             exchange(
@@ -519,3 +521,18 @@ def test_undeclared_task_and_rubric_capabilities_do_not_run(tmp_path):
     ):
         assert not grader().applies_to(measured.manifest)
         assert grader().run(measured).status is CheckStatus.SKIP
+
+
+@pytest.mark.parametrize(
+    "grader", [RubricIntrospectableGrader, RewardAttributionGrader]
+)
+def test_unsupported_session_telemetry_is_a_named_skip(tmp_path, grader):
+    result = grader().run(
+        subject(
+            tmp_path,
+            telemetry_json=None,
+            telemetry_unavailable="unsupported capability: session_telemetry",
+        )
+    )
+    assert result.status is CheckStatus.SKIP
+    assert result.evidence == ["unsupported capability: session_telemetry"]

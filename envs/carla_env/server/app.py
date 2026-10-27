@@ -14,7 +14,7 @@ import os
 
 from openenv.core.env_server import create_app
 
-from ..models import CarlaAction, CarlaObservation
+from ..models import CarlaAction, CarlaObservation, CarlaState
 from .carla_environment import CarlaEnvironment
 
 # Configuration from environment variables
@@ -42,6 +42,7 @@ app = create_app(
     CarlaAction,
     CarlaObservation,
     env_name="carla_env",
+    state_cls=CarlaState,
 )
 
 

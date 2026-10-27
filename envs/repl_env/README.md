@@ -13,101 +13,27 @@ tags:
 
 # REPL Environment for OpenEnv
 
-`repl_env` is an OpenEnv-native Python REPL environment for Recursive Language Model style execution. It now follows the current OpenEnv client/server conventions:
-
-- `REPLEnv` is the remote async `EnvClient`
-- `.sync()` is the sync wrapper for remote usage
-- `LocalREPLEnv` is the explicit in-process helper
-- `LocalRLMRunner` is the higher-level orchestration loop for local recursive RLM runs
-
-The architecture is intentionally split the same way the official `rlm` and DSPy implementations split things:
-
-- the environment executes code and exposes tools
-- the runner owns the iterative prompting loop
-- recursive behavior lives in backend/controller modules, not in the executor
-
-## Overview
-
-Inside the REPL, the model can:
+`repl_env` is a Python REPL environment for [Recursive Language Model](https://huggingface.co/papers/2512.24601) (RLM) style execution. The model writes code that runs in a persistent namespace and can:
 
 - inspect `context`
-- execute Python code across multiple turns with persistent state
-- call `llm_query(...)` and `llm_query_batched(...)`
-- call `rlm_query(...)` and `rlm_query_batched(...)` for recursive child runs when configured
+- execute Python across multiple turns with persistent state
+- call `llm_query(...)` and `llm_query_batched(...)` to query a language model
+- call `rlm_query(...)` and `rlm_query_batched(...)` for recursive child runs, when configured
 - finish with `FINAL(...)`, `FINAL_VAR(...)`, or `answer = {"content": ..., "ready": True}`
 
-## Current Architecture
+The package provides:
 
-Main modules:
-
-- [`client.py`](client.py): remote async OpenEnv client
-- [`local.py`](local.py): explicit in-process local env helper
-- [`runner.py`](runner.py): local RLM orchestration loop
-- [`recursive_backends.py`](recursive_backends.py): direct and recursive backend implementations
-- [`recursive_controller.py`](recursive_controller.py): server-side backend/broker composition
-- [`rubrics.py`](rubrics.py): reward rubrics (OpenEnv RFC 004)
-- [`server/repl_environment.py`](server/repl_environment.py): server-side execution environment
-- [`server/app.py`](server/app.py): OpenEnv HTTP server app and env factory
-
-## What Works Today
-
-- Standard remote OpenEnv usage through `REPLEnv`
-- Local in-process execution through `LocalREPLEnv`
-- Local recursive RLM runs through `LocalRLMRunner`
-- Server-backed recursive calls through the current controller/broker path
-- Explicit recursion controls:
-  - `max_depth`
-  - `max_children_total`
-  - `max_children_per_batch`
-  - `per_child_timeout_s`
-  - `result_truncation_limit`
-- Lightweight child trace metadata on local runner results
-- Rubric-based rewards (OpenEnv RFC 004):
-  - `ExactMatchRubric`: binary outcome reward against ground truth
-  - `FuzzyMatchRubric`: partial credit for containment matches
-  - `CustomMetricRubric`: user-provided `metric(expected, predicted) -> float`
-  - `CodeExecutionRubric`: per-step process reward for code errors
-  - `REPLRubric`: composite rubric combining outcome + process
-  - Ground truth injectable at reset via `expected_answer`
-
-## Rewards
-
-Rewards follow the OpenEnv Rubric system (RFC 004). The environment uses
-`REPLRubric` by default, which combines:
-
-- **Outcome reward** (on terminal steps): compares `final_answer` against
-  `expected_answer` if provided. Returns 1.0 for match, 0.0 otherwise.
-- **Process reward** (on non-terminal steps): returns -0.05 for code
-  execution errors, 0.0 for successful steps.
-- **Failure reward**: returns -0.1 when max iterations exhausted without an answer.
-
-For RL training (GRPO, etc.), pass `expected_answer` at reset time:
-
-```python
-with LocalREPLEnv() as env:
-    env.reset(
-        context="...",
-        task_prompt="...",
-        expected_answer="42",  # ground truth for rubric scoring
-    )
-    result = env.execute("print(FINAL(42))")
-    print(result.reward)  # 1.0 (correct)
-```
-
-Custom rubrics can be injected at construction:
-
-```python
-from repl_env import LocalREPLEnv, CustomMetricRubric, REPLRubric
-
-def my_metric(expected, predicted):
-    return 1.0 if expected.strip() == predicted.strip() else 0.0
-
-env = LocalREPLEnv(rubric=REPLRubric(outcome=CustomMetricRubric(my_metric)))
-```
+- `REPLEnv`: the async client for a remote server (`.sync()` for synchronous code), with `execute(code)`, `submit_final_answer(answer)`, `get_variable(name)` and `list_variables()` on top of `reset()`/`step()`
+- `LocalREPLEnv`: the same environment, in process
+- `LocalRLMRunner`: a local RLM loop that prompts a model, runs its code and handles recursion
 
 ## Quick Start
 
-### Remote Server Usage
+Start a server:
+
+```bash
+PYTHONPATH=src:envs uvicorn envs.repl_env.server.app:app --host 127.0.0.1 --port 8000
+```
 
 Async:
 
@@ -145,7 +71,7 @@ with REPLEnv(base_url="http://127.0.0.1:8000").sync() as env:
     print(result.observation.result.stdout)
 ```
 
-### Local Environment Usage
+### In Process
 
 ```python
 from repl_env import LocalREPLEnv
@@ -160,7 +86,56 @@ with LocalREPLEnv() as env:
     print(env.state().final_answer)
 ```
 
-### Local Recursive RLM Usage
+## Server Configuration
+
+Environment variables read by [`server/app.py`](server/app.py):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HF_TOKEN` | unset | Enables `llm_query` on the server. Without it, a client can pass `hf_token` to `reset()` |
+| `LLM_MODEL` | `Qwen/Qwen3.5-9B` | Default model for `llm_query`. A client can pass `llm_model` to `reset()` |
+| `REPL_MAX_ITERATIONS` | `30` | Maximum steps per episode |
+| `REPL_MAX_OUTPUT_LENGTH` | `8192` | Maximum captured output per step |
+| `REPL_CONTEXT_PREVIEW_LENGTH` | `500` | Length of `context_preview` in observations |
+| `REPL_RLM_MAX_DEPTH` | `2` | Maximum recursion depth for `rlm_query` |
+| `REPL_RLM_MAX_ITERATIONS` | `30` | Maximum iterations for recursive child runs |
+| `MAX_CONCURRENT_ENVS` | `8` | Maximum concurrent sessions |
+
+## Reward
+
+Rewards use the OpenEnv [rubric system](https://huggingface.co/docs/openenv/guides/rewards). The default `REPLRubric` combines:
+
+- **Outcome reward** (on terminal steps): compares `final_answer` against
+  `expected_answer` if provided. Returns 1.0 for match, 0.0 otherwise.
+- **Process reward** (on non-terminal steps): returns -0.05 for code
+  execution errors, 0.0 for successful steps.
+- **Failure reward**: returns -0.1 when max iterations exhausted without an answer.
+
+For RL training (GRPO, etc.), pass `expected_answer` at reset time:
+
+```python
+with LocalREPLEnv() as env:
+    env.reset(
+        context="...",
+        task_prompt="...",
+        expected_answer="42",  # ground truth for rubric scoring
+    )
+    result = env.execute("print(FINAL(42))")
+    print(result.reward)  # 1.0 (correct)
+```
+
+Other rubrics: `ExactMatchRubric` (binary match), `FuzzyMatchRubric` (1.0 for an exact match, 0.5 when the expected answer is contained in the final answer), `CustomMetricRubric` (your `metric(expected, predicted) -> float`) and `CodeExecutionRubric` (per-step error penalty). Pass one at construction:
+
+```python
+from repl_env import LocalREPLEnv, CustomMetricRubric, REPLRubric
+
+def my_metric(expected, predicted):
+    return 1.0 if expected.strip() == predicted.strip() else 0.0
+
+env = LocalREPLEnv(rubric=REPLRubric(outcome=CustomMetricRubric(my_metric)))
+```
+
+## Running an RLM Locally
 
 `LocalRLMRunner` takes any `chat_fn(messages, model=None) -> str`. It works
 with HF Inference API, vLLM, SGLang, Ollama, or any OpenAI-compatible server.
@@ -209,7 +184,7 @@ runner = LocalRLMRunner(chat_fn, max_iterations=30, max_depth=2)
 result = runner.run(context, task)
 ```
 
-### Using Different Models for Outer and Inner Loops
+### Different Models for Outer and Inner Loops
 
 The outer loop (code generation) can use a large model while inner
 `llm_query`/`rlm_query` calls use a smaller, faster model. Pass a
@@ -260,45 +235,9 @@ runner = LocalRLMRunner(
 result = runner.run(context, task)
 ```
 
-## Server
+`LocalRLMRunner` also takes recursion limits (`max_children_total`, `max_children_per_batch`, `per_child_timeout_s`, `result_truncation_limit`) and lifecycle callbacks (`on_subcall_start(depth, model, prompt_preview)`, `on_subcall_complete(depth, model, duration, error_or_none)`). Its results carry lightweight child trace metadata.
 
-Run the local server:
-
-```bash
-PYTHONPATH=src:envs uvicorn envs.repl_env.server.app:app --host 127.0.0.1 --port 8000
-```
-
-The server uses a proper OpenEnv environment factory in [`server/app.py`](server/app.py).
-
-## API Surface
-
-### Remote Client
-
-```python
-class REPLEnv(EnvClient[REPLAction, REPLObservation, REPLState]):
-    async def reset(...)
-    async def execute(code: str)
-    async def submit_final_answer(answer: str)
-    async def state()
-```
-
-Use `.sync()` for synchronous code.
-
-### Local Helpers
-
-```python
-class LocalREPLEnv:
-    def reset(...)
-    def execute(code: str)
-    def state()
-```
-
-```python
-class LocalRLMRunner:
-    def run(context: str, task_prompt: str, *, model: str | None = None) -> RLMRunResult
-```
-
-### Actions and Observations
+## Actions and Observations
 
 `REPLAction`
 
@@ -322,25 +261,13 @@ reward: float | None
 metadata: dict
 ```
 
-## Injected REPL Helpers
+## REPL Helpers
 
 When configured, the REPL namespace exposes:
 
-- `llm_query(prompt, model=None)`
-- `llm_query_batched(prompts, model=None)`
-- `rlm_query(prompt, model=None)`
-- `rlm_query_batched(prompts, model=None)`
-- `FINAL(value)`
-- `FINAL_VAR(name)`
-- `SHOW_VARS()`
-
-Notes:
-
-- `rlm_query` is the recursive child-run surface.
-- At max recursion depth, recursion falls back to direct LM calls rather than spawning more children.
-- Lifecycle callbacks follow the official `rlm` pattern:
-  - `on_subcall_start(depth, model, prompt_preview)`
-  - `on_subcall_complete(depth, model, duration, error_or_none)`
+- `llm_query(prompt, model=None)` and `llm_query_batched(prompts, model=None)`
+- `rlm_query(prompt, model=None)` and `rlm_query_batched(prompts, model=None)`: recursive child runs. At the maximum depth they fall back to direct model calls.
+- `FINAL(value)`, `FINAL_VAR(name)` and `SHOW_VARS()`
 
 ## Finalization Patterns
 
@@ -365,40 +292,14 @@ result = env.execute("answer['content'] = '42'")
 result = env.execute("answer['ready'] = True")
 ```
 
-## Prompt Utilities
+## Prompts and Examples
 
-[`prompts.py`](prompts.py) contains the current message-building and parsing helpers used by the examples and runner.
+[`prompts.py`](prompts.py) has the system prompts and helpers used by the runner: `RLM_SYSTEM_PROMPT`, `RLM_SYSTEM_PROMPT_QWEN`, `QueryMetadata`, `build_rlm_system_prompt(...)`, `build_user_prompt(...)`, `extract_code_blocks(...)` and `format_observations(...)`.
 
-Important exports:
-
-- `RLM_SYSTEM_PROMPT`
-- `RLM_SYSTEM_PROMPT_QWEN`
-- `QueryMetadata`
-- `build_rlm_system_prompt(...)`
-- `build_user_prompt(...)`
-- `extract_code_blocks(...)`
-- `format_observations(...)`
-
-These prompts were updated to reflect the actual helper surface the environment provides, rather than documenting tools that do not exist.
-
-## Examples
+Examples, which default to `Qwen/Qwen3.5-9B` through Hugging Face inference (needs `HF_TOKEN`):
 
 - [`examples/repl_with_llm.py`](../../examples/repl_with_llm.py)
 - [`examples/repl_oolong_simple.py`](../../examples/repl_oolong_simple.py)
-
-Default hosted model in the examples is currently `Qwen/Qwen3.5-9B`, but real hosted inference still depends on provider availability and token access.
-
-## Environment Variables
-
-Server-side configuration in [`server/app.py`](server/app.py):
-
-- `LLM_MODEL`
-- `HF_TOKEN`
-- `REPL_MAX_ITERATIONS`
-- `REPL_MAX_OUTPUT_LENGTH`
-- `REPL_CONTEXT_PREVIEW_LENGTH`
-- `REPL_RLM_MAX_DEPTH`
-- `REPL_RLM_MAX_ITERATIONS`
 
 ## References
 

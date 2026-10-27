@@ -11,10 +11,13 @@ This module wraps ALE's ALEInterface and exposes it
 via the OpenEnv Environment interface.
 """
 
+import base64
+import io
 import uuid
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from openenv.core.env_server import Action, Environment, Observation
+from PIL import Image
 
 # Support both in-repo and standalone imports
 try:
@@ -62,6 +65,8 @@ class AtariEnvironment(Environment):
         >>> obs = env.step(AtariAction(action_id=2))  # UP
         >>> print(obs.reward, obs.done)
     """
+
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
     def __init__(
         self,
@@ -199,6 +204,32 @@ class AtariEnvironment(Environment):
     def state(self) -> AtariState:
         """Get current environment state."""
         return self._state
+
+    def web_actions(
+        self, observation: Dict[str, Any]
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """The legal actions as buttons, named with their ALE meaning (NOOP, FIRE, ...)."""
+        return [
+            (f"{a} · {self._action_set[a].name}", {"action_id": a})
+            for a in observation.get("legal_actions") or []
+        ]
+
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the current game frame (RGB or grayscale) as a pixelated PNG."""
+        if "screen" not in observation:
+            return None
+        if self.obs_type == "ram":
+            return None
+        shape = observation["screen_shape"]
+        frame = np.asarray(observation["screen"], dtype=np.uint8).reshape(shape)
+        buffer = io.BytesIO()
+        Image.fromarray(frame).save(buffer, format="PNG")
+        return (
+            '<img alt="Atari frame" '
+            f'src="data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode()}" '
+            f'style="width:{2 * shape[1]}px;max-width:100%;image-rendering:pixelated;'
+            'border:1px solid var(--border-color-primary);border-radius:6px">'
+        )
 
     def _make_observation(self) -> AtariObservation:
         """

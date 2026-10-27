@@ -13,15 +13,20 @@ and opponent play.
 """
 
 import random
+import threading
 import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 import chess
 from moonfish.lib import search_move
-from moonfish.psqt import board_evaluation
+from moonfish.psqt import board_evaluation, BOARD_EVALUATION_CACHE
 from openenv.core.env_server import Environment
 
 from ..models import ChessAction, ChessObservation, ChessState
 from .rubrics import ChessWinLossRubric
+
+# moonfish keeps one evaluation cache per process, so sessions take turns with it.
+_MOONFISH_LOCK = threading.Lock()
 
 
 class ChessEnvironment(Environment):
@@ -32,6 +37,8 @@ class ChessEnvironment(Environment):
     Designed for RL training where an agent plays as one color against
     an opponent (which can be random, moonfish engine, or self-play).
     """
+
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
     def __init__(
         self,
@@ -74,6 +81,9 @@ class ChessEnvironment(Environment):
             Initial observation of the board state.
         """
         self._reset_rubric()
+        # moonfish's module-level evaluation cache is never trimmed.
+        with _MOONFISH_LOCK:
+            BOARD_EVALUATION_CACHE.clear()
 
         if fen:
             self._board = chess.Board(fen)
@@ -174,8 +184,10 @@ class ChessEnvironment(Environment):
         if done:
             result = self._get_result_string()
 
+        with _MOONFISH_LOCK:
+            evaluation = board_evaluation(self._board)
         metadata = {
-            "evaluation": board_evaluation(self._board),
+            "evaluation": evaluation,
             "fullmove_number": self._board.fullmove_number,
             "halfmove_clock": self._board.halfmove_clock,
         }
@@ -259,7 +271,8 @@ class ChessEnvironment(Environment):
             return
 
         if self._opponent == "moonfish":
-            move = search_move(self._board, depth=self._opponent_depth)
+            with _MOONFISH_LOCK:
+                move = search_move(self._board, depth=self._opponent_depth)
         elif self._opponent == "random":
             move = random.choice(list(self._board.legal_moves))
         else:
@@ -270,6 +283,53 @@ class ChessEnvironment(Environment):
         self._state.move_history.append(move.uci())
         self._state.current_player = "white" if self._board.turn else "black"
         self._state.fen = self._board.fen()
+
+    def web_actions(
+        self, observation: Dict[str, Any]
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """The legal moves (UCI) as buttons, sorted so moves of the same piece sit together."""
+        return [
+            (move, {"move": move})
+            for move in sorted(observation.get("legal_moves") or [])
+        ]
+
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the board from the FEN, white at the bottom, the king in check highlighted."""
+        if "fen" not in observation:
+            return None
+        board = chess.Board(observation["fen"])
+        checked = board.king(board.turn) if observation["is_check"] else None
+        cells = []
+        for rank in range(7, -1, -1):
+            cells.append(f'<span style="opacity:.6;font-size:12px">{rank + 1}</span>')
+            for file in range(8):
+                square = chess.square(file, rank)
+                piece = board.piece_at(square)
+                # Fixed board colours, so a1 stays dark in both themes.
+                if square == checked:
+                    bg = "var(--color-accent)"
+                elif (file + rank) % 2:
+                    bg = "hsl(37 50% 84%)"
+                else:
+                    bg = "hsl(28 33% 55%)"
+                # U+FE0E keeps the pawn as a text glyph instead of an emoji.
+                glyph = piece.unicode_symbol() + "\ufe0e" if piece else ""
+                cells.append(
+                    f'<span style="background:{bg};color:black">{glyph}</span>'
+                )
+        cells.append("<span></span>")
+        cells += [
+            f'<span style="opacity:.6;font-size:12px;line-height:20px">{f}</span>'
+            for f in "abcdefgh"
+        ]
+        return (
+            '<div role="img" aria-label="Chess board" style="display:inline-grid;'
+            "grid-template-columns:16px repeat(8,40px);grid-template-rows:repeat(8,40px) 20px;"
+            "line-height:40px;text-align:center;font-size:30px;color:var(--body-text-color);padding:10px;"
+            'border:1px solid var(--border-color-primary);border-radius:10px;background:var(--background-fill-secondary)">'
+            + "".join(cells)
+            + "</div>"
+        )
 
     @property
     def state(self):

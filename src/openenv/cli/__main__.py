@@ -42,7 +42,7 @@ app.command(name="build", help="Build Docker images for OpenEnv environments")(
 app.add_typer(
     harbor.app,
     name="harbor",
-    help="Run Harbor tasks with token-level capture (requires: pip install openenv[harbor])",
+    help="Run Harbor tasks with token-level capture (requires: pip install openenv\\[harbor])",
 )
 app.command(name="validate", help="Validate a package against the OpenEnv quality bar")(
     validate.validate

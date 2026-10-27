@@ -21,7 +21,8 @@ A few integrations ship as optional extras. Install them with
 | Extra | Pulls in |
 |-------|----------|
 | `inspect` | The Inspect AI evaluation harness |
-| `daytona`, `aca`, `modal` | Cloud sandbox providers (see the Core API reference) |
+| `harbor` | The [Harbor integration](environments/harbor) and its sandbox backends (Python 3.12+) |
+| `daytona`, `aca`, `modal`, `novita` | Cloud sandbox providers (see [Runtime Providers](guides/runtime-providers)) |
 
 ## Try an Environment
 
@@ -154,26 +155,11 @@ with EchoEnv(base_url="http://localhost:8000").sync() as client:
     result = client.reset()
 ```
 
-Cloud sandbox providers implement the same `ContainerProvider` contract as
-local Docker: they start an isolated environment server and return a `base_url`
-that an `EnvClient` can connect to directly, while keeping provider-specific
-control-plane concepts (sandbox groups, projects, signed URLs, snapshots, egress
-policy) inside the provider. Because the contract is provider-neutral, any hosted
-runtime can implement it without changing the client/server protocol.
-
-Providers shipped today: `LocalDockerProvider`, `DockerSwarmProvider`,
-`UVProvider`, `DaytonaProvider`, `ACASandboxProvider` (Azure Container Apps
-Sandboxes), `ModalProvider`, and `NovitaSandboxProvider`. A `KubernetesProvider`
-is planned.
-
-See the [Runtime Providers guide](guides/runtime-providers.md) for the full list,
-install extras, and how to select a provider, and the
-[Core API reference](reference/core.md) for each provider's API. The
-provider-neutral invariants are described in the Cloud Sandbox Providers amendment
-proposed in RFC 002 (env-spec).
+The same client also runs environments on cloud sandboxes (Daytona, Modal, Novita, Azure Container Apps, Hugging Face) through runtime providers. `HFSandboxProvider` ships with core OpenEnv and needs a Hugging Face token for an account that can run Jobs (the sandboxes are billed as Jobs): it runs an environment's Space image in a Hugging Face sandbox ([example](guides/runtime-providers#hfsandboxprovider)). See the [Runtime Providers guide](guides/runtime-providers) to pick one.
 
 ## Next Steps
 
-- [Concepts](guides/concepts.md)
-- [Explore environments](environments.md)
-- [Build your first environment](guides/first-environment.md)
+- [Train an agent](guides/training) with your training framework, or train a coding agent through [Harbor](environments/harbor)
+- [Explore environments](environments)
+- [Build your first environment](guides/first-environment)
+- [Concepts](guides/concepts)

@@ -282,6 +282,7 @@ def build_app(
     )
 
     from .environment import HarborEnvironment
+    from .models import HarborState
     from .ui import harbor_gradio_builder
 
     HarborEnvironment.configure(
@@ -309,6 +310,7 @@ def build_app(
         HarborEnvironment,
         CallToolAction,
         CallToolObservation,
+        state_cls=HarborState,
         env_name="harbor_env",
         max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "4")),
         gradio_builder=gradio_builder,

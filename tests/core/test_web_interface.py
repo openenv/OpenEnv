@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 
 import pytest
 from fastapi.testclient import TestClient
@@ -101,6 +102,23 @@ def test_web_root_redirects_to_gradio_interface() -> None:
     web_response = client.get("/web", follow_redirects=False)
     assert web_response.status_code == 307
     assert web_response.headers["location"] == "/web/"
+
+
+def test_web_interface_instantiates_partial_factory() -> None:
+    """A `functools.partial` factory should be instantiated, like a class or function."""
+    app = create_web_interface_app(
+        partial(NoKwargEnvironment),
+        NoKwargAction,
+        NoKwargObservation,
+    )
+    client = TestClient(app)
+
+    reset_response = client.post("/web/reset")
+    assert reset_response.status_code == 200
+    assert reset_response.json()["observation"]["response"] == "reset"
+
+    metadata = client.get("/web/metadata").json()
+    assert metadata["name"] == "NoKwargEnvironment"
 
 
 def test_repl_web_state_before_reset_returns_conflict() -> None:

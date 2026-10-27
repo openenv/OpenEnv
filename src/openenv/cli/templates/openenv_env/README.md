@@ -25,7 +25,7 @@ from __ENV_NAME__ import __ENV_CLASS_NAME__Action, __ENV_CLASS_NAME__Env
 try:
     # Create environment from Docker image (.sync() for synchronous use)
     __ENV_NAME__env = __ENV_CLASS_NAME__Env.from_docker_image(
-        "__ENV_NAME__-env:latest"
+        "__ENV_IMAGE_NAME__:latest"
     ).sync()
 
     # Reset
@@ -59,7 +59,7 @@ Before using the environment, you need to build the Docker image:
 
 ```bash
 # From project root
-docker build -t __ENV_NAME__-env:latest -f server/Dockerfile .
+docker build -t __ENV_IMAGE_NAME__:latest -f server/Dockerfile .
 ```
 
 ## Deploying to Hugging Face Spaces

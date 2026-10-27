@@ -12,19 +12,8 @@ The maze environment is a simple gridworld with walls, a start cell, and an exit
 
 from typing import List, Optional
 
+from openenv.core.env_server.types import Action, Observation, State
 from pydantic import Field
-
-# Support both in-repo and standalone imports
-try:
-    # In-repo imports (when running from OpenEnv repository)
-    from openenv.core.env_server.types import Action, Observation, State
-except ImportError:
-    try:
-        # Standalone imports with the current package namespace.
-        from openenv.core.env_server.types import Action, Observation, State
-    except ImportError:
-        # Backward-compatible standalone imports when only openenv_core is available.
-        from openenv_core.env_server.types import Action, Observation, State
 
 
 class MazeAction(Action):

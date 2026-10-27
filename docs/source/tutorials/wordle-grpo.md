@@ -1,4 +1,4 @@
-# OpenEnv Wordle with GRPO using TRL
+# Play Wordle with GRPO
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/trl/blob/main/examples/grpo_wordle/grpo_wordle.ipynb)
 

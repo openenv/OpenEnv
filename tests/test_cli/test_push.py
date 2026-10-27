@@ -50,7 +50,7 @@ dependencies = ["openenv>=0.2.0"]
     # Create client.py (required by validate_env_structure)
     (env_dir / "client.py").write_text("# Test client\n")
 
-    # Create models.py (required by validate_env_structure)
+    # Create models.py
     (env_dir / "models.py").write_text("# Test models\n")
 
     # Create server directory and files
@@ -469,6 +469,32 @@ def test_push_accepts_dockerfile_at_env_root(tmp_path: Path) -> None:
         files = staged_files[0]
         assert "Dockerfile" in files
         assert "server/Dockerfile" not in files
+
+
+def test_push_accepts_env_without_models(tmp_path: Path) -> None:
+    """Test that push works without models.py, as in MCP environments like echo_env."""
+    _create_test_openenv_env(tmp_path)
+    (tmp_path / "models.py").unlink()
+
+    with (
+        patch("openenv.cli.commands.push.whoami") as mock_whoami,
+        patch("openenv.cli.commands.push.login") as mock_login,
+        patch("openenv.cli.commands.push.HfApi") as mock_hf_api_class,
+    ):
+        mock_whoami.return_value = {"name": "testuser"}
+        mock_login.return_value = None
+        mock_api = MagicMock()
+        mock_hf_api_class.return_value = mock_api
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            result = runner.invoke(app, ["push"])
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.exit_code == 0, result.output
+        assert mock_api.upload_folder.called
 
 
 def test_push_handles_missing_dockerfile(tmp_path: Path) -> None:
@@ -929,6 +955,75 @@ def test_push_does_not_use_gitignore_as_default_excludes(tmp_path: Path) -> None
 
         assert result.exit_code == 0
         assert mock_api.upload_folder.called
+
+
+def test_push_excludes_build_artifacts_by_default(tmp_path: Path) -> None:
+    """Test that local build artifacts are never uploaded to the Space."""
+    _create_test_openenv_env(tmp_path)
+    (tmp_path / "build" / "lib" / "test_env").mkdir(parents=True)
+    (tmp_path / "build" / "lib" / "test_env" / "client.py").write_text("# stale\n")
+    (tmp_path / "test_env.egg-info").mkdir()
+    (tmp_path / "test_env.egg-info" / "PKG-INFO").write_text("Name: test_env\n")
+
+    with (
+        patch("openenv.cli.commands.push.whoami") as mock_whoami,
+        patch("openenv.cli.commands.push.login") as mock_login,
+        patch("openenv.cli.commands.push.HfApi") as mock_hf_api_class,
+    ):
+        mock_whoami.return_value = {"name": "testuser"}
+        mock_login.return_value = None
+        mock_api = MagicMock()
+        mock_hf_api_class.return_value = mock_api
+
+        def _assert_upload_payload(*_unused_args, **kwargs):
+            staged = Path(kwargs["folder_path"])
+            assert not (staged / "build").exists()
+            assert not (staged / "test_env.egg-info").exists()
+            assert (staged / "client.py").exists()
+
+        mock_api.upload_folder.side_effect = _assert_upload_payload
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            result = runner.invoke(app, ["push"])
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.exit_code == 0
+        assert mock_api.upload_folder.called
+
+
+def test_push_deletes_remote_files_only_with_delete(tmp_path: Path) -> None:
+    """Test that push deletes nothing by default and forwards --delete patterns, as `hf upload` does."""
+    _create_test_openenv_env(tmp_path)
+
+    with (
+        patch("openenv.cli.commands.push.whoami") as mock_whoami,
+        patch("openenv.cli.commands.push.login") as mock_login,
+        patch("openenv.cli.commands.push.HfApi") as mock_hf_api_class,
+    ):
+        mock_whoami.return_value = {"name": "testuser"}
+        mock_login.return_value = None
+        mock_api = MagicMock()
+        mock_hf_api_class.return_value = mock_api
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            default = runner.invoke(app, ["push"])
+            default_kwargs = mock_api.upload_folder.call_args[1]
+            with_delete = runner.invoke(
+                app, ["push", "--delete", "*.py", "--delete", "server/*"]
+            )
+            delete_kwargs = mock_api.upload_folder.call_args[1]
+        finally:
+            os.chdir(old_cwd)
+
+        assert default.exit_code == 0
+        assert default_kwargs["delete_patterns"] is None
+        assert with_delete.exit_code == 0
+        assert delete_kwargs["delete_patterns"] == ["*.py", "server/*"]
 
 
 def test_push_fails_when_exclude_file_missing(tmp_path: Path) -> None:

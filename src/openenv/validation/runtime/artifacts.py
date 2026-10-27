@@ -114,6 +114,7 @@ def write_runtime_bundle(
             "complete": evidence.failure_phase is None
             and evidence.failure_reason is None,
             "telemetry_error": evidence.telemetry_error,
+            "telemetry_unavailable": evidence.telemetry_unavailable,
         }
         telemetry = None
         telemetry_parse_failed = False
@@ -142,6 +143,8 @@ def write_runtime_bundle(
             raw = getattr(evidence, name + "_json")
             discovery[name + "_available"] = raw is not None
             discovery[name + "_error"] = getattr(evidence, name + "_error")
+            if name == "tools":
+                discovery["tools_unavailable"] = evidence.tools_unavailable
             try:
                 discovery[name] = json.loads(raw) if raw is not None else None
             except (ValueError, RecursionError):
@@ -160,6 +163,7 @@ def write_runtime_bundle(
                 "failure_phase": sample.failure_phase,
                 "failure_reason": sample.failure_reason,
                 "telemetry_error": sample.telemetry_error,
+                "telemetry_unavailable": sample.telemetry_unavailable,
                 "trace": [],
                 "omitted_trace_fields": [],
                 "omitted_evidence_fields": [],

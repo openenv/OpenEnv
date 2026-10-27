@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from openenv.core.env_server.mcp_types import Tool
 from openenv.core.harness import (
@@ -696,6 +699,42 @@ class _RecordingLLMClient(LLMClient):
         return self._response
 
 
+class _PooledHttpLLMClient(LLMClient):
+    """Holds one pooled `httpx.AsyncClient` across calls, like the provider SDKs do."""
+
+    def __init__(self, url: str):
+        super().__init__(endpoint=url, port=None)
+        self._client = httpx.AsyncClient()
+
+    async def complete(self, prompt: str, **kwargs: Any) -> str:  # pragma: no cover
+        raise NotImplementedError
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> LLMResponse:
+        response = await self._client.post(self.endpoint, json={"messages": messages})
+        return LLMResponse(content=response.json()["content"], tool_calls=[])
+
+
+class _OkHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        body = json.dumps({"content": "ok"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
 class TestBuildModelStep:
     def _tool(self) -> Tool:
         return Tool(
@@ -811,6 +850,32 @@ class TestBuildModelStep:
 
         assert result.response.content == "ok"
         assert client.calls[0]["messages"] == [{"role": "user", "content": "play"}]
+
+    def test_reuses_pooled_client_across_steps(self):
+        # Regression: a fresh event loop per step broke the client's connection
+        # pool, bound to the first loop, with "Event loop is closed".
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _OkHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            client = _PooledHttpLLMClient(f"http://127.0.0.1:{server.server_port}")
+            step = build_model_step(client)
+
+            for _ in range(3):
+                result = step([{"role": "user", "content": "play"}], [], {})
+                assert result.response.content == "ok"
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_repeated_builds_share_one_loop_thread(self):
+        client = _RecordingLLMClient(LLMResponse(content="ok", tool_calls=[]))
+        threads_before = threading.active_count()
+
+        for _ in range(5):
+            step = build_model_step(client)
+            assert step([], [], {}).response.content == "ok"
+
+        assert threading.active_count() <= threads_before + 1
 
 
 def _populated_output_dir(tmp_path: Path) -> Path:

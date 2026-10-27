@@ -317,4 +317,8 @@ def test_openclaw_catalog_model_id_is_local_to_its_provider(tmp_path):
     catalog = config["models"]["providers"][provider]
     assert any(model["id"] == model_id for model in catalog["models"])
     assert catalog["baseUrl"] == "https://capture.example/v1"
-    assert catalog["apiKey"] == "session-test"
+    # Harbor may keep the key in the runtime environment instead of the config.
+    if catalog["apiKey"] == "${OPENAI_API_KEY}":
+        assert agent.model_connection.env["OPENAI_API_KEY"] == "session-test"
+    else:
+        assert catalog["apiKey"] == "session-test"

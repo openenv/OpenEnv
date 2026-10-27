@@ -1,4 +1,4 @@
-"""Seed acceptance, independent records and bounded fresh replay comparisons."""
+"""Seed forwarding, independent records and bounded fresh replay comparisons."""
 
 import json
 import math
@@ -84,7 +84,11 @@ def _missing_telemetry(grader, evidence):
         return CheckResult(
             check_id=grader.check_id,
             status=CheckStatus.FAIL if failure else CheckStatus.SKIP,
-            evidence=[failure or "session telemetry is unavailable"],
+            evidence=[
+                failure
+                or evidence.telemetry_unavailable
+                or "session telemetry is unavailable"
+            ],
             duration_s=0,
         )
     return None
@@ -112,6 +116,15 @@ class SeedControlGrader(_RuntimeGrader):
                         ],
                     }
                 )
+            unavailable = [
+                sample.telemetry_unavailable
+                for sample in seed_replays
+                if sample.telemetry_unavailable
+            ]
+            if unavailable:
+                return result.model_copy(
+                    update={"status": CheckStatus.SKIP, "evidence": unavailable}
+                )
             if any(
                 sample.failure_reason and sample.telemetry_json is None
                 for sample in seed_replays
@@ -124,6 +137,12 @@ class SeedControlGrader(_RuntimeGrader):
                         ],
                     }
                 )
+        if result.status is CheckStatus.PASS:
+            return result.model_copy(
+                update={
+                    "evidence": ["requested seeds were observed as forwarded to reset"]
+                }
+            )
         return result
 
     def check(self, subject, evidence):
@@ -135,6 +154,8 @@ class SeedControlGrader(_RuntimeGrader):
         ):
             if sample.telemetry_error:
                 problems.append(f"replay {index}: telemetry collection failed")
+                continue
+            if sample.telemetry_unavailable:
                 continue
             incomplete = sample.failure_reason and sample.telemetry_json is None
             if incomplete:

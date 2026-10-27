@@ -2,11 +2,13 @@
 
 **Status**: In Review
 **Created**: 10/17/2025
-**Amended**: November 12, 2025
+**Amended**: October 1, 2026
 **Authors**: @Darktex, @pankit-eng, @jspisak, @zkwentz
 **RFC ID:** 000
 
 ## Amendment History
+
+**October 1, 2026**: Removals of APIs, CLI flags and environments go through a deprecation first, as described in `.claude/docs/INVARIANTS.md` (Deprecations).
 
 **November 12, 2025**: Added design principles, target audience, and updated roadmap to reference RFCs 005-007.
 
@@ -76,7 +78,7 @@ Throughout every phase, we will author concrete environments and we encourage ev
 Detailed success criteria and progress tracking for each version will be managed through GitHub milestones and issues.
 
 ## Our approach towards breaking changes
-Until Version 1.0, we plan to move fast and will accept breaking changes if needed (they will be documented and posted into release notes, but we will not put soft deprecation in place until 1.0). We will have stronger guarantees in place after 1.0, to be determined down the road (probably together with the other "finishing touches" between 0.9 and 1.0...).
+Until Version 1.0, we plan to move fast and will accept breaking changes if needed. They are documented in the release notes, and removing an API, CLI flag or environment goes through a deprecation first: it keeps working with a `FutureWarning` that names the release that removes it and what to use instead, for at least two minor releases (see Deprecations in `.claude/docs/INVARIANTS.md`). We will have stronger guarantees in place after 1.0, to be determined down the road (probably together with the other "finishing touches" between 0.9 and 1.0...).
 
 While APIs may not be 100% stable, we expect that any breaking changes should be relatively minor and can be fixed by LLM coders.
 

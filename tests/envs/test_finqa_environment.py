@@ -599,6 +599,60 @@ class TestToolsPathTraversal:
         assert "Error" in tools.get_table_info("../..", "whatever")
 
 
+class TestResetSeed:
+    """reset(seed=...) must make the question order reproducible.
+
+    Self-contained (synthetic data, no downloaded dataset needed) so it runs in CI.
+    """
+
+    @pytest.fixture
+    def data_path(self, tmp_path):
+        pytest.importorskip("pandas")
+        questions = tmp_path / "benchmark_questions"
+        questions.mkdir()
+        rows = ["id,user_query,company,question,answer"]
+        rows += [f"{i},query {i},acme,question {i},\\boxed{{{i}}}" for i in range(20)]
+        (questions / "finqa.csv").write_text("\n".join(rows) + "\n")
+        return str(tmp_path)
+
+    @staticmethod
+    def _make_env(data_path):
+        from envs.finqa_env.server.finqa_environment import FinQAEnvironment
+
+        return FinQAEnvironment(data_path=data_path)
+
+    @staticmethod
+    def _questions_after_seed(env, seed, n=5):
+        """One seeded reset followed by n - 1 unseeded ones."""
+        questions = [env.reset(seed=seed).metadata["question"]]
+        questions += [env.reset().metadata["question"] for _ in range(n - 1)]
+        return questions
+
+    def test_same_seed_same_question_across_instances(self, data_path):
+        questions = {
+            self._make_env(data_path).reset(seed=1234).metadata["question"]
+            for _ in range(5)
+        }
+        assert len(questions) == 1
+
+    def test_same_seed_same_sequence_across_instances(self, data_path):
+        first = self._questions_after_seed(self._make_env(data_path), seed=1234)
+        second = self._questions_after_seed(self._make_env(data_path), seed=1234)
+        assert first == second
+
+    def test_reseeding_restarts_the_sequence(self, data_path):
+        env = self._make_env(data_path)
+        first = self._questions_after_seed(env, seed=1234)
+        second = self._questions_after_seed(env, seed=1234)
+        assert first == second
+
+    def test_different_seeds_give_different_sequences(self, data_path):
+        env = self._make_env(data_path)
+        assert self._questions_after_seed(env, seed=1) != self._questions_after_seed(
+            env, seed=2
+        )
+
+
 @pytest.mark.skipif(_integration_skip, reason=_integration_reason)
 class TestEnvironment:
     """Test environment logic using MCP actions."""

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html
 import os
 from typing import Any, Optional
 
@@ -34,9 +35,35 @@ def _judge_from_env() -> VisionJudge | None:
     training loops want. It does mean no judge, though. Configuring one whose
     every call fails would keep the 0.35/0.65 weight split while `semantic`
     never scores, silently capping the reward at 0.35.
+
+    `PELICAN_SVG_JUDGE_BASE_URL` points the judge at an OpenAI-compatible
+    server instead, a local vLLM for example. It needs no Hugging Face token,
+    but it does need `PELICAN_SVG_JUDGE_MODEL`, since the default repository id
+    is a 72B model that such a server is unlikely to be serving. Raising beats
+    guessing here for the same reason the docstring above gives: a judge whose
+    every call fails is worse than no judge at all.
+
+    Raises:
+        ValueError: If `PELICAN_SVG_JUDGE_BASE_URL` is set without
+            `PELICAN_SVG_JUDGE_MODEL`.
     """
     if os.environ.get("PELICAN_SVG_DISABLE_JUDGE", "").lower() in {"1", "true", "yes"}:
         return None
+    model = os.environ.get("PELICAN_SVG_JUDGE_MODEL")
+    base_url = os.environ.get("PELICAN_SVG_JUDGE_BASE_URL")
+    if base_url:
+        if not model:
+            raise ValueError(
+                "PELICAN_SVG_JUDGE_BASE_URL is set but PELICAN_SVG_JUDGE_MODEL "
+                "is not. Set it to the model the endpoint serves."
+            )
+        return VisionJudge(
+            HFVisionClient(
+                model=model,
+                api_key=os.environ.get("PELICAN_SVG_JUDGE_API_KEY"),
+                base_url=base_url,
+            )
+        )
     token = (
         os.environ.get("HF_TOKEN")
         or os.environ.get("HUGGING_FACE_HUB_TOKEN")
@@ -44,8 +71,9 @@ def _judge_from_env() -> VisionJudge | None:
     )
     if not token:
         return None
-    model = os.environ.get("PELICAN_SVG_JUDGE_MODEL", DEFAULT_JUDGE_MODEL)
-    return VisionJudge(HFVisionClient(model=model, api_key=token))
+    return VisionJudge(
+        HFVisionClient(model=model or DEFAULT_JUDGE_MODEL, api_key=token)
+    )
 
 
 class PelicanSvgEnvironment(
@@ -115,6 +143,7 @@ class PelicanSvgEnvironment(
         self._return_image = return_image
         self._state = PelicanSvgState()
         self._task: Task | None = None
+        self._svg = ""
 
     @property
     def state(self) -> PelicanSvgState:
@@ -198,6 +227,7 @@ class PelicanSvgEnvironment(
             task_id=kwargs.get("task_id"),
         )
         self._task = task
+        self._svg = ""
         self._state = PelicanSvgState(
             episode_id=episode_id, step_count=0, task_id=task.task_id, submitted=False
         )
@@ -250,12 +280,59 @@ class PelicanSvgEnvironment(
         evaluation = await evaluate_submission(action.response, self._task, self._judge)
         self._state.step_count += 1
         self._state.submitted = True
+        self._svg = evaluation.svg
         observation = self._to_observation(evaluation)
         # The rubric containers hand back a coroutine whenever they are called
         # from inside a running loop, even with entirely synchronous children,
         # so the reward has to be awaited through the async helper here.
         observation.reward = await self._apply_rubric_async(action, observation)
         return self._apply_transform(observation)
+
+    def render_web(self, observation: dict[str, Any]) -> Optional[str]:
+        """Draw the task on reset, then the submitted SVG next to its scores."""
+        if "prompt" not in observation:
+            return None
+        breakdown = observation["breakdown"]
+        if not breakdown:
+            return (
+                '<div style="max-width:500px;padding:10px;'
+                "border:1px solid var(--border-color-primary);border-radius:10px;"
+                'background:var(--background-fill-secondary);color:var(--body-text-color)">'
+                f"{html.escape(observation['prompt'])}</div>"
+            )
+        # An <img> renders the SVG without running any script it carries.
+        picture = (
+            f'<img alt="Pelican SVG drawing" src="data:image/svg+xml;base64,'
+            f'{base64.b64encode(self._svg.encode()).decode()}" style="width:200px;height:200px;'
+            'object-fit:contain;background:white;border:1px solid var(--border-color-primary);border-radius:6px">'
+            if self._svg
+            else '<div style="width:200px;text-align:center">No SVG found</div>'
+        )
+        lines = [
+            f"<b>reward {breakdown['reward']:.2f}</b>",
+            f"gate: {'passed' if observation['gate_passed'] else 'rejected'}",
+            f"structure: {observation['structure_score']:.2f}",
+            f"judge: {observation['semantic_score']:.2f}"
+            if observation["judged"]
+            else "judge: off",
+        ]
+        if breakdown["judge"]:
+            lines += [
+                f"{'✓' if ok else '✗'} {html.escape(item)}"
+                for item, ok in breakdown["judge"]["checklist"].items()
+            ]
+        lines.append(
+            f'<span style="opacity:.75">{html.escape(observation["feedback"])}</span>'
+        )
+        return (
+            '<div style="display:flex;'
+            "flex-wrap:wrap;gap:12px;max-width:500px;padding:10px;border:1px solid var(--border-color-primary);"
+            'border-radius:10px;background:var(--background-fill-secondary);color:var(--body-text-color)">'
+            + picture
+            + '<div style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:4px">'
+            + "".join(f"<div>{line}</div>" for line in lines)
+            + "</div></div>"
+        )
 
     def _to_observation(self, evaluation: Evaluation) -> PelicanSvgObservation:
         task = evaluation.task
