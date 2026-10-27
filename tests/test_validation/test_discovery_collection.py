@@ -196,8 +196,14 @@ def test_failed_tool_discovery_is_not_empty_success_and_preserves_episode(
     evidence, _ = collect(
         monkeypatch, DiscoveryConnection(response), collect_tools=True
     )
-    assert evidence.tools_json is None and evidence.tools_error
-    assert "private" not in evidence.tools_error
+    assert evidence.tools_json is None
+    if fault == "unsupported":
+        assert evidence.tools_error is None
+        assert evidence.tools_unavailable == "unsupported capability: tool_discovery"
+    else:
+        assert evidence.tools_error
+        assert evidence.tools_unavailable is None
+    assert "private" not in repr(evidence)
     assert evidence.failure_reason is None
     assert len(evidence.exchanges) == 4
 
@@ -265,3 +271,76 @@ def test_socket_failure_keeps_discovery_error_and_fails_replay(monkeypatch):
     assert evidence.failure_phase == "reset"
     assert evidence.failure_reason == "reset failed (ConnectionError)"
     assert evidence.exchanges == ()
+
+
+@pytest.mark.parametrize(
+    "reply,status",
+    [
+        ({"type": "error", "data": {"code": "UNKNOWN_TYPE"}}, "skip"),
+        (
+            {
+                "type": "mcp",
+                "data": {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": {"code": -32601, "message": "unsupported"},
+                },
+            },
+            "skip",
+        ),
+        (
+            {
+                "type": "mcp",
+                "data": {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": {
+                        "code": -32603,
+                        "message": "Environment does not support MCP",
+                    },
+                },
+            },
+            "fail",
+        ),
+        (
+            {
+                "type": "mcp",
+                "data": {
+                    "jsonrpc": "2.0",
+                    "id": 99,
+                    "error": {"code": -32601, "message": "unsupported"},
+                },
+            },
+            "fail",
+        ),
+        ("malformed", "fail"),
+        (
+            {
+                "type": "mcp",
+                "data": {"jsonrpc": "2.0", "id": 1, "result": {"tools": []}},
+            },
+            "pass",
+        ),
+    ],
+)
+def test_tool_discovery_distinguishes_unsupported_from_failures(
+    monkeypatch, tmp_path, reply, status
+):
+    from dataclasses import replace
+
+    from openenv.validation.graders.runtime.discovery import (
+        ToolDeclarationAccuracyGrader,
+    )
+    from test_runtime_discovery import subject
+
+    evidence, _ = collect(monkeypatch, DiscoveryConnection(reply), collect_tools=True)
+    measured = subject(tmp_path)
+    measured.manifest.capabilities.declared_tools = []
+    result = ToolDeclarationAccuracyGrader().run(
+        replace(measured, runtime_evidence=evidence)
+    )
+    assert result.status.value == status
+    assert evidence.failure_reason is None
+    if status == "skip":
+        assert evidence.tools_error is None
+        assert result.evidence == ["unsupported capability: tool_discovery"]

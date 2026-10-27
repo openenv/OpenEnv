@@ -111,6 +111,7 @@ def collect_runtime_evidence(
     telemetry_json = None
     telemetry_error = None
     tools_json = tools_error = tasks_json = tasks_error = None
+    tools_unavailable = None
     telemetry_unavailable = None
     server_code = None
 
@@ -297,23 +298,39 @@ def collect_runtime_evidence(
                     if contains_credential(response):
                         raise ValueError("discovery contains validation credentials")
                     rpc = response.get("data")
-                    if (
-                        response.get("type") != "mcp"
-                        or not isinstance(rpc, dict)
-                        or rpc.get("jsonrpc") != "2.0"
-                        or type(rpc.get("id")) is not int
-                        or rpc["id"] != 1
-                        or rpc.get("error") is not None
-                        or not isinstance(rpc.get("result"), dict)
-                        or not isinstance(rpc["result"].get("tools"), list)
-                    ):
-                        raise ValueError("invalid tool discovery response")
-                    discovered = json.dumps(
-                        rpc["result"], allow_nan=False, ensure_ascii=False
-                    )
-                    if len(discovered.encode()) > MAX_MESSAGE_BYTES:
-                        raise ValueError("discovery exceeds size bound")
-                    tools_json = discovered
+                    if _server_error_code(response) == WSErrorCode.UNKNOWN_TYPE:
+                        tools_unavailable = "unsupported capability: tool_discovery"
+                    else:
+                        if (
+                            response.get("type") != "mcp"
+                            or not isinstance(rpc, dict)
+                            or rpc.get("jsonrpc") != "2.0"
+                            or type(rpc.get("id")) is not int
+                            or rpc["id"] != 1
+                        ):
+                            raise ValueError("invalid tool discovery envelope")
+                        error = rpc.get("error")
+                        if (
+                            isinstance(error, dict)
+                            and type(error.get("code")) is int
+                            and error["code"] == -32601
+                            and isinstance(error.get("message"), str)
+                            and rpc.get("result") is None
+                        ):
+                            tools_unavailable = "unsupported capability: tool_discovery"
+                        else:
+                            if (
+                                error is not None
+                                or not isinstance(rpc.get("result"), dict)
+                                or not isinstance(rpc["result"].get("tools"), list)
+                            ):
+                                raise ValueError("invalid tool discovery response")
+                            discovered = json.dumps(
+                                rpc["result"], allow_nan=False, ensure_ascii=False
+                            )
+                            if len(discovered.encode()) > MAX_MESSAGE_BYTES:
+                                raise ValueError("discovery exceeds size bound")
+                            tools_json = discovered
                 except Exception as exc:
                     tools_error = f"tool discovery failed ({type(exc).__name__})"
 
@@ -442,6 +459,7 @@ def collect_runtime_evidence(
             telemetry_error=telemetry_error,
             tools_json=tools_json,
             tools_error=tools_error,
+            tools_unavailable=tools_unavailable,
             tasks_json=tasks_json,
             tasks_error=tasks_error,
             telemetry_unavailable=telemetry_unavailable,
@@ -459,6 +477,7 @@ def collect_runtime_evidence(
                 telemetry_error=telemetry_error,
                 tools_json=tools_json,
                 tools_error=tools_error,
+                tools_unavailable=tools_unavailable,
                 tasks_json=tasks_json,
                 tasks_error=tasks_error,
                 telemetry_unavailable=telemetry_unavailable,
@@ -476,6 +495,7 @@ def collect_runtime_evidence(
             telemetry_error=telemetry_error,
             tools_json=tools_json,
             tools_error=tools_error,
+            tools_unavailable=tools_unavailable,
             tasks_json=tasks_json,
             tasks_error=tasks_error,
             telemetry_unavailable=telemetry_unavailable,

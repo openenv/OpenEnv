@@ -70,7 +70,9 @@ the subject's namespace and from a control container; a probe counts only when
 the control reaches the sink, and a denial that is not proven is a `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 Explicitly unsupported session telemetry yields a `SKIP` naming `session_telemetry`;
-authorization refusals and malformed telemetry remain failures. Seed control
+authorization refusals and malformed telemetry remain failures. Explicitly unsupported
+`tools/list` similarly skips with `tool_discovery` named. Internal discovery errors
+and malformed responses remain failures, even for an empty declared tool set. Seed control
 reports observed forwarding to reset, separately from empirical determinism.
 The declared `episode_timeout_s` bounds each episode; a reset or judged step may use
 its remaining budget. Original and replay collection share a 300-second deadline

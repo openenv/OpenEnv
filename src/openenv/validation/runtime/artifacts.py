@@ -143,6 +143,8 @@ def write_runtime_bundle(
             raw = getattr(evidence, name + "_json")
             discovery[name + "_available"] = raw is not None
             discovery[name + "_error"] = getattr(evidence, name + "_error")
+            if name == "tools":
+                discovery["tools_unavailable"] = evidence.tools_unavailable
             try:
                 discovery[name] = json.loads(raw) if raw is not None else None
             except (ValueError, RecursionError):

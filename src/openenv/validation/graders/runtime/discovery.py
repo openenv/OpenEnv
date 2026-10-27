@@ -27,6 +27,8 @@ def _json_float(value):
 class _EvidenceGrader(_RuntimeGrader):
     """Discovery can be measured without an episode step; missing evidence cannot pass."""
 
+    unavailable_field = None
+
     def run(self, subject):
         started = time.monotonic()
         problems, incomplete = [], None
@@ -37,6 +39,8 @@ class _EvidenceGrader(_RuntimeGrader):
             incomplete = "runtime evidence is unavailable"
         elif getattr(evidence, self.error_field):
             problems = [f"{self.label} collection failed"]
+        elif self.unavailable_field and getattr(evidence, self.unavailable_field):
+            incomplete = getattr(evidence, self.unavailable_field)
         elif getattr(evidence, self.field) is None:
             incomplete = f"missing prerequisite: {self.label} evidence"
         else:
@@ -70,6 +74,7 @@ class _EvidenceGrader(_RuntimeGrader):
 class ToolDeclarationAccuracyGrader(_EvidenceGrader):
     check_id = "runtime.tool_declaration_accuracy"
     field, error_field, label = "tools_json", "tools_error", "tool discovery"
+    unavailable_field = "tools_unavailable"
 
     def applies_to(self, manifest):
         return "declared_tools" in manifest.capabilities.model_fields_set
@@ -222,6 +227,7 @@ class RubricIntrospectableGrader(_EvidenceGrader):
     check_id = "runtime.rubric_introspectable"
     requires_capabilities = frozenset({"rubric_tree"})
     field, error_field, label = "telemetry_json", "telemetry_error", "rubric telemetry"
+    unavailable_field = "telemetry_unavailable"
 
     def applies_to(self, manifest):
         return manifest.capabilities.rubric_tree
