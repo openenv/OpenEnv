@@ -125,6 +125,8 @@
     title: DM Control
   - local: environments/finqa
     title: FinQA
+  - local: environments/fraud_triage
+    title: Fraud Triage
   - local: environments/grid_world
     title: Grid World
   - local: environments/julia
