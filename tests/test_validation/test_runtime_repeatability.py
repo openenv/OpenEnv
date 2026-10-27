@@ -592,3 +592,42 @@ def test_public_divergence_paths_never_disclose_subject_keys(
     assert "\n" not in result.evidence[0]
     assert "\r" not in result.evidence[0]
     assert "\t" not in result.evidence[0]
+
+
+@pytest.mark.parametrize("grader", [SeedControlGrader, TrajectoryRecordGrader])
+def test_explicit_unsupported_telemetry_skips_with_capability_named(tmp_path, grader):
+    subject = subject_with_replays(tmp_path)
+    evidence = replace(
+        subject.runtime_evidence,
+        telemetry_json=None,
+        telemetry_unavailable="unsupported capability: session_telemetry",
+    )
+    result = grader().run(replace(subject, runtime_evidence=evidence))
+    assert result.status is CheckStatus.SKIP
+    assert result.evidence == ["unsupported capability: session_telemetry"]
+
+
+def test_unsupported_changed_seed_telemetry_does_not_become_seed_failure(tmp_path):
+    subject = subject_with_replays(tmp_path)
+    seed = subject.runtime_evidence.replays[-1]
+    seed = replace(
+        seed,
+        evidence=replace(
+            seed.evidence,
+            telemetry_json=None,
+            telemetry_unavailable="unsupported capability: session_telemetry",
+        ),
+    )
+    evidence = replace(
+        subject.runtime_evidence,
+        replays=subject.runtime_evidence.replays[:-1] + (seed,),
+    )
+    result = SeedControlGrader().run(replace(subject, runtime_evidence=evidence))
+    assert result.status is CheckStatus.SKIP
+    assert "session_telemetry" in result.evidence[0]
+
+
+def test_seed_success_describes_forwarding(tmp_path):
+    result = SeedControlGrader().run(subject_with_replays(tmp_path))
+    assert result.status is CheckStatus.PASS
+    assert result.evidence == ["requested seeds were observed as forwarded to reset"]

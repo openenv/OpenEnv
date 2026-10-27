@@ -52,7 +52,7 @@ during the fresh-container replay. Both use the same immutable image and are
 removed even if a check fails.
 
 The runtime level implements startup, reward, observation, state, network policy,
-seed control, determinism and emitted trajectory record checks. Other applicable
+seed forwarding, determinism and emitted trajectory record checks. Other applicable
 Level 2 checks appear as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
@@ -67,6 +67,9 @@ pulled on first use. `runtime.network_policy` probes a validator-owned sink from
 the subject's namespace and from a control container; a probe counts only when
 the control reaches the sink, and a denial that is not proven is a `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
+Explicitly unsupported session telemetry yields a `SKIP` naming `session_telemetry`;
+authorization refusals and malformed telemetry remain failures. Seed control
+reports observed forwarding to reset, separately from empirical determinism.
 The declared `episode_timeout_s` bounds each episode; a reset or judged step may use
 its remaining budget. Original and replay collection share a 300-second deadline
 and a 32 MiB evidence budget. `llm_judged` requests 20 identical-input episodes,

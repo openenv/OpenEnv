@@ -269,6 +269,8 @@ class RuntimeEvidence:
             Subject-emitted session snapshot, independent of the wire transcript.
         telemetry_error (`str`, *optional*):
             Bounded telemetry failure without invalidating completed wire evidence.
+        telemetry_unavailable (`str`, *optional*):
+            Named capability absent from a subject that explicitly rejects telemetry.
         reset_observation_schema_json (`str`, *optional*):
             Explicit `/schema` reset_observation value; absent means use the step schema.
     """
@@ -279,6 +281,7 @@ class RuntimeEvidence:
     failure_reason: str | None = None
     telemetry_json: str | None = None
     telemetry_error: str | None = None
+    telemetry_unavailable: str | None = None
     replays: tuple["ReplayEvidence", ...] = ()
     replay_failure_reason: str | None = None
     reset_observation_schema_json: str | None = None
@@ -292,6 +295,7 @@ class ReplayEvidence:
     evidence: RuntimeEvidence
     provider_json: str | None = None
     cleanup_complete: bool | None = None
+
 
 class ProbeOutcome(BaseModel):
     """
