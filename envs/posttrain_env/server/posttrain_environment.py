@@ -25,6 +25,7 @@ import asyncio
 import logging
 import os
 import secrets
+import threading
 import time
 from typing import Any, Optional
 from uuid import uuid4
@@ -51,6 +52,8 @@ else:
     )
 TOOL_TIMEOUT_S = 120.0
 MAX_LOG_CHARS = 20_000
+# Keep asynchronous close fallbacks alive after core releases the session.
+_CLOSE_TASKS: set[asyncio.Task] = set()
 
 
 class PostTrainEnvironment(MCPEnvironment):
@@ -100,6 +103,8 @@ class PostTrainEnvironment(MCPEnvironment):
         self._reward: float | None = None
         self._score_job_id: str | None = None
         self._end: dict = {}
+        self._lifecycle_lock = threading.RLock()
+        self._close_task: asyncio.Task | None = None
 
         @mcp.tool
         def budget() -> dict:
@@ -258,57 +263,58 @@ class PostTrainEnvironment(MCPEnvironment):
             `RuntimeError`: If a job of the previous episode could not be
                 confirmed cancelled. It may still be running and billing.
         """
-        self._end_jobs("episode reset")
-        task_id = task_id or self._default_task_id
-        if task_id not in TASKS:
-            raise ValueError(
-                f"Unknown task_id {task_id!r}; choose from {sorted(TASKS)}"
+        with self._lifecycle_lock:
+            self._end_jobs("episode reset", self._broker)
+            task_id = task_id or self._default_task_id
+            if task_id not in TASKS:
+                raise ValueError(
+                    f"Unknown task_id {task_id!r}; choose from {sorted(TASKS)}"
+                )
+            if self._namespace is None:
+                self._namespace = (
+                    os.environ.get("POSTTRAIN_NAMESPACE") or self._api.whoami()["name"]
+                )
+            self._task = TASKS[task_id]
+            self._state = State(
+                episode_id=episode_id or str(uuid4()), step_count=0, task_id=task_id
             )
-        if self._namespace is None:
-            self._namespace = (
-                os.environ.get("POSTTRAIN_NAMESPACE") or self._api.whoami()["name"]
+            self._broker = Broker(
+                self._api,
+                namespace=self._namespace,
+                episode_id=self._state.episode_id,
+                budget_usd=self._task.budget_usd,
+                max_jobs=self._task.max_jobs,
+                max_dev_evals=self._task.max_dev_evals,
+                resource_group_id=os.environ.get("POSTTRAIN_RESOURCE_GROUP_ID"),
             )
-        self._task = TASKS[task_id]
-        self._state = State(
-            episode_id=episode_id or str(uuid4()), step_count=0, task_id=task_id
-        )
-        self._broker = Broker(
-            self._api,
-            namespace=self._namespace,
-            episode_id=self._state.episode_id,
-            budget_usd=self._task.budget_usd,
-            max_jobs=self._task.max_jobs,
-            max_dev_evals=self._task.max_dev_evals,
-            resource_group_id=os.environ.get("POSTTRAIN_RESOURCE_GROUP_ID"),
-        )
-        self._nonce = secrets.token_hex(8)
-        self._started_at = time.monotonic()
-        self._done = False
-        self._reward = None
-        self._end = {}
-        self._score_job_id = None
-        return Observation(
-            done=False,
-            reward=0.0,
-            metadata={
-                "task_id": task_id,
-                "prompt": self._task.prompt.format(nonce=self._nonce),
-                "budget_usd": self._task.budget_usd,
-                "max_steps": self._max_steps,
-                "max_episode_minutes": self._task.max_episode_minutes,
-                "score_timeout_s": self._score_timeout_s(),
-                "service_spend": self._broker.spend(),
-            },
-        )
+            self._nonce = secrets.token_hex(8)
+            self._started_at = time.monotonic()
+            self._done = False
+            self._reward = None
+            self._end = {}
+            self._score_job_id = None
+            return Observation(
+                done=False,
+                reward=0.0,
+                metadata={
+                    "task_id": task_id,
+                    "prompt": self._task.prompt.format(nonce=self._nonce),
+                    "budget_usd": self._task.budget_usd,
+                    "max_steps": self._max_steps,
+                    "max_episode_minutes": self._task.max_episode_minutes,
+                    "score_timeout_s": self._score_timeout_s(),
+                    "service_spend": self._broker.spend(),
+                },
+            )
 
-    def _end_jobs(self, reason: str) -> None:
-        if self._broker is None:
+    def _end_jobs(self, reason: str, broker: Broker | None) -> None:
+        if broker is None:
             return
-        orphaned = self._broker.cancel_all(reason, self._cancel_timeout_s, self._poll_s)
+        orphaned = broker.cancel_all(reason, self._cancel_timeout_s, self._poll_s)
         if orphaned:
             raise RuntimeError(
                 f"HF Jobs did not confirm cancelling {orphaned} from episode "
-                f"{self._broker.episode_id}; they may still be running and billing"
+                f"{broker.episode_id}; they may still be running and billing"
             )
 
     def _score_timeout_s(self) -> float:
@@ -326,24 +332,26 @@ class PostTrainEnvironment(MCPEnvironment):
             return self._max_wait_s + TOOL_TIMEOUT_S
         return TOOL_TIMEOUT_S
 
-    def _finish(self, obs: Observation) -> Observation:
-        if self._broker is None:
+    def _finish(self, obs: Observation, broker: Broker | None) -> Observation:
+        with self._lifecycle_lock:
+            if broker is None or broker is not self._broker:
+                return obs
+            if not self._done:
+                elapsed_min = (time.monotonic() - self._started_at) / 60
+                if self._state.step_count >= self._max_steps:
+                    self._stop("max_steps", f"Reached {self._max_steps} tool calls")
+                elif elapsed_min >= self._task.max_episode_minutes:
+                    self._stop(
+                        "time_limit",
+                        f"Reached {self._task.max_episode_minutes} minutes",
+                    )
+            metadata = {**obs.metadata, "service_spend": self._broker.spend()}
+            if self._done:
+                obs.done = True
+                obs.reward = self._reward
+                metadata["episode_end"] = self._end
+            obs.metadata = metadata
             return obs
-        if not self._done:
-            elapsed_min = (time.monotonic() - self._started_at) / 60
-            if self._state.step_count >= self._max_steps:
-                self._stop("max_steps", f"Reached {self._max_steps} tool calls")
-            elif elapsed_min >= self._task.max_episode_minutes:
-                self._stop(
-                    "time_limit", f"Reached {self._task.max_episode_minutes} minutes"
-                )
-        metadata = {**obs.metadata, "service_spend": self._broker.spend()}
-        if self._done:
-            obs.done = True
-            obs.reward = self._reward
-            metadata["episode_end"] = self._end
-        obs.metadata = metadata
-        return obs
 
     def _stop(self, kind: str, message: str) -> None:
         orphaned = self._broker.cancel_all(kind, self._cancel_timeout_s, self._poll_s)
@@ -357,11 +365,12 @@ class PostTrainEnvironment(MCPEnvironment):
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> Observation:
+        broker = self._broker
         self._state.step_count += 1
         obs = super().step(
             action, timeout_s=self._tool_timeout(action, timeout_s), **kwargs
         )
-        return self._finish(obs)
+        return self._finish(obs, broker)
 
     async def step_async(
         self,
@@ -369,13 +378,14 @@ class PostTrainEnvironment(MCPEnvironment):
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> Observation:
+        broker = self._broker
         self._state.step_count += 1
         obs = await super().step_async(
             action, timeout_s=self._tool_timeout(action, timeout_s), **kwargs
         )
         # Ending an episode waits on HF Jobs to confirm cancels; keep that off
         # the event loop shared by every session.
-        return await asyncio.to_thread(self._finish, obs)
+        return await asyncio.to_thread(self._finish, obs, broker)
 
     def _step_impl(
         self,
@@ -397,10 +407,32 @@ class PostTrainEnvironment(MCPEnvironment):
         return self._state
 
     def close(self) -> None:
+        broker = self._broker
         try:
-            self._end_jobs("environment closed")
-        finally:
-            super().close()
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._close(broker)
+        else:
+            # Core retries failed executor cleanup directly on its event loop.
+            # Retain that retry without waiting for HF cancellation on the loop.
+            if self._close_task is None or self._close_task.done():
+                self._close_task = loop.create_task(self._close_in_thread(broker))
+                _CLOSE_TASKS.add(self._close_task)
+                self._close_task.add_done_callback(_CLOSE_TASKS.discard)
+
+    def _close(self, broker: Broker | None) -> None:
+        with self._lifecycle_lock:
+            try:
+                self._end_jobs("environment closed", broker)
+            finally:
+                if broker is self._broker:
+                    super().close()
+
+    async def _close_in_thread(self, broker: Broker | None) -> None:
+        try:
+            await asyncio.to_thread(self._close, broker)
+        except Exception:
+            logger.exception("posttrain_env close could not confirm job cancellation")
 
     # -- tools --------------------------------------------------------------
 

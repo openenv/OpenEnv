@@ -9,6 +9,7 @@ and spend nothing.
 from __future__ import annotations
 
 import ast
+import asyncio
 import base64
 import ctypes.util
 import dataclasses
@@ -16,6 +17,8 @@ import json
 import re
 import subprocess
 import sys
+import threading
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -863,3 +866,368 @@ print("unix")
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert out.stdout.split() == ["blocked", "blocked", "blocked", "unix"]
+
+
+@pytest.mark.parametrize("same_key", [False, True])
+@pytest.mark.parametrize("lost_response", [False, True])
+def test_concurrent_fastmcp_admission(env, api, monkeypatch, same_key, lost_response):
+    env.reset(task_id="t0_arithmetic_format")
+    api.fail_after_create = lost_response
+    entered = threading.Event()
+    release = threading.Event()
+    api_lock = threading.Lock()
+    run = api.run_uv_job
+
+    def blocked_run(**kwargs):
+        entered.set()
+        assert release.wait(5)
+        with api_lock:
+            return run(**kwargs)
+
+    monkeypatch.setattr(api, "run_uv_job", blocked_run)
+
+    async def exercise():
+        async with env.mcp_session() as client:
+
+            def request(i):
+                return client.call_tool(
+                    "jobs_submit",
+                    {
+                        "script": "print(1)",
+                        "flavor": "a10g-small",
+                        "timeout_minutes": 60,
+                        "idempotency_key": "same" if same_key else str(i),
+                    },
+                )
+
+            calls = [asyncio.create_task(request(i)) for i in range(4)]
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                # A budget call traverses the same FastMCP thread pool while
+                # provider submission is pending.
+                budget = await client.call_tool("budget", {})
+                assert budget.data["remaining_usd"] <= 3 - 60 * A10G_SMALL / 1e6
+            finally:
+                release.set()
+            return [result.data for result in await asyncio.gather(*calls)]
+
+    results = asyncio.run(exercise())
+    successes = [r for r in results if "job_id" in r]
+    if same_key:
+        assert len(successes) == 4
+        assert len({r["job_id"] for r in successes}) == 1
+        assert len(api.runs) == 1
+    else:
+        assert len(successes) == 2
+        assert len(api.runs) == 2
+        assert all(
+            r["error"]["type"] == "budget_exhausted" for r in results if "error" in r
+        )
+    assert env._broker.remaining_micro_usd() >= 0
+    assert (
+        env._broker.spend()["reserved"]["usd"] == len(api.runs) * 60 * A10G_SMALL / 1e6
+    )
+
+
+def test_cancelled_finish_cannot_end_reset_episode(api, monkeypatch):
+    env = PostTrainEnvironment(api=api, max_steps=2, poll_s=0, cancel_timeout_s=0.01)
+    env.reset(task_id="t0_artifact")
+    submit_job(env)
+    old_broker = env._broker
+    entered = threading.Event()
+    release = threading.Event()
+    cancel_all = old_broker.cancel_all
+    first = True
+    worker_finished = threading.Event()
+    finish = env._finish
+
+    def blocked_cancel(*args):
+        nonlocal first
+        if first:
+            first = False
+            entered.set()
+            assert release.wait(5)
+        return cancel_all(*args)
+
+    def finish_and_signal(*args):
+        try:
+            return finish(*args)
+        finally:
+            worker_finished.set()
+
+    monkeypatch.setattr(old_broker, "cancel_all", blocked_cancel)
+    monkeypatch.setattr(env, "_finish", finish_and_signal)
+
+    async def exercise():
+        step = asyncio.create_task(
+            env.step_async(CallToolAction(tool_name="budget", arguments={}))
+        )
+        assert await asyncio.to_thread(entered.wait, 5)
+        step.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await step
+        reset = asyncio.create_task(
+            asyncio.to_thread(env.reset, task_id="t0_artifact", episode_id="new")
+        )
+        # Let reset finish if it can overtake the old completion. With the
+        # lifecycle lock it instead waits until we release that completion.
+        await asyncio.wait({reset}, timeout=0.05)
+        release.set()
+        obs = await reset
+        assert await asyncio.to_thread(worker_finished.wait, 5)
+        assert not obs.done
+        assert env.state.episode_id == "new"
+        assert not env._done
+        assert env._end == {}
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        env.close()
+
+
+def test_session_cleanup_retry_keeps_event_loop_responsive(api, monkeypatch):
+    from openenv.core.env_server.http_server import HTTPEnvServer
+
+    env = PostTrainEnvironment(api=api, poll_s=0.01, cancel_timeout_s=0.1)
+    env.reset(task_id="t0_artifact")
+    job = submit_job(env)
+    api.cancel_confirms = False
+    server = object.__new__(HTTPEnvServer)
+    server._shared_session_executor = None
+    loop_calls = []
+    cancel = api.cancel_job
+
+    def record_cancel(**kwargs):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            loop_calls.append(kwargs["job_id"])
+        return cancel(**kwargs)
+
+    monkeypatch.setattr(api, "cancel_job", record_cancel)
+
+    async def exercise():
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            await server._cleanup_session_resources(env, executor)
+        assert not loop_calls
+        # If fallback scheduled another attempt, it remains owned until done.
+        if env._close_task is not None:
+            await env._close_task
+        assert env._broker.jobs[job["job_id"]].state == "orphaned"
+        api.cancel_confirms = True
+        await asyncio.to_thread(env.close)
+        assert env._broker.jobs[job["job_id"]].state == "cancelled"
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        api.cancel_confirms = True
+        env.close()
+
+
+@pytest.mark.parametrize("role", ["agent", "dev_eval"])
+def test_pending_admission_enforces_job_limits(env, api, monkeypatch, role):
+    from envs.posttrain_env.server.broker import BrokerError
+
+    env.reset(task_id="t0_artifact")
+    source = env._broker.get(submit_job(env)["job_id"])
+    api.finish(source.job_id)
+    env._broker.refresh(source)
+    broker = env._broker
+    broker.max_jobs = 2  # The source consumes the first slot.
+    broker.max_dev_evals = 1
+    barrier = threading.Barrier(4)
+    entered = threading.Event()
+    release = threading.Event()
+    api_lock = threading.Lock()
+    run = api.run_uv_job
+
+    def blocked_run(**kwargs):
+        entered.set()
+        assert release.wait(5)
+        with api_lock:
+            return run(**kwargs)
+
+    monkeypatch.setattr(api, "run_uv_job", blocked_run)
+
+    def start():
+        barrier.wait(5)
+        try:
+            if role == "agent":
+                return broker.submit(
+                    "print(1)",
+                    flavor="cpu-basic",
+                    timeout_minutes=1,
+                    allowed_flavors=("cpu-basic",),
+                    max_timeout_minutes=1,
+                )
+            return broker.evaluate(
+                source,
+                role=role,
+                script_path=env._task.eval_script_path,
+                flavor="cpu-basic",
+                timeout_minutes=1,
+                env={},
+            )
+        except BrokerError as error:
+            return error.kind
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(start) for _ in range(4)]
+        try:
+            assert entered.wait(5)
+            done, _ = wait(futures, timeout=2, return_when=FIRST_COMPLETED)
+            assert done, (
+                "Other admissions must reject while the provider call is pending"
+            )
+        finally:
+            release.set()
+        results = [f.result(5) for f in futures]
+    assert results.count("limit_reached") == 3
+    assert len(api.runs) == 2
+
+
+def test_failed_admission_releases_only_its_own_reservation(env, api, monkeypatch):
+    env.reset(task_id="t0_artifact")
+    broker = env._broker
+    entered = [threading.Event(), threading.Event()]
+    release = [threading.Event(), threading.Event()]
+    api_lock = threading.Lock()
+    run = api.run_uv_job
+    attempts = 0
+
+    def failing_run(**kwargs):
+        nonlocal attempts
+        with api_lock:
+            index = attempts
+            attempts += 1
+        if index < 2:
+            entered[index].set()
+            assert release[index].wait(5)
+        if index == 0:
+            raise ConnectionError("failed before creating job")
+        with api_lock:
+            return run(**kwargs)
+
+    monkeypatch.setattr(api, "run_uv_job", failing_run)
+
+    async def exercise():
+        async with env.mcp_session() as client:
+
+            def start(key):
+                return client.call_tool(
+                    "jobs_submit",
+                    {
+                        "script": "print(1)",
+                        "flavor": "cpu-basic",
+                        "timeout_minutes": 10,
+                        "idempotency_key": key,
+                    },
+                )
+
+            first = asyncio.create_task(start("retry"))
+            assert await asyncio.to_thread(entered[0].wait, 5)
+            second = asyncio.create_task(start("other"))
+            try:
+                assert await asyncio.to_thread(entered[1].wait, 5)
+                release[0].set()
+                failed = await first
+                assert failed.data["error"]["type"] == "internal_error"
+                assert broker.remaining_micro_usd() == 50_000 - 10 * CPU_BASIC
+                retry = await start("retry")
+                assert "job_id" in retry.data
+                assert broker.remaining_micro_usd() == 50_000 - 20 * CPU_BASIC
+            finally:
+                for event in release:
+                    event.set()
+                await asyncio.gather(first, second)
+        assert len(api.runs) == 2
+        assert broker.spend()["reserved"]["usd"] == 20 * CPU_BASIC / 1e6
+
+    asyncio.run(exercise())
+
+
+def test_finish_queued_before_reset_keeps_episode_ownership(api, monkeypatch):
+    env = PostTrainEnvironment(api=api, max_steps=1)
+    env.reset(task_id="t0_artifact")
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    finish = env._finish
+
+    def queued_finish(*args):
+        entered.set()
+        assert release.wait(5)
+        try:
+            return finish(*args)
+        finally:
+            completed.set()
+
+    monkeypatch.setattr(env, "_finish", queued_finish)
+
+    async def exercise():
+        step = asyncio.create_task(
+            env.step_async(CallToolAction(tool_name="budget", arguments={}))
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            step.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await step
+            await asyncio.to_thread(env.reset, task_id="t0_artifact", episode_id="new")
+            # New episode activity must never be completed by the old worker.
+            env.state.step_count = 1
+        finally:
+            release.set()
+        assert await asyncio.to_thread(completed.wait, 5)
+        assert not env._done
+        assert env._end == {}
+        assert env.state.episode_id == "new"
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        env.close()
+
+
+def test_deferred_close_retains_the_original_broker(api, monkeypatch):
+    env = PostTrainEnvironment(api=api)
+    env.reset(task_id="t0_artifact")
+    old_job = submit_job(env)
+    entered = threading.Event()
+    release = threading.Event()
+    close = env._close
+
+    def queued_close(broker):
+        entered.set()
+        assert release.wait(5)
+        close(broker)
+
+    monkeypatch.setattr(env, "_close", queued_close)
+
+    async def exercise():
+        env.close()
+        owner = env._close_task
+        env.close()
+        assert env._close_task is owner
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            await asyncio.to_thread(env.reset, task_id="t0_artifact", episode_id="new")
+            new_job = await asyncio.to_thread(submit_job, env)
+        finally:
+            release.set()
+        await owner
+        assert api.jobs[old_job["job_id"]]["stage"] == "CANCELED"
+        assert api.jobs[new_job["job_id"]]["stage"] == "SCHEDULING"
+        assert env.mcp_server is not None
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        env.close()

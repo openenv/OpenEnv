@@ -22,6 +22,7 @@ import json
 import math
 import re
 import tempfile
+import threading
 import time
 import tomllib
 from contextlib import suppress
@@ -156,22 +157,34 @@ class Broker:
         self.jobs: dict[str, Job] = {}
         self._idempotency: dict[str, str] = {}
         self._hardware: dict[str, Any] | None = None
+        self._admission = threading.Condition(threading.RLock())
+        self._pending: dict[str, tuple[str, int]] = {}
+        self._pending_keys: set[str] = set()
+        self._closing = False
 
     # -- ledger -------------------------------------------------------------
 
     def count(self, role: str) -> int:
         """Return how many jobs of `role` this episode has started."""
-        return sum(1 for j in self.jobs.values() if j.role == role)
+        with self._admission:
+            return sum(1 for j in self.jobs.values() if j.role == role) + sum(
+                1 for pending_role, _ in self._pending.values() if pending_role == role
+            )
 
     def _charged(self) -> list[Job]:
         return [j for j in self.jobs.values() if j.role in ("agent", "dev_eval")]
 
     def remaining_micro_usd(self) -> int:
-        used = sum(
-            j.settled_micro_usd if j.settled else j.reserved_micro_usd
-            for j in self._charged()
-        )
-        return self.budget_micro_usd - used
+        with self._admission:
+            used = sum(
+                j.settled_micro_usd if j.settled else j.reserved_micro_usd
+                for j in self._charged()
+            ) + sum(
+                cost
+                for role, cost in self._pending.values()
+                if role in ("agent", "dev_eval")
+            )
+            return self.budget_micro_usd - used
 
     def rate_micro_usd_per_minute(self, flavor: str) -> int:
         return self._hardware_info(flavor).unit_cost_micro_usd
@@ -194,37 +207,48 @@ class Broker:
         return reservation
 
     def _settle(self, job: Job) -> None:
-        if job.running_secs is None:
-            # A job that ended without a reported duration may still have run;
-            # charge its full reservation unless it never started.
-            cost = 0 if job.state == "cancelled" else job.reserved_micro_usd
-        else:
-            minutes = math.ceil(job.running_secs / 60)
-            cost = minutes * self.rate_micro_usd_per_minute(job.flavor)
-        job.settled_micro_usd = min(cost, job.reserved_micro_usd)
-        job.settled = True
+        with self._admission:
+            if job.running_secs is None:
+                # A job that ended without a reported duration may still have run;
+                # charge its full reservation unless it never started.
+                cost = 0 if job.state == "cancelled" else job.reserved_micro_usd
+            else:
+                minutes = math.ceil(job.running_secs / 60)
+                cost = minutes * self.rate_micro_usd_per_minute(job.flavor)
+            job.settled_micro_usd = min(cost, job.reserved_micro_usd)
+            job.settled = True
 
     def spend(self) -> dict:
         """Return the `service_spend` observation entry for this episode."""
-        charged = self._charged()
-        gpu_s = 0.0
-        for job in charged:
-            accelerator = self._hardware_info(job.flavor).accelerator
-            if accelerator is not None:
-                gpu_s += (job.running_secs or 0) * int(accelerator.quantity)
-        return {
-            "version": 1,
-            "settled": {
-                "usd": sum(j.settled_micro_usd for j in charged if j.settled) / 1e6,
-                "gpu_s": gpu_s,
-                "jobs": self.count("agent"),
-                "calls": self.count("dev_eval"),
-            },
-            "reserved": {
-                "usd": sum(j.reserved_micro_usd for j in charged if not j.settled) / 1e6
-            },
-            "final": all(j.state in CONFIRMED_STATES for j in self.jobs.values()),
-        }
+        with self._admission:
+            charged = self._charged()
+            gpu_s = 0.0
+            for job in charged:
+                accelerator = self._hardware_info(job.flavor).accelerator
+                if accelerator is not None:
+                    gpu_s += (job.running_secs or 0) * int(accelerator.quantity)
+            return {
+                "version": 1,
+                "settled": {
+                    "usd": sum(j.settled_micro_usd for j in charged if j.settled) / 1e6,
+                    "gpu_s": gpu_s,
+                    "jobs": self.count("agent"),
+                    "calls": self.count("dev_eval"),
+                },
+                "reserved": {
+                    "usd": (
+                        sum(j.reserved_micro_usd for j in charged if not j.settled)
+                        + sum(
+                            cost
+                            for role, cost in self._pending.values()
+                            if role in ("agent", "dev_eval")
+                        )
+                    )
+                    / 1e6
+                },
+                "final": not self._pending
+                and all(j.state in CONFIRMED_STATES for j in self.jobs.values()),
+            }
 
     # -- jobs ---------------------------------------------------------------
 
@@ -250,8 +274,9 @@ class Broker:
         from wheels before that. Each of `datasets` is mounted read-only at
         `/datasets/<repo_id>`, next to `volumes`.
         """
-        if idempotency_key and idempotency_key in self._idempotency:
-            return self.jobs[self._idempotency[idempotency_key]]
+        with self._admission:
+            if idempotency_key and idempotency_key in self._idempotency:
+                return self.jobs[self._idempotency[idempotency_key]]
         if flavor not in allowed_flavors:
             raise BrokerError(
                 "flavor_not_allowed",
@@ -268,23 +293,70 @@ class Broker:
             )
         requirements = self._requirements(script, dependencies or [])
         mounts = self._dataset_volumes(datasets or [], denied_datasets)
-        if self.count("agent") >= self.max_jobs:
-            raise BrokerError(
-                "limit_reached", f"This episode allows {self.max_jobs} jobs"
-            )
-        reservation = self._reserve(flavor, timeout_minutes, charged=True)
-        job = self._run(
+        return self._start(
             self._launcher_script(script, requirements),
             role="agent",
             flavor=flavor,
             timeout_minutes=timeout_minutes,
-            reservation=reservation,
             dependencies=[],
             volumes=[*(volumes or []), *mounts],
+            idempotency_key=idempotency_key,
         )
-        if idempotency_key:
-            self._idempotency[idempotency_key] = job.job_id
-        return job
+
+    def _start(
+        self,
+        script: str,
+        *,
+        role: str,
+        flavor: str,
+        timeout_minutes: int,
+        idempotency_key: str | None = None,
+        **kwargs: Any,
+    ) -> Job:
+        # Only admission and ledger publication hold the lock. Provider calls
+        # may block while other tools inspect or cancel existing jobs.
+        with self._admission:
+            if idempotency_key:
+                self._admission.wait_for(
+                    lambda: idempotency_key not in self._pending_keys
+                )
+                if idempotency_key in self._idempotency:
+                    return self.jobs[self._idempotency[idempotency_key]]
+            if self._closing:
+                raise BrokerError("episode_over", "The episode is ending")
+            limit = self.max_jobs if role == "agent" else self.max_dev_evals
+            if role != "score" and self.count(role) >= limit:
+                raise BrokerError(
+                    "limit_reached", f"This episode allows {limit} {role} jobs"
+                )
+            reservation = self._reserve(
+                flavor, timeout_minutes, charged=role != "score"
+            )
+            request = uuid4().hex
+            self._pending[request] = (role, reservation)
+            if idempotency_key:
+                self._pending_keys.add(idempotency_key)
+        job = None
+        try:
+            job = self._run(
+                script,
+                role=role,
+                flavor=flavor,
+                timeout_minutes=timeout_minutes,
+                reservation=reservation,
+                **kwargs,
+            )
+            return job
+        finally:
+            with self._admission:
+                if job is not None:
+                    self.jobs[job.job_id] = job
+                    if idempotency_key:
+                        self._idempotency[idempotency_key] = job.job_id
+                del self._pending[request]
+                if idempotency_key:
+                    self._pending_keys.remove(idempotency_key)
+                self._admission.notify_all()
 
     @staticmethod
     def _requirements(script: str, dependencies: list[str]) -> list[str]:
@@ -402,12 +474,6 @@ class Broker:
     ) -> Job:
         """Run an evaluator job on `source`'s artifact, mounted read-only at `/model`, next to `volumes`."""
         self.require_artifact(source)
-        if role == "dev_eval" and self.count("dev_eval") >= self.max_dev_evals:
-            raise BrokerError(
-                "limit_reached",
-                f"This episode allows {self.max_dev_evals} dev evaluations",
-            )
-        reservation = self._reserve(flavor, timeout_minutes, charged=role == "dev_eval")
         model = Volume(
             type="bucket",
             source=source.bucket,
@@ -415,12 +481,11 @@ class Broker:
             mount_path="/model",
             read_only=True,
         )
-        job = self._run(
+        job = self._start(
             script_path.read_text(),
             role=role,
             flavor=flavor,
             timeout_minutes=timeout_minutes,
-            reservation=reservation,
             dependencies=[],
             env=env,
             secrets=secrets,
@@ -490,7 +555,6 @@ class Broker:
             bucket=artifacts[0].source if artifacts else None,
             path=artifacts[0].path if artifacts else None,
         )
-        self.jobs[job.job_id] = job
         return job
 
     def require_artifact(self, job: Job) -> None:
@@ -590,7 +654,10 @@ class Broker:
         Returns:
             `list[str]`: ids of the orphaned jobs.
         """
-        live = [j for j in self.jobs.values() if j.state not in CONFIRMED_STATES]
+        with self._admission:
+            self._closing = True
+            self._admission.wait_for(lambda: not self._pending)
+            live = [j for j in self.jobs.values() if j.state not in CONFIRMED_STATES]
         for job in live:
             if job.state == "orphaned":
                 job.state, job.settled = "cancelling", False
