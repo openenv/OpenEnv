@@ -21,6 +21,7 @@ Server configuration (environment variables):
   one server process.
 """
 
+import asyncio
 import logging
 import os
 import secrets
@@ -372,7 +373,9 @@ class PostTrainEnvironment(MCPEnvironment):
         obs = await super().step_async(
             action, timeout_s=self._tool_timeout(action, timeout_s), **kwargs
         )
-        return self._finish(obs)
+        # Ending an episode waits on HF Jobs to confirm cancels; keep that off
+        # the event loop shared by every session.
+        return await asyncio.to_thread(self._finish, obs)
 
     def _step_impl(
         self,

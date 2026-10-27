@@ -5,7 +5,7 @@
 **Authors**: @rycerzes
 **RFC ID**: 014
 
-Discussion: [#1382](https://github.com/huggingface/OpenEnv/issues/1382). Prototype: [`envs/posttrain_env`](../envs/posttrain_env/).
+Discussion: [#1382](https://github.com/openenv/OpenEnv/issues/1382). Prototype: [`envs/posttrain_env`](../envs/posttrain_env/).
 
 ## Summary
 
@@ -126,7 +126,7 @@ v1 reports `usd`, `gpu_s`, `jobs` and `calls`. `jobs` counts agent jobs and `cal
 
 ### Decisions from the discussion
 
-1. **Long-running services and GRPO.** A service runs live at train time only if it finishes within the trainer's staleness window; for example, TRL's experimental `AsyncGRPOTrainer` drops samples more than [`max_staleness`](https://github.com/huggingface/trl/blob/0dcd18c48bf7e63b49a23da0cb030b0a93a2f39f/trl/experimental/async_grpo/async_grpo_config.py#L126-L128) weight updates old (default 4). Slower services declare a stand-in and the real service runs only at eval. Post-training tasks are multi-hour episodes, so their near-term use is evaluation.
+1. **Long-running services and GRPO.** A service runs live at train time only if it finishes within the trainer's staleness window. Asynchronous GRPO trainers drop samples generated more than a few weight updates ago, so an episode has minutes, not hours. Slower services declare a stand-in and the real service runs only at eval. Post-training tasks are multi-hour episodes, so their near-term use is evaluation.
 2. **HF Spaces.** No services on Spaces for now. A Space gives no isolation guarantee, so it must not hold a broker credential.
 
 ### Not allowed

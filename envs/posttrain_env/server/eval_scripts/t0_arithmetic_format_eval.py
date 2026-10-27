@@ -77,7 +77,7 @@ try:
     )
 except Exception as e:  # Report a bad checkpoint as a score, don't crash.
     invalid(f"cannot load /model: {type(e).__name__}")
-if info["missing_keys"] or info["mismatched_keys"]:
+if info["missing_keys"] or info["unexpected_keys"] or info["mismatched_keys"]:
     invalid("/model weights do not match the base model")
 # from_pretrained also reads /model/generation_config.json; generate() would fill
 # unset fields from it, so the checkpoint could change or break decoding.

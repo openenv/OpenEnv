@@ -661,6 +661,36 @@ def test_websocket_path_ends_the_episode_with_the_score(api):
     env.close()
 
 
+def test_websocket_path_waits_for_cancels_off_the_event_loop(api):
+    """Other sessions share the event loop, so ending an episode must not block it."""
+    import asyncio
+
+    env = PostTrainEnvironment(api=api, max_steps=2, poll_s=0.05, cancel_timeout_s=0.5)
+    env.reset(task_id="t0_artifact")
+    job = submit_job(env)
+    api.jobs[job["job_id"]]["stage"] = "RUNNING"
+    api.cancel_confirms = False
+    ticks = 0
+
+    async def tick():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    async def run():
+        ticker = asyncio.create_task(tick())
+        obs = await env.step_async(CallToolAction(tool_name="budget", arguments={}))
+        ticker.cancel()
+        return obs
+
+    obs = asyncio.run(run())
+    assert obs.metadata["episode_end"]["orphaned_jobs"] == [job["job_id"]]
+    assert ticks >= 10
+    api.cancel_confirms = True
+    env.close()
+
+
 def http_error(status=500):
     import httpx
     from huggingface_hub.errors import HfHubHTTPError
