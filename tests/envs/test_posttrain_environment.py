@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import AsyncExitStack
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1822,6 +1823,64 @@ def test_score_admission_fastmcp(env, api, monkeypatch, lost_response):
     finally:
         release.set()
         monkeypatch.setattr(api, "list_jobs", lookup)
+
+
+@pytest.mark.parametrize("preopen", [False, True])
+@pytest.mark.parametrize("old_tool", ["budget", "jobs_submit"])
+def test_fresh_episode_dispatch_during_old_request(
+    env, api, monkeypatch, preopen, old_tool
+):
+    env.reset(task_id="t0_artifact", episode_id="old")
+    old = env._broker
+    entered, release = threading.Event(), threading.Event()
+    original = env._call
+
+    def blocked(*args, **kwargs):
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(env, "_call", blocked)
+
+    async def exercise():
+        args = {"script": "print(1)", "flavor": "cpu-basic", "timeout_minutes": 1}
+        async with AsyncExitStack() as stack:
+            if preopen:
+                await stack.enter_async_context(env.mcp_session())
+            request = asyncio.create_task(
+                env.step_async(
+                    CallToolAction(
+                        tool_name=old_tool,
+                        arguments={} if old_tool == "budget" else args,
+                    )
+                )
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                await asyncio.to_thread(
+                    env.reset, task_id="t0_artifact", episode_id="new"
+                )
+                new = env._broker
+                fresh = await env.step_async(
+                    CallToolAction(tool_name="jobs_submit", arguments=args)
+                )
+            finally:
+                release.set()
+                stale = await request
+            assert fresh.error is None
+            assert fresh.result.data["job_id"] in new.jobs
+            assert stale.error is None
+            assert stale.result.data["error"]["type"] == "episode_over"
+            assert env._broker is new and new is not old
+            assert not old.jobs and len(new.jobs) == 1 and len(api.runs) == 1
+            assert env.state.step_count == 1
+            assert not new._closing and not env._done and env._end == {}
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
 
 
 @pytest.mark.parametrize("tool", ["jobs_submit", "dev_evaluate"])

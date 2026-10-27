@@ -116,7 +116,14 @@ class PostTrainEnvironment(MCPEnvironment):
 
         class EpisodeDispatch(Middleware):
             async def on_call_tool(self, context, call_next):
-                ownership = owner._episode()
+                # The MCP session task may have inherited an earlier episode.
+                with owner._lifecycle_lock:
+                    ownership = (
+                        owner._broker,
+                        owner._task,
+                        owner._nonce,
+                        owner._score_lock,
+                    )
                 meta = context.fastmcp_context.request_context.meta
                 expected = (
                     None if meta is None else meta.model_dump().get("posttrain_episode")
