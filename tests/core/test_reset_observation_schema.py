@@ -64,6 +64,9 @@ def test_default_reset_schema_keeps_declared_model_without_creating_environment(
 
 def test_schema_response_still_accepts_legacy_three_schema_payload():
     response = SchemaResponse(action={}, observation={}, state={})
+    assert response.reset is None
+    assert "reset" not in response.model_dump()
+    assert "reset" not in json.loads(response.model_dump_json())
     assert response.reset_observation is None
     assert "reset_observation" not in response.model_dump()
     assert "reset_observation" not in json.loads(response.model_dump_json())
@@ -74,6 +77,7 @@ def test_schema_response_still_accepts_legacy_three_schema_payload():
         return response
 
     with TestClient(app) as client:
+        assert "reset" not in client.get("/schema").json()
         assert "reset_observation" not in client.get("/schema").json()
 
 

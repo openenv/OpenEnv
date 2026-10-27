@@ -35,9 +35,35 @@ def _judge_from_env() -> VisionJudge | None:
     training loops want. It does mean no judge, though. Configuring one whose
     every call fails would keep the 0.35/0.65 weight split while `semantic`
     never scores, silently capping the reward at 0.35.
+
+    `PELICAN_SVG_JUDGE_BASE_URL` points the judge at an OpenAI-compatible
+    server instead, a local vLLM for example. It needs no Hugging Face token,
+    but it does need `PELICAN_SVG_JUDGE_MODEL`, since the default repository id
+    is a 72B model that such a server is unlikely to be serving. Raising beats
+    guessing here for the same reason the docstring above gives: a judge whose
+    every call fails is worse than no judge at all.
+
+    Raises:
+        ValueError: If `PELICAN_SVG_JUDGE_BASE_URL` is set without
+            `PELICAN_SVG_JUDGE_MODEL`.
     """
     if os.environ.get("PELICAN_SVG_DISABLE_JUDGE", "").lower() in {"1", "true", "yes"}:
         return None
+    model = os.environ.get("PELICAN_SVG_JUDGE_MODEL")
+    base_url = os.environ.get("PELICAN_SVG_JUDGE_BASE_URL")
+    if base_url:
+        if not model:
+            raise ValueError(
+                "PELICAN_SVG_JUDGE_BASE_URL is set but PELICAN_SVG_JUDGE_MODEL "
+                "is not. Set it to the model the endpoint serves."
+            )
+        return VisionJudge(
+            HFVisionClient(
+                model=model,
+                api_key=os.environ.get("PELICAN_SVG_JUDGE_API_KEY"),
+                base_url=base_url,
+            )
+        )
     token = (
         os.environ.get("HF_TOKEN")
         or os.environ.get("HUGGING_FACE_HUB_TOKEN")
@@ -45,8 +71,9 @@ def _judge_from_env() -> VisionJudge | None:
     )
     if not token:
         return None
-    model = os.environ.get("PELICAN_SVG_JUDGE_MODEL", DEFAULT_JUDGE_MODEL)
-    return VisionJudge(HFVisionClient(model=model, api_key=token))
+    return VisionJudge(
+        HFVisionClient(model=model or DEFAULT_JUDGE_MODEL, api_key=token)
+    )
 
 
 class PelicanSvgEnvironment(

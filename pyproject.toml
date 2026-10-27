@@ -54,6 +54,9 @@ modal = [
     "modal>=1.4.0",
     "pyyaml>=6.0",
 ]
+kubernetes = [
+    "kubernetes>=29.0.0",
+]
 novita = [
     "novita-sandbox>=2.1.1",
 ]

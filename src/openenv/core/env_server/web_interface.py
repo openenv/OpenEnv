@@ -28,7 +28,7 @@ from .gradio_theme import OPENENV_GRADIO_CSS, OPENENV_GRADIO_THEME
 from .gradio_ui import build_gradio_app, get_gradio_display_title
 from .interfaces import Environment
 from .serialization import deserialize_action_with_preprocessing, serialize_observation
-from .types import Action, EnvironmentMetadata, Observation, State
+from .types import Action, EnvironmentMetadata, Observation, ResetRequest, State
 
 
 _CLIENT_BASES = {"EnvClient", "MCPClientBase", "MCPToolClient"}
@@ -485,6 +485,7 @@ def create_web_interface_app(
     *,
     mode: Optional[Any] = None,
     reset_observation_cls: Optional[Type[Observation]] = None,
+    reset_cls: Type[ResetRequest] = ResetRequest,
 ) -> FastAPI:
     """
     Create a FastAPI application with web interface for the given environment.
@@ -519,6 +520,9 @@ def create_web_interface_app(
             title instead of the default ``"OpenEnv Agentic Environment: {name}"``.
         state_cls: The State subclass this environment reports. Used for the /state
             response model and the state entry of /schema. Defaults to State.
+        reset_cls: The ResetRequest subclass describing reset parameters. Published
+            as the reset entry of /schema; not used for validation. Defaults to
+            ResetRequest.
         mode: Server mode (``ServerMode`` or string). When ``None``, resolved
             from the ``OPENENV_MODE`` environment variable, defaulting to
             simulation.
@@ -537,6 +541,7 @@ def create_web_interface_app(
         concurrency_config,
         env_name=env_name,
         state_cls=state_cls,
+        reset_cls=reset_cls,
         reset_observation_cls=reset_observation_cls,
         mode=mode,
     )
