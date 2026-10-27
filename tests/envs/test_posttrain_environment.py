@@ -1015,8 +1015,8 @@ def test_session_cleanup_retry_keeps_event_loop_responsive(api, monkeypatch):
             await server._cleanup_session_resources(env, executor)
         assert not loop_calls
         # If fallback scheduled another attempt, it remains owned until done.
-        if env._close_task is not None:
-            await env._close_task
+        if env._close_tasks:
+            await asyncio.gather(*env._close_tasks.values())
         assert env._broker.jobs[job["job_id"]].state == "orphaned"
         api.cancel_confirms = True
         await asyncio.to_thread(env.close)
@@ -1195,6 +1195,74 @@ def test_finish_queued_before_reset_keeps_episode_ownership(api, monkeypatch):
         env.close()
 
 
+def test_close_after_reset_runs_while_old_close_is_pending(api, monkeypatch, caplog):
+    env = PostTrainEnvironment(api=api, poll_s=0, cancel_timeout_s=0)
+    env.reset(task_id="t0_artifact")
+    old_job = submit_job(env)
+    old_broker = env._broker
+    entered = threading.Event()
+    release = threading.Event()
+    close = env._close
+    closed_brokers = []
+
+    def queued_close(broker):
+        closed_brokers.append(broker)
+        if broker is old_broker:
+            entered.set()
+            assert release.wait(5)
+        close(broker)
+
+    monkeypatch.setattr(env, "_close", queued_close)
+
+    async def exercise():
+        env.close()
+        old_owner = env._close_tasks[old_broker]
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            await asyncio.to_thread(env.reset, task_id="t0_artifact", episode_id="new")
+            new_broker = env._broker
+            new_job = await asyncio.to_thread(submit_job, env)
+            api.cancel_confirms = False
+            env.close()
+            new_owner = env._close_tasks[new_broker]
+            assert new_owner is not old_owner
+            env.close()
+            assert env._close_tasks[new_broker] is new_owner
+            await asyncio.wait_for(asyncio.shield(new_owner), 3)
+            assert not old_owner.done()
+            assert new_broker not in env._close_tasks
+            assert old_broker in env._close_tasks
+            assert new_broker.jobs[new_job["job_id"]].state == "orphaned"
+            assert not new_broker.spend()["final"]
+            assert "close could not confirm job cancellation" in caplog.text
+
+            api.cancel_confirms = True
+            env.close()
+            retry = env._close_tasks[new_broker]
+            assert retry is not new_owner
+            await asyncio.wait_for(asyncio.shield(retry), 3)
+            assert not old_owner.done()
+            assert api.jobs[new_job["job_id"]]["stage"] == "CANCELED"
+            assert new_broker.spend()["final"]
+            assert closed_brokers == [old_broker, new_broker, new_broker]
+        finally:
+            api.cancel_confirms = True
+            release.set()
+            await old_owner
+        assert api.jobs[old_job["job_id"]]["stage"] == "CANCELED"
+        assert not env._close_tasks
+        assert old_owner not in posttrain_environment._CLOSE_TASKS
+        assert new_owner not in posttrain_environment._CLOSE_TASKS
+        assert retry not in posttrain_environment._CLOSE_TASKS
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        api.cancel_confirms = True
+        close(env._broker)
+
+
 def test_deferred_close_retains_the_original_broker(api, monkeypatch):
     env = PostTrainEnvironment(api=api)
     env.reset(task_id="t0_artifact")
@@ -1212,9 +1280,9 @@ def test_deferred_close_retains_the_original_broker(api, monkeypatch):
 
     async def exercise():
         env.close()
-        owner = env._close_task
+        owner = env._close_tasks[env._broker]
         env.close()
-        assert env._close_task is owner
+        assert env._close_tasks[env._broker] is owner
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             await asyncio.to_thread(env.reset, task_id="t0_artifact", episode_id="new")

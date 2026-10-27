@@ -104,7 +104,7 @@ class PostTrainEnvironment(MCPEnvironment):
         self._score_job_id: str | None = None
         self._end: dict = {}
         self._lifecycle_lock = threading.RLock()
-        self._close_task: asyncio.Task | None = None
+        self._close_tasks: dict[Broker | None, asyncio.Task] = {}
 
         @mcp.tool
         def budget() -> dict:
@@ -415,10 +415,18 @@ class PostTrainEnvironment(MCPEnvironment):
         else:
             # Core retries failed executor cleanup directly on its event loop.
             # Retain that retry without waiting for HF cancellation on the loop.
-            if self._close_task is None or self._close_task.done():
-                self._close_task = loop.create_task(self._close_in_thread(broker))
-                _CLOSE_TASKS.add(self._close_task)
-                self._close_task.add_done_callback(_CLOSE_TASKS.discard)
+            task = self._close_tasks.get(broker)
+            if task is None or task.done():
+                task = loop.create_task(self._close_in_thread(broker))
+                self._close_tasks[broker] = task
+                _CLOSE_TASKS.add(task)
+
+                def finished(task):
+                    _CLOSE_TASKS.discard(task)
+                    if self._close_tasks.get(broker) is task:
+                        del self._close_tasks[broker]
+
+                task.add_done_callback(finished)
 
     def _close(self, broker: Broker | None) -> None:
         with self._lifecycle_lock:
