@@ -1,9 +1,11 @@
 <!-- openenv-source: posttrain_env -->
-# Post-training Environment
+# Post-training Environment (experimental)
 
 `posttrain_env` is an MCP environment where the agent post-trains a model on
 [HF Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs). It is the
-prototype for [RFC 014: Environment Services](https://github.com/huggingface/OpenEnv/blob/main/rfcs/014-environment-services.md).
+experimental, eval-first prototype for [RFC 014: Environment Services
+(PR #1508)](https://github.com/openenv/OpenEnv/pull/1508); discussion in
+[#1382](https://github.com/openenv/OpenEnv/issues/1382).
 
 The agent never holds a credential. It submits training scripts through MCP
 tools, and the server's broker starts them on HF Jobs with its own token. Each
@@ -115,17 +117,40 @@ while a job is still running or a cancellation was never confirmed.
 
 ## Episode end
 
-An episode ends when the agent calls `submit`, after `max_steps` tool calls
-(default 100) or after the task's time limit. The last two give reward 0. If
-the score job itself fails, times out or is cancelled, the episode ends
+Through `step(CallToolAction(...))`, an episode ends when the agent calls
+`submit`, after `max_steps` tool calls (default 100) or after the task's time limit.
+The step and time limits give reward 0.
+
+Direct `/mcp` calls, including `env.call_tool`, bypass the step and time limits
+and do not return the final step observation with reward and `service_spend`.
+
+If the score job itself fails, times out or is cancelled, the episode ends
 unscored: `reward` is `None` and `episode_end.reason` is `score_failed`, since
 the fault is the grader's. Trainers should drop such a rollout, not count it as
-zero. Ending the episode cancels every live job. `reset` cancels the previous
+zero, subject to acceptance of RFC 013 (#1256) and its final unscored-rollout
+semantics. Ending the episode cancels every live job. `reset` cancels the previous
 episode's jobs first and raises if HF Jobs does not confirm a cancellation,
 since that job may still be running and billing.
 
-`submit` waits for the score job, so it can take several minutes. `reset`
-reports `score_timeout_s`; set the client's `message_timeout_s` above it.
+## Using it with a trainer
+
+This environment is eval-first today. Post-training episodes can take hours,
+beyond the staleness window of asynchronous GRPO trainers. Use it for evaluation;
+training integration needs a service that fits the trainer's staleness window or
+a stand-in for the slow service.
+
+`submit` blocks for up to `score_timeout_s`, reported in reset metadata (2700 s
+for `t0_arithmetic_format`). Size the client's tool/message timeout above that
+value, with room for cancellation and transport overhead; the examples use
+`message_timeout_s=3600`.
+
+Read `final.reward` and `final.observation.metadata["service_spend"]` from the
+final `step` result. For RFC 013 integration, forward one settled amount per
+rollout, for example `service_spend["settled"]["usd"]`, as `costs` in the trainer's
+chosen unit. Spend is accounting, never a sampling weight. `final: true` means
+all jobs have settled, even mid-episode; it does not mean the episode is done.
+Use the step result's `done` for that. An orphan keeps spend `final: false` and
+may still bill; retain that accounting even when reward is `None`.
 
 ## Tasks
 
@@ -141,6 +166,11 @@ export HF_TOKEN=...   # the broker's token, see below
 cd envs/posttrain_env
 uv run --project . server
 ```
+
+The local entry point binds `127.0.0.1:8000`. The Docker command explicitly
+binds `0.0.0.0:8000` so a private host can reach the published port. This
+experimental env is excluded from automatic Spaces releases via
+`SKIP_HF_DEPLOYMENT`; do not publish it to Spaces or add it to HF collections.
 
 Configuration, all read by the server only:
 
@@ -158,6 +188,7 @@ isolation guarantee for the credential it holds.
 ## Client
 
 ```python
+from openenv.core.env_server.mcp_types import CallToolAction
 from posttrain_env import PostTrainEnv
 
 with PostTrainEnv(
@@ -165,14 +196,43 @@ with PostTrainEnv(
 ).sync() as env:
     result = env.reset(task_id="t0_artifact")
     print(result.observation.metadata["prompt"])
-    job = env.call_tool(
-        "jobs_submit",
-        script=open("train.py").read(),
-        flavor="cpu-basic",
-        timeout_minutes=5,
+    result = env.step(
+        CallToolAction(
+            tool_name="jobs_submit",
+            arguments={
+                "script": open("train.py").read(),
+                "flavor": "cpu-basic",
+                "timeout_minutes": 5,
+            },
+        )
     )
-    env.call_tool("jobs_wait", job_id=job["job_id"], timeout_s=300)
-    print(env.call_tool("submit", job_id=job["job_id"]))
+    assert result.observation.error is None
+    job = result.observation.result["data"]
+    assert "error" not in job, job
+    status = "queued"
+    while status in {"queued", "running"}:
+        result = env.step(
+            CallToolAction(
+                tool_name="jobs_wait",
+                arguments={
+                    "job_id": job["job_id"],
+                    "timeout_s": 300,
+                },
+            )
+        )
+        assert not result.done, result.observation.metadata
+        status = result.observation.result["data"]["state"]
+    assert status == "succeeded", result.observation.result
+    final = env.step(
+        CallToolAction(
+            tool_name="submit",
+            arguments={
+                "job_id": job["job_id"],
+            },
+        )
+    )
+    print(final.done, final.reward)
+    print(final.observation.metadata["service_spend"])
 ```
 
 [`examples/posttrain_env_agent.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/posttrain_env_agent.py)
@@ -187,7 +247,8 @@ it never needs the broker's token.
 - Job folders stay in the `jobs-artifacts` bucket, and the size of what a job
   writes there is not capped or charged to the budget.
 - `max_steps` and the time limit are checked in `step`; a client calling the
-  MCP endpoint directly bypasses them, though not the budget.
+  MCP endpoint directly bypasses them, though not the budget. Core enforcement
+  is tracked in [#1507](https://github.com/openenv/OpenEnv/issues/1507).
 - `torch.distributed` over localhost TCP is blocked in agent jobs, so tasks use
   single-GPU flavors.
 

@@ -1666,3 +1666,78 @@ def test_cleanup_reports_job_published_after_its_live_snapshot(env, api, monkeyp
         submission.result(timeout=5)
     env.close()
     assert broker.spend()["final"]
+
+
+@pytest.mark.parametrize("source", ["readme", "client_docstring"])
+def test_documented_client_episode_returns_reward_and_spend(
+    env, api, monkeypatch, tmp_path, source
+):
+    """Execute the examples across server serialization and client parsing."""
+    from contextlib import nullcontext
+
+    import posttrain_env
+    from openenv.core.mcp_client import MCPToolClient
+
+    if source == "readme":
+        text = (ENV_DIR / "README.md").read_text().split("## Client", 1)[1]
+    else:
+        text = posttrain_env.PostTrainEnv.__doc__
+    code = re.search(r"```python\n(.*?)\n\s*```", text, re.S).group(1)
+    # The docstring is indented, while the README fence is not.
+    import textwrap
+
+    code = textwrap.dedent(code)
+    api.on_inspect.update(
+        agent={"stage": "COMPLETED", "running_secs": 90},
+        score={
+            "stage": "COMPLETED",
+            "running_secs": 10,
+            "logs": [score_line(1.0)],
+        },
+    )
+    parser = MCPToolClient(base_url="http://localhost:8000")
+    results = []
+
+    def wire_result(obs):
+        payload = {
+            "observation": obs.model_dump(mode="json"),
+            "reward": obs.reward,
+            "done": obs.done,
+        }
+        return parser._parse_result(json.loads(json.dumps(payload)))
+
+    def step(action):
+        result = wire_result(env.step(action))
+        results.append(result)
+        return result
+
+    client = SimpleNamespace(
+        reset=lambda **kwargs: wire_result(env.reset(**kwargs)), step=step
+    )
+    monkeypatch.setattr(
+        posttrain_env,
+        "PostTrainEnv",
+        lambda **kwargs: SimpleNamespace(sync=lambda: nullcontext(client)),
+    )
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "train.py").write_text("print('train')")
+    exec(compile(code, source, "exec"), {"script": "print('train')"})
+    assert env.state.step_count == 3
+    final = results[-1]
+    assert final.done is True
+    assert final.reward == 1.0
+    spend = final.observation.metadata["service_spend"]
+    assert spend["final"] is True
+    assert spend["settled"]["usd"] == pytest.approx(2 * CPU_BASIC / 1e6)
+    assert spend["settled"]["jobs"] == 1
+    assert spend["reserved"]["usd"] == 0
+
+
+def test_local_server_binds_only_loopback(monkeypatch):
+    import uvicorn
+    from envs.posttrain_env.server import app
+
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: calls.append(kwargs))
+    app.main()
+    assert calls == [{"host": "127.0.0.1", "port": 8000}]

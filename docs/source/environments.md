@@ -295,8 +295,8 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
-      <div class="font-bold mb-2">Post-training</div>
-      <p class="text-sm"><code>posttrain_env</code> lets an agent post-train a model on HF Jobs through a broker that holds the credentials and enforces a per-rollout budget. A grader-only evaluation on a hidden split is the reward. Prototype for RFC 014.</p>
+      <div class="font-bold mb-2">Post-training (experimental)</div>
+      <p class="text-sm"><code>posttrain_env</code> lets an agent post-train a model on HF Jobs through a broker that holds the credentials and enforces a per-rollout budget. A grader-only evaluation on a hidden split is the reward. Eval-first prototype for RFC 014; private deployments only, excluded from Spaces releases and HF collections.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/posttrain" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
       </div>
