@@ -7,22 +7,32 @@ started with `run_uv_job` and explicit flavor, namespace, timeout and labels,
 and with no secrets. A `job.write` token passed into a job could start further
 jobs that skip this ledger, so the broker never passes one in.
 
+Agent scripts run inside `job_launcher.py`, which cuts the job's network
+access before the script starts. Dependencies are installed first, from wheels
+only, and inputs come as read-only mounts: the task's base model and the public
+datasets the agent asks for.
+
 Money is tracked in integer micro-USD. A job reserves its worst case (the
 flavor's per-minute rate times its timeout) before it starts, and settles at
 the per-minute rate for the minutes it actually ran.
 """
 
+import base64
 import json
 import math
+import re
 import tempfile
 import time
+import tomllib
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from huggingface_hub import Volume
-from huggingface_hub.errors import HfHubHTTPError
+from huggingface_hub.errors import HfHubHTTPError, HFValidationError
+from huggingface_hub.utils import validate_repo_id
+from packaging.requirements import InvalidRequirement, Requirement
 
 # HF Jobs stage -> job state exposed to the agent.
 STATE_FROM_STAGE = {
@@ -41,6 +51,11 @@ SCORE_MARKER = "POSTTRAIN_SCORE "
 ARTIFACTS_MOUNT = "/data"
 MAX_SCRIPT_BYTES = 200_000
 MAX_DEPENDENCIES = 20
+MAX_DATASETS = 5
+DATASETS_MOUNT = "/datasets"
+LAUNCHER = Path(__file__).parent / "job_launcher.py"
+# A PEP 723 `script` block, as in the specification's reference regex.
+SCRIPT_BLOCK = re.compile(r"(?m)^# /// script$\s(?P<content>(^#(| .*)$\s)+)^# ///$")
 MAX_ARTIFACT_FILES = 50
 # Logs can lag a finished job; re-read before declaring the score missing.
 MAX_RESULT_READS = 3
@@ -221,9 +236,19 @@ class Broker:
         allowed_flavors: tuple[str, ...],
         max_timeout_minutes: int,
         dependencies: list[str] | None = None,
+        datasets: list[str] | None = None,
+        denied_datasets: tuple[str, ...] = (),
+        volumes: list[Volume] | None = None,
         idempotency_key: str | None = None,
     ) -> Job:
-        """Start an agent job after checking limits and reserving its worst case."""
+        """
+        Start an agent job after checking limits and reserving its worst case.
+
+        The script runs without network access, inside `job_launcher.py`. Its
+        dependencies, from `dependencies` and its PEP 723 header, are installed
+        from wheels first. Each of `datasets` is mounted read-only at
+        `/datasets/<repo_id>`, next to `volumes`.
+        """
         if idempotency_key and idempotency_key in self._idempotency:
             return self.jobs[self._idempotency[idempotency_key]]
         if flavor not in allowed_flavors:
@@ -240,27 +265,124 @@ class Broker:
             raise BrokerError(
                 "invalid_script", f"script must be 1 to {MAX_SCRIPT_BYTES} bytes"
             )
-        dependencies = dependencies or []
-        if len(dependencies) > MAX_DEPENDENCIES:
-            raise BrokerError(
-                "invalid_script", f"At most {MAX_DEPENDENCIES} dependencies"
-            )
+        requirements = self._requirements(script, dependencies or [])
+        mounts = self._dataset_volumes(datasets or [], denied_datasets)
         if self.count("agent") >= self.max_jobs:
             raise BrokerError(
                 "limit_reached", f"This episode allows {self.max_jobs} jobs"
             )
         reservation = self._reserve(flavor, timeout_minutes, charged=True)
         job = self._run(
-            script,
+            self._launcher_script(script, requirements),
             role="agent",
             flavor=flavor,
             timeout_minutes=timeout_minutes,
             reservation=reservation,
-            dependencies=dependencies,
+            dependencies=[],
+            volumes=[*(volumes or []), *mounts],
         )
         if idempotency_key:
             self._idempotency[idempotency_key] = job.job_id
         return job
+
+    @staticmethod
+    def _requirements(script: str, dependencies: list[str]) -> list[str]:
+        """Merge the script's PEP 723 dependencies with `dependencies`; packages only, no URLs."""
+        match = SCRIPT_BLOCK.search(script)
+        if match:
+            content = "".join(
+                line[2:] if line.startswith("# ") else line[1:]
+                for line in match.group("content").splitlines(keepends=True)
+            )
+            try:
+                header = tomllib.loads(content).get("dependencies", [])
+            except tomllib.TOMLDecodeError as e:
+                raise BrokerError("invalid_script", f"PEP 723 header: {e}")
+            if not isinstance(header, list):
+                raise BrokerError(
+                    "invalid_script", "PEP 723 dependencies must be a list"
+                )
+            dependencies = [*header, *dependencies]
+        if len(dependencies) > MAX_DEPENDENCIES:
+            raise BrokerError(
+                "invalid_dependency", f"At most {MAX_DEPENDENCIES} dependencies"
+            )
+        requirements = []
+        for dependency in dependencies:
+            try:
+                requirement = Requirement(str(dependency))
+            except InvalidRequirement:
+                raise BrokerError(
+                    "invalid_dependency", f"{dependency!r} is not a valid requirement"
+                )
+            if requirement.url:
+                raise BrokerError(
+                    "invalid_dependency",
+                    f"{dependency!r}: only packages from PyPI, not URLs",
+                )
+            requirements.append(str(requirement))
+        return requirements
+
+    def _dataset_volumes(
+        self, datasets: list[str], denied: tuple[str, ...]
+    ) -> list[Volume]:
+        """Mount each public, ungated dataset read-only at its current revision."""
+        if len(datasets) > MAX_DATASETS:
+            raise BrokerError("dataset_not_allowed", f"At most {MAX_DATASETS} datasets")
+        denied_ids = {d.lower() for d in denied}
+        volumes = []
+        for repo_id in dict.fromkeys(datasets):
+            try:
+                validate_repo_id(repo_id)
+                valid = "/" in repo_id
+            except HFValidationError:
+                valid = False
+            if not valid:
+                raise BrokerError(
+                    "dataset_not_allowed", "Datasets are Hub repo ids like owner/name"
+                )
+            if repo_id.lower() in denied_ids:
+                raise BrokerError(
+                    "dataset_not_allowed", f"{repo_id} is not allowed in this task"
+                )
+            # Looked up anonymously: the broker's token must not open private repos.
+            try:
+                info = self._api.dataset_info(repo_id, token=False)
+            except HfHubHTTPError:
+                info = None
+            if info is None or info.gated:
+                raise BrokerError(
+                    "dataset_not_allowed",
+                    f"{repo_id} is not a public, ungated dataset on the Hub",
+                )
+            volumes.append(
+                Volume(
+                    type="dataset",
+                    source=repo_id,
+                    revision=info.sha,
+                    mount_path=f"{DATASETS_MOUNT}/{repo_id}",
+                    read_only=True,
+                )
+            )
+        return volumes
+
+    @staticmethod
+    def _launcher_script(script: str, requirements: list[str]) -> str:
+        """Embed `script` in the launcher, with `requirements` installed from wheels only."""
+        header = [
+            "# /// script",
+            '# requires-python = ">=3.10"',
+            f"# dependencies = {json.dumps(requirements)}",
+            "#",
+            "# [tool.uv]",
+            "# no-build = true",
+            "# ///",
+        ]
+        encoded = base64.b64encode(script.encode()).decode()
+        launcher = LAUNCHER.read_text().replace(
+            'AGENT_SCRIPT = ""', f'AGENT_SCRIPT = "{encoded}"', 1
+        )
+        return "\n".join(header) + "\n" + launcher
 
     def evaluate(
         self,
@@ -271,8 +393,9 @@ class Broker:
         flavor: str,
         timeout_minutes: int,
         env: dict[str, str],
+        volumes: list[Volume] | None = None,
     ) -> Job:
-        """Run an evaluator job on `source`'s artifact, mounted read-only at `/model`."""
+        """Run an evaluator job on `source`'s artifact, mounted read-only at `/model`, next to `volumes`."""
         self.require_artifact(source)
         if role == "dev_eval" and self.count("dev_eval") >= self.max_dev_evals:
             raise BrokerError(
@@ -295,7 +418,7 @@ class Broker:
             reservation=reservation,
             dependencies=[],
             env=env,
-            volumes=[model],
+            volumes=[model, *(volumes or [])],
         )
         job.source_job_id = source.job_id
         return job

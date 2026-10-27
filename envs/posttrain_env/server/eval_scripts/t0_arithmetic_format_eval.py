@@ -21,9 +21,9 @@ The split is drawn from `POSTTRAIN_SEED`. The dev seed is public; the test seed
 is held by the environment server and only reaches score jobs.
 
 Only the weights come from the checkpoint. The tokenizer, chat template, model
-config and generation settings are the base model's, at a pinned revision: a
-chat template is a program that sees the question, so the agent's own template
-could write the answer into the prompt.
+config and generation settings are the base model's, which the broker mounts at
+`/base_model` at a pinned revision: a chat template is a program that sees the
+question, so the agent's own template could write the answer into the prompt.
 
 The job runs on CPU, so torch comes from the CPU-only index: the default wheel
 pulls several GB of CUDA libraries, and that download alone can exceed the
@@ -43,8 +43,7 @@ from transformers import (
     GenerationConfig,
 )
 
-BASE_MODEL = "HuggingFaceTB/SmolLM2-135M-Instruct"
-BASE_REVISION = "12fd25f77366fa6b3b4b768ec3050bf629380bac"
+BASE_MODEL = "/base_model"
 N_PROMPTS = {"dev": 50, "test": 100}
 
 
@@ -61,9 +60,9 @@ split = os.environ["POSTTRAIN_SPLIT"]
 rng = random.Random(int(os.environ["POSTTRAIN_SEED"]))
 pairs = [(rng.randint(0, 99), rng.randint(0, 99)) for _ in range(N_PROMPTS[split])]
 
-tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, revision=BASE_REVISION)
-config = AutoConfig.from_pretrained(BASE_MODEL, revision=BASE_REVISION)
-generation_config = GenerationConfig.from_pretrained(BASE_MODEL, revision=BASE_REVISION)
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+config = AutoConfig.from_pretrained(BASE_MODEL)
+generation_config = GenerationConfig.from_pretrained(BASE_MODEL)
 generation_config.update(max_new_tokens=16, do_sample=False)
 
 try:
@@ -79,7 +78,7 @@ try:
 except Exception as e:  # Report a bad checkpoint as a score, don't crash.
     invalid(f"cannot load /model: {type(e).__name__}")
 if info["missing_keys"] or info["mismatched_keys"]:
-    invalid(f"/model weights do not match {BASE_MODEL}")
+    invalid("/model weights do not match the base model")
 model.eval()
 
 correct = formatted = 0

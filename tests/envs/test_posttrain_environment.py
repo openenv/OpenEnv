@@ -8,16 +8,24 @@ and spend nothing.
 
 from __future__ import annotations
 
+import base64
+import ctypes.util
+import dataclasses
 import json
+import re
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import yaml
 from envs.posttrain_env.server import posttrain_environment
-from envs.posttrain_env.server.broker import MAX_RESULT_READS, SCORE_MARKER
+from envs.posttrain_env.server.broker import LAUNCHER, MAX_RESULT_READS, SCORE_MARKER
 from envs.posttrain_env.server.posttrain_environment import PostTrainEnvironment
+from envs.posttrain_env.server.tasks import TASKS
 from huggingface_hub import Volume
+from huggingface_hub.errors import HfHubHTTPError
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
 
 ENV_DIR = Path(__file__).parents[2] / "envs" / "posttrain_env"
@@ -32,6 +40,13 @@ def hardware(name, micro_usd_per_minute, gpus=None):
     )
 
 
+class NotFound(HfHubHTTPError):
+    """A Hub 404, without the HTTP response the real error carries."""
+
+    def __init__(self, repo_id):
+        Exception.__init__(self, f"{repo_id} not found")
+
+
 class FakeHfApi:
     """The subset of `HfApi` the broker uses, backed by a dict of jobs."""
 
@@ -41,6 +56,11 @@ class FakeHfApi:
         self.cancel_confirms = True
         # Applied the first time a job with this role label is inspected.
         self.on_inspect = {}
+        self.datasets = {
+            "open/data": SimpleNamespace(sha="abc123", gated=False),
+            "gated/data": SimpleNamespace(sha="def456", gated="auto"),
+        }
+        self.dataset_lookups = []
 
     def whoami(self):
         return {"name": "operator"}
@@ -94,6 +114,12 @@ class FakeHfApi:
     def fetch_job_logs(self, *, job_id, namespace, tail):
         return iter(self.jobs[job_id]["logs"][-tail:])
 
+    def dataset_info(self, repo_id, *, token):
+        self.dataset_lookups.append((repo_id, token))
+        if repo_id not in self.datasets:
+            raise NotFound(repo_id)
+        return self.datasets[repo_id]
+
     def list_bucket_tree(self, bucket_id, prefix, recursive):
         return [
             SimpleNamespace(
@@ -110,6 +136,13 @@ class FakeHfApi:
 
 def score_line(score, **extra):
     return SCORE_MARKER + json.dumps({"status": "ok", "score": score, **extra})
+
+
+def launched(run):
+    """Return the agent script embedded in a launcher job, and the job's PEP 723 header."""
+    encoded = re.search(r'^AGENT_SCRIPT = "([^"]*)"', run["script"], re.M).group(1)
+    header = run["script"].split("# ///\n", 1)[0]
+    return base64.b64decode(encoded).decode(), header
 
 
 @pytest.fixture
@@ -131,11 +164,13 @@ def call(env, tool, **arguments):
     return obs.result.data, obs
 
 
-def submit_job(env, flavor="cpu-basic", timeout_minutes=10, **extra):
+def submit_job(
+    env, flavor="cpu-basic", timeout_minutes=10, script="print('train')", **extra
+):
     data, _ = call(
         env,
         "jobs_submit",
-        script="print('train')",
+        script=script,
         flavor=flavor,
         timeout_minutes=timeout_minutes,
         **extra,
@@ -181,15 +216,108 @@ class TestSubmitJobs:
         assert run["namespace"] == "operator"
         assert run["flavor"] == "cpu-basic"
         assert run["timeout"] == "10m"
-        assert run["dependencies"] == ["numpy"]
         assert run["labels"] == {
             "openenv-env": "posttrain_env",
             "openenv-episode": "ep1",
             "openenv-role": "agent",
         }
-        assert run["script"] == "print('train')"
+        assert run["volumes"] == []
         assert job["state"] == "queued"
         assert job["remaining_usd"] == pytest.approx(0.05 - 10 * CPU_BASIC / 1e6)
+
+    def test_script_runs_in_the_launcher_with_wheel_only_dependencies(self, env, api):
+        env.reset(task_id="t0_artifact")
+        script = (
+            '# /// script\n# dependencies = ["torch==2.14.1"]\n# ///\nprint("hi")\n'
+        )
+        submit_job(env, script=script, dependencies=["numpy>=2"])
+        run = api.runs[0]
+        agent_script, header = launched(run)
+        assert agent_script == script
+        assert '# dependencies = ["torch==2.14.1", "numpy>=2"]' in header
+        assert "# no-build = true" in header
+        assert run["dependencies"] == []
+        assert "install_filter()" in run["script"]
+        compile(run["script"], "launcher.py", "exec")
+
+    @pytest.mark.parametrize(
+        "dependencies, script",
+        [
+            (["pkg @ https://example.com/pkg.whl"], "print(1)"),
+            (["git+https://github.com/owner/repo"], "print(1)"),
+            (["numpy; nonsense"], "print(1)"),
+            (["numpy"] * 21, "print(1)"),
+            ([], "# /// script\n# dependencies = [\n# ///\nprint(1)\n"),
+            ([], '# /// script\n# dependencies = ["x @ file:///etc/passwd"]\n# ///\n'),
+        ],
+    )
+    def test_dependencies_must_be_pypi_packages(self, env, api, dependencies, script):
+        env.reset(task_id="t0_artifact")
+        data, _ = call(
+            env,
+            "jobs_submit",
+            script=script,
+            flavor="cpu-basic",
+            timeout_minutes=5,
+            dependencies=dependencies,
+        )
+        assert data["error"]["type"] in ("invalid_dependency", "invalid_script")
+        assert api.runs == []
+
+    def test_datasets_are_mounted_read_only_at_their_revision(self, env, api):
+        env.reset(task_id="t0_artifact")
+        submit_job(env, datasets=["open/data", "open/data"])
+        assert api.runs[0]["volumes"] == [
+            Volume(
+                type="dataset",
+                source="open/data",
+                revision="abc123",
+                mount_path="/datasets/open/data",
+                read_only=True,
+            )
+        ]
+        # Looked up anonymously, so the broker's token cannot open private repos.
+        assert api.dataset_lookups == [("open/data", False)]
+
+    @pytest.mark.parametrize(
+        "dataset", ["gated/data", "private/data", "denied/data", "../data", "data"]
+    )
+    def test_gated_missing_denied_and_malformed_datasets_are_refused(
+        self, env, api, monkeypatch, dataset
+    ):
+        task = dataclasses.replace(
+            TASKS["t0_artifact"], denied_datasets=("Denied/Data",)
+        )
+        monkeypatch.setitem(TASKS, "t0_artifact", task)
+        api.datasets["denied/data"] = SimpleNamespace(sha="x", gated=False)
+        env.reset(task_id="t0_artifact")
+        data, _ = call(
+            env,
+            "jobs_submit",
+            script="print(1)",
+            flavor="cpu-basic",
+            timeout_minutes=5,
+            datasets=[dataset],
+        )
+        assert data["error"]["type"] == "dataset_not_allowed"
+        assert api.runs == []
+
+    def test_base_model_is_mounted_for_agent_jobs_and_evaluations(self, env, api):
+        env.reset(task_id="t0_arithmetic_format")
+        job = submit_job(env, flavor="cpu-upgrade", timeout_minutes=5)
+        api.finish(job["job_id"])
+        call(env, "dev_evaluate", job_id=job["job_id"])
+        base = Volume(
+            type="model",
+            source="HuggingFaceTB/SmolLM2-135M-Instruct",
+            revision="12fd25f77366fa6b3b4b768ec3050bf629380bac",
+            mount_path="/base_model",
+            read_only=True,
+        )
+        agent_run, eval_run = api.runs
+        assert agent_run["volumes"] == [base]
+        assert eval_run["volumes"][1:] == [base]
+        assert eval_run["env"]["HF_HUB_OFFLINE"] == "1"
 
     def test_resource_group_bills_the_backstop(self, env, api, monkeypatch):
         monkeypatch.setenv("POSTTRAIN_RESOURCE_GROUP_ID", "rg-123")
@@ -630,3 +758,33 @@ def test_non_object_metrics_are_dropped(env, api):
     data, _ = call(env, "jobs_status", job_id=evaluation["job_id"])
     assert data["result"]["score"] == 0.5
     assert data["result"]["metrics"] == {}
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux" or ctypes.util.find_library("seccomp") is None,
+    reason="the launcher's seccomp filter needs Linux and libseccomp",
+)
+def test_launcher_filter_blocks_network_sockets_but_not_unix_sockets():
+    code = f"""
+import importlib.util, socket
+spec = importlib.util.spec_from_file_location("launcher", {str(LAUNCHER)!r})
+launcher = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(launcher)
+launcher.install_filter()
+for family, kind in [
+    (socket.AF_INET, socket.SOCK_STREAM),
+    (socket.AF_INET, socket.SOCK_DGRAM),
+    (socket.AF_INET6, socket.SOCK_STREAM),
+]:
+    try:
+        socket.socket(family, kind)
+        print("open")
+    except PermissionError:
+        print("blocked")
+socket.socket(socket.AF_UNIX).close()
+print("unix")
+"""
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.split() == ["blocked", "blocked", "blocked", "unix"]

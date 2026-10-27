@@ -17,7 +17,7 @@ job, and that score is the reward.
 | Tool | What it does |
 |---|---|
 | `budget()` | Remaining budget, allowed hardware with its price, jobs and dev evaluations left |
-| `jobs_submit(script, flavor, timeout_minutes, dependencies=None, idempotency_key=None)` | Run a Python script as an HF Job, like `hf jobs uv run`. Reserves `price/min × timeout` first |
+| `jobs_submit(script, flavor, timeout_minutes, dependencies=None, datasets=None, idempotency_key=None)` | Run a Python script as an HF Job, like `hf jobs uv run`, without network access. Reserves `price/min × timeout` first |
 | `jobs_status(job_id)` | State, cost once settled, artifact files of a succeeded job, result of a finished evaluation |
 | `jobs_wait(job_id, timeout_s=60)` | Wait up to 300 s for a job to finish |
 | `jobs_logs(job_id, tail=100)` | Last lines of one of your own jobs' logs |
@@ -26,7 +26,8 @@ job, and that score is the reward.
 | `submit(job_id)` | Final answer: cancels your other jobs, scores the artifact on the hidden split, ends the episode |
 
 Errors come back as data, with a type the agent can act on: `budget_exhausted`,
-`flavor_not_allowed`, `timeout_not_allowed`, `limit_reached`, `not_ready`,
+`flavor_not_allowed`, `timeout_not_allowed`, `invalid_script`,
+`invalid_dependency`, `dataset_not_allowed`, `limit_reached`, `not_ready`,
 `unknown_job`, `not_allowed`, `episode_over` or `hf_error`.
 
 ## How a job runs
@@ -40,20 +41,49 @@ under `/data/outputs/` is its artifact:
 openenv-artifact://<episode>/<job_id>/outputs
 ```
 
-Evaluations run the task's evaluator script as their own job with that folder
-mounted read-only at `/model`. The evaluator prints one `POSTTRAIN_SCORE {...}`
-line. A missing line, or a score outside [0, 1], scores 0 as `invalid`.
-Evaluators take only weights from the artifact, loaded as safetensors. The
-tokenizer, chat template, config and generation settings come from the base
-model at a pinned revision, because a chat template is a program that sees the
-question and could write the answer into the prompt. Each evaluator pins its
-dependencies in its PEP 723 header, with an `exclude-newer` date for the rest.
-
 Jobs are started with an explicit flavor, namespace, timeout and labels, and
 with no secrets. The broker never passes its own token into a job: a job holding
 a "Start and manage Jobs" token could start further jobs that skip the budget.
 It also never shells out to `hf jobs uv run`, whose script header can pull the
 caller's `HF_TOKEN` into the job.
+
+### No network in agent jobs
+
+A job that can reach the internet can download a model already trained for the
+task, or the evaluation's own test data. So agent jobs get their inputs as
+read-only mounts and run without network access:
+
+- The task's base model is mounted at `/base_model`, at a pinned revision.
+- Each dataset in `datasets` is mounted at `/datasets/<repo_id>`, at its current
+  revision. It must be public and ungated, and not on the task's denylist. The
+  broker looks it up without its token, so the token can't open private repos.
+- Packages from `dependencies` and the script's PEP 723 header are installed
+  before the script runs, from PyPI wheels only (`no-build = true`), so no
+  package code runs while the job still has network access. URLs and git
+  dependencies are refused. Other settings in the script's header are ignored.
+
+HF Jobs has no egress control, and its containers can't create network
+namespaces or firewall rules. So the broker sends
+[`server/job_launcher.py`](https://github.com/huggingface/OpenEnv/blob/main/envs/posttrain_env/server/job_launcher.py) as the job's script, with the
+agent's script embedded. Once uv has installed the packages, the launcher
+installs a seccomp filter that refuses every socket except `AF_UNIX`, and
+io_uring and cross-process memory access; systemd's `RestrictAddressFamilies=`
+works the same way. It then switches to uid 65534 and runs the agent's script
+with `HF_HUB_OFFLINE=1`. The filter can't be removed and covers every child
+process. If any step fails, the script doesn't run. Training on a single GPU,
+DataLoader workers and writing `/data/outputs/` work under the filter;
+`torch.distributed` over localhost TCP does not.
+
+### Evaluations
+
+Evaluations run the task's evaluator script as their own job with that folder
+mounted read-only at `/model`, and the task's base model at `/base_model`. The
+evaluator prints one `POSTTRAIN_SCORE {...}` line. A missing line, or a score
+outside [0, 1], scores 0 as `invalid`. Evaluators take only weights from the
+artifact, loaded as safetensors. The tokenizer, chat template, config and
+generation settings come from the base model mount, because a chat template is
+a program that sees the question and could write the answer into the prompt. Each evaluator pins its
+dependencies in its PEP 723 header, with an `exclude-newer` date for the rest.
 
 ## Budget and spend
 

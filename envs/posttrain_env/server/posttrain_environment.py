@@ -114,6 +114,7 @@ class PostTrainEnvironment(MCPEnvironment):
             flavor: str,
             timeout_minutes: int,
             dependencies: list[str] | None = None,
+            datasets: list[str] | None = None,
             idempotency_key: str | None = None,
         ) -> dict:
             """
@@ -121,13 +122,15 @@ class PostTrainEnvironment(MCPEnvironment):
 
             The job's worst-case cost (price per minute times `timeout_minutes`)
             is reserved before it starts and must fit the remaining budget. The
-            job has no credentials. Write outputs to `/data/outputs/`.
+            job has no credentials and no network access, and runs as an
+            unprivileged user. Write outputs to `/data/outputs/`.
 
             Args:
                 script: Python source of the job. A PEP 723 header may list dependencies.
                 flavor: Hardware flavor, one of those listed by `budget`.
                 timeout_minutes: Job timeout; the job is stopped when it is reached.
-                dependencies: Extra packages, passed to `uv run --with`.
+                dependencies: Extra PyPI packages, installed from wheels before the job starts.
+                datasets: Public Hub dataset repo ids, mounted read-only at `/datasets/<repo_id>`.
                 idempotency_key: Retrying with the same key returns the same job.
             """
             return self._call(
@@ -139,6 +142,9 @@ class PostTrainEnvironment(MCPEnvironment):
                         allowed_flavors=self._task.flavors,
                         max_timeout_minutes=self._task.max_timeout_minutes,
                         dependencies=dependencies,
+                        datasets=datasets,
+                        denied_datasets=self._task.denied_datasets,
+                        volumes=self._task.volumes(),
                         idempotency_key=idempotency_key,
                     )
                 )
@@ -468,7 +474,9 @@ class PostTrainEnvironment(MCPEnvironment):
                 "POSTTRAIN_SPLIT": split,
                 "POSTTRAIN_SEED": str(seed),
                 "POSTTRAIN_EXPECTED": self._nonce,
+                "HF_HUB_OFFLINE": "1",
             },
+            volumes=task.volumes(),
         )
 
     def _submit(self, job_id: str) -> dict:
