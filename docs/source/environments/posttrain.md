@@ -160,7 +160,9 @@ isolation guarantee for the credential it holds.
 ```python
 from posttrain_env import PostTrainEnv
 
-with PostTrainEnv(base_url="http://localhost:8000", message_timeout_s=3600).sync() as env:
+with PostTrainEnv(
+    base_url="http://localhost:8000", message_timeout_s=3600
+).sync() as env:
     result = env.reset(task_id="t0_artifact")
     print(result.observation.metadata["prompt"])
     job = env.call_tool(
