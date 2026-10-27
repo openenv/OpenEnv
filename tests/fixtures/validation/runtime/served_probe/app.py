@@ -69,8 +69,6 @@ class ProbeEnvironment(Environment):
                 self.mcp_server.tool(self.read_counter)
         if mode == "extra_tool":
             self.mcp_server.tool(name="unexpected")(self.read_counter)
-        if mode == "tool_discovery_error":
-            self.mcp_server = None
 
     def increment(self, amount: int = 1) -> dict:
         """Advance the probe using its ordinary step implementation."""
@@ -169,7 +167,16 @@ class WireFault:
         async def fault_send(message: dict[str, Any]):
             if message["type"] == "websocket.send" and message.get("text"):
                 data = json.loads(message["text"])
-                if data.get("type") == "observation":
+                if data.get("type") == "mcp" and self.mode == "tool_discovery_error":
+                    data["data"] = {
+                        "jsonrpc": "2.0",
+                        "id": data["data"]["id"],
+                        "error": {
+                            "code": -32603,
+                            "message": "injected discovery failure",
+                        },
+                    }
+                elif data.get("type") == "observation":
                     payload = data["data"]
                     if self.mode == "bad_reward":
                         payload["reward"] = True
