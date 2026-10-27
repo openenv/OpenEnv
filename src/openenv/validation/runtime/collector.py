@@ -313,9 +313,18 @@ def collect_runtime_evidence(
                         if (
                             isinstance(error, dict)
                             and type(error.get("code")) is int
-                            and error["code"] == -32601
                             and isinstance(error.get("message"), str)
                             and rpc.get("result") is None
+                            and (
+                                error["code"] == -32601
+                                or (
+                                    # Legacy non-MCP tools/list used INTERNAL_ERROR.
+                                    error["code"] == -32603
+                                    and error["message"]
+                                    == "Environment does not support MCP"
+                                    and error.get("data") is None
+                                )
+                            )
                         ):
                             tools_unavailable = "unsupported capability: tool_discovery"
                         else:
