@@ -22,23 +22,19 @@ Usage:
 """
 
 import inspect
+import os
 
 # Support both in-repo and standalone imports
 try:
     # In-repo imports (when running from OpenEnv repository)
-    from core.env_server.http_server import create_app
+    from openenv.core.env_server.http_server import create_app
 
     from ..models import SnakeAction, SnakeObservation
     from .snake_environment import SnakeEnvironment
 except ImportError:
+    # Standalone imports (when environment is standalone with openenv from pip)
     from models import SnakeAction, SnakeObservation
-
-    try:
-        # Standalone imports with the current openenv package namespace
-        from openenv.core.env_server.http_server import create_app
-    except ImportError:
-        # Backward-compatible standalone imports with the legacy namespace
-        from openenv_core.env_server.http_server import create_app
+    from openenv.core.env_server.http_server import create_app
     from server.snake_environment import SnakeEnvironment
 
 
@@ -54,7 +50,13 @@ def _create_snake_app():
         "Environment" in annotation_text and "Callable" not in annotation_text
     )
     env_arg = SnakeEnvironment() if expects_instance else SnakeEnvironment
-    return create_app(env_arg, SnakeAction, SnakeObservation, env_name="snake_env")
+    return create_app(
+        env_arg,
+        SnakeAction,
+        SnakeObservation,
+        env_name="snake_env",
+        max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
+    )
 
 
 # Create the app with web interface and README integration.

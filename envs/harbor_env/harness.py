@@ -12,11 +12,10 @@
     trace = session.fetch_proxy_trace()   # per-turn records for a trainer
     reward = session.verify(transcript)   # the task's own verifier, forwarded
 
-This is the shape TRL's `HarnessRolloutWorker` consumes in loop-owning mode, and it is deliberately
-the same shape `opencode_env.harness` offers — so the training script is the stock one and nothing has
-to be added to TRL. The difference is where the work happens: opencode_env runs the agent locally,
-while this hands a task to a server that owns the sandbox, the agent and the capture proxy. The
-trainer needs no sandbox credentials, no harness installed, and no capture plumbing of its own.
+This is the shape TRL's `HarnessRolloutWorker` consumes in loop-owning mode, so the training script
+is the stock one and nothing has to be added to TRL. The work happens on a server that owns the
+sandbox, the agent and the capture proxy. The trainer needs no sandbox credentials, no harness
+installed, and no capture plumbing of its own.
 
 WHY THE ENGINE IS AN ARGUMENT HERE. `run_rollout` takes `llm_url` per call, so a trainer points the
 server at the vLLM it is currently syncing weights into. The server probes that engine and the tier
@@ -42,6 +41,7 @@ from openenv.core.harness import (
     ToolResult,
     VerifyResult,
 )
+from openenv.core.harness.capture.sessions import evaluation_sampling
 from openenv.core.harness.capture.upstream import training_sampling
 from openenv.core.harness.training import TrainingTrace
 from openenv.harbor.client import HarborEnv
@@ -179,6 +179,9 @@ class HarborSession(ResourceSession):
         agent_timeout_sec: float = 0.0,
         agent_step_limit: int = 0,
         sampling: dict[str, Any] | None = None,
+        provider: str = "openai",
+        purpose: str = "auto",
+        eval_sampling: dict[str, Any] | None = None,
         owns_env: bool = False,
     ) -> None:
         self._env = env
@@ -198,6 +201,9 @@ class HarborSession(ResourceSession):
         self._agent_timeout_sec = agent_timeout_sec
         self._agent_step_limit = agent_step_limit
         self._sampling = training_sampling(sampling) if sampling is not None else None
+        self._provider = provider
+        self._purpose = purpose
+        self._eval_sampling = eval_sampling
         self.result: HarborRolloutResult | None = None
 
     # --- ResourceSession -----------------------------------------------------
@@ -265,9 +271,11 @@ class HarborSession(ResourceSession):
                 model=self._model,
                 api_key=self._api_key,
                 auth_header=self._auth_header,
+                provider=self._provider,
+                purpose=self._purpose,
+                eval_sampling=self._eval_sampling,
                 # `is not None`, not `or`: 0 is a documented value meaning "defer to the task
-                # file", and `or` silently replaces it with the factory default. `OpenCodeSession`
-                # takes the same care for the same reason.
+                # file", and `or` silently replaces it with the factory default.
                 agent_step_limit=self._agent_step_limit,
                 **({"sampling": self._sampling} if self._sampling is not None else {}),
                 agent_timeout_sec=(
@@ -371,6 +379,14 @@ class HarborSessionFactory(ResourceSessionFactory[HarborSession]):
         sampling (`dict`, *optional*):
             Explicit full-vocabulary training policy with the trainer's temperature. Validated
             before opening clients and forwarded on every session, regardless of harness.
+        provider (`str`, *optional*, defaults to `"openai"`):
+            Wire protocol of `llm_url`, e.g. `"anthropic"` for a native Anthropic endpoint.
+        purpose (`str`, *optional*, defaults to `"auto"`):
+            `"train"` fails each rollout up front when the engine cannot return token ids, instead
+            of running it as an eval rollout with nothing to train on. `"eval"` never exports a
+            training contract. `"auto"` takes whatever the engine's probed tier gives.
+        eval_sampling (`dict`, *optional*):
+            Sampling for eval rollouts (`temperature`, `top_p`, `top_k`). Requires `purpose="eval"`.
 
     Examples:
 
@@ -399,6 +415,9 @@ class HarborSessionFactory(ResourceSessionFactory[HarborSession]):
         agent_timeout_sec: float = 600.0,
         agent_step_limit: int = 0,
         sampling: dict[str, Any] | None = None,
+        provider: str = "openai",
+        purpose: str = "auto",
+        eval_sampling: dict[str, Any] | None = None,
         num_tasks: int | None = None,
         indices: list[int] | None = None,
         max_message_size_mb: float = 4096.0,
@@ -414,6 +433,17 @@ class HarborSessionFactory(ResourceSessionFactory[HarborSession]):
         self.agent_timeout_sec = agent_timeout_sec
         self.agent_step_limit = agent_step_limit
         self.sampling = training_sampling(sampling) if sampling is not None else None
+        # Checked here for the same reason as `sampling`: the server rejects these per rollout, so
+        # a bad value would otherwise fail every rollout of the run one at a time.
+        if purpose not in {"auto", "eval", "train"}:
+            raise ValueError("purpose must be auto, eval, or train")
+        if purpose == "eval" and sampling is not None:
+            raise ValueError("eval purpose cannot apply a training sampling override")
+        if evaluation_sampling(eval_sampling) and purpose != "eval":
+            raise ValueError("eval_sampling requires explicit eval purpose")
+        self.provider = provider
+        self.purpose = purpose
+        self.eval_sampling = eval_sampling
         self._num_tasks = num_tasks
         # Specific tasks, rather than the first N of the split. Which tasks a group trains on decides
         # whether it can learn anything at all: a task every generation solves and one none solves both
@@ -566,6 +596,9 @@ class HarborSessionFactory(ResourceSessionFactory[HarborSession]):
             agent_timeout_sec=self.agent_timeout_sec,
             agent_step_limit=self.agent_step_limit,
             sampling=self.sampling,
+            provider=self.provider,
+            purpose=self.purpose,
+            eval_sampling=self.eval_sampling,
         )
 
 

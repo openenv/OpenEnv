@@ -19,6 +19,10 @@ tags:
 
 Embodied evaluation environment for testing LLM decision-making in a full 3D driving simulator with **irreversible consequences**.
 
+![CARLA web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/carla.jpg)
+
+*The `/web` playground on `trolley_saves`: the camera frame, a top-down view of the lanes and the episode stats.*
+
 **Built on OpenEnv framework** with scenarios and navigation agents adapted from [sinatras/carla-env](https://github.com/SinatrasC/carla-env). This implementation provides:
 - **CARLA 0.10.0 simulation** (GPU, UE5.5) in synchronous mode — turn-based, deterministic evaluation
 - Text + optional camera observations, compatible with any LLM
@@ -109,9 +113,9 @@ Each outcome includes: `trolley_action` (SWERVE_LEFT/RIGHT, BRAKE, NONE), `ethic
 ### Maze Navigation
 
 **`maze_navigation`**: Goal-directed navigation through Town10.
-- Vehicle spawns at a random point with a goal ~153m away
+- Vehicle spawns at a random point with a goal 80-300m away
 - Navigate winding roads using spatial reasoning
-- Success: reach goal within 10m | Timeout: 200 steps
+- Success: reach goal within 5m | Timeout: 200 steps
 
 ### Free-Roam Navigation
 
@@ -259,6 +263,7 @@ For RL training, use `rubric_reward` — it provides temporally-discounted credi
 CARLA runs in **synchronous mode** with a **single-client architecture**:
 
 - **Synchronous simulation**: The world only advances when the server calls `world.tick()`. While waiting for the model's action, the simulation is frozen. This ensures deterministic evaluation regardless of inference latency.
+- **Time per step**: each `step()` advances the world by the scenario's tick policy (1 tick = 0.05 s). Action-bias scenarios (`trolley_saves`, `bias_*`, ...) advance 10 ticks per step. `trolley_micro_*` advances 20 ticks after a motion action and 10 after `observe`. Navigation scenarios advance 1 tick (`follow_route` advances `route_steps` ticks). Send one step per tool call. There is no need to send extra `observe` steps to let time pass.
 - **Single connection**: Each CARLA instance handles one client at a time. For concurrent evaluations, deploy multiple instances (separate Spaces or Docker containers), each requiring its own GPU.
 
 ### Training at Scale
@@ -276,10 +281,10 @@ This is inherent to GPU-heavy simulators (CARLA, Unity, Unreal), not an OpenEnv 
 
 ## Deployment
 
-**Hugging Face Spaces** (GPU T4 or A10G):
+**Hugging Face Spaces** (GPU A10G):
 ```bash
 openenv push envs/carla_env --repo-id username/carla-env
-# Then configure GPU T4/A10G in Space settings
+# Then configure GPU A10G in Space settings
 ```
 
 **Local Docker:**
@@ -294,12 +299,12 @@ docker run --gpus all -p 8000:8000 carla-env:latest
 
 | | Value |
 |---|---|
-| GPU | NVIDIA T4 (16GB, minimum) or A10G (24GB, recommended) |
+| GPU | NVIDIA A10G (24GB) or larger. CARLA 0.10 may crash on start on a T4 |
 | CARLA | 0.10.0 + Unreal Engine 5.5, bundled in image |
 | Rendering | RenderOffScreen with OpenGL (offscreen, no display) |
 | Image size | ~15GB |
 | Build time | 30-60 minutes |
-| Startup time | 60-90 seconds |
+| Startup time | ~95 seconds on A10G (the start script retries once if CARLA fails to start) |
 
 ### Configuration
 

@@ -3,6 +3,10 @@
 
 A classic Connect Four board game environment for training agents on turn-based strategy with a 6×7 grid. Players alternate dropping pieces into columns, aiming to connect four in a row horizontally, vertically, or diagonally.
 
+![Connect4 web playground](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/connect4.png)
+
+*The `/web` playground after a few moves: the board and one button per column.*
+
 ## Quick Start
 
 ```python

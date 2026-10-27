@@ -57,6 +57,7 @@ from .mcp_types import (
     ListToolsAction,
     ListToolsObservation,
     McpMethod,
+    ToolErrorType,
     WSMCPMessage,
     WSMCPResponse,
 )
@@ -272,6 +273,7 @@ class HTTPEnvServer:
         self._session_executors: Dict[str, ThreadPoolExecutor] = {}
         self._session_stacks: Dict[str, AsyncExitStack] = {}
         self._session_info: Dict[str, SessionInfo] = {}
+        self._session_modes: Dict[str, Optional[str]] = {}
         self._session_websocket_attachments: set[str] = set()
         self._session_pending_closes: set[str] = set()
         self._session_lock = asyncio.Lock()
@@ -292,6 +294,7 @@ class HTTPEnvServer:
             self._concurrency_config.session_timeout
         )
         self._reaper_task: Optional[asyncio.Task[None]] = None
+        self._reaper_stop_event = asyncio.Event()
 
     def _default_env_name(self) -> str:
         factory = self._env_factory
@@ -382,7 +385,9 @@ class HTTPEnvServer:
 
         return valid_kwargs
 
-    async def _create_session(self) -> tuple[str, Environment]:
+    async def _create_session(
+        self, mode: Optional[str | ServerMode] = None
+    ) -> tuple[str, Environment]:
         """
         Create a new WebSocket session with its own environment instance.
 
@@ -416,6 +421,13 @@ class HTTPEnvServer:
             # Create environment in the executor thread (outside lock)
             loop = asyncio.get_event_loop()
             env = await loop.run_in_executor(executor, self._env_factory)
+            mode_val = (
+                mode.value
+                if isinstance(mode, ServerMode)
+                else (str(mode) if mode is not None else None)
+            )
+            if mode_val is not None and hasattr(env, "set_mode"):
+                env.set_mode(mode_val)
         except Exception as e:
             async with self._session_lock:
                 if executor is not self._shared_session_executor:
@@ -453,6 +465,8 @@ class HTTPEnvServer:
         async with self._session_lock:
             self._sessions[session_id] = env
             self._session_stacks[session_id] = stack
+            if mode is not None:
+                self._session_modes[session_id] = mode_val
             now = time.time()
             self._session_info[session_id] = SessionInfo(
                 session_id=session_id,
@@ -477,6 +491,7 @@ class HTTPEnvServer:
             executor = self._session_executors.pop(session_id, None)
             stack = self._session_stacks.pop(session_id, None)
             self._session_info.pop(session_id, None)
+            self._session_modes.pop(session_id, None)
             self._session_websocket_attachments.discard(session_id)
             self._session_pending_closes.discard(session_id)
 
@@ -545,7 +560,13 @@ class HTTPEnvServer:
         interval = max(timeout / 4, 5.0)  # check frequently enough
         while True:
             try:
-                await asyncio.sleep(interval)
+                try:
+                    await asyncio.wait_for(
+                        self._reaper_stop_event.wait(), timeout=interval
+                    )
+                    return
+                except asyncio.TimeoutError:
+                    pass
                 now = time.time()
                 stale_ids: list[str] = []
                 async with self._session_lock:
@@ -556,6 +577,8 @@ class HTTPEnvServer:
                         ):
                             stale_ids.append(sid)
                 for sid in stale_ids:
+                    if self._reaper_stop_event.is_set():
+                        return
                     # Re-check under lock: activity may have arrived since
                     # the snapshot was taken, making this session active again.
                     # Refresh `now` so slow _destroy_session calls don't cause
@@ -581,12 +604,14 @@ class HTTPEnvServer:
     def _start_reaper(self) -> None:
         """Start the idle-session reaper if a timeout is configured."""
         if self._session_idle_timeout_s is not None and self._reaper_task is None:
+            self._reaper_stop_event.clear()
             self._reaper_task = asyncio.create_task(self._reap_idle_sessions())
 
-    def _stop_reaper(self) -> None:
-        """Cancel the reaper background task."""
+    async def _stop_reaper(self) -> None:
+        """Stop the reaper after any in-progress session cleanup finishes."""
         if self._reaper_task is not None:
-            self._reaper_task.cancel()
+            self._reaper_stop_event.set()
+            await self._reaper_task
             self._reaper_task = None
 
     def get_session_info(self, session_id: str) -> Optional[SessionInfo]:
@@ -897,20 +922,24 @@ class HTTPEnvServer:
             mode == ServerMode.SIMULATION and 32 <= len(validation_token) <= 256
         )
 
-        # Wire up idle-session reaper lifecycle via app events
+        # Wire up session lifecycle via app events
         server_ref = self
 
         async def _start_session_reaper() -> None:
             server_ref._start_reaper()
 
-        async def _stop_session_reaper() -> None:
-            server_ref._stop_reaper()
+        async def _shutdown_sessions() -> None:
+            await server_ref._stop_reaper()
+            async with server_ref._session_lock:
+                session_ids = list(server_ref._sessions)
+            for session_id in session_ids:
+                await server_ref._destroy_session(session_id)
             if server_ref._shared_session_executor is not None:
                 server_ref._shared_session_executor.shutdown(wait=True)
 
         if not getattr(app.router, "_openenv_reaper_registered", False):
             app.router.on_startup.append(_start_session_reaper)
-            app.router.on_shutdown.append(_stop_session_reaper)
+            app.router.on_shutdown.append(_shutdown_sessions)
             app.router._openenv_reaper_registered = True  # type: ignore[attr-defined]
 
         # Helper function to handle reset endpoint
@@ -1011,7 +1040,7 @@ class HTTPEnvServer:
                         request_id=request_id,
                     )
                 try:
-                    created_session_id, _ = await self._create_session()
+                    created_session_id, _ = await self._create_session(mode=mode)
                 except SessionCapacityError as e:
                     return JsonRpcResponse.error_response(
                         JsonRpcErrorCode.SERVER_ERROR,
@@ -1051,6 +1080,21 @@ class HTTPEnvServer:
                     )
 
                 async with self._session_lock:
+                    session_mode = self._session_modes.get(target_session_id)
+                    if (
+                        (
+                            target_session_id in self._sessions
+                            or target_session_id in self._session_websocket_attachments
+                        )
+                        and session_mode is not None
+                        and session_mode != mode.value
+                    ):
+                        return JsonRpcResponse.error_response(
+                            JsonRpcErrorCode.INVALID_PARAMS,
+                            f"Session '{target_session_id}' belongs to mode '{session_mode}', not '{mode.value}'",
+                            request_id=request_id,
+                        )
+
                     if target_session_id in self._session_websocket_attachments:
                         env = _MISSING
                         attached = True
@@ -1064,6 +1108,7 @@ class HTTPEnvServer:
                         executor = self._session_executors.pop(target_session_id, None)
                         stack = self._session_stacks.pop(target_session_id, None)
                         self._session_info.pop(target_session_id, None)
+                        self._session_modes.pop(target_session_id, None)
                     elif not attached:
                         executor = None
                         stack = None
@@ -1117,11 +1162,19 @@ class HTTPEnvServer:
             elif requested_session_id:
                 async with self._session_lock:
                     _env = self._sessions.get(requested_session_id, _MISSING)
+                    session_mode = self._session_modes.get(requested_session_id)
 
                 if _env is _MISSING:
                     return JsonRpcResponse.error_response(
                         JsonRpcErrorCode.INVALID_PARAMS,
                         f"Unknown session_id: {requested_session_id}",
+                        request_id=request_id,
+                    )
+
+                if session_mode is not None and session_mode != mode.value:
+                    return JsonRpcResponse.error_response(
+                        JsonRpcErrorCode.INVALID_PARAMS,
+                        f"Session '{requested_session_id}' belongs to mode '{session_mode}', not '{mode.value}'",
                         request_id=request_id,
                     )
 
@@ -1136,6 +1189,8 @@ class HTTPEnvServer:
                 managed_session_id = requested_session_id
             else:
                 _env = self._env_factory()
+                if hasattr(_env, "set_mode"):
+                    _env.set_mode(mode.value)
                 should_close = True
             try:
                 mcp_client = getattr(_env, "mcp_client", None)
@@ -1160,6 +1215,27 @@ class HTTPEnvServer:
                 }
 
                 if method == McpMethod.TOOLS_LIST:
+                    if hasattr(_env, "_async_handle_list_tools"):
+                        obs = await _env._async_handle_list_tools()
+                        if obs.metadata and "error" in obs.metadata:
+                            return JsonRpcResponse.error_response(
+                                JsonRpcErrorCode.INTERNAL_ERROR,
+                                obs.metadata["error"],
+                                request_id=request_id,
+                            )
+                        tools = [
+                            {
+                                "name": t.name,
+                                "description": t.description or "",
+                                "inputSchema": t.input_schema,
+                            }
+                            for t in obs.tools
+                        ]
+                        return JsonRpcResponse.success(
+                            result={"tools": tools},
+                            request_id=request_id,
+                        )
+
                     # Check if environment is MCP-enabled
                     if mcp_client is None and mcp_server is None:
                         if supports_mcp_style_actions:
@@ -1236,6 +1312,32 @@ class HTTPEnvServer:
                         return JsonRpcResponse.error_response(
                             JsonRpcErrorCode.INVALID_PARAMS,
                             "Missing 'name' in params",
+                            request_id=request_id,
+                        )
+
+                    if hasattr(_env, "_mode_tools") and any(
+                        m is not None for m in _env._mode_tools.get(tool_name, {})
+                    ):
+                        obs = await _env._async_handle_call_tool(
+                            CallToolAction(tool_name=tool_name, arguments=arguments)
+                        )
+                        if obs.error:
+                            err_code = (
+                                JsonRpcErrorCode.INVALID_PARAMS
+                                if obs.error.error_type
+                                in (
+                                    ToolErrorType.INVALID_ARGS,
+                                    ToolErrorType.TOOL_NOT_FOUND,
+                                )
+                                else JsonRpcErrorCode.INTERNAL_ERROR
+                            )
+                            return JsonRpcResponse.error_response(
+                                err_code,
+                                obs.error.message,
+                                request_id=request_id,
+                            )
+                        return JsonRpcResponse.success(
+                            result=_make_json_serializable(obs.result),
                             request_id=request_id,
                         )
 
@@ -1432,7 +1534,7 @@ class HTTPEnvServer:
 
             try:
                 # Create session with dedicated environment
-                session_id, session_env = await self._create_session()
+                session_id, session_env = await self._create_session(mode=mode)
                 if session_env is None:
                     raise RuntimeError(
                         "Session environment not initialized for MCP websocket"
@@ -1781,9 +1883,14 @@ all schema information needed to interact with the environment.
                         attached_env = self._sessions.get(
                             requested_session_id, _MISSING
                         )
+                        session_mode = self._session_modes.get(requested_session_id)
                         if attached_env is _MISSING:
                             raise RuntimeError(
                                 f"Unknown session_id: {requested_session_id}"
+                            )
+                        if session_mode is not None and session_mode != mode.value:
+                            raise RuntimeError(
+                                f"Session '{requested_session_id}' belongs to mode '{session_mode}', not '{mode.value}'"
                             )
                         if attached_env is None:
                             raise RuntimeError(
@@ -1800,7 +1907,7 @@ all schema information needed to interact with the environment.
                         attached_session = True
                     self._update_session_activity(session_id)
                 else:
-                    session_id, session_env = await self._create_session()
+                    session_id, session_env = await self._create_session(mode=mode)
                     owns_session = True
 
                 if session_env is None:
@@ -2036,6 +2143,12 @@ all schema information needed to interact with the environment.
                             await websocket.send_text(response.model_dump_json())
 
                         except ValidationError as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": "Invalid message",
@@ -2045,6 +2158,12 @@ all schema information needed to interact with the environment.
                             )
                             await websocket.send_text(error_resp.model_dump_json())
                         except Exception as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": str(e),

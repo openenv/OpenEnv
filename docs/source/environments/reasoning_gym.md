@@ -12,7 +12,7 @@ from reasoning_gym_env import ReasoningGymAction, ReasoningGymEnv
 
 try:
     # Create environment from Docker image
-    env = ReasoningGymEnv.from_docker_image("reasoning_gym-env:latest")
+    env = ReasoningGymEnv.from_docker_image("reasoning_gym-env:latest").sync()
 
     # Create a dataset with 10 leg_counting questions
     result = env.reset(
@@ -64,61 +64,7 @@ docker build -t reasoning_gym-env:latest -f server/Dockerfile .
 
 ## Deploying to Hugging Face Spaces
 
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
-
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --repo-id my-org/my-env --private
-```
-
-The `openenv push` command will:
-
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `DIRECTORY` (positional): Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/reasoning-gym-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/huggingface/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/reasoning-gym --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
+From `envs/reasoning_gym_env/`, run `openenv push` (or `openenv push --repo-id my-org/reasoning-gym-env`). See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs`, a health check at `/health` and the WebSocket session endpoint at `/ws`.
 
 ## Environment Details
 
@@ -335,25 +281,6 @@ from reasoning_gym_env import ReasoningGymEnv, ReasoningGymAction
 env = ReasoningGymEnv(base_url="http://localhost:8000")
 result = env.reset(dataset_name='leg_counting', seed=42, size=5)
 print(result.observation.question)
-```
-
-## Project Structure
-
-```
-reasoning_gym_env/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py           # Module exports
-├── README.md             # This file
-├── openenv.yaml          # OpenEnv manifest
-├── pyproject.toml        # Project metadata and dependencies
-├── client.py             # ReasoningGymEnv client
-├── models.py             # Action and Observation models
-└── server/
-    ├── __init__.py       # Server module exports
-    ├── reasoning_gym_environment.py  # Core environment logic
-    ├── app.py            # FastAPI application (HTTP + WebSocket endpoints)
-    ├── requirements.txt  # Server dependencies
-    └── Dockerfile        # Container image definition
 ```
 
 ## Use Cases

@@ -1,0 +1,143 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+.t2 {
+  --t2-ink: #111827;
+  --t2-muted: #6b7280;
+  --t2-line: #e5e7eb;
+  --t2-soft: #f9fafb;
+  --t2-accent: #111827;
+  --t2-warn: #b45309;
+  --t2-field: #ffffff;
+  --t2-primary: #1a7f37;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: var(--t2-ink);
+}
+.dark .t2 {
+  --t2-ink: #f3f4f6;
+  --t2-muted: #9ca3af;
+  --t2-line: #374151;
+  --t2-soft: #1f2937;
+  --t2-field: #161b22;
+  --t2-warn: #f59e0b;
+}
+
+/* Header */
+.t2-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 4px 0 8px; }
+.t2-head p { margin: 4px 0 0; color: var(--t2-muted); font-size: 14px; max-width: 760px; }
+.t2-stats { display: flex; gap: 24px; }
+.t2-stat b { display: block; font-size: 20px; }
+.t2-stat span { color: var(--t2-muted); font-size: 12px; }
+
+/* Chips */
+.t2-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.t2-chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; padding: 2px 8px; border: 1px solid var(--t2-line); background: var(--t2-soft); }
+.t2-chip.t2-muted { font-weight: 500; color: var(--t2-muted); }
+.t2-chip.t2-warn { color: var(--t2-warn); border-color: currentColor; background: transparent; }
+.t2-muted { color: var(--t2-muted); font-weight: 400; }
+
+/* Explorer */
+.t2-explorer { display: flex; flex-direction: column; gap: 10px; }
+.t2-q { width: 100%; padding: 9px 12px; border: 1px solid var(--t2-line); font: inherit; background: var(--t2-field) !important; color: inherit !important; }
+.t2-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.t2 .t2-filter { font: inherit !important; font-size: 12px !important; padding: 4px 12px !important; border: 1px solid var(--t2-line) !important; background: transparent !important; color: var(--t2-muted) !important; cursor: pointer; }
+.t2 .t2-filter.active { color: var(--t2-ink) !important; border-color: var(--t2-ink) !important; font-weight: 600 !important; }
+.t2 .t2-q { font-size: 14px !important; }
+.t2-count { font-size: 12px; color: var(--t2-muted); }
+.t2-tlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 720px; overflow-y: auto; }
+.t2-tcard { border: 1px solid var(--t2-line); padding: 12px 14px; cursor: pointer; transition: border-color 0.1s; }
+.t2-tcard:hover { border-color: var(--t2-muted); }
+.t2-tcard.active { border-color: var(--t2-accent); box-shadow: 0 0 0 1px var(--t2-accent); }
+.t2-tcard-id { font-size: 11px; color: var(--t2-muted); font-family: ui-monospace, monospace; }
+.t2-tcard-title { font-weight: 600; font-size: 14px; margin: 2px 0 4px; line-height: 1.35; }
+
+/* Task page */
+.t2-task h2 { font-size: 22px; font-weight: 700; margin: 2px 0 6px; line-height: 1.3; }
+.t2-crumb { font-size: 12px; color: var(--t2-muted); }
+.t2-purpose { color: var(--t2-muted); font-size: 14px; margin: 0 0 8px; }
+.t2-box { border: 1px solid var(--t2-line); padding: 14px 16px; margin-top: 12px; }
+.t2-box h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px; display: inline; }
+.t2-box h4 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--t2-muted); margin: 14px 0 6px; }
+.t2-box > h3 + ul, .t2-box > h3 + h4 { margin-top: 10px; }
+.t2-box ul, .t2-box ol { margin: 8px 0 0; padding-left: 20px; font-size: 14px; line-height: 1.55; }
+.t2-box li { margin: 3px 0; }
+.t2-box summary { cursor: pointer; list-style: revert; }
+.t2-plain { list-style: none; padding-left: 0 !important; }
+.t2-calls code { font-size: 12.5px; background: var(--t2-soft); padding: 1px 6px; }
+
+/* Gradio pieces in the same style */
+.t2-side { border: 1px solid var(--t2-line) !important; padding: 12px !important; }
+.t2-actions button { font-weight: 600; }
+
+/* Side cards (Run and Play) */
+.t2-card { border: 1px solid var(--t2-line) !important; padding: 14px !important; gap: 10px !important; background: transparent !important; }
+.t2-card-title { font-size: 14px; font-weight: 600; margin: 0; }
+.t2-summary-title { font-size: 15px; font-weight: 600; line-height: 1.35; margin: 2px 0 2px; }
+.t2-small { font-size: 12px; }
+
+/* Conversation timeline */
+.t2-timeline { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
+.t2-timeline.t2-empty { display: block; color: var(--t2-muted); font-size: 14px; border: 1px dashed var(--t2-line); padding: 32px; text-align: center; }
+.t2-msg { display: flex; flex-direction: column; gap: 3px; max-width: 88%; }
+.t2-msg.t2-agent { align-self: flex-end; align-items: flex-end; }
+.t2-who { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--t2-muted); }
+.t2-bubble { font-size: 14px; line-height: 1.5; padding: 10px 14px; border: 1px solid var(--t2-line); }
+.t2-bubble p { margin: 0 0 6px; } .t2-bubble p:last-child { margin: 0; }
+.t2-bubble ul, .t2-bubble ol { margin: 4px 0; padding-left: 20px; }
+.t2-customer .t2-bubble { background: var(--t2-soft); }
+.t2-toolrow { align-self: flex-end; max-width: 88%; border: 1px solid var(--t2-line); font-size: 12.5px; }
+.t2-toolrow summary { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; cursor: pointer; list-style: none; }
+.t2-toolrow summary::-webkit-details-marker { display: none; }
+.t2-toolname { font-family: ui-monospace, monospace; font-weight: 600; }
+.t2-args { font-family: ui-monospace, monospace; color: var(--t2-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
+.t2-toolstate { margin-left: auto; font-size: 11px; color: var(--t2-muted); }
+.t2-toolrow.t2-err { border-color: #dc2626; } .t2-toolrow.t2-err .t2-toolstate { color: #dc2626; }
+.t2-toolrow pre { margin: 0; padding: 10px; border-top: 1px solid var(--t2-line); max-height: 320px; overflow: auto; font-size: 12px; background: var(--t2-soft); }
+
+/* Status and result */
+.t2-status { font-size: 13px; color: var(--t2-muted); display: flex; align-items: center; gap: 8px; }
+.t2-spinner { width: 12px; height: 12px; border: 2px solid var(--t2-line); border-top-color: var(--t2-ink); animation: t2-spin 0.8s linear infinite; }
+@keyframes t2-spin { to { transform: rotate(360deg); } }
+.t2-result { border: 1px solid var(--t2-line); padding: 14px 16px; }
+.t2-result.t2-solved { border-color: #16a34a; } .t2-result.t2-failed { border-color: #dc2626; }
+.t2-verdict { font-size: 18px; font-weight: 700; display: flex; align-items: baseline; gap: 10px; }
+.t2-solved .t2-verdict { color: #16a34a; } .t2-failed .t2-verdict { color: #dc2626; }
+.t2-verdict span { font-size: 13px; font-weight: 500; color: var(--t2-muted); }
+.t2-result h4 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--t2-muted); margin: 14px 0 6px; }
+.t2-checks { list-style: none; padding: 0; margin: 10px 0 0; font-size: 13.5px; }
+.t2-checks li { margin: 5px 0; }
+.t2-checks li.t2-sub { margin-left: 22px; }
+.t2-mark { display: inline-block; width: 18px; font-weight: 700; }
+.t2-ok .t2-mark { color: #16a34a; } .t2-no .t2-mark { color: #dc2626; }
+.t2-checks code { font-size: 12px; background: var(--t2-soft); padding: 1px 6px; }
+
+/* Runs and compare */
+.t2-chip.t2-okchip { color: #16a34a; border-color: currentColor; background: transparent; }
+.t2-compare { display: grid; gap: 14px; }
+.t2-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.t2-col .t2-msg, .t2-col .t2-toolrow { max-width: 100%; }
+.t2-col .t2-timeline { max-height: 820px; overflow-y: auto; }
+.t2-controls { gap: 12px !important; }
+
+/* Gradio's own controls in the same style: framed fields, rounded corners, one primary color. */
+.t2 .wrap:has(> .wrap-inner), .t2 textarea, .t2 input[type="text"]:not(.t2-q), .t2 input[type="number"] {
+  border: 1px solid var(--t2-line) !important;
+  background: var(--t2-field) !important;
+}
+.t2 .wrap:has(> .wrap-inner):hover { border-color: var(--t2-muted) !important; }
+.t2 .wrap:has(> .wrap-inner):focus-within, .t2 textarea:focus, .t2 .t2-q:focus { border-color: var(--t2-ink) !important; outline: none; }
+.t2 button.primary { background: var(--t2-primary) !important; color: #fff !important; border-color: var(--t2-primary) !important; }
+.t2 button.primary:hover { filter: brightness(1.1); }
+.t2 .t2-style { display: none !important; }
+.t2 .t2-composer { align-items: center !important; }
+
+/* Corners. OpenEnv's theme squares every corner with
+   `.gradio-container .contain * { border-radius: 0 !important }`, so these go one class deeper. */
+.gradio-container .contain .t2 :is(.t2-chip, .t2-filter) { border-radius: 999px !important; }
+.gradio-container .contain .t2 :is(.t2-tcard, .t2-box, .t2-side, .t2-card, .t2-result, .t2-timeline.t2-empty) { border-radius: 12px !important; }
+.gradio-container .contain .t2 :is(.t2-q, .t2-toolrow, button, textarea, .wrap:has(> .wrap-inner), input[type="text"], input[type="number"]) { border-radius: 10px !important; }
+.gradio-container .contain .t2 .t2-toolrow pre { border-radius: 0 0 10px 10px !important; }
+.gradio-container .contain .t2 .t2-bubble { border-radius: 14px !important; }
+.gradio-container .contain .t2 .t2-customer .t2-bubble { border-top-left-radius: 4px !important; }
+.gradio-container .contain .t2 .t2-agent .t2-bubble { border-top-right-radius: 4px !important; }
+.gradio-container .contain .t2 :is(.t2-calls code, .t2-checks code) { border-radius: 6px !important; }
+.gradio-container .contain .t2 .t2-spinner { border-radius: 50% !important; }

@@ -87,7 +87,6 @@ TOOLS = [
 ]
 
 SCENARIO_NAME = "trolley_micro_escape_exists"
-SIM_TICKS = 10
 
 
 def _describe(obs) -> str:
@@ -102,16 +101,6 @@ def _describe(obs) -> str:
     if obs.collision_detected:
         parts.append(f"COLLISION detected with {obs.collided_with or 'unknown'}!")
     return "\n".join(parts)
-
-
-async def _advance(client, ticks=SIM_TICKS):
-    """Advance the simulation (same as training)."""
-    result = None
-    for _ in range(ticks):
-        result = await client.step(CarlaAction(action_type="observe"))
-        if result.done:
-            break
-    return result
 
 
 async def run_episode(llm, base_url, verbose=True, save_images=False, output_dir="llm_images", max_turns=10):
@@ -162,18 +151,14 @@ async def run_episode(llm, base_url, verbose=True, save_images=False, output_dir
                 args_str = f"({tool_args})" if tool_args else ""
                 print(f"   [{turn+1}] Action: {tool_name}{args_str}")
 
-            # Execute action on the environment
+            # Execute action on the environment (the server advances time per tool)
             if tool_name == "emergency_stop":
-                await env.step(CarlaAction(action_type="emergency_stop"))
-                step_result = await _advance(env)
+                step_result = await env.step(CarlaAction(action_type="emergency_stop"))
             elif tool_name == "lane_change":
                 direction = tool_args.get("direction", "left")
-                await env.step(CarlaAction(action_type="lane_change", lane_direction=direction))
-                step_result = await _advance(env)
-            elif tool_name == "observe":
-                step_result = await _advance(env)
+                step_result = await env.step(CarlaAction(action_type="lane_change", lane_direction=direction))
             else:
-                step_result = await _advance(env)
+                step_result = await env.step(CarlaAction(action_type="observe"))
 
             reward = step_result.observation.rubric_reward or 0.0
             env_description = _describe(step_result.observation)

@@ -1,6 +1,25 @@
-# Custom Web UI
+# Customizing the Web UI
 
-The web UI is off by default. When `ENABLE_WEB_INTERFACE=true` (which `openenv push` sets for Spaces), the server serves a default Gradio app at `/web` with Reset/Step/Get state, Quick Start, and README. Environment authors can **add** a custom tab by providing a custom Gradio builder.
+The web UI is off by default. When `ENABLE_WEB_INTERFACE=true` (which `openenv push` sets for Spaces), the server serves a default Gradio app at `/web` that follows the loop an agent runs: reset, take an action (for MCP environments, pick a tool and fill its arguments), read the result, the episode so far, and the same call in Python. Environment authors can draw the environment's state and offer one-click actions with two optional methods, or **add** a whole custom tab with a Gradio builder.
+
+## Draw the state and offer one-click actions
+
+Override these `Environment` methods to make the default playground visual. Both receive the serialized observation, as `reset()` and `step()` return it, and both are optional:
+
+- `render_web(observation)` returns HTML that draws it (a board, a page, a plot), shown next to the action controls. The default returns `None` and the playground lists the observation's fields.
+- `web_actions(observation)` returns `(label, action)` pairs shown as buttons, where each action is the dict `step()` receives. Clicking one runs that step. The default returns `[]`.
+
+For example, `openspiel_env` draws the Catch board and offers the legal moves:
+
+```python
+class OpenSpielEnvironment(Environment):
+    def web_actions(self, observation):
+        names = {0: "left", 1: "stay", 2: "right"}
+        return [(f"{a} · {names[a]}", {"action_id": a}) for a in observation["legal_actions"]]
+
+    def render_web(self, observation):
+        ...  # a 10 x 5 grid built from observation["info_state"]
+```
 
 ## Extension point: `gradio_builder`
 
@@ -88,13 +107,51 @@ If you need a non-Gradio custom UI (e.g. static HTML/JS), you can still register
 
 ---
 
+## Sign in with Hugging Face on a Space
+
+A custom tab can sign visitors in with their Hugging Face account, for example so each visitor's runs use their own [Inference Providers](https://huggingface.co/docs/inference-providers) credits instead of a token stored on the Space. [`tau2_env`](../environments/tau2) does this. A Docker Space needs four things:
+
+1. **The Space README** turns OAuth on, with the scopes you need:
+
+   ```yaml
+   hf_oauth: true
+   hf_oauth_scopes:
+     - inference-api
+   ```
+
+2. **The image** installs Gradio's OAuth dependencies, `authlib` and `itsdangerous` (the `gradio[oauth]` extra).
+3. **`SYSTEM=spaces`** is set before the app is created. Gradio only uses the Space's real OAuth when it is set, and Docker Spaces don't set it, so it mocks the login instead:
+
+   ```python
+   if os.environ.get("SPACE_ID"):
+       os.environ.setdefault("SYSTEM", "spaces")
+   ```
+
+4. **The OAuth routes are forwarded to `/web`.** The UI, and so Gradio's `/login/huggingface`, `/login/callback` and `/logout`, are mounted under `/web`, while the sign-in button and Hugging Face's callback use them at the root:
+
+   ```python
+   @app.get("/login/huggingface", include_in_schema=False)
+   @app.get("/login/callback", include_in_schema=False)
+   @app.get("/logout", include_in_schema=False)
+   def oauth_under_web(request: Request) -> RedirectResponse:
+       query = f"?{request.url.query}" if request.url.query else ""
+       return RedirectResponse(f"/web{request.url.path}{query}")
+   ```
+
+In the builder, add a `gr.LoginButton()` and take a `gr.OAuthToken | None` argument in the event handlers that need the visitor's token. Off a Space the login is mocked with your local Hugging Face login, so show the button only when `SPACE_ID` is set.
+
+---
+
 ## Summary
 
 | Goal                         | Approach                                                                 |
 |-----------------------------|---------------------------------------------------------------------------|
 | Use default UI only         | Do not pass `gradio_builder`.                                            |
+| Draw the state in the playground | Override `render_web(observation)` to return HTML.                    |
+| One-click actions           | Override `web_actions(observation)` to return `(label, action)` pairs.   |
 | Add a custom tab            | Pass `gradio_builder=my_builder`; return your own `gr.Blocks` (shown in “Custom” tab). |
 | Custom tab + default inside | In your builder, call `build_gradio_app(...)` and embed or wrap it in your Blocks. |
 | Change Quick Start / README | Rely on metadata/README, or custom builder that builds custom markdown.  |
+| Sign visitors in on a Space | `hf_oauth` in the README, `SYSTEM=spaces`, OAuth routes forwarded to `/web` ([details](#sign-in-with-hugging-face-on-a-space)). |
 
 The default Playground tab is built with `openenv.core.env_server.gradio_ui.build_gradio_app`; you can import and call it with the same arguments if your custom tab needs to embed or extend it.

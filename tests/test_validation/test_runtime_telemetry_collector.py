@@ -196,7 +196,7 @@ def test_terminal_opening_error_preserves_only_its_safe_code(
     assert TOKEN not in repr(result)
 
 
-@pytest.mark.parametrize("code", ["UNKNOWN_TYPE", "VALIDATION_ERROR", TOKEN])
+@pytest.mark.parametrize("code", ["VALIDATION_ERROR", TOKEN])
 def test_optional_opening_refusal_does_not_fail_the_episode(monkeypatch, code):
     result = collect(
         monkeypatch,
@@ -261,3 +261,20 @@ def test_malformed_wire_cannot_retain_escaped_credentials(
         [] if operation == "reset" else ["reset", "state"]
     )
     assert result.failure_reason == f"{operation} failed (JSONDecodeError)"
+
+
+def test_explicit_unsupported_opening_names_missing_capability(monkeypatch):
+    result = collect(
+        monkeypatch,
+        opening_reply=json.dumps({"type": "error", "data": {"code": "UNKNOWN_TYPE"}}),
+    )
+    assert result.failure_reason is None
+    assert result.telemetry_json is None
+    assert result.telemetry_error is None
+    assert result.telemetry_unavailable == "unsupported capability: session_telemetry"
+    assert [row.operation for row in result.exchanges] == [
+        "reset",
+        "state",
+        "step",
+        "state",
+    ]

@@ -1,6 +1,7 @@
 import os
 import random
 import uuid
+from typing import Any, Dict, Optional
 
 from openenv.core.env_server.interfaces import Environment
 
@@ -17,6 +18,27 @@ DIRS_8 = {
     "W": (-1, 0),
     "NW": (-1, -1),
     "CALM": (0, 0),
+}
+
+# Web drawing: (label, cell style) per grid code. Fire and water need their own hues
+# (no theme variable is orange or blue); the rest follow the theme.
+CELL_STYLES = {
+    2: ("burning", "background:hsl(16 90% 52%)"),
+    1: ("fuel", "background:var(--color-accent);opacity:.45"),
+    4: ("water", "background:hsl(210 80% 55%)"),
+    3: ("firebreak", "background:var(--body-text-color)"),
+    0: ("ash", "background:var(--body-text-color);opacity:.25"),
+}
+WIND_ARROWS = {
+    "N": "↑",
+    "NE": "↗",
+    "E": "→",
+    "SE": "↘",
+    "S": "↓",
+    "SW": "↙",
+    "W": "←",
+    "NW": "↖",
+    "CALM": "·",
 }
 
 
@@ -48,6 +70,8 @@ class WildfireEnvironment(Environment):
       - burning spreads to neighbors with wind + humidity effects
       - burning cells burn for multiple ticks, then become ash
     """
+
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
     def __init__(
         self,
@@ -95,7 +119,26 @@ class WildfireEnvironment(Environment):
 
     # --- Core API ---
 
-    def reset(self) -> WildfireObservation:
+    def reset(
+        self,
+        seed: int | None = None,
+        episode_id: str | None = None,
+        **kwargs: Any,
+    ) -> WildfireObservation:
+        """
+        Start a new episode: a grid of fuel with new fires, wind and humidity.
+
+        Args:
+            seed (`int`, *optional*):
+                Reseeds the wind, humidity, starting fires and fire spread. The same
+                seed and actions give the same episode, and the same episodes on the
+                unseeded resets that follow.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
+        """
+        if seed is not None:
+            self.rng = random.Random(seed)
+
         # Ensure w and h are integers (defensive type conversion)
         w, h = int(self.w), int(self.h)
 
@@ -127,7 +170,7 @@ class WildfireEnvironment(Environment):
 
         # Use model_construct to bypass Pydantic validation for dataclass/Pydantic compatibility
         self._state = WildfireState.model_construct(
-            episode_id=str(uuid.uuid4()),
+            episode_id=episode_id if episode_id is not None else str(uuid.uuid4()),
             step_count=0,
             total_burned=0,
             total_extinguished=0,
@@ -217,6 +260,47 @@ class WildfireEnvironment(Environment):
         obs.done = done
         obs.reward = reward
         return obs
+
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the fire grid (one colour per cell state) with a legend, wind, humidity and resources."""
+        if "grid" not in observation:
+            return None
+        width = observation["width"]
+        size = max(6, min(22, 380 // width))
+        max_width = f"max-width:{width * (size + 2)}px"
+        cells = "".join(
+            f'<span title="x={i % width}, y={i // width}: {CELL_STYLES[v][0]}" '
+            f'style="{CELL_STYLES[v][1]};border-radius:3px"></span>'
+            for i, v in enumerate(observation["grid"])
+        )
+        legend = "".join(
+            f'<span style="display:inline-flex;align-items:center;gap:5px">'
+            f'<span style="width:11px;height:11px;border-radius:3px;{style}"></span>{label}</span>'
+            for label, style in CELL_STYLES.values()
+        )
+        wind = observation["wind_dir"]
+        stats = " · ".join(
+            f'<span style="white-space:nowrap">{item}</span>'
+            for item in (
+                f"step {observation['step']}",
+                f"wind {wind} {WIND_ARROWS[wind]}",
+                f"humidity {observation['humidity']:.2f}",
+                f"water {observation['remaining_water']}",
+                f"breaks {observation['remaining_breaks']}",
+                f"burning {observation['burning_count']}",
+                f"ash {observation['burned_count']}",
+            )
+        )
+        return (
+            '<div style="display:inline-flex;flex-direction:column;gap:8px;'
+            "padding:10px;border:1px solid var(--border-color-primary);border-radius:10px;"
+            'background:var(--background-fill-secondary);color:var(--body-text-color);font-size:12px">'
+            f'<div role="img" aria-label="Wildfire board" style="display:grid;grid-template-columns:repeat({width},{size}px);'
+            f'grid-auto-rows:{size}px;gap:2px">{cells}</div>'
+            f'<div style="display:flex;flex-wrap:wrap;gap:4px 12px;{max_width}">{legend}</div>'
+            f'<div style="font-family:var(--font-mono);color:var(--body-text-color-subdued);{max_width}">{stats}</div>'
+            "</div>"
+        )
 
     # --- Internal mechanics ---
 

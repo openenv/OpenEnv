@@ -27,10 +27,10 @@ import asyncio
 import re
 import time
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any, Union
 
 import openai
-
 from openenv.core.rubrics.base import Rubric
 
 
@@ -215,12 +215,16 @@ class MathProofRubric(Rubric):
         self._last_input_tokens: int | None = None
         self._last_output_tokens: int | None = None
 
-        client_kwargs: dict[str, Any] = {}
+        self._client_kwargs: dict[str, Any] = {}
         if api_base_url is not None:
-            client_kwargs["base_url"] = api_base_url
+            self._client_kwargs["base_url"] = api_base_url
         if api_key is not None:
-            client_kwargs["api_key"] = api_key
-        self._client = openai.AsyncOpenAI(**client_kwargs)
+            self._client_kwargs["api_key"] = api_key
+
+    @cached_property
+    def _client(self) -> openai.AsyncOpenAI:
+        """Grader client, created on first use so the server starts without credentials."""
+        return openai.AsyncOpenAI(**self._client_kwargs)
 
     # Rubric base-class interface
 

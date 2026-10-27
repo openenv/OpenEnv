@@ -8,8 +8,11 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _E2B_IMPORT_ERROR: ImportError | None = None
 
@@ -59,10 +62,8 @@ class E2BSandbox:
         try:
             self._sbx.kill()
         except Exception:
-            try:
-                self._sbx.close()
-            except Exception:
-                pass
+            logger.error("Failed to delete E2B sandbox %s", self.sandbox_id)
+            raise
 
 
 def _normalize(execution: Any) -> ShellResult:

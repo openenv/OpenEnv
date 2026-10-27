@@ -24,13 +24,19 @@ Usage:
 import os
 from contextlib import suppress
 
-from coding_env.models import CodeAction, CodeObservation
+from coding_env.models import CodeAction, CodeObservation, CodeState
 from coding_env.server.python_codeact_env import PythonCodeActEnv
 from openenv.core.env_server import create_app
 
 # Create the app with web interface and README integration
 # Pass the class (factory) instead of an instance for WebSocket session support
-app = create_app(PythonCodeActEnv, CodeAction, CodeObservation, env_name="coding_env")
+app = create_app(
+    PythonCodeActEnv,
+    CodeAction,
+    CodeObservation,
+    env_name="coding_env",
+    state_cls=CodeState,
+)
 
 
 def main():

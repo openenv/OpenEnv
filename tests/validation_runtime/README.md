@@ -55,10 +55,12 @@ telemetry, container identity and cleanup outcome. A process-only provider expli
 skips fresh-container determinism. Subject-emitted records are compared with the
 independently collected wire trace.
 
-The Docker suite contains 28 required cases: three provider lifecycle tests,
-24 CLI fault/control cases, and one real `echo_env` canary. The slow-step case
-completes a tool call taking more than five seconds within the declared episode
-budget. The hung-step case
+The Docker suite contains 33 required cases: three provider lifecycle tests,
+five network-policy tests, 24 CLI fault/control cases, and one real `echo_env`
+canary. The network tests run `public` and `no-network` subjects against a
+validator-owned sink and verify the isolated namespace and helper. The slow-step
+case completes a tool call taking more than five seconds within the declared
+episode budget. The hung-step case
 checks the episode deadline; the interruption case sends SIGINT only after a
 container log confirms the second step has begun. Both must retain the completed
 reset/state/step/state prefix and remove their own containers. Each CLI case uses

@@ -3,6 +3,9 @@
 """OpenEnv validate command."""
 
 import json
+import signal
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -25,6 +28,24 @@ EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_UNSUPPORTED = 2
 EXIT_INTERNAL = 3
+
+
+@contextmanager
+def _sigterm_as_interrupt():
+    """Treat SIGTERM like Ctrl-C so the runner cleans up its subject."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, interrupt)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
 
 _LEVELS = {
     "static": Level.STATIC,
@@ -235,15 +256,16 @@ def validate(
     try:
         if output is not None and not output.parent.is_dir():
             raise OSError("report output directory does not exist")
-        validation_report = run_validation(
-            package_root,
-            max_level=_LEVELS[level],
-            skip_build=skip_build,
-            policy=load_policy(policy_version) if policy_version else None,
-            artifacts_dir=(
-                output.parent / (output.stem + ".artifacts") if output else None
-            ),
-        )
+        with _sigterm_as_interrupt():
+            validation_report = run_validation(
+                package_root,
+                max_level=_LEVELS[level],
+                skip_build=skip_build,
+                policy=load_policy(policy_version) if policy_version else None,
+                artifacts_dir=(
+                    output.parent / (output.stem + ".artifacts") if output else None
+                ),
+            )
         report_json = write_report(validation_report, output)
     except (SignatureError, UnsupportedPackageError) as exc:
         typer.echo(f"Error: {exc}", err=True)

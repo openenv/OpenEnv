@@ -1,3 +1,16 @@
+---
+title: kernrl Environment Server
+emoji: ⚡
+colorFrom: yellow
+colorTo: green
+sdk: docker
+pinned: false
+app_port: 8000
+base_path: /web
+tags:
+  - openenv
+---
+
 # kernrl
 
 RL environment for GPU kernel optimization. Train LLM agents to write fast CUDA/Triton kernels.

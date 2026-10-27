@@ -12,10 +12,10 @@ manual imports:
     >>> from openenv import AutoEnv, AutoAction
     >>>
     >>> # Load environment from installed package or HuggingFace Hub
-    >>> env = AutoEnv.from_name("coding-env")
+    >>> env = AutoEnv.from_env("coding-env")
     >>>
     >>> # Get action class
-    >>> CodeAction = AutoAction.from_name("coding")
+    >>> CodeAction = AutoAction.from_env("coding")
     >>> action = CodeAction(code="print('Hello!')")
 
 Classes:

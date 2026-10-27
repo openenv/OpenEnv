@@ -247,7 +247,7 @@ class SumoEnvironment(Environment):
             obs_list = list(obs)
 
         # Get action mask (all actions valid in SUMO-RL)
-        num_phases = self.env.action_space.n
+        num_phases = int(self.env.action_space.n)
         action_mask = list(range(num_phases))
 
         # Extract system metrics for metadata

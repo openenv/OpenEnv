@@ -47,7 +47,7 @@ The design is checked against independent implementations of the same pattern �
 
 ### Problem 1: token capture was per-env and in-sandbox — now it is both
 
-RFC 005 (Agentic Harness Integration) defined the wrapping pattern. The gap this RFC opened against was that the only working token capture lived inside one environment: [`envs/opencode_env/sandbox/interception.py`](../envs/opencode_env/sandbox/interception.py) forwards `/v1/chat/completions` upstream with `logprobs=true` injected and writes JSON-lines `TurnRecord`s inside the sandbox, which the trainer reads back afterwards.
+RFC 005 (Agentic Harness Integration) defined the wrapping pattern. The gap this RFC opened against was that the only working token capture lived inside one environment: [`envs/opencode_env/sandbox/interception.py`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/envs/opencode_env/sandbox/interception.py) forwards `/v1/chat/completions` upstream with `logprobs=true` injected and writes JSON-lines `TurnRecord`s inside the sandbox, which the trainer reads back afterwards.
 
 **#1036 does not close this gap; it forks it.** The new `core/harness/capture/` is a strictly better implementation — four wire dialects instead of one, canonical `prompt_token_ids` instead of `"token_id:{id}"` string recovery, graph stitching, ingest validation — but it touches **no file** under `envs/opencode_env/` or `envs/pi_env/`. The repository would therefore ship two independent interception proxies, and the older one is load-bearing:
 
@@ -59,7 +59,9 @@ RFC 005 (Agentic Harness Integration) defined the wrapping pattern. The gap this
 
 `envs/pi_env/pyproject.toml` also declares `opencode_env` only as a **comment**, not a dependency, so `pip install openenv-pi-env` yields a broken package unless `openenv-opencode-env` is installed separately.
 
-This is not an argument against #1036. It is the statement that **consolidation is now a scheduled obligation rather than an aspiration**: `opencode_env` and `pi_env` should become thin adapters over `core.harness.capture`, and the RFC's original Problem 1 is only closed when they are. See [What remains open](#what-remains-open).
+This is not an argument against #1036. It is the statement that **consolidation is now a scheduled obligation rather than an aspiration**: `opencode_env` and `pi_env` should become thin adapters over `core.harness.capture`, and the RFC's original Problem 1 is only closed when they are.
+
+**Update:** Problem 1 is closed. #1276 deprecated `opencode_env` and `pi_env` in favour of `harbor_env`, and #1346 removed them, so `core.harness.capture`, which Harbor uses, is the only capture proxy.
 
 ### Problem 2: the installed-agent training gap
 
@@ -363,7 +365,7 @@ The dialect transformers are adapted from the **Polar** gateway (Apache-2.0) and
 ### Interception topology
 
 ```
-Previously shipped, still shipping (opencode_env, pi_env):
+Previously shipped (opencode_env, pi_env, removed in 0.9.0):
   [sandbox]  agent → in-sandbox proxy →(HTTPS egress)→ vLLM  [trainer host]
              records inside the sandbox; the trainer reads the trace back afterwards
 
@@ -372,7 +374,7 @@ This RFC, implemented by #1036:
              records canonical ids on the trainer host, live; OpenEnv assembles
 ```
 
-The in-sandbox proxy remains a *supported* mode rather than a legacy one — it is the simpler deployment — but it is no longer the *recommended* one, and Problem 1 is not closed until both shipped harness envs are adapters over `core.harness.capture`. Both modes can share the graph and the export contract, differing only in where the process runs.
+The in-sandbox proxy left with `opencode_env` and `pi_env` (#1346). OpenCode, Pi and the other installed agents now train through Harbor (`harbor_env`), on the trainer-host capture proxy above.
 
 ### Request lifecycle
 
@@ -423,8 +425,6 @@ Landed in [#1036](https://github.com/huggingface/OpenEnv/pull/1036) (merged 2026
 
 | Item | Decision | Note |
 |---|---|---|
-| Consolidate `opencode_env` / `pi_env` onto `core.harness.capture` | Problem 1 | two proxies ship today; `pi_env` reads the older one off disk and re-exports its sandbox types |
-| Declare `opencode_env` as a real dependency of `pi_env` | Problem 1 | currently a comment in `pyproject.toml`; the package is broken without it |
 | Sandbox protocol + E2B/HF/Docker backends into `core/harness/sandbox/` | — | deferred follow-up to [#998](https://github.com/huggingface/OpenEnv/pull/998); orthogonal to Harbor, which brings its own |
 | Served-template hash in provenance + mismatch check | D3, D11 | the one remaining fidelity assertion; not an assembly job |
 | Config-file hashing per call | D11 | agents can rewrite their own prompts mid-episode |
@@ -495,8 +495,8 @@ Property tests runnable without GPUs, none of which need a tokenizer in core: ca
 - **RFC 012** — Harbor capture purpose, provider fidelity and live-session ownership: [`rfcs/012-harbor-capture-providers.md`](./012-harbor-capture-providers.md); extends this RFC and amends D2
 - RFC 005 — Agentic Harness Integration: [`rfcs/005-agentic-harnesses.md`](./005-agentic-harnesses.md); runtime in [`src/openenv/core/harness/rollout.py`](../src/openenv/core/harness/rollout.py) (split into a package by [#1097](https://github.com/huggingface/OpenEnv/pull/1097)), landed via [#652](https://github.com/huggingface/OpenEnv/pull/652)/[#903](https://github.com/huggingface/OpenEnv/pull/903)
 - Tracking issue [#940](https://github.com/huggingface/OpenEnv/issues/940)
-- Existing in-sandbox proxy: [`envs/opencode_env/sandbox/interception.py`](../envs/opencode_env/sandbox/interception.py); second consumer [`envs/pi_env/harness.py`](../envs/pi_env/harness.py) ([#999](https://github.com/huggingface/OpenEnv/pull/999))
-- Tutorials documenting the in-sandbox path: [`docs/source/tutorials/opencode-agent-grpo.md`](../docs/source/tutorials/opencode-agent-grpo.md) ([#1028](https://github.com/huggingface/OpenEnv/pull/1028)), [`pi-agent-grpo.md`](../docs/source/tutorials/pi-agent-grpo.md) ([#1023](https://github.com/huggingface/OpenEnv/pull/1023))
+- Existing in-sandbox proxy: [`envs/opencode_env/sandbox/interception.py`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/envs/opencode_env/sandbox/interception.py); second consumer [`envs/pi_env/harness.py`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/envs/pi_env/harness.py) ([#999](https://github.com/huggingface/OpenEnv/pull/999))
+- Tutorials documenting the in-sandbox path: [`docs/source/tutorials/opencode-agent-grpo.md`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/docs/source/tutorials/opencode-agent-grpo.md) ([#1028](https://github.com/huggingface/OpenEnv/pull/1028)), [`pi-agent-grpo.md`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/docs/source/tutorials/pi-agent-grpo.md) ([#1023](https://github.com/huggingface/OpenEnv/pull/1023))
 - PR [#998](https://github.com/huggingface/OpenEnv/pull/998) — `HFSandboxBackend` + `sandbox_home` fix (merged); sandbox consolidation is its deferred follow-up
 - **`huggingface_hub.Sandbox`** (first-class since 1.22.0, plus an `hf sandbox` CLI): [`src/huggingface_hub/_sandbox.py`](https://github.com/huggingface/huggingface_hub/blob/main/src/huggingface_hub/_sandbox.py) (`proxy_url_for`, `proxy_headers`, `$SBX_PROXY_DIR/<port>.sock`), [guide](https://huggingface.co/docs/huggingface_hub/main/en/guides/sandbox) — the trainer-dials-in route D18 considered and did not take
 - PRs [#1007](https://github.com/huggingface/OpenEnv/pull/1007), [#1009](https://github.com/huggingface/OpenEnv/pull/1009) — merged, satisfying two TRL `TODO(@openenv)`s

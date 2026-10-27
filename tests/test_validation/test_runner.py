@@ -48,8 +48,8 @@ def test_registered_runtime_graders_use_metadata_throughout_run(
     # Register test implementations against existing policy IDs. The runner must
     # discover them without adding their IDs to execution or dependency lists.
     probes = [
-        Probe("runtime.network_policy", "runtime.startup"),
-        Probe("runtime.host_containment", "runtime.network_policy"),
+        Probe("runtime.resource_bounds", "runtime.startup"),
+        Probe("runtime.host_containment", "runtime.resource_bounds"),
     ]
     for probe in probes:
         registry.register(probe)

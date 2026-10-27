@@ -1,538 +1,146 @@
-# RL Training with OpenEnv: 2048 Game
+# Play 2048 with GRPO
 
-This tutorial covers training a language model to play the 2048 game using
-reinforcement learning with GRPO (Group Relative Policy Optimization).
+Train a language model to play 2048 with GRPO. The game runs in the OpenSpiel environment, and TRL's `GRPOTrainer` drives it through `environment_factory`: the model plays by calling a `move` tool, and the game score is the reward.
+
+The recipe follows TRL's [`examples/grpo_2048`](https://github.com/huggingface/trl/tree/main/examples/grpo_2048), which implements the game in plain Python. Here the game logic lives in an OpenEnv server instead.
+
+> [!TIP]
+> Unsloth maintains its own [2048 tutorial with OpenEnv](https://github.com/unslothai/notebooks/blob/main/nb/OpenEnv_gpt_oss_%2820B%29_Reinforcement_Learning_2048_Game.ipynb), which trains `gpt-oss-20b` with Unsloth on the same OpenSpiel server to write a 2048 strategy instead of playing move by move.
 
 > [!NOTE]
-> **Time**: ~45 minutes | **Difficulty**: Advanced | **GPU Required**: Yes (T4 or better)
+> **Difficulty**: Advanced | **GPU Required**: Yes
 
-## What You'll Learn
-
-- **Model Setup**: Load and configure LLMs with Unsloth for efficient RL
-- **Environment Connection**: Connect to the 2048 OpenEnv environment
-- **Reward Design**: Create effective reward functions
-- **GRPO Training**: Train models with reinforcement learning
-- **Deployment**: Save and deploy trained models
-
-## Prerequisites
-
-Before starting this tutorial, you should have completed the
-[Getting Started](index) series to understand:
-
-- How OpenEnv environments work
-- The reset/step/state API pattern
-- How to connect to environments
-
-You'll also need:
-
-- A GPU (free T4 on Google Colab works)
-- Basic understanding of PyTorch
-- ~30 minutes for training
-
-## Part 1: Environment Setup
-
-### Installation
-
-```bash
-# Install required packages
-!pip install -q unsloth openenv trl
-
-# For Google Colab, also run:
-!pip install -q "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-```
-
-### Imports
+## 1. Install dependencies
 
 ```python
-import torch
-from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
-import random
-
-# Check GPU availability
-print(f"GPU Available: {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+!pip install -Uq "trl[peft]" trackio open_spiel
+!pip install -q "openenv-openspiel-env @ git+https://github.com/huggingface/OpenEnv.git#subdirectory=envs/openspiel_env"
 ```
 
-## Part 2: Model Configuration
+`open_spiel` ships the game engine (wheels for Linux and macOS). `openenv-openspiel-env` installs the client (`OpenSpielEnv`) and the server.
 
-We use Unsloth for memory-efficient training with LoRA adapters.
+## 2. Start the 2048 server
 
-### Configuration Classes
-
-```python
-@dataclass
-class ModelConfig:
-    """Configuration for loading LLM models."""
-    model_name: str = "unsloth/Qwen2.5-1.5B"
-    max_seq_length: int = 768
-    load_in_4bit: bool = True
-    dtype: Optional[str] = None  # Auto-detect
-
-
-@dataclass
-class LoRAConfig:
-    """Configuration for LoRA fine-tuning."""
-    r: int = 16
-    lora_alpha: int = 32
-    target_modules: List[str] = None
-    lora_dropout: float = 0.0
-
-    def __post_init__(self):
-        if self.target_modules is None:
-            self.target_modules = [
-                "q_proj", "k_proj", "v_proj", "o_proj",
-                "gate_proj", "up_proj", "down_proj",
-            ]
-```
-
-### Loading the Model
+An OpenSpiel server serves one game, chosen with the `OPENSPIEL_GAME` variable when it starts. Run one locally for 2048:
 
 ```python
-from unsloth import FastLanguageModel
+import os, subprocess, sys, time
 
-# Create configurations
-model_config = ModelConfig()
-lora_config = LoRAConfig()
+import requests
 
-# Load model
-model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=model_config.model_name,
-    max_seq_length=model_config.max_seq_length,
-    load_in_4bit=model_config.load_in_4bit,
-    dtype=model_config.dtype,
+server = subprocess.Popen(
+    [sys.executable, "-m", "uvicorn", "openspiel_env.server.app:app", "--port", "8000"],
+    env={**os.environ, "OPENSPIEL_GAME": "2048"},
 )
 
-# Apply LoRA adapters
-model = FastLanguageModel.get_peft_model(
-    model,
-    r=lora_config.r,
-    target_modules=lora_config.target_modules,
-    lora_alpha=lora_config.lora_alpha,
-    lora_dropout=lora_config.lora_dropout,
-    bias="none",
-    use_gradient_checkpointing="unsloth",
-    random_state=42,
-)
-
-# Check parameter counts
-trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-total = sum(p.numel() for p in model.parameters())
-print(f"Trainable: {trainable:,} / {total:,} ({trainable/total*100:.2f}%)")
-```
-
-## Part 3: The 2048 Environment
-
-### Game Overview
-
-2048 is a sliding puzzle game where you combine tiles to reach 2048.
-
-**Actions:**
-- `0` = UP
-- `1` = RIGHT
-- `2` = DOWN
-- `3` = LEFT
-
-**Goal:** Create a tile with value 2048 (or higher!)
-
-### Connecting to the Environment
-
-```python
-from envs.openspiel_env import OpenSpielEnv, OpenSpielAction
-
-# Connect to 2048 environment
-# Option 1: From Hub
-env = OpenSpielEnv.from_hub("openenv/openspiel-env")
-
-# Option 2: From running server
-# env = OpenSpielEnv(base_url="http://localhost:8000")
-
-# Test connection
-with env:
-    result = env.reset()
-    print(f"Game started!")
-    print(f"Legal actions: {result.observation.legal_actions}")
-
-    # Take a test action
-    action = OpenSpielAction(action_id=0, game_name="2048")
-    result = env.step(action)
-    print(f"After UP: reward={result.reward}, done={result.done}")
-```
-
-### Board Utilities
-
-```python
-import numpy as np
-from typing import List
-
-def info_state_to_board(info_state: List[int], size: int = 4) -> List[List[int]]:
-    """Convert flat info_state to 2D board."""
-    return np.array(info_state, dtype=int).reshape(size, size).tolist()
-
-def render_board(board: List[List[int]]) -> str:
-    """Render board as ASCII string."""
-    lines = ["+------" * len(board[0]) + "+"]
-    for row in board:
-        cells = [f"{v:5d}" if v > 0 else "    ." for v in row]
-        lines.append("|" + " |".join(cells) + " |")
-        lines.append("+------" * len(row) + "+")
-    return "\n".join(lines)
-
-def get_max_tile(board: List[List[int]]) -> int:
-    """Get highest tile value."""
-    return max(cell for row in board for cell in row)
-```
-
-## Part 4: Reward Function Design
-
-The reward function is crucial for RL. We consider:
-
-1. **Success**: Did we reach 2048?
-2. **Progress**: What's the highest tile achieved?
-3. **Code Quality**: Did the generated code execute correctly?
-
-### Reward Implementation
-
-```python
-import math
-
-def calculate_reward(
-    max_tile: int,
-    success: bool,
-    code_error: bool = False
-) -> float:
-    """
-    Calculate reward for a 2048 game outcome.
-
-    Args:
-        max_tile: Highest tile achieved (2, 4, 8, ..., 2048)
-        success: Whether we reached 2048
-        code_error: Whether generated code had errors
-
-    Returns:
-        Float reward value
-    """
-    if code_error:
-        return -0.5  # Penalty for invalid code
-
-    if success:
-        return 1.0  # Full reward for winning
-
-    # Progress reward: log scale from 0 to 0.9
-    if max_tile > 0:
-        progress = math.log2(max_tile) / math.log2(2048)
-        return min(0.9, progress)
-
-    return 0.0
-
-# Test reward function
-test_cases = [
-    (2048, True, False, "Won!"),
-    (1024, False, False, "Got to 1024"),
-    (512, False, False, "Got to 512"),
-    (64, False, False, "Early game"),
-]
-
-for max_tile, success, error, desc in test_cases:
-    reward = calculate_reward(max_tile, success, error)
-    print(f"{desc:20s} -> Reward: {reward:+.3f}")
-```
-
-## Part 5: Strategy Generation
-
-We'll train the model to generate Python strategy functions.
-
-### Prompt Template
-
-```python
-SYSTEM_PROMPT = """You are an expert at playing 2048. Generate a Python function
-that takes a board state and returns the best action (0=UP, 1=RIGHT, 2=DOWN, 3=LEFT).
-
-The board is a 4x4 list of integers. Empty cells are 0.
-Your function should analyze the board and return an optimal move.
-"""
-
-def create_prompt(board: List[List[int]]) -> str:
-    """Create prompt for strategy generation."""
-    board_str = "\n".join(str(row) for row in board)
-    return f"""{SYSTEM_PROMPT}
-
-Current board:
-{board_str}
-
-Generate a strategy function:
-```python
-def strategy(board):
-    # Your code here
-    return action  # 0, 1, 2, or 3
-```"""
-```
-
-### Executing Generated Strategies
-
-```python
-import ast
-from typing import Callable
-
-def extract_and_execute_strategy(
-    generated_code: str,
-    board: List[List[int]],
-    timeout: float = 5.0
-) -> tuple[int, bool]:
-    """
-    Extract and execute a generated strategy function.
-
-    Returns:
-        (action, success): The action to take and whether execution succeeded
-    """
+for _ in range(60):
     try:
-        # Extract code block
-        if "```python" in generated_code:
-            code = generated_code.split("```python")[1].split("```")[0]
-        else:
-            code = generated_code
-
-        # Parse and validate AST
-        tree = ast.parse(code)
-
-        # Execute in sandbox
-        namespace = {"board": board}
-        exec(compile(tree, "<strategy>", "exec"), namespace)
-
-        # Call the strategy function
-        if "strategy" in namespace:
-            action = namespace["strategy"](board)
-            if action in [0, 1, 2, 3]:
-                return action, True
-
-        return 0, False  # Default action on failure
-
-    except Exception as e:
-        print(f"Strategy execution error: {e}")
-        return 0, False
+        if requests.get("http://localhost:8000/health").ok:
+            break
+    except requests.ConnectionError:
+        time.sleep(1)
 ```
 
-## Part 6: GRPO Training
+The hosted [`openenv/openspiel_env`](https://huggingface.co/spaces/openenv/openspiel_env) Space serves Catch. To host 2048 instead, duplicate it, set the `OPENSPIEL_GAME=2048` variable in the Space settings, and use its `https://<user>-openspiel-env.hf.space` URL as `base_url` below.
 
-GRPO (Group Relative Policy Optimization) is optimized for language models.
+The server accepts 8 concurrent sessions by default (`MAX_CONCURRENT_ENVS`), one per rollout in a generation batch with the settings below.
 
-### Training Configuration
+## 3. Define the environment class
+
+`environment_factory` takes a class the trainer instantiates once per rollout. Its public methods with docstrings become tools, `reset()` returns the start of the conversation, and `get_reward()` scores the finished rollout.
+
+OpenSpiel's 2048 observation is the board as 16 tile values (`info_state`), the step reward is the points gained by merging tiles, and the actions are `0` (up), `1` (right), `2` (down) and `3` (left).
 
 ```python
+from openspiel_env import OpenSpielAction, OpenSpielEnv
+
+PROMPT = "Play 2048 on a 4x4 board. Use the tool `move` with one of: up, down, left, right. Maximize the score."
+MOVES = {"up": 0, "right": 1, "down": 2, "left": 3}
+
+
+class Game2048Env:
+    def __init__(self):
+        self.client = OpenSpielEnv(base_url="http://localhost:8000").sync()
+
+    def reset(self, **kwargs) -> str:
+        result = self.client.reset()
+        self.observation = result.observation
+        self.score = 0.0
+        self.done = result.done
+        return f"{PROMPT}\n\n{self._render()}"
+
+    def move(self, direction: str) -> str:
+        """
+        Play one move in 2048.
+
+        Args:
+            direction: One of "up", "down", "left", "right".
+
+        Returns:
+            The board and score after the move.
+        """
+        if self.done:
+            raise ValueError("Game over.")
+        action_id = MOVES.get(direction.strip().lower())
+        if action_id not in self.observation.legal_actions:
+            raise ValueError(f"Illegal move: {direction}.")
+        result = self.client.step(OpenSpielAction(action_id=action_id, game_name="2048"))
+        self.observation = result.observation
+        self.score += result.reward or 0.0
+        self.done = result.done
+        return self._render()
+
+    def get_reward(self) -> float:
+        return self.score
+
+    def _render(self) -> str:
+        tiles = [int(v) for v in self.observation.info_state]
+        rows = [" ".join(f"{v:4d}" for v in tiles[i : i + 4]) for i in range(0, 16, 4)]
+        return f"score={self.score}\n" + "\n".join(rows) + f"\ndone={self.done}"
+```
+
+An error raised inside a tool is sent back to the model as the tool response, so an illegal move costs a turn without ending the game.
+
+## 4. Train with GRPO
+
+The environment generates the starting board and owns the reward, so the trainer needs no dataset and no reward function. `max_steps` sets the length of the run.
+
+```python
+from peft import LoraConfig
 from trl import GRPOConfig, GRPOTrainer
 
-grpo_config = GRPOConfig(
-    # Learning rate
-    learning_rate=2e-6,
-
-    # Batch sizes
-    per_device_train_batch_size=4,
-    gradient_accumulation_steps=4,
-
-    # Training duration
-    max_steps=200,
-
-    # Memory optimization
-    bf16=True,
-    gradient_checkpointing=True,
-
-    # Logging
-    logging_steps=1,
-    output_dir="./2048_grpo_output",
-    report_to="none",
+trainer = GRPOTrainer(
+    model="Qwen/Qwen3-4B",
+    args=GRPOConfig(
+        max_steps=200,
+        chat_template_kwargs={"enable_thinking": False},
+        logging_steps=1,
+        log_completions=True,
+        num_completions_to_print=2,
+        report_to="trackio",
+        trackio_space_id="openenv-2048",
+        max_completion_length=2048,
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=2,
+    ),
+    environment_factory=Game2048Env,
+    peft_config=LoraConfig(),
 )
+trainer.train()
 ```
 
-### Training Loop
+Each generation batch holds `per_device_train_batch_size × gradient_accumulation_steps = 8` rollouts, all from the same starting prompt (`num_generations` defaults to 8). The trainer keeps one `Game2048Env` instance per rollout and reuses them across batches. A rollout ends when the model stops calling `move` or reaches `max_completion_length`, so longer completions let the model play longer games.
+
+In the Trackio dashboard, `reward` (also logged as `rewards/Game2048Env/mean`) is the mean game score and `tools/call_frequency` is how often the model calls `move`. Expect the call frequency to rise first, then the score.
+
+## 5. Save the model
 
 ```python
-def train_2048_agent(
-    model,
-    tokenizer,
-    env,
-    config: GRPOConfig,
-    num_episodes: int = 100,
-):
-    """
-    Train the model to play 2048 using GRPO.
-    """
-    # Prepare model for training
-    FastLanguageModel.for_training(model)
-
-    training_data = []
-
-    for episode in range(num_episodes):
-        # Reset environment
-        result = env.reset()
-        board = info_state_to_board(result.observation.info_state)
-
-        episode_reward = 0
-        steps = 0
-
-        while not result.done and steps < 1000:
-            # Generate strategy
-            prompt = create_prompt(board)
-            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=256,
-                temperature=0.7,
-                do_sample=True,
-            )
-
-            generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-            # Execute strategy
-            action, success = extract_and_execute_strategy(generated, board)
-
-            # Take action in environment
-            env_action = OpenSpielAction(action_id=action, game_name="2048")
-            result = env.step(env_action)
-
-            # Update board
-            board = info_state_to_board(result.observation.info_state)
-            episode_reward += result.reward if result.reward else 0
-            steps += 1
-
-        # Calculate final reward
-        max_tile = get_max_tile(board)
-        final_reward = calculate_reward(max_tile, max_tile >= 2048)
-
-        # Store for training
-        training_data.append({
-            "prompt": prompt,
-            "response": generated,
-            "reward": final_reward,
-        })
-
-        if episode % 10 == 0:
-            print(f"Episode {episode}: Max tile={max_tile}, Reward={final_reward:.3f}")
-
-    return training_data
+trainer.push_to_hub()
+server.terminate()
 ```
 
-## Part 7: Deployment
+## Next steps
 
-After training, save and deploy your model.
-
-### Saving the Model
-
-```python
-# Save LoRA adapters only
-model.save_pretrained("./2048_strategy_model")
-tokenizer.save_pretrained("./2048_strategy_model")
-
-# Save merged model for inference
-model.save_pretrained_merged(
-    "./2048_strategy_model_merged",
-    tokenizer,
-    save_method="merged_16bit",
-)
-```
-
-### Push to Hugging Face Hub
-
-```python
-# Push to Hub
-model.push_to_hub(
-    "your-username/2048-strategy-model",
-    tokenizer,
-    save_method="merged_16bit",
-    private=False,
-)
-
-print("Model deployed to: huggingface.co/your-username/2048-strategy-model")
-```
-
-### Using the Trained Model
-
-```python
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-# Load trained model
-model = AutoModelForCausalLM.from_pretrained("your-username/2048-strategy-model")
-tokenizer = AutoTokenizer.from_pretrained("your-username/2048-strategy-model")
-
-# Generate strategy
-def get_action(board: List[List[int]]) -> int:
-    prompt = create_prompt(board)
-    inputs = tokenizer(prompt, return_tensors="pt")
-    outputs = model.generate(**inputs, max_new_tokens=256)
-    generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    action, _ = extract_and_execute_strategy(generated, board)
-    return action
-
-# Play a game
-with OpenSpielEnv.from_hub("openenv/openspiel-env") as env:
-    result = env.reset()
-    board = info_state_to_board(result.observation.info_state)
-
-    while not result.done:
-        action = get_action(board)
-        result = env.step(OpenSpielAction(action_id=action, game_name="2048"))
-        board = info_state_to_board(result.observation.info_state)
-
-    print(f"Final max tile: {get_max_tile(board)}")
-```
-
-## Preventing Reward Hacking
-
-Be aware of potential reward hacking strategies:
-
-1. **Code that modifies rewards** - Run in sandboxed environment
-2. **Infinite loops** - Set execution timeouts
-3. **Memory exhaustion** - Limit resource usage
-
-```python
-import resource
-import signal
-
-def safe_execute(code: str, board: List[List[int]], timeout: float = 5.0) -> int:
-    """Execute strategy with safety limits."""
-
-    def handler(signum, frame):
-        raise TimeoutError("Strategy timed out")
-
-    # Set timeout
-    signal.signal(signal.SIGALRM, handler)
-    signal.alarm(int(timeout))
-
-    try:
-        # Set memory limit (100MB)
-        resource.setrlimit(resource.RLIMIT_AS, (100 * 1024 * 1024, -1))
-
-        # Execute in restricted namespace
-        namespace = {"board": board, "__builtins__": {"len": len, "max": max, "min": min}}
-        exec(code, namespace)
-
-        return namespace.get("strategy", lambda b: 0)(board)
-    finally:
-        signal.alarm(0)
-```
-
-## Summary
-
-In this tutorial, you learned:
-
-1. **Model Setup**: Loading LLMs with Unsloth and LoRA
-2. **Environment Connection**: Using OpenEnv's 2048 environment
-3. **Reward Design**: Creating balanced reward functions
-4. **GRPO Training**: Training with reinforcement learning
-5. **Deployment**: Saving and sharing trained models
-
-## Next Steps
-
-- Try different model architectures
-- Experiment with reward function designs
-- Train on other OpenEnv environments
-- Share your trained models on Hugging Face Hub!
-
-## Related Resources
-
-- [OpenEnv Getting Started](index)
-- [Building Custom Environments](../getting_started/environment-builder)
-- [GRPO Documentation](https://huggingface.co/docs/trl/grpo_trainer)
-- [Unsloth Documentation](https://github.com/unslothai/unsloth)
+- The [end-to-end walkthrough](end-to-end-walkthrough) covers the same `environment_factory` pattern on a single-step task, and [Wordle GRPO](wordle-grpo) on another multi-turn game.
+- The [Training overview](../guides/training) lists the other frameworks that train on OpenEnv environments.

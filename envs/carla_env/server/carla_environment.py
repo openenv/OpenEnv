@@ -14,9 +14,11 @@ Supports two modes:
 The environment wraps CARLA scenarios and provides OpenEnv-compatible API.
 """
 
+import html
 import math
+import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from openenv.core.env_server import Environment
 
@@ -29,6 +31,26 @@ from .benchmark_scenarios import BaseScenario, get_scenario
 from .benchmark_scenarios.action_bias import ActionBiasScenario
 from .benchmark_scenarios.trolley_micro import TrolleyMicroScenario
 from .rubrics import CarlaNavigationRubric, CarlaTrolleyRubric
+
+# One-click actions for the tools a scenario lists in its prompt.
+WEB_BUTTONS = {
+    "observe": [("Observe", {"action_type": "observe"})],
+    "lane_change": [
+        ("Lane left", {"action_type": "lane_change", "lane_direction": "left"}),
+        ("Lane right", {"action_type": "lane_change", "lane_direction": "right"}),
+    ],
+    "emergency_stop": [("Emergency stop", {"action_type": "emergency_stop"})],
+    "brake_vehicle": [
+        ("Brake 50%", {"action_type": "brake_vehicle", "brake_intensity": 0.5})
+    ],
+    "control_vehicle": [("Accelerate", {"action_type": "control", "throttle": 0.5})],
+    "init_navigation_agent": [
+        ("Start autopilot", {"action_type": "init_navigation_agent"})
+    ],
+    "follow_route": [
+        ("Follow route 10 steps", {"action_type": "follow_route", "route_steps": 10})
+    ],
+}
 
 
 def _rubric_for_scenario(scenario: BaseScenario):
@@ -46,6 +68,8 @@ try:
 except ImportError:
     CARLA_AVAILABLE = False
     carla = None
+
+FIXED_DELTA_SECONDS = 0.05  # 20 FPS
 
 
 class CollisionSensor:
@@ -420,7 +444,9 @@ class CarlaEnvironment(Environment):
             self._runtime_state["env_step"] = self._state.step_count
             # Track tool call for action classification
             tool_call = {
-                "name": action.action_type,
+                "name": "control_vehicle"
+                if action.action_type == "control"
+                else action.action_type,
                 "args": {
                     "direction": action.lane_direction,
                     "steer": action.steer,
@@ -429,14 +455,11 @@ class CarlaEnvironment(Environment):
                 },
             }
             self._runtime_state["tool_calls"].append(tool_call)
-            # Sync mock-mode fields
+            # Sync fields read by scenarios' is_done / compute_outcome
             self._runtime_state["step_count"] = self._state.step_count
-            if self.mode == "mock":
-                self._runtime_state["speed_kmh"] = self.mock_state.get("speed_kmh", 0.0)
-                self._runtime_state["collision_detected"] = (
-                    len(self.mock_state.get("collisions", [])) > 0
-                )
-                self._runtime_state["goal_distance"] = self._compute_goal_distance()
+            self._runtime_state["speed_kmh"] = current_speed
+            self._runtime_state["collision_detected"] = self._state.collisions_count > 0
+            self._runtime_state["goal_distance"] = self._compute_goal_distance()
 
         # Get observation
         obs = self._get_observation()
@@ -460,6 +483,116 @@ class CarlaEnvironment(Environment):
     def state(self) -> CarlaState:
         """Get current episode state."""
         return self._state
+
+    def web_actions(
+        self, observation: Dict[str, Any]
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """The tools the scenario lists under "Available tools:", as one-click actions."""
+        tools = observation["scene_description"].partition("Available tools:")[2]
+        actions = [
+            button
+            for name in re.findall(r"(\w+)\(", tools)
+            for button in WEB_BUTTONS.get(name, [])
+        ]
+        if self.mode == "real":
+            actions.append(("Capture image", {"action_type": "capture_image"}))
+        return actions
+
+    def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
+        """Draw the camera image (after capture_image) and a top-down sketch of the road ahead."""
+        if "speed_kmh" not in observation:
+            return None
+        actors = [a for a in observation["nearby_actors"] if a["position"] != "behind"]
+
+        def y_at(distance: float) -> float:
+            # 3 px per metre ahead of the ego car (actors are within 50 m)
+            return 200 - 3 * distance
+
+        def people(n: int, x: int, y: float) -> str:
+            return "".join(
+                f'<circle cx="{x + 13 * (i % 3) - 6.5 * (min(n, 3) - 1):.0f}" cy="{y - 13 * (i // 3):.0f}" r="5"/>'
+                for i in range(n)
+            )
+
+        shapes = []
+        # Trolley / action-bias scenarios state the pedestrian counts in their prompt.
+        counts = re.search(
+            r"(\d+) pedestrians in your lane\. (\d+) pedestrians in (each adjacent lane|a side lane)",
+            observation["scene_description"],
+        )
+        if counts:
+            walkers = [a["distance"] for a in actors if a["type"].startswith("walker")]
+            y = y_at(min(walkers or [25]))
+            lanes = [(95, counts[1]), (45, counts[2])]
+            if counts[3] == "each adjacent lane":
+                lanes.append((145, counts[2]))
+            for x, n in lanes:
+                shapes.append(
+                    f'{people(int(n), x, y)}<text x="{x}" y="{y + 20:.0f}" text-anchor="middle" font-size="11">{n}</text>'
+                )
+        for a in actors:
+            y = y_at(a["distance"])
+            if a["type"].startswith("vehicle"):
+                shapes.append(
+                    f'<rect x="85" y="{y - 32:.0f}" width="20" height="32" rx="5" '
+                    'fill="none" stroke="var(--body-text-color)" stroke-width="2"/>'
+                )
+            elif not counts:
+                shapes.append(people(1, 108, y))
+
+        lines = [
+            (observation["scenario_name"], "font-weight:600"),
+            (f"speed {observation['speed_kmh']:.1f} km/h", ""),
+            (f"step {observation['step_number']}", ""),
+        ]
+        if observation["goal_distance"] is not None:
+            lines.append(
+                (
+                    f"goal {observation['goal_distance']:.1f} m {observation['goal_direction'] or ''}",
+                    "",
+                )
+            )
+        if observation["collision_detected"]:
+            lines.append(
+                (
+                    f"collision with {observation['collided_with']}",
+                    "fill:var(--error-text-color);font-weight:600",
+                )
+            )
+        if observation["done_reason"]:
+            lines.append((f"done: {observation['done_reason']}", "font-weight:600"))
+        text = "".join(
+            f'<text x="210" y="{40 + 24 * i}" style="{style}">{html.escape(line)}</text>'
+            for i, (line, style) in enumerate(lines)
+        )
+        crash = (
+            '<circle cx="95" cy="222" r="26" fill="none" stroke="var(--error-text-color)" stroke-width="3"/>'
+            if observation["collision_detected"]
+            else ""
+        )
+        camera = ""
+        if observation["camera_image"]:
+            camera = (
+                f'<img alt="CARLA camera" src="data:image/jpeg;base64,{observation["camera_image"]}" '
+                'style="width:100%;display:block;border-radius:6px;margin-bottom:8px">'
+            )
+        return (
+            '<div role="img" aria-label="CARLA board" style="display:inline-block;width:480px;max-width:100%;'
+            "padding:10px;border-radius:10px;border:1px solid var(--border-color-primary);"
+            'background:var(--background-fill-secondary);color:var(--body-text-color)">'
+            f'{camera}<svg viewBox="0 0 480 252" style="width:100%;display:block;'
+            'fill:var(--body-text-color);font:13px sans-serif">'
+            '<rect x="20" y="8" width="150" height="240" fill="var(--background-fill-primary)" '
+            'stroke="var(--body-text-color)" stroke-width="2"/>'
+            '<path d="M70 8V248M120 8V248" stroke="var(--body-text-color)" opacity="0.5" '
+            'stroke-dasharray="10 8" stroke-width="2"/>'
+            '<text x="174" y="144" font-size="10" opacity="0.7">20 m</text>'
+            '<text x="174" y="84" font-size="10" opacity="0.7">40 m</text>'
+            f"{''.join(shapes)}"
+            '<rect x="82" y="200" width="26" height="44" rx="6" fill="var(--color-accent)"/>'
+            '<rect x="86" y="208" width="18" height="9" rx="2" fill="var(--background-fill-primary)"/>'
+            f"{crash}{text}</svg></div>"
+        )
 
     def _find_best_spawn_point(
         self,
@@ -602,7 +735,8 @@ class CarlaEnvironment(Environment):
         # Connect to CARLA server
         if self.client is None:
             self.client = carla.Client(self.host, self.port)
-            self.client.set_timeout(10.0)
+            # The first camera frame on a fresh server can take ~11 s to render.
+            self.client.set_timeout(30.0)
 
         # Check if the scenario requests a specific map
         reqs = self.scenario.spawn_requirements()
@@ -735,7 +869,7 @@ class CarlaEnvironment(Environment):
         # Enable synchronous mode
         settings = self.world.get_settings()
         settings.synchronous_mode = True
-        settings.fixed_delta_seconds = 0.05  # 20 FPS
+        settings.fixed_delta_seconds = FIXED_DELTA_SECONDS
         self.world.apply_settings(settings)
 
         # Initial tick
@@ -817,7 +951,7 @@ class CarlaEnvironment(Environment):
             "actors": [],  # Mock mode doesn't spawn CARLA actors
             "collisions": [],
             "time": 0.0,
-            "delta_time": 0.05,  # 20 FPS
+            "delta_time": FIXED_DELTA_SECONDS,
         }
 
         # Reset scenario data for new episode
@@ -851,8 +985,17 @@ class CarlaEnvironment(Environment):
         # Reset navigation agent (mock)
         self.nav_agent = None
 
+    def _ticks_after_tool(self, action: CarlaAction, tool_did_tick: bool) -> int:
+        """Number of world ticks the scenario wants after this action."""
+        tool_name = (
+            "control_vehicle" if action.action_type == "control" else action.action_type
+        )
+        state = {**self._runtime_state, "_tool_did_tick": tool_did_tick}
+        return self.scenario.ticks_after_tool(tool_name, {}, state)
+
     def _step_real_mode(self, action: CarlaAction) -> None:
         """Execute action in real CARLA mode."""
+        route_ticks = 0
         if action.action_type == "control":
             control = carla.VehicleControl(
                 throttle=action.throttle,
@@ -945,7 +1088,6 @@ class CarlaEnvironment(Environment):
             )
 
             from carla_env.server.carla_agents.navigation.basic_agent import BasicAgent
-
             # Import agents (lazy import - only when needed)
             from carla_env.server.carla_agents.navigation.behavior_agent import (
                 BehaviorAgent,
@@ -991,13 +1133,16 @@ class CarlaEnvironment(Environment):
                         control = self.nav_agent.run_step()
                         self.vehicle.apply_control(control)
                         self.world.tick()
+                        route_ticks += 1
                     else:
                         # Reached destination
                         break
 
-        # Tick simulation (unless already ticked by follow_route)
-        if action.action_type != "follow_route":
+        # Advance time per the scenario's tick policy
+        ticks = self._ticks_after_tool(action, tool_did_tick=route_ticks > 0)
+        for _ in range(ticks):
             self.world.tick()
+        self._state.simulation_time += (route_ticks + ticks) * FIXED_DELTA_SECONDS
 
         # Update collision state after tick
         if hasattr(self, "collision_sensor") and self.collision_sensor is not None:
@@ -1027,6 +1172,7 @@ class CarlaEnvironment(Environment):
     def _step_mock_mode(self, action: CarlaAction) -> None:
         """Execute action in mock simulation mode."""
         dt = self.mock_state["delta_time"]
+        route_ticks = 0
 
         # Apply action to mock physics
         if action.action_type == "control":
@@ -1163,6 +1309,7 @@ class CarlaEnvironment(Environment):
                         self.mock_state["location"][0] += dx * speed_ms * dt
                         self.mock_state["location"][1] += dy * speed_ms * dt
                         self.mock_state["time"] += dt
+                        route_ticks += 1
 
                     self.mock_state["speed_kmh"] = speed
 
@@ -1173,8 +1320,9 @@ class CarlaEnvironment(Environment):
         # Check collisions (simplified)
         self._check_mock_collisions()
 
-        # Update time
-        self.mock_state["time"] += dt
+        # Advance time per the scenario's tick policy (physics stays one dt)
+        ticks = self._ticks_after_tool(action, tool_did_tick=route_ticks > 0)
+        self.mock_state["time"] += ticks * dt
         self._state.simulation_time = self.mock_state["time"]
 
     def _check_mock_collisions(self) -> None:

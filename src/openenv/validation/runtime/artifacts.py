@@ -114,6 +114,7 @@ def write_runtime_bundle(
             "complete": evidence.failure_phase is None
             and evidence.failure_reason is None,
             "telemetry_error": evidence.telemetry_error,
+            "telemetry_unavailable": evidence.telemetry_unavailable,
         }
         telemetry = None
         telemetry_parse_failed = False
@@ -160,6 +161,7 @@ def write_runtime_bundle(
                 "failure_phase": sample.failure_phase,
                 "failure_reason": sample.failure_reason,
                 "telemetry_error": sample.telemetry_error,
+                "telemetry_unavailable": sample.telemetry_unavailable,
                 "trace": [],
                 "omitted_trace_fields": [],
                 "omitted_evidence_fields": [],
