@@ -493,10 +493,13 @@ class PostTrainEnvironment(MCPEnvironment):
         )
         return {"job_id": job_id, "logs": "\n".join(lines)[-MAX_LOG_CHARS:]}
 
-    def _evaluate(self, job_id: str, role: str):
-        task = self._task
-        source = self._broker.refresh(self._broker.get(job_id))
-        env = {"POSTTRAIN_EXPECTED": self._nonce, "HF_HUB_OFFLINE": "1"}
+    def _evaluate(self, job_id: str, role: str, *, broker=None, task=None, nonce=None):
+        with self._lifecycle_lock:
+            broker = broker if broker is not None else self._broker
+            task = task if task is not None else self._task
+            nonce = nonce if nonce is not None else self._nonce
+        source = broker.refresh(broker.get(job_id))
+        env = {"POSTTRAIN_EXPECTED": nonce, "HF_HUB_OFFLINE": "1"}
         # The hidden seed goes as a secret, so it doesn't show in the job's spec.
         if role == "dev_eval":
             env |= {"POSTTRAIN_SPLIT": "dev", "POSTTRAIN_SEED": str(task.dev_seed)}
@@ -504,7 +507,7 @@ class PostTrainEnvironment(MCPEnvironment):
         else:
             env |= {"POSTTRAIN_SPLIT": "test"}
             secrets = {"POSTTRAIN_SEED": str(TEST_SEED)}
-        return self._broker.evaluate(
+        return broker.evaluate(
             source,
             role=role,
             script_path=task.eval_script_path,
@@ -516,37 +519,51 @@ class PostTrainEnvironment(MCPEnvironment):
         )
 
     def _submit(self, job_id: str) -> dict:
-        # A retry after a transient HF error reuses the score job already started.
-        if self._score_job_id is None:
-            self._broker.require_artifact(
-                self._broker.refresh(self._broker.get(job_id))
-            )
-            for job in self._broker.jobs.values():
+        # Snapshot episode ownership before any provider call. Reset must not
+        # wait on the lifecycle lock while a provider worker is hung.
+        with self._lifecycle_lock:
+            broker, task, nonce = self._broker, self._task, self._nonce
+            score_job_id = self._score_job_id
+            score_timeout_s = self._score_timeout_s()
+        if score_job_id is None:
+            broker.require_artifact(broker.refresh(broker.get(job_id)))
+            for job in list(broker.jobs.values()):
                 if job.state not in TERMINAL_STATES:
-                    self._broker.cancel(job, "submitted")
-            self._score_job_id = self._evaluate(job_id, "score").job_id
-        score_job = self._broker.get(self._score_job_id)
-        self._broker.wait(score_job, self._score_timeout_s(), self._poll_s)
+                    broker.cancel(job, "submitted")
+            score_job = self._evaluate(
+                job_id, "score", broker=broker, task=task, nonce=nonce
+            )
+            with self._lifecycle_lock:
+                if broker is not self._broker:
+                    return BrokerError(
+                        "episode_over", "The episode has ended"
+                    ).as_dict()
+                self._score_job_id = score_job.job_id
+        else:
+            score_job = broker.get(score_job_id)
+        broker.wait(score_job, score_timeout_s, self._poll_s)
         if score_job.state not in TERMINAL_STATES:
-            self._broker.cancel(score_job, "score timed out")
+            broker.cancel(score_job, "score timed out")
         result = score_job.result or {"status": "timeout", "score": 0.0}
-        orphaned = self._broker.cancel_all(
-            "submitted", self._cancel_timeout_s, self._poll_s
-        )
-        self._done = True
-        # A score job that did not run to the end, or printed no valid score, is
-        # the grader's fault, not the agent's: the episode ends unscored, and a
-        # missing reward is not zero.
-        scored = score_job.state == "succeeded" and result["status"] not in (
-            "error",
-            "timeout",
-        )
-        self._reward = result["score"] if scored else None
-        self._end = {
-            "reason": "submitted" if scored else "score_failed",
-            "job_id": score_job.source_job_id,
-            "score_job_id": score_job.job_id,
-            "score": result,
-            "orphaned_jobs": orphaned,
-        }
-        return {"submitted": score_job.source_job_id, "result": result}
+        orphaned = broker.cancel_all("submitted", self._cancel_timeout_s, self._poll_s)
+        response = {"submitted": score_job.source_job_id, "result": result}
+        with self._lifecycle_lock:
+            if broker is not self._broker:
+                return response
+            self._done = True
+            # A score job that did not run to the end, or printed no valid score, is
+            # the grader's fault, not the agent's: the episode ends unscored, and a
+            # missing reward is not zero.
+            scored = score_job.state == "succeeded" and result["status"] not in (
+                "error",
+                "timeout",
+            )
+            self._reward = result["score"] if scored else None
+            self._end = {
+                "reason": "submitted" if scored else "score_failed",
+                "job_id": score_job.source_job_id,
+                "score_job_id": score_job.job_id,
+                "score": result,
+                "orphaned_jobs": orphaned,
+            }
+        return response

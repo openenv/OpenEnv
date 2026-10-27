@@ -61,6 +61,7 @@ SCRIPT_BLOCK = re.compile(r"(?m)^# /// script$\s(?P<content>(^#(| .*)$\s)+)^# //
 MAX_ARTIFACT_FILES = 50
 # Logs can lag a finished job; re-read before declaring the score missing.
 MAX_RESULT_READS = 3
+ADMISSION_TIMEOUT_S = 120.0
 
 
 class BrokerError(Exception):
@@ -115,6 +116,18 @@ class Job:
         return view
 
 
+@dataclass
+class PendingJob:
+    """A reserved request whose remote job identity is not yet confirmed."""
+
+    role: str
+    reservation: int
+    flavor: str
+    timeout_minutes: int
+    idempotency_key: str | None
+    active: bool = True
+
+
 class Broker:
     """
     Start, track and cancel HF Jobs for one episode, against a budget.
@@ -158,8 +171,7 @@ class Broker:
         self._idempotency: dict[str, str] = {}
         self._hardware: dict[str, Any] | None = None
         self._admission = threading.Condition(threading.RLock())
-        self._pending: dict[str, tuple[str, int]] = {}
-        self._pending_keys: set[str] = set()
+        self._pending: dict[str, PendingJob] = {}
         self._closing = False
 
     # -- ledger -------------------------------------------------------------
@@ -168,7 +180,7 @@ class Broker:
         """Return how many jobs of `role` this episode has started."""
         with self._admission:
             return sum(1 for j in self.jobs.values() if j.role == role) + sum(
-                1 for pending_role, _ in self._pending.values() if pending_role == role
+                1 for pending in self._pending.values() if pending.role == role
             )
 
     def _charged(self) -> list[Job]:
@@ -180,9 +192,9 @@ class Broker:
                 j.settled_micro_usd if j.settled else j.reserved_micro_usd
                 for j in self._charged()
             ) + sum(
-                cost
-                for role, cost in self._pending.values()
-                if role in ("agent", "dev_eval")
+                pending.reservation
+                for pending in self._pending.values()
+                if pending.role in ("agent", "dev_eval")
             )
             return self.budget_micro_usd - used
 
@@ -239,9 +251,9 @@ class Broker:
                     "usd": (
                         sum(j.reserved_micro_usd for j in charged if not j.settled)
                         + sum(
-                            cost
-                            for role, cost in self._pending.values()
-                            if role in ("agent", "dev_eval")
+                            pending.reservation
+                            for pending in self._pending.values()
+                            if pending.role in ("agent", "dev_eval")
                         )
                     )
                     / 1e6
@@ -315,28 +327,67 @@ class Broker:
     ) -> Job:
         # Only admission and ledger publication hold the lock. Provider calls
         # may block while other tools inspect or cancel existing jobs.
+        retry = None
         with self._admission:
             if idempotency_key:
-                self._admission.wait_for(
-                    lambda: idempotency_key not in self._pending_keys
+                ready = self._admission.wait_for(
+                    lambda: (
+                        not any(
+                            p.idempotency_key == idempotency_key and p.active
+                            for p in self._pending.values()
+                        )
+                    ),
+                    timeout=ADMISSION_TIMEOUT_S,
                 )
+                if not ready:
+                    raise BrokerError(
+                        "creation_pending",
+                        "Remote job creation is unconfirmed; retry later",
+                    )
                 if idempotency_key in self._idempotency:
                     return self.jobs[self._idempotency[idempotency_key]]
-            if self._closing:
-                raise BrokerError("episode_over", "The episode is ending")
-            limit = self.max_jobs if role == "agent" else self.max_dev_evals
-            if role != "score" and self.count(role) >= limit:
-                raise BrokerError(
-                    "limit_reached", f"This episode allows {limit} {role} jobs"
+                retry = next(
+                    (
+                        request
+                        for request, p in self._pending.items()
+                        if p.idempotency_key == idempotency_key
+                    ),
+                    None,
                 )
-            reservation = self._reserve(
-                flavor, timeout_minutes, charged=role != "score"
+            if retry is None:
+                if self._closing:
+                    raise BrokerError("episode_over", "The episode is ending")
+                limit = self.max_jobs if role == "agent" else self.max_dev_evals
+                if role != "score" and self.count(role) >= limit:
+                    raise BrokerError(
+                        "limit_reached", f"This episode allows {limit} {role} jobs"
+                    )
+                reservation = self._reserve(
+                    flavor, timeout_minutes, charged=role != "score"
+                )
+                request = uuid4().hex
+                self._pending[request] = PendingJob(
+                    role, reservation, flavor, timeout_minutes, idempotency_key
+                )
+        if retry is not None:
+            try:
+                job = self._reconcile(retry)
+            except Exception as error:
+                raise BrokerError(
+                    "creation_pending",
+                    "Remote job creation is unconfirmed; retry later",
+                ) from error
+            if job is not None:
+                return job
+            # A successful lookup confirmed no job, or another caller adopted it.
+            return self._start(
+                script,
+                role=role,
+                flavor=flavor,
+                timeout_minutes=timeout_minutes,
+                idempotency_key=idempotency_key,
+                **kwargs,
             )
-            request = uuid4().hex
-            self._pending[request] = (role, reservation)
-            if idempotency_key:
-                self._pending_keys.add(idempotency_key)
-        job = None
         try:
             job = self._run(
                 script,
@@ -344,18 +395,86 @@ class Broker:
                 flavor=flavor,
                 timeout_minutes=timeout_minutes,
                 reservation=reservation,
+                request=request,
                 **kwargs,
             )
+        except Exception:
+            # A lost response can hide a running job. If lookup also fails,
+            # retain the request label, reservation and key for later recovery.
+            job = self._reconcile(request, creating=True)
+            if job is None:
+                raise
+        else:
+            self._publish(request, job)
+        return job
+
+    def _publish(self, request: str, job: Job | None) -> None:
+        with self._admission:
+            pending = self._pending.pop(request)
+            if job is not None:
+                self.jobs[job.job_id] = job
+                if pending.idempotency_key:
+                    self._idempotency[pending.idempotency_key] = job.job_id
+            closing = self._closing
+            self._admission.notify_all()
+        if job is not None and closing:
+            # A timed-out cleanup may have returned before creation completed.
+            # Keep the returned handle and attempt cancellation on this worker.
+            with suppress(Exception):
+                self.cancel(job, "episode ended during creation")
+
+    def _reconcile(
+        self,
+        request: str,
+        *,
+        creating: bool = False,
+        cleanup: bool = False,
+        timeout_s: float | None = None,
+    ) -> Job | None:
+        with self._admission:
+            if not creating:
+                ready = self._admission.wait_for(
+                    lambda: (
+                        request not in self._pending
+                        or not self._pending[request].active
+                    ),
+                    timeout=ADMISSION_TIMEOUT_S if timeout_s is None else timeout_s,
+                )
+                if not ready:
+                    raise BrokerError(
+                        "creation_pending", "Remote job creation is unconfirmed"
+                    )
+            pending = self._pending.get(request)
+            if pending is None:
+                return None
+            if self._closing and not (creating or cleanup):
+                # Cleanup owns recovery once closing starts, so a retry cannot
+                # publish a live job after cancel_all snapshots the known jobs.
+                raise BrokerError(
+                    "creation_pending", "Remote job creation is unconfirmed"
+                )
+            pending.active = True
+        try:
+            found = self._api.list_jobs(
+                labels={"openenv-request": request}, namespace=self.namespace
+            )
+            info = next(iter(found), None)
+            job = (
+                None
+                if info is None
+                else self._job_from_info(
+                    info,
+                    role=pending.role,
+                    flavor=pending.flavor,
+                    timeout_minutes=pending.timeout_minutes,
+                    reservation=pending.reservation,
+                )
+            )
+            self._publish(request, job)
             return job
         finally:
             with self._admission:
-                if job is not None:
-                    self.jobs[job.job_id] = job
-                    if idempotency_key:
-                        self._idempotency[idempotency_key] = job.job_id
-                del self._pending[request]
-                if idempotency_key:
-                    self._pending_keys.remove(idempotency_key)
+                pending.active = False
                 self._admission.notify_all()
 
     @staticmethod
@@ -502,6 +621,7 @@ class Broker:
         flavor: str,
         timeout_minutes: int,
         reservation: int,
+        request: str,
         dependencies: list[str],
         env: dict[str, str] | None = None,
         secrets: dict[str, str] | None = None,
@@ -513,34 +633,33 @@ class Broker:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / f"{role}.py"
             path.write_text(script)
-            request = uuid4().hex
-            try:
-                info = self._api.run_uv_job(
-                    script=str(path),
-                    dependencies=dependencies,
-                    env=env or {},
-                    secrets=secrets or {},
-                    flavor=flavor,
-                    timeout=f"{timeout_minutes}m",
-                    labels={
-                        "openenv-env": "posttrain_env",
-                        "openenv-episode": self.episode_id,
-                        "openenv-role": role,
-                        "openenv-request": request,
-                    },
-                    volumes=volumes,
-                    namespace=self.namespace,
-                    resource_group_id=self.resource_group_id,
-                )
-            except Exception:
-                # The job can exist although the call failed, e.g. on a read
-                # timeout. Track it rather than leave it running unbudgeted.
-                found = self._api.list_jobs(
-                    labels={"openenv-request": request}, namespace=self.namespace
-                )
-                info = next(iter(found), None)
-                if info is None:
-                    raise
+            info = self._api.run_uv_job(
+                script=str(path),
+                dependencies=dependencies,
+                env=env or {},
+                secrets=secrets or {},
+                flavor=flavor,
+                timeout=f"{timeout_minutes}m",
+                labels={
+                    "openenv-env": "posttrain_env",
+                    "openenv-episode": self.episode_id,
+                    "openenv-role": role,
+                    "openenv-request": request,
+                },
+                volumes=volumes,
+                namespace=self.namespace,
+                resource_group_id=self.resource_group_id,
+            )
+        return self._job_from_info(
+            info,
+            role=role,
+            flavor=flavor,
+            timeout_minutes=timeout_minutes,
+            reservation=reservation,
+        )
+
+    @staticmethod
+    def _job_from_info(info, *, role, flavor, timeout_minutes, reservation) -> Job:
         artifacts = [
             v
             for v in info.volumes or []
@@ -651,12 +770,29 @@ class Broker:
         their full reservation, since their real cost is unknown. Orphans are
         retried on every later call until HF Jobs confirms they ended.
 
+        Unconfirmed creation requests keep their reservations and are reconciled
+        again on later calls. They are returned as `request:<label>` until their
+        remote job identity can be found or their absence confirmed.
+
         Returns:
-            `list[str]`: ids of the orphaned jobs.
+            `list[str]`: orphaned job ids and unresolved request labels.
         """
+        deadline = time.monotonic() + timeout_s
         with self._admission:
             self._closing = True
-            self._admission.wait_for(lambda: not self._pending)
+            self._admission.wait_for(
+                lambda: not any(p.active for p in self._pending.values()),
+                timeout=max(0, deadline - time.monotonic()),
+            )
+            unresolved = [
+                request for request, p in self._pending.items() if not p.active
+            ]
+        for request in unresolved:
+            with suppress(Exception):
+                self._reconcile(
+                    request, cleanup=True, timeout_s=max(0, deadline - time.monotonic())
+                )
+        with self._admission:
             live = [j for j in self.jobs.values() if j.state not in CONFIRMED_STATES]
         for job in live:
             if job.state == "orphaned":
@@ -664,24 +800,28 @@ class Broker:
             # Best effort: the Hub client's network errors vary by version.
             with suppress(Exception):
                 self.cancel(job, reason)
-        deadline = time.monotonic() + timeout_s
         while (
             any(j.state not in TERMINAL_STATES for j in live)
             and time.monotonic() < deadline
         ):
-            time.sleep(poll_s)
+            time.sleep(min(poll_s, max(0, deadline - time.monotonic())))
             for job in live:
                 with suppress(Exception):
                     self.refresh(job)
-        orphaned = []
         for job in live:
             if job.state not in TERMINAL_STATES:
                 job.state = "orphaned"
                 job.reason = f"{reason}: cancel not confirmed"
                 job.settled_micro_usd = job.reserved_micro_usd
                 job.settled = True
-                orphaned.append(job.job_id)
-        return orphaned
+        with self._admission:
+            # Include late publications as well as unknown request identities.
+            # Their worker may still be attempting cancellation after our deadline.
+            return [f"request:{request}" for request in self._pending] + [
+                job.job_id
+                for job in self.jobs.values()
+                if job.state not in CONFIRMED_STATES
+            ]
 
     def artifacts(self, job: Job) -> list[dict]:
         """List the files under the job's `/data/outputs/`, with their content hashes."""

@@ -1231,3 +1231,370 @@ def test_deferred_close_retains_the_original_broker(api, monkeypatch):
     finally:
         release.set()
         env.close()
+
+
+@pytest.mark.parametrize("pause_at", ["refresh", "evaluate", "wait", "cancel_all"])
+def test_cancelled_submit_cannot_touch_reset_episode(env, api, monkeypatch, pause_at):
+    env.reset(task_id="t0_artifact")
+    source = submit_job(env)
+    api.finish(source["job_id"])
+    old_broker = env._broker
+    if pause_at == "cancel_all":
+        api.on_inspect["score"] = {
+            "stage": "COMPLETED",
+            "running_secs": 1,
+            "logs": [score_line(1.0)],
+        }
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    original = getattr(old_broker, pause_at)
+    submit = env._submit
+    first = True
+
+    def blocked(*args, **kwargs):
+        nonlocal first
+        if first:
+            first = False
+            entered.set()
+            assert release.wait(5)
+        return original(*args, **kwargs)
+
+    def signalled_submit(*args):
+        try:
+            return submit(*args)
+        finally:
+            completed.set()
+
+    monkeypatch.setattr(old_broker, pause_at, blocked)
+    monkeypatch.setattr(env, "_submit", signalled_submit)
+
+    async def exercise():
+        async with env.mcp_session():
+            request = asyncio.create_task(
+                env.step_async(
+                    CallToolAction(
+                        tool_name="submit", arguments={"job_id": source["job_id"]}
+                    )
+                )
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                request.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await request
+                await asyncio.to_thread(
+                    env.reset, task_id="t0_artifact", episode_id="new"
+                )
+                new_broker = env._broker
+                new_job = await env.step_async(
+                    CallToolAction(
+                        tool_name="jobs_submit",
+                        arguments={
+                            "script": "print(1)",
+                            "flavor": "cpu-basic",
+                            "timeout_minutes": 1,
+                        },
+                    )
+                )
+                job_id = new_job.result.data["job_id"]
+            finally:
+                release.set()
+            assert await asyncio.to_thread(completed.wait, 5)
+            assert env._broker is new_broker
+            assert env.state.episode_id == "new"
+            assert not env._done
+            assert env._reward is None
+            assert env._end == {}
+            assert env._score_job_id is None
+            assert not new_broker._closing
+            assert api.jobs[job_id]["stage"] == "SCHEDULING"
+            assert not api.jobs[job_id].get("cancel_requested")
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+
+
+def test_uncertain_creation_keeps_ownership_until_reconciliation(env, api, monkeypatch):
+    from envs.posttrain_env.server.broker import BrokerError
+
+    env.reset(task_id="t0_arithmetic_format")
+    broker = env._broker
+    list_jobs = api.list_jobs
+    api.fail_after_create = True
+
+    def unavailable(**kwargs):
+        raise ConnectionError("reconciliation unavailable")
+
+    monkeypatch.setattr(api, "list_jobs", unavailable)
+    arguments = dict(
+        flavor="a10g-small",
+        timeout_minutes=60,
+        allowed_flavors=("a10g-small",),
+        max_timeout_minutes=60,
+        idempotency_key="same",
+    )
+    with pytest.raises(ConnectionError):
+        broker.submit("print(1)", **arguments)
+    reservation = 60 * A10G_SMALL
+    assert broker.remaining_micro_usd() == 3_000_000 - reservation
+    assert broker.spend()["reserved"]["usd"] == reservation / 1e6
+    assert not broker.spend()["final"]
+    assert broker.count("agent") == 1
+    for _ in range(2):
+        with pytest.raises(BrokerError, match="unconfirmed"):
+            broker.submit("print(1)", **arguments)
+    assert len(api.runs) == 1
+    # The unknown job's reservation still constrains other keys.
+    broker.submit("print(2)", **{**arguments, "idempotency_key": "other"})
+    with pytest.raises(BrokerError) as error:
+        broker.submit("print(3)", **{**arguments, "idempotency_key": "third"})
+    assert error.value.kind == "budget_exhausted"
+    assert broker.spend()["reserved"]["usd"] == 2 * reservation / 1e6
+    for cleanup in (env.close, lambda: env.reset(task_id="t0_artifact")):
+        with pytest.raises(RuntimeError, match="did not confirm cancelling"):
+            cleanup()
+        assert env._broker is broker
+        assert broker._pending
+        assert not broker.spend()["final"]
+    assert api.jobs["job0"]["stage"] == "SCHEDULING"
+    assert api.jobs["job1"]["stage"] == "CANCELED"
+    monkeypatch.setattr(api, "list_jobs", list_jobs)
+    # Once closing starts, cleanup owns recovery and cancels the recovered id.
+    with pytest.raises(BrokerError, match="unconfirmed"):
+        broker.submit("print(1)", **arguments)
+    env.close()
+    assert "job0" in broker.jobs
+    assert len(api.runs) == 2
+    assert all(job["stage"] == "CANCELED" for job in api.jobs.values())
+    assert not broker._pending
+    assert broker.spend()["final"]
+
+
+@pytest.mark.parametrize("found", [False, True])
+def test_uncertain_creation_retry_recovers_without_duplicate(
+    env, api, monkeypatch, found
+):
+    from envs.posttrain_env.server.broker import BrokerError
+
+    env.reset(task_id="t0_arithmetic_format")
+    broker = env._broker
+    run = api.run_uv_job
+    list_jobs = api.list_jobs
+    lookups = []
+
+    def lost_response(**kwargs):
+        if found:
+            run(**kwargs)
+        raise ConnectionError("response lost")
+
+    def unavailable(**kwargs):
+        lookups.append(kwargs["labels"]["openenv-request"])
+        raise ConnectionError("list unavailable")
+
+    monkeypatch.setattr(api, "run_uv_job", lost_response)
+    monkeypatch.setattr(api, "list_jobs", unavailable)
+    arguments = dict(
+        flavor="a10g-small",
+        timeout_minutes=60,
+        allowed_flavors=("a10g-small",),
+        max_timeout_minutes=60,
+        idempotency_key="retry",
+    )
+    with pytest.raises(ConnectionError):
+        broker.submit("print(1)", **arguments)
+    with pytest.raises(BrokerError, match="unconfirmed"):
+        broker.submit("print(1)", **arguments)
+    assert lookups == [lookups[0], lookups[0]]
+    assert list(broker._pending) == [lookups[0]]
+    monkeypatch.setattr(api, "run_uv_job", run)
+    monkeypatch.setattr(api, "list_jobs", list_jobs)
+
+    async def exercise():
+        async with env.mcp_session() as client:
+            replies = await asyncio.gather(
+                *(
+                    client.call_tool(
+                        "jobs_submit",
+                        {
+                            "script": "print(1)",
+                            "flavor": "a10g-small",
+                            "timeout_minutes": 60,
+                            "idempotency_key": "retry",
+                        },
+                    )
+                    for _ in range(4)
+                )
+            )
+            assert all(reply.data["job_id"] == "job0" for reply in replies)
+
+    asyncio.run(exercise())
+    assert len(api.runs) == 1
+    assert not broker._pending
+    assert broker.count("agent") == 1
+    assert broker.spend()["reserved"]["usd"] == 60 * A10G_SMALL / 1e6
+    assert broker.remaining_micro_usd() == 3_000_000 - 60 * A10G_SMALL
+
+
+@pytest.mark.parametrize(
+    "cleanup", ["close", "reset", "max_steps", "time_limit", "duplicate_key"]
+)
+def test_hung_creation_waits_have_deadlines(env, api, monkeypatch, cleanup):
+    from envs.posttrain_env.server import broker as broker_module
+    from envs.posttrain_env.server.broker import BrokerError
+
+    env.reset(task_id="t0_artifact")
+    broker = env._broker
+    monkeypatch.setattr(broker_module, "ADMISSION_TIMEOUT_S", 0.02, raising=False)
+    entered = threading.Event()
+    release = threading.Event()
+    run = api.run_uv_job
+
+    def blocked_run(**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return run(**kwargs)
+
+    monkeypatch.setattr(api, "run_uv_job", blocked_run)
+    arguments = dict(
+        flavor="cpu-basic",
+        timeout_minutes=10,
+        allowed_flavors=("cpu-basic",),
+        max_timeout_minutes=10,
+        idempotency_key="hung",
+    )
+
+    def operation():
+        if cleanup == "duplicate_key":
+            with pytest.raises(BrokerError) as error:
+                broker.submit("print(1)", **arguments)
+            assert error.value.kind == "creation_pending"
+        elif cleanup in ("max_steps", "time_limit"):
+            if cleanup == "max_steps":
+                env._max_steps = 1
+            else:
+                env._started_at -= 60 * env._task.max_episode_minutes
+            obs = env.step(CallToolAction(tool_name="budget", arguments={}))
+            assert obs.done
+            assert obs.metadata["episode_end"]["orphaned_jobs"]
+            assert not obs.metadata["service_spend"]["final"]
+        else:
+            with pytest.raises(RuntimeError, match="did not confirm cancelling"):
+                if cleanup == "close":
+                    env.close()
+                else:
+                    env.reset(task_id="t0_artifact", episode_id="new")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        submission = pool.submit(broker.submit, "print(1)", **arguments)
+        try:
+            assert entered.wait(5)
+            # The worker stays blocked until all deadline assertions are done.
+            attempt = pool.submit(operation)
+            attempt.result(timeout=0.5)
+            assert not release.is_set()
+            assert not submission.done()
+            assert env._broker is broker
+            assert broker.spend()["reserved"]["usd"] == 10 * CPU_BASIC / 1e6
+            assert not broker.spend()["final"]
+            assert broker.count("agent") == 1
+        finally:
+            release.set()
+        job = submission.result(timeout=5)
+    assert len(api.runs) == 1
+    if cleanup != "duplicate_key":
+        assert api.jobs[job.job_id]["stage"] == "CANCELED"
+    env.close()
+    assert broker.spend()["final"]
+
+
+def test_hung_score_creation_does_not_hold_lifecycle_lock(env, api, monkeypatch):
+    env.reset(task_id="t0_artifact")
+    source = submit_job(env)
+    api.finish(source["job_id"])
+    broker = env._broker
+    entered = threading.Event()
+    release = threading.Event()
+    run = api.run_uv_job
+
+    def blocked_score(**kwargs):
+        if kwargs["labels"]["openenv-role"] == "score":
+            entered.set()
+            assert release.wait(5)
+        return run(**kwargs)
+
+    monkeypatch.setattr(api, "run_uv_job", blocked_score)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        scoring = pool.submit(env._submit, source["job_id"])
+        try:
+            assert entered.wait(5)
+
+            def cleanup():
+                with pytest.raises(RuntimeError, match="did not confirm cancelling"):
+                    env.close()
+
+            pool.submit(cleanup).result(timeout=0.5)
+            assert not scoring.done()
+            assert not broker.spend()["final"]
+            assert broker.count("score") == 1
+        finally:
+            release.set()
+        scoring.result(timeout=5)
+    assert len(api.runs) == 2
+    assert api.jobs["job1"]["stage"] == "CANCELED"
+    assert broker.spend()["final"]
+
+
+def test_cleanup_reports_job_published_after_its_live_snapshot(env, api, monkeypatch):
+    env.reset(task_id="t0_artifact")
+    submit_job(env)
+    broker = env._broker
+    creating = threading.Event()
+    release_creation = threading.Event()
+    cancelling = [threading.Event(), threading.Event()]
+    release_cancel = [threading.Event(), threading.Event()]
+    run = api.run_uv_job
+    cancel = api.cancel_job
+
+    def blocked_run(**kwargs):
+        creating.set()
+        assert release_creation.wait(5)
+        return run(**kwargs)
+
+    def blocked_cancel(**kwargs):
+        index = int(kwargs["job_id"][-1])
+        cancelling[index].set()
+        assert release_cancel[index].wait(5)
+        return cancel(**kwargs)
+
+    monkeypatch.setattr(api, "run_uv_job", blocked_run)
+    monkeypatch.setattr(api, "cancel_job", blocked_cancel)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        submission = pool.submit(
+            broker.submit,
+            "print(1)",
+            flavor="cpu-basic",
+            timeout_minutes=1,
+            allowed_flavors=("cpu-basic",),
+            max_timeout_minutes=1,
+        )
+        try:
+            assert creating.wait(5)
+            closing = pool.submit(env.close)
+            # Cleanup has snapshotted job0, then the late worker publishes job1.
+            assert cancelling[0].wait(5)
+            release_creation.set()
+            assert cancelling[1].wait(5)
+            release_cancel[0].set()
+            with pytest.raises(RuntimeError, match="job1"):
+                closing.result(timeout=0.5)
+            assert not broker.spend()["final"]
+        finally:
+            release_creation.set()
+            for event in release_cancel:
+                event.set()
+        submission.result(timeout=5)
+    env.close()
+    assert broker.spend()["final"]
