@@ -10,6 +10,9 @@ Chat Environment Implementation.
 A chat-based environment for LLMs, designed as a blank canvas for conversation and RL.
 """
 
+from typing import Any, Optional
+from uuid import uuid4
+
 from openenv.core.env_server.interfaces import (
     Environment,
     Message,
@@ -103,12 +106,25 @@ class ChatEnvironment(Environment):
 
         return self._coerce_tokens(tokens)
 
-    def reset(self) -> ChatObservation:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> ChatObservation:
         """Reset the environment to initial state.
+
+        Args:
+            seed (`int`, *optional*):
+                Unused. The chat environment has no randomness.
+            episode_id (`str`, *optional*):
+                ID for the new episode. A new UUID is generated when omitted.
 
         Returns:
             ChatObservation: Initial observation with system prompt (if any)
         """
+        self._state.episode_id = episode_id or str(uuid4())
+        self._state.step_count = 0
         self._state.history_messages = []
         self._state.history_tokens = []
         if self.system_prompt:
@@ -140,6 +156,7 @@ class ChatEnvironment(Environment):
         decoded_text = self.tokenizer.decode(action_tokens, skip_special_tokens=True)
         assistant_message: Message = {"role": "assistant", "content": decoded_text}
         self._state.history_messages.append(assistant_message)
+        self._state.step_count += 1
 
         return self._create_observation()
 

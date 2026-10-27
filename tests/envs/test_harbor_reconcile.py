@@ -226,21 +226,42 @@ def test_calls_captured_but_none_labelled_agent_is_fatal():
     assert "no_agent_sequence" in fatal_codes(report)
 
 
-def test_subagent_trajectories_are_refused_not_merely_noted():
+@pytest.mark.parametrize(
+    "captured,reported,diagnostic",
+    [
+        ([10, 20], [10, 20], "turns_match"),
+        ([10, 20], [0, 0], "atif_no_token_counts"),
+        ([10, 20], [], "atif_no_token_counts"),
+        ([10, 20, 30], [10, 20], "atif_aux_calls"),
+    ],
+)
+def test_subagent_trajectories_are_refused_not_merely_noted(
+    captured, reported, diagnostic
+):
     """The warning used to say subagent turns must not carry the parent's reward and then did nothing
     to stop it: no node ids collected, no role changed. ATIF does not say which captured calls belong
     to the subagent, so the rollout cannot be attributed and is refused."""
     report = reconcile(
-        document([10, 20]),
-        trace([10, 20], subagent_trajectories=[{"agent": {"name": "sub"}}]),
+        document(captured),
+        trace(reported, subagent_trajectories=[{"agent": {"name": "sub"}}]),
     )
     assert not report.ok
     assert "atif_subagents" in fatal_codes(report)
+    assert diagnostic in codes(report)
 
 
 # --- the eval path ----------------------------------------------------------
 def test_eval_rollouts_compare_call_counts_since_token_counts_do_not_exist():
     report = reconcile(document([0, 0, 0], rollout_type="eval"), trace([10, 20, 30]))
+    assert report.ok
+    assert "eval_reconcile_counts_only" in codes(report)
+
+
+def test_eval_subagents_do_not_require_training_attribution():
+    report = reconcile(
+        document([0, 0], rollout_type="eval"),
+        trace([10, 20], subagent_trajectories=[{"agent": {"name": "sub"}}]),
+    )
     assert report.ok
     assert "eval_reconcile_counts_only" in codes(report)
 
@@ -269,6 +290,14 @@ def test_partial_usage_requires_exact_ordered_call_identity():
     assert "atif_partial_usage" in codes(report)
     assert "turns_match" not in codes(report)
     assert not report.aux_node_ids
+
+
+def test_partial_usage_cannot_bypass_subagent_attribution():
+    doc, native = _partial_usage_pair()
+    native["subagent_trajectories"] = [{"agent": {"name": "sub"}}]
+    report = reconcile(doc, native)
+    assert "atif_subagents" in fatal_codes(report)
+    assert "atif_partial_usage" in codes(report)
 
 
 @pytest.mark.parametrize(
