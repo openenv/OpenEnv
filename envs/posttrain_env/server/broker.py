@@ -124,7 +124,7 @@ class PendingJob:
     reservation: int
     flavor: str
     timeout_minutes: int
-    idempotency_key: str | None
+    idempotency_key: str | tuple[str] | None
     active: bool = True
 
 
@@ -168,7 +168,7 @@ class Broker:
         self.max_dev_evals = max_dev_evals
         self.resource_group_id = resource_group_id
         self.jobs: dict[str, Job] = {}
-        self._idempotency: dict[str, str] = {}
+        self._idempotency: dict[str | tuple[str], str] = {}
         self._hardware: dict[str, Any] | None = None
         self._admission = threading.Condition(threading.RLock())
         self._pending: dict[str, PendingJob] = {}
@@ -322,7 +322,7 @@ class Broker:
         role: str,
         flavor: str,
         timeout_minutes: int,
-        idempotency_key: str | None = None,
+        idempotency_key: str | tuple[str] | None = None,
         **kwargs: Any,
     ) -> Job:
         # Only admission and ledger publication hold the lock. Provider calls
@@ -609,6 +609,9 @@ class Broker:
             env=env,
             secrets=secrets,
             volumes=[model, *(volumes or [])],
+            # Broker lifetime is one episode; the tuple cannot collide with an
+            # agent-supplied string key. Retain all uncertain-creation guards.
+            idempotency_key=("score",) if role == "score" else None,
         )
         job.source_job_id = source.job_id
         return job

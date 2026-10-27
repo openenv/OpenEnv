@@ -27,10 +27,13 @@ import os
 import secrets
 import threading
 import time
+from contextvars import ContextVar
 from typing import Any, Optional
 from uuid import uuid4
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware
+from fastmcp.tools.tool import ToolResult
 from huggingface_hub import HfApi
 from huggingface_hub.errors import HfHubHTTPError
 from openenv.core.env_server.mcp_environment import MCPEnvironment
@@ -102,9 +105,35 @@ class PostTrainEnvironment(MCPEnvironment):
         self._done = False
         self._reward: float | None = None
         self._score_job_id: str | None = None
+        self._score_source_job_id: str | None = None
+        self._score_lock = threading.Lock()
+        self._tool_episode = ContextVar("posttrain_episode", default=None)
         self._end: dict = {}
         self._lifecycle_lock = threading.RLock()
         self._close_tasks: dict[Broker | None, asyncio.Task] = {}
+
+        owner = self
+
+        class EpisodeDispatch(Middleware):
+            async def on_call_tool(self, context, call_next):
+                ownership = owner._episode()
+                meta = context.fastmcp_context.request_context.meta
+                expected = (
+                    None if meta is None else meta.model_dump().get("posttrain_episode")
+                )
+                if expected is not None and expected != ownership[2]:
+                    return ToolResult(
+                        structured_content=BrokerError(
+                            "episode_over", "The episode has ended"
+                        ).as_dict()
+                    )
+                token = owner._tool_episode.set(ownership)
+                try:
+                    return await call_next(context)
+                finally:
+                    owner._tool_episode.reset(token)
+
+        mcp.add_middleware(EpisodeDispatch())
 
         @mcp.tool
         def budget() -> dict:
@@ -139,21 +168,25 @@ class PostTrainEnvironment(MCPEnvironment):
                 datasets: Public Hub dataset repo ids, mounted read-only at `/datasets/<repo_id>`.
                 idempotency_key: Retrying with the same key returns the same job.
             """
+            ownership = self._episode()
+            broker, task, _, _ = ownership
             return self._call(
                 lambda: self._job_view(
-                    self._broker.submit(
+                    broker.submit(
                         script,
                         flavor=flavor,
                         timeout_minutes=timeout_minutes,
-                        allowed_flavors=self._task.flavors,
-                        max_timeout_minutes=self._task.max_timeout_minutes,
+                        allowed_flavors=task.flavors,
+                        max_timeout_minutes=task.max_timeout_minutes,
                         dependencies=dependencies,
                         datasets=datasets,
-                        denied_datasets=self._task.denied_datasets,
-                        volumes=self._task.volumes(),
+                        denied_datasets=task.denied_datasets,
+                        volumes=task.volumes(),
                         idempotency_key=idempotency_key,
-                    )
-                )
+                    ),
+                    broker=broker,
+                ),
+                ownership,
             )
 
         @mcp.tool
@@ -220,8 +253,16 @@ class PostTrainEnvironment(MCPEnvironment):
             Args:
                 job_id: Id of a succeeded job from `jobs_submit`.
             """
+            ownership = self._episode()
+            broker, task, nonce, _ = ownership
             return self._call(
-                lambda: self._job_view(self._evaluate(job_id, "dev_eval"))
+                lambda: self._job_view(
+                    self._evaluate(
+                        job_id, "dev_eval", broker=broker, task=task, nonce=nonce
+                    ),
+                    broker=broker,
+                ),
+                ownership,
             )
 
         @mcp.tool
@@ -234,7 +275,8 @@ class PostTrainEnvironment(MCPEnvironment):
             Args:
                 job_id: Id of a succeeded job from `jobs_submit`.
             """
-            return self._call(lambda: self._submit(job_id))
+            ownership = self._episode()
+            return self._call(lambda: self._submit(job_id, ownership), ownership)
 
         super().__init__(mcp)
         self._state = State(episode_id=str(uuid4()), step_count=0)
@@ -293,6 +335,8 @@ class PostTrainEnvironment(MCPEnvironment):
             self._reward = None
             self._end = {}
             self._score_job_id = None
+            self._score_source_job_id = None
+            self._score_lock = threading.Lock()
             return Observation(
                 done=False,
                 reward=0.0,
@@ -365,12 +409,18 @@ class PostTrainEnvironment(MCPEnvironment):
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> Observation:
-        broker = self._broker
-        self._state.step_count += 1
-        obs = super().step(
-            action, timeout_s=self._tool_timeout(action, timeout_s), **kwargs
-        )
-        return self._finish(obs, broker)
+        with self._lifecycle_lock:
+            ownership = self._episode()
+            broker = ownership[0]
+            self._state.step_count += 1
+        token = self._tool_episode.set(ownership)
+        try:
+            obs = super().step(
+                action, timeout_s=self._tool_timeout(action, timeout_s), **kwargs
+            )
+            return self._finish(obs, broker)
+        finally:
+            self._tool_episode.reset(token)
 
     async def step_async(
         self,
@@ -378,14 +428,28 @@ class PostTrainEnvironment(MCPEnvironment):
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> Observation:
-        broker = self._broker
-        self._state.step_count += 1
-        obs = await super().step_async(
-            action, timeout_s=self._tool_timeout(action, timeout_s), **kwargs
-        )
-        # Ending an episode waits on HF Jobs to confirm cancels; keep that off
-        # the event loop shared by every session.
-        return await asyncio.to_thread(self._finish, obs, broker)
+        with self._lifecycle_lock:
+            ownership = self._episode()
+            broker = ownership[0]
+            self._state.step_count += 1
+        token = self._tool_episode.set(ownership)
+        try:
+            obs = await super().step_async(
+                action, timeout_s=self._tool_timeout(action, timeout_s), **kwargs
+            )
+            # Cancellation confirmation must stay off the session event loop.
+            return await asyncio.to_thread(self._finish, obs, broker)
+        finally:
+            self._tool_episode.reset(token)
+
+    async def _async_call_tool(self, tool_name: str, arguments: dict) -> Any:
+        # MCP runs the server in a separate task: Python context alone does not
+        # cross that transport. Reject a queued call after reset at dispatch.
+        ownership = self._episode()
+        async with self.mcp_session() as client:
+            return await client.call_tool(
+                tool_name, arguments, meta={"posttrain_episode": ownership[2]}
+            )
 
     def _step_impl(
         self,
@@ -444,11 +508,22 @@ class PostTrainEnvironment(MCPEnvironment):
 
     # -- tools --------------------------------------------------------------
 
-    def _call(self, fn) -> dict:
-        if self._broker is None:
-            return BrokerError("not_started", "Call reset before using tools").as_dict()
-        if self._done:
-            return BrokerError("episode_over", "The episode has ended").as_dict()
+    def _episode(self):
+        ownership = self._tool_episode.get()
+        if ownership is not None:
+            return ownership
+        with self._lifecycle_lock:
+            return self._broker, self._task, self._nonce, self._score_lock
+
+    def _call(self, fn, ownership=None) -> dict:
+        broker = (ownership if ownership is not None else self._episode())[0]
+        with self._lifecycle_lock:
+            if broker is None:
+                return BrokerError(
+                    "not_started", "Call reset before using tools"
+                ).as_dict()
+            if broker is not self._broker or self._done:
+                return BrokerError("episode_over", "The episode has ended").as_dict()
         try:
             return fn()
         except BrokerError as e:
@@ -482,14 +557,15 @@ class PostTrainEnvironment(MCPEnvironment):
             / 1e6,
         }
 
-    def _job_view(self, job) -> dict:
+    def _job_view(self, job, *, broker=None) -> dict:
+        broker = broker if broker is not None else self._broker
         view = job.view()
         if job.role == "agent" and job.state == "succeeded":
             view["artifact"] = {
-                "uri": f"openenv-artifact://{self._state.episode_id}/{job.job_id}/outputs",
-                "files": self._broker.artifacts(job),
+                "uri": f"openenv-artifact://{broker.episode_id}/{job.job_id}/outputs",
+                "files": broker.artifacts(job),
             }
-        view["remaining_usd"] = self._broker.remaining_micro_usd() / 1e6
+        view["remaining_usd"] = broker.remaining_micro_usd() / 1e6
         return view
 
     def _logs(self, job_id: str, tail: int) -> dict:
@@ -526,17 +602,34 @@ class PostTrainEnvironment(MCPEnvironment):
             volumes=task.volumes(),
         )
 
-    def _submit(self, job_id: str) -> dict:
-        # Snapshot episode ownership before any provider call. Reset must not
-        # wait on the lifecycle lock while a provider worker is hung.
+    def _submit(self, job_id: str, ownership=None) -> dict:
+        broker, task, nonce, score_lock = ownership or self._episode()
+        # Serialize scoring, without blocking reset/close on a provider call.
+        if not score_lock.acquire(timeout=TOOL_TIMEOUT_S):
+            raise BrokerError("creation_pending", "Scoring is in progress; retry later")
+        try:
+            return self._submit_score(job_id, broker, task, nonce)
+        finally:
+            score_lock.release()
+
+    def _submit_score(self, job_id, broker, task, nonce) -> dict:
         with self._lifecycle_lock:
-            broker, task, nonce = self._broker, self._task, self._nonce
+            if broker is not self._broker:
+                return BrokerError("episode_over", "The episode has ended").as_dict()
             score_job_id = self._score_job_id
-            score_timeout_s = self._score_timeout_s()
+            job_id = self._score_source_job_id or job_id
+            score_timeout_s = task.eval_timeout_minutes * 60 + 900.0
         if score_job_id is None:
             broker.require_artifact(broker.refresh(broker.get(job_id)))
+            with self._lifecycle_lock:
+                if broker is not self._broker:
+                    return BrokerError(
+                        "episode_over", "The episode has ended"
+                    ).as_dict()
+                # Preserve the selected artifact even when create/recovery fails.
+                self._score_source_job_id = job_id
             for job in list(broker.jobs.values()):
-                if job.state not in TERMINAL_STATES:
+                if job.role != "score" and job.state not in TERMINAL_STATES:
                     broker.cancel(job, "submitted")
             score_job = self._evaluate(
                 job_id, "score", broker=broker, task=task, nonce=nonce

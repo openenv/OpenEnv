@@ -1741,3 +1741,284 @@ def test_local_server_binds_only_loopback(monkeypatch):
     monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: calls.append(kwargs))
     app.main()
     assert calls == [{"host": "127.0.0.1", "port": 8000}]
+
+
+@pytest.mark.parametrize("lost_response", [False, True])
+def test_score_admission_fastmcp(env, api, monkeypatch, lost_response):
+    env.reset(task_id="t0_artifact")
+    source = submit_job(env)["job_id"]
+    api.finish(source)
+    api.on_inspect["score"] = {
+        "stage": "COMPLETED",
+        "running_secs": 1,
+        "logs": [score_line(0.75)],
+    }
+    entered, release = threading.Event(), threading.Event()
+    run, lookup = api.run_uv_job, api.list_jobs
+    creates = []
+    second_entered = threading.Event()
+    submit = env._submit
+    submit_count = 0
+
+    def counted_submit(*args):
+        nonlocal submit_count
+        submit_count += 1
+        if submit_count == 2:
+            second_entered.set()
+        return submit(*args)
+
+    monkeypatch.setattr(env, "_submit", counted_submit)
+
+    def blocked_run(**kwargs):
+        if kwargs["labels"]["openenv-role"] == "score":
+            creates.append(kwargs)
+            entered.set()
+            assert release.wait(5)
+        return run(**kwargs)
+
+    monkeypatch.setattr(api, "run_uv_job", blocked_run)
+
+    async def exercise():
+        async with env.mcp_session() as client:
+            if lost_response:
+                api.fail_after_create = True
+
+                def unavailable(**kwargs):
+                    raise ConnectionError("lookup unavailable")
+
+                monkeypatch.setattr(api, "list_jobs", unavailable)
+                release.set()
+                failed = await client.call_tool("submit", {"job_id": source})
+                assert "error" in failed.data
+                for _ in range(2):
+                    failed = await client.call_tool("submit", {"job_id": source})
+                    assert "error" in failed.data
+                assert len(creates) == 1
+                assert len(env._broker._pending) == 1
+                monkeypatch.setattr(api, "list_jobs", lookup)
+                results = [await client.call_tool("submit", {"job_id": source})]
+            else:
+                first = asyncio.create_task(
+                    client.call_tool("submit", {"job_id": source})
+                )
+                assert await asyncio.to_thread(entered.wait, 5)
+                second = asyncio.create_task(
+                    client.call_tool("submit", {"job_id": source})
+                )
+                assert await asyncio.to_thread(second_entered.wait, 5)
+                await client.call_tool("budget", {})
+                release.set()
+                results = await asyncio.gather(first, second)
+            assert all(r.data.get("result", {}).get("score") == 0.75 for r in results)
+
+    try:
+        asyncio.run(exercise())
+        assert len(creates) == 1
+        assert len(api.runs) == 2
+        assert not api.jobs["job1"].get("cancel_requested")
+        assert env._reward == 0.75
+        assert env._end["reason"] == "submitted"
+        assert env._broker.spend()["settled"]["jobs"] == 1
+    finally:
+        release.set()
+        monkeypatch.setattr(api, "list_jobs", lookup)
+
+
+@pytest.mark.parametrize("tool", ["jobs_submit", "dev_evaluate"])
+@pytest.mark.parametrize("pause_at", ["call", "dispatch"])
+def test_tool_dispatch_keeps_episode_ownership(env, api, monkeypatch, tool, pause_at):
+    env.reset(task_id="t0_artifact", episode_id="old")
+    source = submit_job(env)["job_id"]
+    api.finish(source)
+    old = env._broker
+    entered, release = threading.Event(), threading.Event()
+    original = env._call if pause_at == "call" else env._async_call_tool
+
+    if pause_at == "call":
+
+        def blocked(*args, **kwargs):
+            entered.set()
+            assert release.wait(5)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(env, "_call", blocked)
+    else:
+
+        async def blocked(*args, **kwargs):
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 5)
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(env, "_async_call_tool", blocked)
+
+    async def exercise():
+        async with env.mcp_session():
+            args = (
+                {"job_id": source}
+                if tool == "dev_evaluate"
+                else {"script": "print(1)", "flavor": "cpu-basic", "timeout_minutes": 1}
+            )
+            request = asyncio.create_task(
+                env.step_async(CallToolAction(tool_name=tool, arguments=args))
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                await asyncio.to_thread(
+                    env.reset, task_id="t0_arithmetic_format", episode_id="new"
+                )
+                new = env._broker
+            finally:
+                release.set()
+            obs = await request
+            assert obs.result.data["error"]["type"] == "episode_over"
+            assert env._broker is new and new is not old
+            assert not new.jobs and not new._pending and not new._closing
+            assert new.remaining_micro_usd() == 3_000_000
+            assert env.state.step_count == 0
+            assert env._score_job_id is None and not env._done and env._end == {}
+            assert len(api.runs) == 1
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize("created", [False, True])
+def test_score_recovery_pins_source_and_key(env, api, monkeypatch, created):
+    env.reset(task_id="t0_artifact")
+    first = submit_job(env, idempotency_key="score")["job_id"]
+    other = submit_job(env)["job_id"]
+    api.finish(first)
+    api.finish(other)
+    run, lookup = api.run_uv_job, api.list_jobs
+
+    def uncertain(**kwargs):
+        if created:
+            run(**kwargs)
+        raise ConnectionError("create response lost")
+
+    def unavailable(**kwargs):
+        raise ConnectionError("lookup unavailable")
+
+    monkeypatch.setattr(api, "run_uv_job", uncertain)
+    monkeypatch.setattr(api, "list_jobs", unavailable)
+    failed, _ = call(env, "submit", job_id=first)
+    assert "error" in failed
+    pending = list(env._broker._pending)
+    for _ in range(2):
+        failed, _ = call(env, "submit", job_id=other)
+        assert failed["error"]["type"] == "creation_pending"
+        assert list(env._broker._pending) == pending
+        assert len(api.runs) == 2 + int(created)
+    monkeypatch.setattr(api, "run_uv_job", run)
+    monkeypatch.setattr(api, "list_jobs", lookup)
+    api.on_inspect["score"] = {
+        "stage": "COMPLETED",
+        "running_secs": 1,
+        "logs": [score_line(0.5)],
+    }
+    result, obs = call(env, "submit", job_id=other)
+    assert result["submitted"] == first
+    assert obs.reward == 0.5
+    assert len(api.runs) == 3 and not env._broker._pending
+    assert not api.jobs["job2"].get("cancel_requested")
+    assert api.runs[-1]["volumes"][0].path == "run0/outputs"
+
+
+def test_queued_old_submit_cannot_cancel_new_score(env, api, monkeypatch):
+    env.reset(task_id="t0_artifact", episode_id="old")
+    source = submit_job(env)["job_id"]
+    api.finish(source)
+    entered, release = threading.Event(), threading.Event()
+    original = env._async_call_tool
+
+    async def blocked(*args, **kwargs):
+        entered.set()
+        assert await asyncio.to_thread(release.wait, 5)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(env, "_async_call_tool", blocked)
+
+    async def exercise():
+        async with env.mcp_session():
+            request = asyncio.create_task(
+                env.step_async(
+                    CallToolAction(tool_name="submit", arguments={"job_id": source})
+                )
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                await asyncio.to_thread(
+                    env.reset, task_id="t0_artifact", episode_id="new"
+                )
+                broker = env._broker
+                job = await asyncio.to_thread(
+                    broker.submit,
+                    "print(1)",
+                    flavor="cpu-basic",
+                    timeout_minutes=1,
+                    allowed_flavors=("cpu-basic",),
+                    max_timeout_minutes=1,
+                )
+                api.finish(job.job_id)
+                score = await asyncio.to_thread(env._evaluate, job.job_id, "score")
+                spend = broker.spend()
+            finally:
+                release.set()
+            obs = await request
+            assert obs.result.data["error"]["type"] == "episode_over"
+            assert broker.spend() == spend
+            assert not broker._closing and not env._done
+            assert not api.jobs[score.job_id].get("cancel_requested")
+            assert len(api.runs) == 3
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize("tool", ["jobs_submit", "dev_evaluate"])
+def test_tool_result_keeps_old_budget_after_reset(env, api, monkeypatch, tool):
+    env.reset(task_id="t0_artifact", episode_id="old")
+    source = submit_job(env)["job_id"]
+    api.finish(source)
+    old = env._broker
+    entered, release = threading.Event(), threading.Event()
+    view = env._job_view
+
+    def blocked(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return view(*args, **kwargs)
+
+    monkeypatch.setattr(env, "_job_view", blocked)
+
+    async def exercise():
+        async with env.mcp_session():
+            args = (
+                {"job_id": source}
+                if tool == "dev_evaluate"
+                else {"script": "print(1)", "flavor": "cpu-basic", "timeout_minutes": 1}
+            )
+            request = asyncio.create_task(
+                env.step_async(CallToolAction(tool_name=tool, arguments=args))
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                await asyncio.to_thread(
+                    env.reset, task_id="t0_arithmetic_format", episode_id="new"
+                )
+            finally:
+                release.set()
+            obs = await request
+            assert obs.result.data["remaining_usd"] == old.remaining_micro_usd() / 1e6
+            assert obs.result.data["remaining_usd"] != 3.0
+            assert not env._broker.jobs and not env._broker._closing
+            assert env.state.step_count == 0 and not env._done
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
