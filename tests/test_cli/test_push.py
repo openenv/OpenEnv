@@ -9,7 +9,10 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 from openenv.cli.__main__ import app
-from openenv.cli.commands.push import _rewrite_dockerfile_for_space
+from openenv.cli.commands.push import (
+    _prepare_staging_directory,
+    _rewrite_dockerfile_for_space,
+)
 from typer.testing import CliRunner
 
 
@@ -178,6 +181,14 @@ def test_push_authenticates_after_login(tmp_path: Path) -> None:
         assert result.exit_code == 0, result.output
         mock_login.assert_called_once()
         assert mock_api.upload_folder.called
+
+
+def test_push_rejects_interface_and_no_interface(tmp_path, monkeypatch):
+    _create_test_openenv_env(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["push", "--interface", "--no-interface"])
+    assert result.exit_code != 0
+    assert "cannot specify both" in result.output.lower()
 
 
 def test_push_enables_web_interface_in_dockerfile(tmp_path: Path) -> None:
@@ -1711,3 +1722,16 @@ def test_push_exits_cleanly_if_setting_space_variable_fails(tmp_path: Path) -> N
         assert "failed to set variable openspiel_game" in result.output.lower()
         assert "permission denied" in result.output.lower()
         assert "traceback" not in result.output.lower()
+
+
+def test_staging_preserves_readme_body_after_frontmatter(tmp_path):
+    env_dir = tmp_path / "env"
+    env_dir.mkdir()
+    _create_test_openenv_env(env_dir)
+    body = "\n# Environment\n\nUsage examples.\n\n---\n\nMore content.\n"
+    (env_dir / "README.md").write_text("---\ntitle: Example\nsdk: docker\n---" + body)
+    staged = tmp_path / "staged"
+    _prepare_staging_directory(env_dir, "example", staged, [])
+    assert (staged / "README.md").read_text() == (
+        "---\ntitle: Example\nsdk: docker\nbase_path: /web\n---" + body
+    )

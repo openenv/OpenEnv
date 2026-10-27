@@ -301,12 +301,22 @@ async def test_command_wrappers_preserve_harbor_positional_call_contract(
     )
 
 
-def test_openclaw_catalog_model_id_is_local_to_its_provider(tmp_path):
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session", ["session-test", "session-other"])
+async def test_openclaw_catalog_model_id_is_local_to_its_provider(
+    tmp_path, monkeypatch, session
+):
+    from string import Template
+    from unittest.mock import AsyncMock
+
+    from harbor.models.agent.context import AgentContext
     from openenv.harbor.seams import get
+
+    monkeypatch.setenv("OPENAI_API_KEY", "host-key-must-not-be-used")
 
     selected, kwargs, env, _ = get("openclaw").resolve(
         base_url="https://capture.example",
-        session="session-test",
+        session=session,
         model="Qwen/Qwen3.5-4B",
     )
     agent = install_fixes.InterceptOpenClaw(
@@ -317,8 +327,17 @@ def test_openclaw_catalog_model_id_is_local_to_its_provider(tmp_path):
     catalog = config["models"]["providers"][provider]
     assert any(model["id"] == model_id for model in catalog["models"])
     assert catalog["baseUrl"] == "https://capture.example/v1"
-    # Harbor may keep the key in the runtime environment instead of the config.
-    if catalog["apiKey"] == "${OPENAI_API_KEY}":
-        assert agent.model_connection.env["OPENAI_API_KEY"] == "session-test"
-    else:
-        assert catalog["apiKey"] == "session-test"
+    execution = AsyncMock()
+    monkeypatch.setattr(OpenClaw, "exec_as_agent", execution)
+    monkeypatch.setattr(agent, "_copy_openclaw_session_file_to_agent_logs", AsyncMock())
+    await agent.run("test instruction", object(), AgentContext())
+    launches = [
+        call
+        for call in execution.call_args_list
+        if "openclaw agent --local" in call.kwargs["command"]
+    ]
+    assert len(launches) == 1
+    # Harbor may store an env reference instead of a literal key in the config.
+    launch_env = launches[0].kwargs["env"]
+    assert launch_env["OPENAI_API_KEY"] == session
+    assert Template(catalog["apiKey"]).substitute(launch_env) == session

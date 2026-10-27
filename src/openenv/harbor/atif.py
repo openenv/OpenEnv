@@ -325,6 +325,26 @@ def reconcile(document: dict[str, Any], atif: dict[str, Any] | None) -> Report:
             )
         return report
 
+    subagents = atif.get("subagent_trajectories") or []
+    if subagents:
+        # FATAL, not WARN. The old text said subagent turns "must not be trained with the parent
+        # rollout's reward" and then did nothing to stop it: no node ids were collected, no role was
+        # changed, so if a subagent's calls landed in the same session as `agent` roots they shipped as
+        # trainable carrying the parent's reward — the exact outcome the sentence forbade. The aux path
+        # below demotes; this one only complained.
+        #
+        # Refusing rather than guessing which roots belong to the subagent: ATIF gives trajectories,
+        # not the node ids that would let us demote precisely, and picking roots by shape here would be
+        # inventing an attribution. A rollout whose reward cannot be attributed is not trainable.
+        report.add(
+            FATAL,
+            "atif_subagents",
+            f"ATIF reports {len(subagents)} subagent trajectory(ies) and the graph has "
+            f"{document['stats']['n_roots']} root(s). Subagent turns must not be trained with the "
+            "parent rollout's reward, and ATIF does not say which captured calls are theirs, so "
+            "this rollout cannot be attributed. Run this harness without subagents to train on it.",
+        )
+
     # Compare against EVERY call the agent made, in arrival order, across ALL agent roots.
     #
     # Two reasons this is the right comparison rather than the surviving training path:
@@ -473,25 +493,6 @@ def reconcile(document: dict[str, Any], atif: dict[str, Any] | None) -> Report:
             f"Graph found {document['stats']['n_discarded']} discarded turn(s).",
         )
 
-    subagents = atif.get("subagent_trajectories") or []
-    if subagents:
-        # FATAL, not WARN. The old text said subagent turns "must not be trained with the parent
-        # rollout's reward" and then did nothing to stop it: no node ids were collected, no role was
-        # changed, so if a subagent's calls landed in the same session as `agent` roots they shipped as
-        # trainable carrying the parent's reward — the exact outcome the sentence forbade. The aux path
-        # right above demotes; this one only complained.
-        #
-        # Refusing rather than guessing which roots belong to the subagent: ATIF gives trajectories,
-        # not the node ids that would let us demote precisely, and picking roots by shape here would be
-        # inventing an attribution. A rollout whose reward cannot be attributed is not trainable.
-        report.add(
-            FATAL,
-            "atif_subagents",
-            f"ATIF reports {len(subagents)} subagent trajectory(ies) and the graph has "
-            f"{document['stats']['n_roots']} root(s). Subagent turns must not be trained with the "
-            "parent rollout's reward, and ATIF does not say which captured calls are theirs, so "
-            "this rollout cannot be attributed. Run this harness without subagents to train on it.",
-        )
     return report
 
 

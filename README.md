@@ -97,6 +97,8 @@ openenv validate my_env --level static --skip-build   # quick check against the 
 openenv push my_env       # deploy it to Hugging Face Spaces
 ```
 
+For local development, run `openenv serve my_env` after installing its dependencies. This runs on the host and binds to `127.0.0.1`; use Docker or Spaces for isolated training and deployment.
+
 See [Your First Environment](https://huggingface.co/docs/openenv/guides/first-environment) and [Deploying an Environment](https://huggingface.co/docs/openenv/getting_started/environment-builder). `openenv import` wraps an existing environment from ORS/OpenReward or Verifiers.
 
 ## Environments

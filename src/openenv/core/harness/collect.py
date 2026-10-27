@@ -23,7 +23,7 @@ import warnings
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Iterable, Iterator
+from typing import Any, BinaryIO, Callable, Iterable
 
 from ..env_server.mcp_types import Tool
 from ..llm_client import LLMClient
@@ -237,9 +237,10 @@ class CollectResult:
 class CollectRunner:
     """Drive repeated rollouts into an append-only JSONL dataset.
 
-    The runner is stateless across ``run()`` calls — resume state lives on
-    disk via the ``RolloutSerializer``. A single runner instance can be
-    reused across runs targeting different output dirs.
+    Resume state lives on disk via the ``RolloutSerializer``. Repeatable task
+    iterables, such as lists and tuples, restart at the first task on each
+    ``run()`` so tasks stay aligned with episode ids. One-shot iterators work
+    for one run; reusing them raises ``ValueError`` before accessing results.
     """
 
     def __init__(
@@ -254,16 +255,9 @@ class CollectRunner:
         self._session_factory = session_factory
         self._harness_adapter = harness_adapter
         self._serializer = serializer
-        self._tasks: Iterator[Any] | None = iter(tasks) if tasks is not None else None
+        self._tasks = tasks
+        self._tasks_used = False
         self._limits = limits
-
-    def _next_task(self) -> Any:
-        if self._tasks is None:
-            return None
-        try:
-            return next(self._tasks)
-        except StopIteration:
-            return None
 
     def run(
         self,
@@ -274,6 +268,16 @@ class CollectRunner:
         resume: bool = True,
         should_keep: Callable[[EpisodeRecord], bool] | None = None,
     ) -> CollectResult:
+        task_iterator = iter(self._tasks) if self._tasks is not None else None
+        if (
+            task_iterator is not None
+            and task_iterator is self._tasks
+            and self._tasks_used
+        ):
+            raise ValueError(
+                "Cannot reuse a one-shot task iterator; pass a repeatable iterable "
+                "or create a new CollectRunner with a fresh iterator."
+            )
         planned_ids = [f"{episode_id_prefix}-{i:06d}" for i in range(num_episodes)]
 
         if resume:
@@ -312,7 +316,8 @@ class CollectRunner:
         with progress:
             for episode_id in planned_ids:
                 # Preserve task-to-episode alignment even when resume skips ids.
-                task = self._next_task()
+                self._tasks_used = True
+                task = next(task_iterator, None) if task_iterator is not None else None
                 if episode_id in already:
                     num_skipped += 1
                     progress.advance(task_id)
