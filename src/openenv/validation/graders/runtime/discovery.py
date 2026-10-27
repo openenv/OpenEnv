@@ -236,7 +236,7 @@ class RubricIntrospectableGrader(_EvidenceGrader):
         if type(payload["schema_version"]) is not int or payload["schema_version"] != 1:
             raise ValueError("unsupported telemetry version")
         if payload.get("rubric_error") is not None:
-            return ["subject reported unavailable rubric introspection"], None
+            return [], "unsupported capability: rubric_introspection"
         nodes = _rubric_nodes(payload["rubric"])
         return (
             ["rubric configuration is unavailable"]
@@ -250,7 +250,9 @@ class RewardAttributionGrader(RubricIntrospectableGrader):
     depends_on = ("runtime.startup", "runtime.rubric_introspectable")
 
     def check(self, subject, payload):
-        problems, _ = super().check(subject, payload)
+        problems, incomplete = super().check(subject, payload)
+        if incomplete:
+            return problems, incomplete
         if subject.runtime_evidence.failure_reason:
             problems.append("wire replay is incomplete")
         if problems:

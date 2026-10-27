@@ -364,7 +364,6 @@ def test_missing_prerequisite_and_collection_failure_are_distinct(
         "nonfinite_score",
         "stale_score",
         "bad_version",
-        "rubric_error",
         "empty_child_segment",
     ],
 )
@@ -387,11 +386,19 @@ def test_missing_or_malformed_rubric_introspection_fails(tmp_path, change):
     elif change == "empty_child_segment":
         payload["rubric"][0]["children"][0] = "root."
         payload["rubric"][1]["name"] = "root."
-    else:
-        payload["rubric_error"] = "private-error"
     result = RubricIntrospectableGrader().run(subject(tmp_path, snapshot=payload))
     assert result.status is CheckStatus.FAIL
-    assert "private-error" not in result.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "grader", [RubricIntrospectableGrader, RewardAttributionGrader]
+)
+def test_unavailable_rubric_introspection_is_a_named_skip(tmp_path, grader):
+    payload = telemetry()
+    payload["rubric_error"] = "private-error"
+    result = grader().run(subject(tmp_path, snapshot=payload))
+    assert result.status is CheckStatus.SKIP
+    assert result.evidence == ["unsupported capability: rubric_introspection"]
 
 
 @pytest.mark.parametrize(

@@ -196,8 +196,12 @@ def test_terminal_opening_error_preserves_only_its_safe_code(
     assert TOKEN not in repr(result)
 
 
-@pytest.mark.parametrize("code", ["VALIDATION_ERROR", TOKEN])
-def test_optional_opening_refusal_does_not_fail_the_episode(monkeypatch, code):
+@pytest.mark.parametrize(
+    "code,unsupported", [("VALIDATION_ERROR", True), (TOKEN, False)]
+)
+def test_optional_opening_refusal_does_not_fail_the_episode(
+    monkeypatch, code, unsupported
+):
     result = collect(
         monkeypatch,
         opening_reply=json.dumps(
@@ -206,10 +210,17 @@ def test_optional_opening_refusal_does_not_fail_the_episode(monkeypatch, code):
     )
     assert result.failure_reason is None
     assert result.telemetry_json is None
-    assert (
-        result.telemetry_error
-        == "session telemetry unavailable or authorization refused"
-    )
+    if unsupported:
+        assert result.telemetry_error is None
+        assert (
+            result.telemetry_unavailable == "unsupported capability: session_telemetry"
+        )
+    else:
+        assert (
+            result.telemetry_error
+            == "session telemetry unavailable or authorization refused"
+        )
+        assert result.telemetry_unavailable is None
     assert [row.operation for row in result.exchanges] == [
         "reset",
         "state",

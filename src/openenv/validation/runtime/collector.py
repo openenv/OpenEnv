@@ -258,7 +258,10 @@ def collect_runtime_evidence(
                         and 16 <= len(data["capability"]) <= 256
                     ):
                         capability = data["capability"]
-                    elif code == WSErrorCode.UNKNOWN_TYPE:
+                    elif code in {
+                        WSErrorCode.UNKNOWN_TYPE,
+                        WSErrorCode.VALIDATION_ERROR,
+                    }:
                         telemetry_unavailable = (
                             "unsupported capability: session_telemetry"
                         )
@@ -313,8 +316,15 @@ def collect_runtime_evidence(
                         if (
                             isinstance(error, dict)
                             and type(error.get("code")) is int
-                            and error["code"] == -32601
                             and isinstance(error.get("message"), str)
+                            and (
+                                error["code"] == -32601
+                                or (
+                                    error["code"] == -32603
+                                    and error["message"]
+                                    == "Environment does not support MCP"
+                                )
+                            )
                             and rpc.get("result") is None
                         ):
                             tools_unavailable = "unsupported capability: tool_discovery"

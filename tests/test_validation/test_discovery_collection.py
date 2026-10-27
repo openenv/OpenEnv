@@ -300,7 +300,7 @@ def test_socket_failure_keeps_discovery_error_and_fails_replay(monkeypatch):
                     },
                 },
             },
-            "fail",
+            "skip",
         ),
         (
             {
