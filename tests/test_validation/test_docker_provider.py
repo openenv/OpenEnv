@@ -119,6 +119,7 @@ def test_start_is_hardened_and_does_not_forward_host_tokens(commands, monkeypatc
         "--publish": "127.0.0.1::8000",
         "--network": "bridge",
         "--stop-timeout": "0",
+        "--cgroupns": "private",
     }.items():
         assert create[create.index(flag) + 1] == value
     assert "--read-only" in create and "--init" in create

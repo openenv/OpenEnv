@@ -12,6 +12,9 @@ _RUNTIME_MOUNTS = {
     "/etc/hosts",
     "/etc/hostname",
     "/etc/resolv.conf",
+    # Docker binds its init at /sbin/docker-init, which resolves to
+    # /usr/sbin/docker-init in images where /sbin links to /usr/sbin.
+    "/sbin/docker-init",
     "/usr/sbin/docker-init",
     "/run/podman-init",
 }

@@ -109,7 +109,8 @@ def test_writable_image_root_is_detected(image, monkeypatch):
             [
                 "python",
                 "-c",
-                "open('/opt/nested/data/escape', 'wb').write(bytes(2**20))",
+                "with open('/opt/nested/data/escape', 'wb') as f:\n"
+                " for _ in range(65): f.write(bytes(2**20))",
             ],
             30,
         )

@@ -101,6 +101,20 @@ def test_hardened_subject_passes():
     assert result.measured["processes"] == 2
 
 
+# Docker's init lands under /usr/sbin only where /sbin links there.
+@pytest.mark.parametrize("init", ["/sbin/docker-init", "/usr/sbin/docker-init"])
+def test_init_binary_mount_passes(init):
+    measured = contained()
+    measured["mounts"] = [
+        mount(init, "overlay", "0:26", True, 60000 * MIB)
+        if m["mount_point"] == "/usr/sbin/docker-init"
+        else m
+        for m in measured["mounts"]
+    ]
+    result = grade(measured)
+    assert result.status is CheckStatus.PASS, result.evidence
+
+
 @pytest.mark.parametrize(
     "launch, expected",
     [

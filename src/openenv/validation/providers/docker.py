@@ -347,6 +347,9 @@ class DockerValidationProvider:
             "--stop-timeout",
             "0",
             "--init",
+            # cgroup v1 daemons default to the host cgroup namespace.
+            "--cgroupns",
+            "private",
             "--user",
             "65532:65532",
             "--read-only",

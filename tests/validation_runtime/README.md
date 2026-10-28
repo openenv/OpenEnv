@@ -74,8 +74,12 @@ skip. Protocol and Docker runs must also execute every named case in the committ
 clears inherited `PYTEST_ADDOPTS` and copies the inventory and its digest into the
 bundle. Verify a bundle using its recorded source revision, since later revisions
 can add required cases. This checks the implemented slice's inventory, not completion of all RFC
-008 checks. A successful image build is not evidence for reproducible-build,
-containment or resource-validation graders. Those checks land in later slices.
+008 checks. A successful image build does not establish any runtime qualification. This layer
+measures host-containment settings, process privileges, the complete mount table
+and write access. Resource validation and reproducible-build qualification land
+in later slices. A host-read sentinel is not exercised: the current provider has
+no positive control for a file on the Docker daemon host, which can differ from
+the validator host on Docker Desktop or remote engines.
 
 For changes after the first sync, reinstall the local wheel before fast/protocol
 tests: `uv sync --project tests/validation_runtime --frozen --reinstall-package
