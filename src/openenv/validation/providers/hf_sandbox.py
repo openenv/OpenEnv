@@ -153,11 +153,20 @@ class HFSandboxValidationProvider:
         # Raw runtime metadata is not provenance for a separately launched Job.
         runtime = info.runtime.raw if info.runtime else {}
         stage, runtime_revision = runtime.get("stage"), runtime.get("sha")
-        if stage != "RUNNING" or runtime_revision != self.revision:
+        if stage not in (None, "RUNNING") or runtime_revision not in (
+            None,
+            self.revision,
+        ):
             raise ProviderError(
                 f"Space {self.space_id} reports stage {stage}, runtime revision "
                 f"{runtime_revision}; expected RUNNING at source revision {self.revision}; "
                 "job image identity remains unverified"
+            )
+        if stage is None or runtime_revision is None:
+            raise UnsupportedCapability(
+                "missing provider capability: space_runtime_metadata; "
+                "Space runtime stage or revision is unavailable; "
+                "job image identity remains unverified; no job launched"
             )
 
     def build(self, root: Path, execution: ExecutionDeclaration) -> str:

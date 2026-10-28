@@ -145,7 +145,9 @@ bound to the downloaded source commit. Matching repository and running-build
 revisions alone cannot prove which image a Job would pull. A different repository
 or reported runtime revision reports `runtime.startup` as `ERROR`. This provider
 also refuses building, sleeping and paused Spaces: it requires reported stage
-`RUNNING`, without treating that stage as proof of image provenance. Use
+`RUNNING`, without treating that stage as proof of image provenance. Absent runtime
+stage or revision metadata yields a named `space_runtime_metadata` SKIP; explicit
+contradictory metadata still yields ERROR. Use
 `--level static` to validate historical source commits. Reports retain the source
 commit and source digest without claiming a verified runtime image or execution.
 

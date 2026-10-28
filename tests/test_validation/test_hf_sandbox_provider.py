@@ -300,6 +300,70 @@ def test_start_refuses_even_a_digest_without_source_provenance(provider):
     assert not FakeSandbox.created
 
 
+@pytest.mark.parametrize("operation", ["build", "start"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        {},
+        {"stage": "RUNNING"},
+        {"sha": "a" * 40},
+        {"stage": None, "sha": "a" * 40},
+        {"stage": "RUNNING", "sha": None},
+    ],
+    ids=["no-runtime", "empty", "no-sha", "no-stage", "null-stage", "null-sha"],
+)
+def test_unavailable_runtime_metadata_is_unsupported(
+    provider, tmp_path, monkeypatch, operation, raw
+):
+    hf = provider()
+    info = SimpleNamespace(
+        sha=hf.revision, runtime=None if raw is None else SimpleNamespace(raw=raw)
+    )
+    monkeypatch.setattr(hf._api, "space_info", lambda _: info)
+    with pytest.raises(UnsupportedCapability, match="space_runtime_metadata"):
+        if operation == "build":
+            hf.build(space(tmp_path), ExecutionDeclaration())
+        else:
+            hf.start(spec())
+    assert not FakeSandbox.created
+
+
+def test_explicit_runtime_revision_mismatch_precedes_missing_stage(
+    provider, monkeypatch
+):
+    hf = provider()
+    info = SimpleNamespace(
+        sha=hf.revision, runtime=SimpleNamespace(raw={"sha": "b" * 40})
+    )
+    monkeypatch.setattr(hf._api, "space_info", lambda _: info)
+    with pytest.raises(ProviderError, match="runtime revision b") as refused:
+        hf.start(spec())
+    assert type(refused.value) is ProviderError
+    assert not FakeSandbox.created
+
+
+def test_missing_runtime_sha_cli_skips_without_collection(downloads, monkeypatch):
+    from openenv.validation import runner
+
+    def no_runtime_sha(self, space_id, revision=None):
+        return SimpleNamespace(
+            sha="a" * 40, runtime=SimpleNamespace(raw={"stage": "RUNNING"})
+        )
+
+    def unexpected_collection(*args, **kwargs):
+        raise AssertionError("unsupported runtime must never collect evidence")
+
+    monkeypatch.setattr(FakeApi, "space_info", no_runtime_sha)
+    monkeypatch.setattr(runner, "collect_runtime_evidence", unexpected_collection)
+    report = validate_space("--level", "runtime")
+    startup = next(r for r in report["results"] if r["check_id"] == "runtime.startup")
+    assert startup["status"] == "skip"
+    assert "space_runtime_metadata" in " ".join(startup["evidence"])
+    assert report["verdict"] == "warn"
+    assert not FakeSandbox.created
+
+
 def test_mutable_space_image_is_not_a_launch_spec():
     with pytest.raises(ValidationError, match="image_ref"):
         spec("hf.co/spaces/openenv-testing/probe")
