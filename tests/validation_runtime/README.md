@@ -31,19 +31,24 @@ The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
 switches and wire corruption remain inside test assets. They share one fixture
 and one public runtime plan, so a defect changes one property at a time.
 
-The Docker suite contains 30 required cases: three provider lifecycle tests,
-five network-policy tests, eight host-containment tests, two resource-bounds
-tests, eleven CLI fault/control cases, and one real `echo_env` canary. The network
-tests run `public` and `no-network` subjects against a validator-owned sink,
-detect a subject launched on the bridge while declared `no-network`, and confirm
-the no-network helper serves `/health` and `/ws` without giving the subject a route
-out. The host-containment tests measure the hardened fixture in both network
-modes, detect a launch whose image root is writable, detect writable nested
-directories and existing regular files on `/dev`, leave owner-changeable permission
-denials inconclusive, and detect a root process started inside the subject. The
-resource-bounds tests read the subject's cgroup limits, run bounded memory, process,
-disk and deadline probes in a disposable sibling, and detect limits above a smaller
-declaration. The slow-step case completes a tool call taking more than five seconds within
+The Docker suite contains 36 required cases: three provider lifecycle tests,
+five network-policy tests, eight host-containment tests, eight resource-bounds
+tests, eleven CLI fault/control
+cases, and one real `echo_env`
+canary. The network tests run `public` and `no-network` subjects against a
+validator-owned sink, detect a subject launched on the bridge while declared
+`no-network`, and confirm the no-network helper serves `/health` and `/ws` without
+giving the subject a route out. The host-containment tests measure the hardened
+fixture in both network modes, detect a launch whose image root is writable,
+detect writable nested directories and existing regular files on `/dev`, leave
+owner-changeable permission denials inconclusive, and
+detect a root process started inside the subject. The resource-bounds tests read
+the subject's cgroup limits and complete filesystem inventory. Separate disposable
+subjects qualify memory, process, disk and exec-timeout cleanup. Tests detect
+limits above a smaller declaration, an unaccounted writable root, false exit-137
+signals, and failed disposable subject or no-network helper cleanup, including
+failed startup. The
+slow-step case completes a tool call taking more than five seconds within
 the declared episode budget. The hung-step case
 checks the episode deadline; the interruption case sends SIGINT only after a
 container log confirms the second step has begun. Both must retain the completed
@@ -80,8 +85,10 @@ bundle. Verify a bundle using its recorded source revision, since later revision
 can add required cases. This checks the implemented slice's inventory, not completion of all RFC
 008 checks. A successful image build does not establish any runtime qualification. This layer
 measures host-containment settings, process privileges, the complete mount table
-and write access. Resource validation and reproducible-build qualification land
-in later slices. A host-read sentinel is not exercised: the current provider has
+and write access. Resource validation measures CPU, memory, PID and complete
+writable-storage ceilings with positive stress evidence and Docker exec descendant
+cleanup. It does not qualify served-episode deadline enforcement. Reproducible-build
+qualification lands in a later slice. A host-read sentinel is not exercised: the current provider has
 no positive control for a file on the Docker daemon host, which can differ from
 the validator host on Docker Desktop or remote engines.
 

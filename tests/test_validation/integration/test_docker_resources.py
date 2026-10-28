@@ -74,14 +74,25 @@ def grade(declared, measured):
     return ResourceBoundsGrader().run(subject)
 
 
-def test_good_resource_bounds(image):
+def test_good_resource_bounds(image, monkeypatch):
+    created = []
+    original = DockerValidationProvider.start
+
+    def start(self, spec):
+        running = original(self, spec)
+        created.append(running.name)
+        return running
+
+    monkeypatch.setattr(DockerValidationProvider, "start", start)
     measured = measure(image)
+    assert len(created) == len(set(created)) == 5
     assert measured["cgroup"] == {
         "memory_max": 256 * 1024 * 1024,
         "swap_max": 0,
         "cpu_quota": 100000,
         "cpu_period": 100000,
         "pids_max": 256,
+        "unavailable": [],
     }
     result = grade(LAUNCHED, measured)
     assert result.status is CheckStatus.PASS, result.evidence
@@ -95,3 +106,121 @@ def test_limit_above_the_declaration_is_detected(image):
     evidence = " ".join(result.evidence)
     assert "exceeds 128 MiB" in evidence
     assert "exceeds 32 MiB" in evidence
+
+
+@pytest.mark.parametrize("emit_start", [False, True])
+def test_exit_137_without_enforcement_evidence_is_inconclusive(
+    image, monkeypatch, emit_start
+):
+    script = "import sys\n"
+    if emit_start:
+        script += "print('openenv-probe-start:' + sys.argv[3], flush=True)\n"
+    script += "print('contained', flush=True)\nsys.exit(137)"
+    monkeypatch.setattr(docker, "QUALIFY_SCRIPT", script)
+    measured = measure(image)
+    assert {probe["result"] for probe in measured["qualification"]} == {"inconclusive"}
+    assert grade(LAUNCHED, measured).status is CheckStatus.SKIP
+
+
+def test_writable_root_is_not_accounted_as_only_tmpfs(image, monkeypatch):
+    original = docker._command
+
+    def writable_root(argv, *args, **kwargs):
+        if argv[:2] == ["docker", "create"]:
+            argv = [arg for arg in argv if arg != "--read-only"]
+        return original(argv, *args, **kwargs)
+
+    monkeypatch.setattr(docker, "_command", writable_root)
+    result = grade(LAUNCHED, measure(image))
+    assert result.status is CheckStatus.FAIL
+    assert "the image root is writable" in result.evidence
+
+
+@pytest.mark.parametrize("failed_resource", ["subject", "helper", "startup"])
+def test_disposable_cleanup_failure_is_reported_and_retried(
+    image, monkeypatch, tmp_path, failed_resource
+):
+    import shutil
+
+    import yaml
+    from conftest import FIXTURES
+    from openenv.validation import runner
+    from openenv.validation.types import Level, ProviderCapability
+    from support.runtime import evidence
+
+    package = tmp_path / "subject"
+    shutil.copytree(FIXTURES / "runtime" / "served_probe", package)
+    manifest = yaml.safe_load((package / "openenv.yaml").read_text())
+    manifest["validation"]["network"] = {"mode": "no-network"}
+    (package / "openenv.yaml").write_text(yaml.safe_dump(manifest))
+
+    class Provider(DockerValidationProvider):
+        capabilities = frozenset(
+            {
+                ProviderCapability.IMAGE_BUILD,
+                ProviderCapability.EXEC,
+                ProviderCapability.RESOURCE_ENFORCEMENT,
+            }
+        )
+
+        def build(self, *args):
+            return image
+
+    created = []
+    removals = []
+    original_start = DockerValidationProvider.start
+    original_command = docker._command
+    original_helper_exec = docker.DockerRunningSubject._helper_exec
+
+    def start(self, spec):
+        subject = original_start(self, spec)
+        created.append(subject)
+        return subject
+
+    def command(argv, *args, **kwargs):
+        if created and created[0]._disposables and argv[:2] == ["docker", "rm"]:
+            disposable = created[0]._disposables[0]
+            target = (
+                disposable.name
+                if failed_resource in {"subject", "startup"}
+                else disposable._auxiliary[0]
+            )
+            if argv[-1] == target:
+                removals.append(target)
+                return 1, "", "injected removal failure"
+        return original_command(argv, *args, **kwargs)
+
+    def helper_exec(self, script, *args):
+        if (
+            failed_resource == "startup"
+            and created
+            and self is not created[0]
+            and script == docker.WAIT_READY_SCRIPT
+        ):
+            return 1, "", "injected readiness failure"
+        return original_helper_exec(self, script, *args)
+
+    monkeypatch.setattr(docker.DockerRunningSubject, "_helper_exec", helper_exec)
+    monkeypatch.setattr(DockerValidationProvider, "start", start)
+    monkeypatch.setattr(docker, "_command", command)
+    monkeypatch.setattr(runner, "collect_runtime_evidence", lambda *a, **k: evidence())
+    try:
+        report = runner.run_validation(
+            package,
+            max_level=Level.RUNTIME,
+            provider=Provider(),
+            artifacts_dir=tmp_path / "artifacts",
+        )
+        cleanup = json.loads((tmp_path / "artifacts" / "cleanup.json").read_text())
+        assert cleanup["completed"] is False
+        startup = next(
+            result for result in report.results if result.check_id == "runtime.startup"
+        )
+        assert startup.status is CheckStatus.ERROR
+        assert len(removals) >= 2
+        assert owned(created[0].run_id)
+    finally:
+        monkeypatch.setattr(docker, "_command", original_command)
+        for subject in reversed(created):
+            subject.stop()
+    assert owned(created[0].run_id) == []

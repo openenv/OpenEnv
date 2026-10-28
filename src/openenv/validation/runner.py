@@ -23,7 +23,7 @@ from .manifest import ManifestError, NormalizedManifest, NormalizedManifestV2
 from .parsers import ParserRegistry
 from .parsers.openenv_yaml import OpenEnvYamlParser
 from .policy import apply_policy, load_policy, PolicyError, SeverityPolicy
-from .providers import ProviderError, StartupError, UnsupportedCapability
+from .providers import CleanupError, ProviderError, StartupError, UnsupportedCapability
 from .report import CheckResult, ValidationReport, ValidationReportV2
 from .runtime.artifacts import write_runtime_bundle
 from .runtime.collector import collect_runtime_evidence, RuntimeCollectionInterrupted
@@ -231,6 +231,8 @@ def _runtime(subject, graders, *, skip_build, provider):
                 resources = running.measure_resources()
                 resource_json = json.dumps(resources, allow_nan=False)
                 inspection = {**inspection, "resources": resources}
+            except CleanupError:
+                raise
             except ProviderError as exc:
                 inspection = {**inspection, "resources_error": str(exc)[:1024]}
         subject = replace(

@@ -77,10 +77,17 @@ or a mount table that cannot be read in full leaves containment unproven and
 reports `SKIP`.
 `runtime.resource_bounds` reads the subject's cgroup v2 limits and writable-root
 sizes and compares them with the declared `cpu`, `memory_mb` and `disk_mb`; swap
-must be disabled and the process count bounded. Bounded memory, process, disk and
-deadline probes then run in a disposable subject started from the same image, so
-the measured subject is never stressed. A probe that cannot run leaves enforcement
-unproven and reports `SKIP`.
+must be disabled and the process count bounded. Storage accounting uses the complete
+mount inventory, deduplicates bind mounts of one filesystem, and cannot pass with
+an unaccounted or unbounded writable filesystem. Each bounded memory, process,
+disk and Docker exec-timeout probe runs in its own disposable subject. A fresh
+start marker and trusted cgroup events or filesystem measurements must corroborate
+enforcement. Exit 137 alone proves no limit. Unreadable cgroup files preserve
+independently readable limits and leave the affected qualification unproven.
+Unavailable evidence reports `SKIP`; failed disposable teardown reports `ERROR`
+and outer cleanup retries every run-owned subject and helper. The exec-timeout
+probe checks removal of that command and its descendants. It does not qualify
+enforcement of the declared `episode_timeout_s` for a served episode.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,

@@ -511,7 +511,7 @@ class CgroupLimits(BaseModel):
     """
     Effective cgroup v2 limits read from inside the subject.
 
-    `None` means the limit is `max`, i.e. not enforced.
+    `None` means unlimited unless the field is listed in `unavailable`.
 
     Attributes:
         memory_max (`int`, *optional*):
@@ -524,6 +524,8 @@ class CgroupLimits(BaseModel):
             CPU period in microseconds.
         pids_max (`int`, *optional*):
             `pids.max`.
+        unavailable (`list[str]`):
+            Fields whose cgroup files could not be read independently.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -531,8 +533,9 @@ class CgroupLimits(BaseModel):
     memory_max: int | None = Field(ge=0)
     swap_max: int | None = Field(ge=0)
     cpu_quota: int | None = Field(ge=0)
-    cpu_period: int = Field(gt=0)
+    cpu_period: int | None = Field(gt=0)
     pids_max: int | None = Field(ge=0)
+    unavailable: list[str] = Field(default_factory=list)
 
 
 class WritableRoot(BaseModel):
@@ -558,16 +561,40 @@ class QualificationProbe(BaseModel):
 
     Attributes:
         kind (`str`):
-            `"memory"`, `"pids"`, `"disk"` or `"deadline"`.
+            `"memory"`, `"pids"`, `"disk"` or `"exec_timeout"`.
         result (`str`):
             `"contained"` when the limit stopped the probe, `"escaped"` when it
             exceeded its budget, `"inconclusive"` otherwise.
+        started (`bool`):
+            Whether the stimulus emitted its fresh start marker.
+        reason (`str`, *optional*):
+            Trusted corroboration of the outcome.
+        counter_before (`int`, *optional*):
+            Cgroup event count before the stimulus.
+        counter_after (`int`, *optional*):
+            Cgroup event count after the stimulus.
+        oom_killed (`bool`):
+            Whether Docker recorded a container OOM kill.
+        free_bytes_before (`dict[str, int or None]`):
+            Trusted free capacity before the disk stimulus, per allotted root.
+        free_bytes (`dict[str, int or None]`):
+            Trusted free capacity after the disk stimulus, per allotted root.
+        removed (`bool`):
+            Whether timeout cleanup independently verified container removal.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    kind: Literal["memory", "pids", "disk", "deadline"]
+    kind: Literal["memory", "pids", "disk", "exec_timeout"]
     result: Literal["contained", "escaped", "inconclusive"]
+    started: bool = False
+    reason: str | None = Field(default=None, max_length=256)
+    counter_before: int | None = Field(default=None, ge=0)
+    counter_after: int | None = Field(default=None, ge=0)
+    oom_killed: bool = False
+    free_bytes_before: dict[str, int | None] = Field(default_factory=dict)
+    free_bytes: dict[str, int | None] = Field(default_factory=dict)
+    removed: bool = False
 
 
 class ResourceEvidence(BaseModel):
@@ -583,6 +610,8 @@ class ResourceEvidence(BaseModel):
             Capacity of every writable root.
         qualification (`list[QualificationProbe]`):
             Enforcement measured by stress probes.
+        containment ([`~openenv.validation.runtime.contracts.ContainmentEvidence`], *optional*):
+            Complete filesystem inventory and write controls for storage accounting.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -591,3 +620,4 @@ class ResourceEvidence(BaseModel):
     cgroup: CgroupLimits | None
     writable: list[WritableRoot]
     qualification: list[QualificationProbe]
+    containment: ContainmentEvidence | None = None

@@ -162,53 +162,73 @@ print(json.dumps({
 }))
 """
 
-# Reads the subject's cgroup v2 limits and writable-root sizes. argv: writable roots.
+# Read limits independently: an unavailable file must not erase known violations.
 LIMITS_SCRIPT = """
+import json
+root = "/proc/1/root/sys/fs/cgroup/"
+cgroup = {}
+unavailable = []
+for filename, keys in [
+    ("memory.max", ["memory_max"]),
+    ("memory.swap.max", ["swap_max"]),
+    ("cpu.max", ["cpu_quota", "cpu_period"]),
+    ("pids.max", ["pids_max"]),
+]:
+    try:
+        with open(root + filename) as f:
+            values = f.read().split()
+        if len(values) != len(keys):
+            raise ValueError()
+        parsed = [None if value == "max" else int(value) for value in values]
+        if any(value is not None and value < 0 for value in parsed):
+            raise ValueError()
+        if "cpu_period" in keys and (parsed[1] is None or parsed[1] == 0):
+            raise ValueError()
+    except (OSError, ValueError):
+        parsed = [None] * len(keys)
+        unavailable.extend(keys)
+    cgroup.update(zip(keys, parsed))
+cgroup["unavailable"] = unavailable
+print(json.dumps({"cgroup": cgroup}))
+"""
+
+# Trusted pre/post stress evidence from the subject's cgroup and filesystem.
+COUNTERS_SCRIPT = """
 import json, os, sys
 root = "/proc/1/root"
-def read(name):
-    with open(root + "/sys/fs/cgroup/" + name) as f:
-        return f.read().split()
-def limit(value):
-    return None if value == "max" else int(value)
-try:
-    quota, period = read("cpu.max")
-    cgroup = {
-        "memory_max": limit(read("memory.max")[0]),
-        "swap_max": limit(read("memory.swap.max")[0]),
-        "cpu_quota": limit(quota),
-        "cpu_period": int(period),
-        "pids_max": limit(read("pids.max")[0]),
-    }
-except (OSError, ValueError):
-    cgroup = None
-writable = []
+result = {}
+for filename, key, counter in [
+    ("memory.events", "oom_kill", "oom_kill"),
+    ("pids.events", "pids_max", "max"),
+]:
+    try:
+        with open(root + "/sys/fs/cgroup/" + filename) as f:
+            result[key] = int(dict(line.split() for line in f)[counter])
+    except (OSError, ValueError, KeyError):
+        result[key] = None
+result["free_bytes"] = {}
 for path in sys.argv[1:]:
     try:
         info = os.statvfs(root + path)
+        result["free_bytes"][path] = info.f_bavail * info.f_frsize
     except OSError:
-        continue
-    writable.append({"path": path, "size_bytes": info.f_blocks * info.f_frsize})
-print(json.dumps({"cgroup": cgroup, "writable": writable}))
+        result["free_bytes"][path] = None
+print(json.dumps(result))
 """
 
-# Runs inside a disposable subject. argv: kind, budget. Prints the outcome; a
-# kill by the kernel (exit 137) also means the limit held.
+# Subject-image code is only a stimulus. Trusted counters corroborate its result.
 QUALIFY_SCRIPT = """
 import errno, os, sys, time
-kind, budget = sys.argv[1], int(sys.argv[2])
+kind, budget, nonce = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+print("openenv-probe-start:" + nonce, flush=True)
 mib = 1 << 20
 if kind == "memory":
-    # Make the probe the OOM killer's first choice so the server survives.
     with open("/proc/self/oom_score_adj", "w") as f:
         f.write("1000")
     held = []
-    try:
-        while len(held) * 16 * mib < budget + 64 * mib:
-            held.append(b"\\x01" * (16 * mib))
-        print("escaped")
-    except MemoryError:
-        print("contained")
+    while len(held) * 16 * mib < budget + 64 * mib:
+        held.append(b"\\x01" * (16 * mib))
+    print("escaped", flush=True)
 elif kind == "pids":
     children = []
     try:
@@ -218,17 +238,16 @@ elif kind == "pids":
                 time.sleep(30)
                 os._exit(0)
             children.append(pid)
-        print("escaped")
+        print("escaped", flush=True)
     except BlockingIOError:
-        print("contained")
+        print("contained", flush=True)
     finally:
         for pid in children:
             os.kill(pid, 9)
             os.waitpid(pid, 0)
 elif kind == "disk":
-    # Fill every writable root; together they must stay within the budget.
     written = 0
-    for index, path in enumerate(sys.argv[3:]):
+    for index, path in enumerate(sys.argv[4:]):
         try:
             with open(os.path.join(path, f"openenv-fill-{index}"), "wb") as f:
                 while written <= budget + 16 * mib:
@@ -237,7 +256,14 @@ elif kind == "disk":
                     written += mib
         except OSError as exc:
             if exc.errno not in (errno.ENOSPC, errno.EDQUOT):
-                print("inconclusive")
+                print("inconclusive", flush=True)
                 sys.exit()
-    print("escaped" if written > budget else "contained")
+    # Leave the files for trusted statvfs verification; this subject is disposable.
+    print("escaped" if written > budget else "contained", flush=True)
+elif kind == "exec_timeout":
+    if os.fork() == 0:
+        time.sleep(300)
+        os._exit(0)
+    print("openenv-probe-descendant:" + nonce, flush=True)
+    time.sleep(300)
 """

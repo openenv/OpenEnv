@@ -7,11 +7,16 @@ from ...runtime.contracts import ResourceEvidence
 from ...types import CheckStatus, Level, ProviderCapability
 
 _MIB = 1024 * 1024
-_PROBES = ("memory", "pids", "disk", "deadline")
+_PROBES = {
+    "memory": "cgroup_oom_kill",
+    "pids": "cgroup_pids_max",
+    "disk": "filesystem_full",
+    "exec_timeout": "exec_timeout",
+}
 
 
 class ResourceBoundsGrader:
-    """Check that one episode cannot exceed its declared CPU, memory, storage or time."""
+    """Check measured resource ceilings and Docker exec descendant cleanup."""
 
     check_id = "runtime.resource_bounds"
     level = Level.RUNTIME
@@ -28,7 +33,11 @@ class ResourceBoundsGrader:
         return CheckResult(
             check_id=self.check_id,
             status=status,
-            evidence=problems or ["measured limits enforce the declared budget"],
+            evidence=problems
+            or [
+                "measured CPU, memory, PID and storage ceilings match the declaration; "
+                "Docker exec timeout removes descendants; episode deadline is not qualified"
+            ],
             measured=measured,
             remediation=(
                 "Run the subject under finite CPU, memory, swap, process and "
@@ -54,23 +63,58 @@ class ResourceBoundsGrader:
         cgroup = evidence.cgroup
         problems = []
         if cgroup is not None:
-            if cgroup.memory_max is None:
+            if "memory_max" in cgroup.unavailable:
+                pass
+            elif cgroup.memory_max is None:
                 problems.append("memory is unlimited")
             elif cgroup.memory_max > declared.memory_mb * _MIB:
                 problems.append(
                     f"memory limit {cgroup.memory_max} B exceeds {declared.memory_mb} MiB"
                 )
-            if cgroup.swap_max != 0:
+            if "swap_max" not in cgroup.unavailable and cgroup.swap_max != 0:
                 problems.append("swap is not disabled")
-            if cgroup.cpu_quota is None:
+            if {"cpu_quota", "cpu_period"} & set(cgroup.unavailable):
+                pass
+            elif cgroup.cpu_quota is None:
                 problems.append("CPU is unlimited")
+            elif cgroup.cpu_period is None:
+                problems.append("CPU period is unavailable")
             elif cgroup.cpu_quota / cgroup.cpu_period > declared.cpu + 1e-9:
                 problems.append(
                     f"CPU limit {cgroup.cpu_quota / cgroup.cpu_period:g} exceeds {declared.cpu:g}"
                 )
-            if cgroup.pids_max is None:
+            if "pids_max" not in cgroup.unavailable and cgroup.pids_max is None:
                 problems.append("process count is unlimited")
-        writable = sum(root.size_bytes for root in evidence.writable)
+        inventory = evidence.containment
+        storage_unknown = inventory is None or not any(
+            mount.mount_point == "/" for mount in inventory.mounts
+        )
+        filesystems = {}
+        if inventory is not None:
+            # Docker's root-owned device tmpfs is also bound over masked /proc files.
+            dev = {
+                mount.device
+                for mount in inventory.mounts
+                if (mount.mount_point, mount.fstype) == ("/dev", "tmpfs")
+            }
+            for mount in inventory.mounts:
+                if mount.mount_point == "/" and not mount.read_only:
+                    problems.append("the image root is writable")
+                if mount.read_only or (mount.mount_point, mount.fstype) in {
+                    ("/proc", "proc"),
+                    ("/dev/pts", "devpts"),
+                    ("/dev/mqueue", "mqueue"),
+                }:
+                    continue
+                if mount.device in dev and "/dev" not in inventory.writable:
+                    continue
+                if mount.size_bytes is None:
+                    storage_unknown = True
+                else:
+                    filesystems[mount.device] = mount.size_bytes
+            if sorted(inventory.allotted_writable) != sorted(inventory.allotted):
+                storage_unknown = True
+        writable = sum(filesystems.values())
         if writable > declared.disk_mb * _MIB:
             problems.append(
                 f"writable storage {writable} B exceeds {declared.disk_mb} MiB"
@@ -91,7 +135,47 @@ class ResourceBoundsGrader:
             return CheckStatus.FAIL, problems, measured
         if cgroup is None:
             return CheckStatus.SKIP, ["cgroup v2 limits could not be read"], measured
-        unproven = [kind for kind in _PROBES if results.get(kind) != "contained"]
+        if cgroup.unavailable:
+            return (
+                CheckStatus.SKIP,
+                ["unreadable cgroup limits: " + ", ".join(cgroup.unavailable)],
+                measured,
+            )
+        if storage_unknown:
+            return (
+                CheckStatus.SKIP,
+                ["complete writable-filesystem inventory is unavailable"],
+                measured,
+            )
+        qualified = {probe.kind: probe for probe in evidence.qualification}
+        unproven = []
+        for kind, reason in _PROBES.items():
+            probe = qualified.get(kind)
+            if (
+                probe is None
+                or not probe.started
+                or probe.result != "contained"
+                or probe.reason != reason
+            ):
+                unproven.append(kind)
+                continue
+            increased = (
+                probe.counter_before is not None
+                and probe.counter_after is not None
+                and probe.counter_after > probe.counter_before
+            )
+            corroborated = {
+                "memory": probe.oom_killed or increased,
+                "pids": increased,
+                "disk": all(
+                    probe.free_bytes.get(path) == 0
+                    and (probe.free_bytes_before.get(path) or 0) > 0
+                    for path in inventory.allotted
+                ),
+                "exec_timeout": probe.removed,
+            }[kind]
+            if not corroborated:
+                unproven.append(kind)
         if unproven:
             return (
                 CheckStatus.SKIP,

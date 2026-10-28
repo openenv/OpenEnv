@@ -15,6 +15,7 @@ from openenv.validation.providers import ProviderError
 from openenv.validation.runner import run_validation
 from openenv.validation.types import CheckStatus, Level, ProviderCapability
 from support.runtime import evidence, FakeRunningSubject, FakeRuntimeProvider
+from test_host_containment import contained
 
 MIB = 1024 * 1024
 
@@ -32,13 +33,29 @@ def bounded(**cgroup):
     return {
         "schema_version": 1,
         "cgroup": limits,
+        "containment": contained(),
         "writable": [
             {"path": "/tmp", "size_bytes": 32 * MIB},
             {"path": "/dev/shm", "size_bytes": 32 * MIB},
         ],
         "qualification": [
-            {"kind": kind, "result": "contained"}
-            for kind in ("memory", "pids", "disk", "deadline")
+            {
+                "kind": kind,
+                "result": "contained",
+                "started": True,
+                "reason": reason,
+                "counter_before": 0,
+                "counter_after": 1,
+                "removed": True,
+                "free_bytes_before": {"/tmp": 32 * MIB, "/dev/shm": 32 * MIB},
+                "free_bytes": {"/tmp": 0, "/dev/shm": 0},
+            }
+            for kind, reason in [
+                ("memory", "cgroup_oom_kill"),
+                ("pids", "cgroup_pids_max"),
+                ("disk", "filesystem_full"),
+                ("exec_timeout", "exec_timeout"),
+            ]
         ],
     }
 
@@ -88,7 +105,7 @@ def test_missing_limit_fails(cgroup, expected):
 
 def test_writable_storage_over_budget_fails():
     measured = bounded()
-    measured["writable"][0]["size_bytes"] = 64 * MIB
+    measured["containment"]["mounts"][-1]["size_bytes"] = 64 * MIB
     result = grade(measured)
     assert result.status is CheckStatus.FAIL
     assert "exceeds 64 MiB" in " ".join(result.evidence)
@@ -99,7 +116,7 @@ def test_escaped_probe_fails_even_with_correct_settings():
     measured["qualification"][3]["result"] = "escaped"
     result = grade(measured)
     assert result.status is CheckStatus.FAIL
-    assert "deadline probe escaped" in " ".join(result.evidence)
+    assert "exec_timeout probe escaped" in " ".join(result.evidence)
 
 
 @pytest.mark.parametrize("result", ["inconclusive", None])
@@ -182,3 +199,129 @@ def test_provider_without_enforcement_is_not_asked(tmp_path, monkeypatch):
     assert subject.measured == 0
     assert result.status is CheckStatus.SKIP
     assert "resource_enforcement" in " ".join(result.evidence)
+
+
+def test_writable_image_root_cannot_pass_resources():
+    measured = bounded()
+    measured["containment"] = contained()
+    measured["containment"]["mounts"][0]["read_only"] = False
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    assert "image root is writable" in " ".join(result.evidence)
+
+
+def test_missing_storage_inventory_is_unproven():
+    measured = bounded()
+    measured.pop("containment")
+    result = grade(measured)
+    assert result.status is CheckStatus.SKIP
+    assert "inventory" in " ".join(result.evidence)
+
+
+def test_unreadable_limit_preserves_a_known_violation():
+    measured = bounded(memory_max=2048 * MIB)
+    measured["cgroup"]["unavailable"] = ["swap_max"]
+    measured["cgroup"]["swap_max"] = None
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    assert "exceeds 1024 MiB" in " ".join(result.evidence)
+    assert "swap is not disabled" not in result.evidence
+
+
+@pytest.mark.parametrize("kind", ["memory", "pids", "disk", "exec_timeout"])
+def test_claimed_enforcement_without_start_or_cause_is_unproven(kind):
+    measured = bounded()
+    probe = next(probe for probe in measured["qualification"] if probe["kind"] == kind)
+    probe["started"] = False
+    assert grade(measured).status is CheckStatus.SKIP
+    probe["started"] = True
+    probe["reason"] = None
+    assert grade(measured).status is CheckStatus.SKIP
+
+
+def test_unknown_storage_capacity_and_partial_cgroup_are_unproven():
+    measured = bounded()
+    measured["containment"]["mounts"][-1]["size_bytes"] = None
+    assert grade(measured).status is CheckStatus.SKIP
+    measured = bounded(swap_max=None, unavailable=["swap_max"])
+    assert grade(measured).status is CheckStatus.SKIP
+
+
+def test_shared_filesystem_is_counted_once():
+    measured = bounded()
+    duplicate = dict(measured["containment"]["mounts"][-1], mount_point="/dev/cache")
+    measured["containment"]["mounts"].append(duplicate)
+    result = grade(measured)
+    assert result.status is CheckStatus.PASS, result.evidence
+    assert result.measured["writable_bytes"] == 64 * MIB
+
+
+@pytest.mark.parametrize("cpu", ["100000 100000", "100000 0", "invalid", ""])
+def test_limits_script_retains_independently_readable_values(monkeypatch, capsys, cpu):
+    import io
+
+    from openenv.validation.providers._pidns import LIMITS_SCRIPT
+
+    values = {
+        "memory.max": str(2048 * MIB),
+        "cpu.max": cpu,
+        "pids.max": "256",
+    }
+
+    def read(path):
+        name = path.rsplit("/", 1)[-1]
+        if name not in values:
+            raise PermissionError(name)
+        return io.StringIO(values[name])
+
+    monkeypatch.setattr("builtins.open", read)
+    exec(LIMITS_SCRIPT, {})
+    measured = json.loads(capsys.readouterr().out)["cgroup"]
+    assert measured["memory_max"] == 2048 * MIB
+    assert measured["pids_max"] == 256
+    expected = (
+        ["swap_max"]
+        if cpu == "100000 100000"
+        else ["swap_max", "cpu_quota", "cpu_period"]
+    )
+    assert measured["unavailable"] == expected
+
+
+def test_disposable_cleanup_failure_is_fatal_and_retried(tmp_path, monkeypatch):
+    from openenv.validation.providers import CleanupError
+
+    class FailedCleanup(MeasuredSubject):
+        calls = 0
+
+        def stop(self):
+            self.calls += 1
+            raise CleanupError("disposable helper remains")
+
+        def measure_resources(self, timeout_s=180):
+            self.stop()
+
+    subject = FailedCleanup(measurement=CleanupError("disposable teardown failed"))
+    package = tmp_path / "subject"
+    shutil.copytree(FIXTURES / "runtime" / "served_probe", package)
+    monkeypatch.setattr(runner, "collect_runtime_evidence", lambda *a, **k: evidence())
+    report = run_validation(
+        package,
+        max_level=Level.RUNTIME,
+        provider=FakeRuntimeProvider(capabilities=ENFORCING, subject=subject),
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    startup = next(
+        result for result in report.results if result.check_id == "runtime.startup"
+    )
+    assert startup.status is CheckStatus.ERROR
+    assert subject.calls == 2
+    cleanup = json.loads((tmp_path / "artifacts" / "cleanup.json").read_text())
+    assert cleanup["completed"] is False
+
+
+@pytest.mark.parametrize("kind", ["memory", "pids", "disk", "exec_timeout"])
+def test_missing_trusted_cause_cannot_qualify_a_claimed_result(kind):
+    measured = bounded()
+    probe = next(probe for probe in measured["qualification"] if probe["kind"] == kind)
+    probe.update(counter_after=0, free_bytes_before={}, removed=False)
+    assert grade(measured).status is CheckStatus.SKIP
