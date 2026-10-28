@@ -554,3 +554,38 @@ class ResourceEvidence(BaseModel):
     cgroup: CgroupLimits | None
     writable: list[WritableRoot]
     qualification: list[QualificationProbe]
+
+
+@dataclass(frozen=True)
+class IsolationEvidence:
+    """
+    Raw evidence for `runtime.episode_isolation`, collected on the running subject.
+
+    Attributes:
+        sequential ([`~openenv.validation.runtime.contracts.RuntimeEvidence`]):
+            The plan run twice on one session: episode A, then a reset into B.
+        fresh ([`~openenv.validation.runtime.contracts.RuntimeEvidence`]):
+            The plan run once on a new session, as the reference for B.
+    """
+
+    sequential: RuntimeEvidence
+    fresh: RuntimeEvidence
+
+
+@dataclass(frozen=True)
+class HttpProbe:
+    """
+    One bounded HTTP GET against the subject's control endpoint.
+
+    Attributes:
+        path (`str`):
+            Requested path.
+        status (`int`, *optional*):
+            Response status; `None` when no response arrived.
+        body (`bytes`):
+            At most the first MiB of the response body.
+    """
+
+    path: str
+    status: int | None
+    body: bytes = b""

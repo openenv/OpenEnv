@@ -7,13 +7,17 @@ import stat
 import time
 import uuid
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+import httpx
 
 from .graders import GraderRegistry, Subject
 from .graders.runtime import (
+    EpisodeIsolationGrader,
     HostContainmentGrader,
     NetworkPolicyGrader,
     ObservationSchemaGrader,
+    OracleContainmentGrader,
     ResourceBoundsGrader,
     RewardWellFormedGrader,
     StateContractGrader,
@@ -27,7 +31,13 @@ from .providers import ProviderError, StartupError, UnsupportedCapability
 from .report import CheckResult, ValidationReport, ValidationReportV2
 from .runtime.artifacts import write_runtime_bundle
 from .runtime.collector import collect_runtime_evidence, RuntimeCollectionInterrupted
-from .runtime.contracts import LaunchSpec, load_runtime_plan, RuntimePlanError
+from .runtime.contracts import (
+    HttpProbe,
+    IsolationEvidence,
+    LaunchSpec,
+    load_runtime_plan,
+    RuntimePlanError,
+)
 from .runtime.scheduler import execute_graders, order_graders
 from .signature import detect_signature
 from .types import CheckStatus, Lane, Level, ProviderCapability
@@ -98,6 +108,8 @@ def default_grader_registry(policy: SeverityPolicy) -> GraderRegistry:
     registry.register(NetworkPolicyGrader())
     registry.register(HostContainmentGrader())
     registry.register(ResourceBoundsGrader())
+    registry.register(EpisodeIsolationGrader())
+    registry.register(OracleContainmentGrader())
     return registry
 
 
@@ -109,6 +121,24 @@ def _outcome(check_id, status, reason, *, started=None, measured=None):
         measured=measured or {},
         duration_s=time.monotonic() - started if started is not None else 0,
     )
+
+
+def _get(base_url, location, max_bytes=1024 * 1024):
+    """Fetch a package-relative path from the control endpoint, bounded and unproxied."""
+    path = "/" + PurePosixPath(location).as_posix()
+    try:
+        with (
+            httpx.Client(trust_env=False, follow_redirects=False) as client,
+            client.stream("GET", base_url.rstrip("/") + path, timeout=10) as response,
+        ):
+            body = bytearray()
+            for chunk in response.iter_bytes():
+                body.extend(chunk[: max_bytes - len(body)])
+                if len(body) >= max_bytes:
+                    break
+            return HttpProbe(path, response.status_code, bytes(body))
+    except httpx.HTTPError:
+        return HttpProbe(path, None)
 
 
 def _applicable(check_id, manifest):
@@ -198,6 +228,30 @@ def _runtime(subject, graders, *, skip_build, provider):
                 evidence.failure_reason,
                 started=started,
             )
+        isolation = None
+        oracle_http = ()
+        if result.status is CheckStatus.PASS:
+            try:
+                isolation = IsolationEvidence(
+                    sequential=collect_runtime_evidence(
+                        running.base_url,
+                        plan,
+                        episode_timeout_s=manifest.resources.episode_timeout_s,
+                        episodes=2,
+                    ),
+                    fresh=collect_runtime_evidence(
+                        running.base_url,
+                        plan,
+                        episode_timeout_s=manifest.resources.episode_timeout_s,
+                    ),
+                )
+            except RuntimeCollectionInterrupted:
+                # Keep the measured episode, not this experiment, as the evidence.
+                raise KeyboardInterrupt from None
+            if manifest.capabilities.oracle is not None:
+                oracle_http = (
+                    _get(running.base_url, manifest.capabilities.oracle.location),
+                )
         network_json = None
         if (
             result.status is CheckStatus.PASS
@@ -241,6 +295,8 @@ def _runtime(subject, graders, *, skip_build, provider):
             network_evidence_json=network_json,
             containment_evidence_json=containment_json,
             resource_evidence_json=resource_json,
+            isolation_evidence=isolation,
+            oracle_http=oracle_http,
         )
         checks = execute_graders(
             graders,

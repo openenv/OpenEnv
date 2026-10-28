@@ -25,14 +25,14 @@ IMPLEMENTED = {
     "runtime.network_policy",
     "runtime.host_containment",
     "runtime.resource_bounds",
+    "runtime.episode_isolation",
+    "runtime.oracle_containment",
 }
 PENDING = {
     "runtime.trajectory_record",
     "runtime.tool_declaration_accuracy",
     "runtime.seed_control",
     "runtime.episode_determinism",
-    "runtime.episode_isolation",
-    "runtime.oracle_containment",
 }
 NOT_APPLICABLE = {
     "runtime.rubric_introspectable",
@@ -281,16 +281,17 @@ def _invoke_cli(
     assert not marker.exists(), "--skip-build invoked Docker"
     checks = {row["check_id"]: row for row in report["results"]}
     assert len(checks) == len(report["results"]), "Report contains duplicate check IDs"
-    assert {
-        key for key in checks if key.startswith("runtime.")
-    } == IMPLEMENTED | PENDING
-    assert not NOT_APPLICABLE & checks.keys()
+    requested = IMPLEMENTED | PENDING
+    not_applicable = NOT_APPLICABLE
+    # Oracle containment applies only to subjects that declare an oracle.
+    if "    oracle:" not in (context / "openenv.yaml").read_text():
+        requested = requested - {"runtime.oracle_containment"}
+        not_applicable = not_applicable | {"runtime.oracle_containment"}
+    assert {key for key in checks if key.startswith("runtime.")} == requested
+    assert not not_applicable & checks.keys()
     assert all(checks[key]["status"] == "skip" for key in PENDING)
     assert all(checks[key]["evidence"] for key in PENDING)
-    assert (
-        set(artifacts["coverage.json"]["requested_runtime_checks"])
-        == IMPLEMENTED | PENDING
-    )
+    assert set(artifacts["coverage.json"]["requested_runtime_checks"]) == requested
     assert artifacts["cleanup.json"]["completed"] is True
     return result, report, checks, artifacts
 
@@ -304,6 +305,8 @@ def _invoke_cli(
         ("bad_observation", "runtime.observation_schema"),
         ("missing_done", "runtime.observation_schema"),
         ("bad_state", "runtime.state_contract"),
+        ("sticky_episode", "runtime.episode_isolation"),
+        ("exposed_oracle", "runtime.oracle_containment"),
     ],
 )
 def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check):

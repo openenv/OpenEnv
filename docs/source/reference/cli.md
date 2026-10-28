@@ -49,7 +49,8 @@ opens one WebSocket session, measures reward values, observation schemas and
 state continuity, and removes the container even if a check fails.
 
 The runtime level implements startup, reward, observation, state, network
-policy, host containment and resource bounds checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
+policy, host containment, resource bounds, episode isolation and oracle
+containment checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
@@ -74,6 +75,13 @@ must be disabled and the process count bounded. Bounded memory, process, disk an
 deadline probes then run in a disposable subject started from the same image, so
 the measured subject is never stressed. A probe that cannot run leaves enforcement
 unproven and reports `SKIP`.
+`runtime.episode_isolation` runs the replay plan twice on one session, as episode A
+and then a reset into episode B, and once more on a new session. Episode B must
+match the fresh episode exchange for exchange. If two fresh episodes differ, the
+subject is not deterministic under fixed inputs and the check reports `SKIP`.
+`runtime.oracle_containment` applies when `capabilities.oracle` is declared. It
+fails when distinctive text from the oracle artifact appears in any reset, step,
+state or schema response, or when `GET` on the oracle's declared path returns it.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,

@@ -27,13 +27,16 @@ checkout with `PYTHONPATH` removed, exercising installed package data and the
 production OpenEnv `/ws` endpoint. Each launch uses a fresh subject.
 
 The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
-`bad_observation`, `missing_done`, `bad_state`, `hung_step`, `slow_step`, and `startup_failure`. All fault
+`bad_observation`, `missing_done`, `bad_state`, `hung_step`, `slow_step`,
+`sticky_episode`, `exposed_oracle`, and `startup_failure`. `sticky_episode` keeps the
+counter across a reset; `exposed_oracle` serves the fixture's harmless oracle canary
+at its declared path. All fault
 switches and wire corruption remain inside test assets. They share one fixture
 and one public runtime plan, so a defect changes one property at a time.
 
-The Docker suite contains 25 required cases: three provider lifecycle tests,
+The Docker suite contains 27 required cases: three provider lifecycle tests,
 five network-policy tests, three host-containment tests, two resource-bounds
-tests, eleven CLI fault/control
+tests, thirteen CLI fault/control
 cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
 validator-owned sink, detect a subject launched on the bridge while declared
