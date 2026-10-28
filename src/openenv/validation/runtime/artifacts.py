@@ -1,12 +1,14 @@
 """Small, bounded reproduction bundles; reports remain the public result contract."""
 
 import hashlib
-import json
 import math
 import platform
 import re
 from dataclasses import asdict
+from decimal import Decimal
 from pathlib import Path
+
+from .json_values import dumps, loads
 
 _SECRET_KEY = re.compile(r"(?i)(password|secret|token|authorization|api[_-]?key)")
 _TOKEN_METADATA_KEYS = {"max_tokens", "prompt_token_ids"}
@@ -32,11 +34,116 @@ def _redact(value, *, depth=0):
         return _TOKEN.sub("[REDACTED]", value)
     if isinstance(value, float) and not math.isfinite(value):
         return {"invalid_number": str(value)}
+    if isinstance(value, Decimal) and not value.is_finite():
+        return {"invalid_number": str(value).lower()}
     return value
 
 
+def _recording(evidence, trace_file):
+    """Use the same redaction and completion metadata for every session."""
+    trace = []
+    collector_metadata = None
+    if evidence:
+        omitted_fields = []
+        for index, exchange in enumerate(evidence.exchanges):
+            row = asdict(exchange)
+            for key in ("request_json", "response_json"):
+                try:
+                    row[key] = loads(row[key])
+                except (ValueError, ArithmeticError, RecursionError):
+                    row[key] = "[malformed or unsupported response omitted]"
+                    omitted_fields.append({"exchange_index": index, "field": key})
+            trace.append(row)
+        schema = None
+        schema_parse_failed = False
+        if evidence.observation_schema_json is not None:
+            try:
+                schema = loads(evidence.observation_schema_json)
+            except (ValueError, ArithmeticError, RecursionError):
+                schema_parse_failed = True
+        reset_schema = None
+        reset_schema_parse_failed = False
+        if evidence.reset_observation_schema_json is not None:
+            try:
+                reset_schema = loads(evidence.reset_observation_schema_json)
+            except (ValueError, ArithmeticError, RecursionError):
+                reset_schema_parse_failed = True
+        schema_response = None
+        schema_response_parse_failed = False
+        if evidence.schema_response_json is not None:
+            try:
+                schema_response = loads(evidence.schema_response_json)
+            except (ValueError, ArithmeticError, RecursionError):
+                schema_response_parse_failed = True
+        collector_metadata = {
+            "evidence_schema_version": "1",
+            "trace_file": trace_file,
+            "observation_schema": schema,
+            "schema_available": evidence.observation_schema_json is not None,
+            "schema_parse_failed": schema_parse_failed,
+            "reset_observation_schema": reset_schema,
+            "reset_schema_available": evidence.reset_observation_schema_json
+            is not None,
+            "reset_schema_parse_failed": reset_schema_parse_failed,
+            "schema_response": schema_response,
+            "schema_response_available": evidence.schema_response_json is not None,
+            "schema_response_parse_failed": schema_response_parse_failed,
+            "omitted_trace_fields": omitted_fields,
+            "failure_phase": evidence.failure_phase,
+            "failure_reason": evidence.failure_reason,
+            "complete": evidence.failure_phase is None
+            and evidence.failure_reason is None,
+        }
+        collector_metadata["redacted"] = (
+            bool(omitted_fields)
+            or schema_parse_failed
+            or reset_schema_parse_failed
+            or schema_response_parse_failed
+            or _redact(trace) != trace
+            or _redact(collector_metadata) != collector_metadata
+        )
+    return trace, collector_metadata
+
+
+def _http_body(body):
+    text = body.decode("utf-8", errors="replace")
+    omitted = False
+    try:
+        value = loads(text.lstrip("\ufeff"))
+    except (ValueError, ArithmeticError, RecursionError):
+        value = text
+        # Unparseable JSON loses the key context used by the structured redactor.
+        omitted = text.lstrip("\ufeff \t\r\n").startswith(("{", "[", '"'))
+    pending = [value]
+    while pending and not omitted:
+        child = pending.pop()
+        if isinstance(child, dict):
+            pending.extend(child.values())
+        elif isinstance(child, list):
+            pending.extend(child)
+        elif isinstance(child, str) and _SECRET_KEY.search(child):
+            omitted = True
+    if omitted:
+        value = "[unstructured body omitted]"
+    return {
+        "body": value,
+        "body_sha256": hashlib.sha256(body).hexdigest(),
+        "retained_bytes": len(body),
+        "body_omitted": omitted,
+        "redacted": omitted or _redact(value) != value or text.encode("utf-8") != body,
+    }
+
+
 def write_runtime_bundle(
-    directory: Path, report, *, plan=None, evidence=None, provider=None, cleanup=None
+    directory: Path,
+    report,
+    *,
+    plan=None,
+    evidence=None,
+    provider=None,
+    cleanup=None,
+    isolation=None,
+    oracle_http=(),
 ):
     """Write a credential-filtered trace, source/policy/plan provenance and coverage."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -55,6 +162,7 @@ def write_runtime_bundle(
         files["runtime-plan.json"] = plan.model_dump(mode="json")
     files["run-manifest.json"] = {
         "bundle_schema_version": "1",
+        "json_numbers": "exact integer and decimal tokens; decode with Decimal",
         "source_digest": report.source_digest,
         "policy_version": report.policy_version,
         "manifest_schema_version": report.manifest.manifest_schema_version
@@ -71,63 +179,41 @@ def write_runtime_bundle(
         "python": platform.python_version(),
         "provider": provider or {},
     }
-    trace = []
-    collector_metadata = None
-    if evidence:
-        omitted_fields = []
-        for index, exchange in enumerate(evidence.exchanges):
-            row = asdict(exchange)
-            for key in ("request_json", "response_json"):
-                try:
-                    row[key] = json.loads(row[key])
-                except (ValueError, RecursionError):
-                    row[key] = "[malformed response omitted]"
-                    omitted_fields.append({"exchange_index": index, "field": key})
-            trace.append(row)
-        schema = None
-        schema_parse_failed = False
-        if evidence.observation_schema_json is not None:
-            try:
-                schema = json.loads(evidence.observation_schema_json)
-            except (ValueError, RecursionError):
-                schema_parse_failed = True
-        reset_schema = None
-        reset_schema_parse_failed = False
-        if evidence.reset_observation_schema_json is not None:
-            try:
-                reset_schema = json.loads(evidence.reset_observation_schema_json)
-            except (ValueError, RecursionError):
-                reset_schema_parse_failed = True
-        collector_metadata = {
-            "evidence_schema_version": "1",
-            "trace_file": "collector-trace.json",
-            "observation_schema": schema,
-            "schema_available": evidence.observation_schema_json is not None,
-            "schema_parse_failed": schema_parse_failed,
-            "reset_observation_schema": reset_schema,
-            "reset_schema_available": evidence.reset_observation_schema_json
-            is not None,
-            "reset_schema_parse_failed": reset_schema_parse_failed,
-            "omitted_trace_fields": omitted_fields,
-            "failure_phase": evidence.failure_phase,
-            "failure_reason": evidence.failure_reason,
-            "complete": evidence.failure_phase is None
-            and evidence.failure_reason is None,
-        }
-        collector_metadata["redacted"] = (
-            bool(omitted_fields)
-            or schema_parse_failed
-            or reset_schema_parse_failed
-            or _redact(trace) != trace
-            or _redact(collector_metadata) != collector_metadata
+    recordings = [("collector", evidence)]
+    if isolation is not None:
+        recordings.extend(
+            [
+                ("isolation-sequential", isolation.sequential),
+                ("isolation-fresh", isolation.fresh),
+            ]
         )
-    files["collector-trace.json"] = trace
-    files["collector-evidence.json"] = collector_metadata
+    for session, recording in recordings:
+        trace_file = f"{session}-trace.json"
+        trace, metadata = _recording(recording, trace_file)
+        if metadata is not None:
+            metadata["session"] = session
+        files[trace_file] = trace
+        files[f"{session}-evidence.json"] = metadata
+    probes = []
+    for probe in oracle_http:
+        row = asdict(probe)
+        row.update(_http_body(row.pop("body")))
+        row["redirect_bodies"] = [_http_body(body) for body in row["redirect_bodies"]]
+        row["redacted"] |= any(body["redacted"] for body in row["redirect_bodies"])
+        probes.append(row)
+    retained_probes = _redact(probes)
+    # Evaluate modification flags at their actual depth in the saved document.
+    for original, retained in zip(probes, retained_probes):
+        retained["redacted"] |= original["body"] != retained["body"]
+        for before, after in zip(
+            original["redirect_bodies"], retained["redirect_bodies"]
+        ):
+            after["redacted"] |= before["body"] != after["body"]
+            retained["redacted"] |= after["redacted"]
+    files["oracle-http.json"] = retained_probes
     digests = []
     for name, value in files.items():
-        payload = (
-            json.dumps(_redact(value), indent=2, sort_keys=True, allow_nan=False) + "\n"
-        ).encode()
+        payload = (dumps(_redact(value)) + "\n").encode()
         (directory / name).write_bytes(payload)
         digests.append(f"{hashlib.sha256(payload).hexdigest()}  {name}\n")
     (directory / "SHA256SUMS").write_text("".join(digests))

@@ -4,6 +4,7 @@ import json
 import socket
 import threading
 import time
+from decimal import Decimal
 from types import SimpleNamespace
 
 import httpx
@@ -88,7 +89,14 @@ def test_compressed_schema_is_rejected_before_body_read(monkeypatch, plan, encod
 )
 def test_uncompressed_schema_is_read_and_retained(monkeypatch, plan, headers):
     schema = {"type": "object"}
-    stream = TrackedStream(json.dumps({"observation": schema}).encode())
+    full_schema = {
+        "observation": schema,
+        "action": {"description": "oracle α"},
+        "state": {"default": "withheld-state"},
+        "reset": {"default": "reset-input"},
+    }
+    payload = json.dumps(full_schema, ensure_ascii=False, indent=2)
+    stream = TrackedStream(payload.encode())
     requests = schema_transport(monkeypatch, stream, headers)
     evidence = collector.collect_runtime_evidence(
         "http://127.0.0.1:8000", plan, episode_timeout_s=2
@@ -96,7 +104,55 @@ def test_uncompressed_schema_is_read_and_retained(monkeypatch, plan, headers):
     assert requests[0].headers["Accept-Encoding"] == "identity"
     assert stream.read and stream.closed
     assert json.loads(evidence.observation_schema_json) == schema
+    assert evidence.schema_response_json == payload
     assert evidence.failure_phase == "connect"
+
+
+def test_extracted_schemas_keep_exact_numeric_values(monkeypatch, plan):
+    from openenv.validation.runtime.json_values import loads
+
+    raw = '{"x-exact":1.0000000000000001,"decimal":1e0,"integer":1}'
+    payload = '{"observation":' + raw + ',"reset_observation":' + raw + "}"
+    schema_transport(monkeypatch, TrackedStream(payload.encode()))
+    evidence = collector.collect_runtime_evidence(
+        "http://127.0.0.1:8000", plan, episode_timeout_s=2
+    )
+    assert evidence.failure_phase == "connect"
+    for schema in (
+        evidence.observation_schema_json,
+        evidence.reset_observation_schema_json,
+    ):
+        value = loads(schema)
+        assert value["x-exact"] == Decimal("1.0000000000000001")
+        assert type(value["decimal"]) is Decimal
+        assert type(value["integer"]) is int
+
+
+def test_unsupported_schema_numbers_preserve_evidence_as_a_capability_gap(
+    monkeypatch, plan
+):
+    payload = '{"observation":{"minimum":1e9999999999999999999}}'
+    schema_transport(monkeypatch, TrackedStream(payload.encode()))
+    with pytest.raises(RuntimeError, match="json_numeric_range") as unsupported:
+        collector.collect_runtime_evidence(
+            "http://127.0.0.1:8000", plan, episode_timeout_s=2
+        )
+    assert unsupported.value.evidence.schema_response_json == payload
+
+
+def test_unsupported_schema_depth_is_a_capability_gap(monkeypatch, plan):
+    payload = '{"observation":{"type":"object"}}'
+    schema_transport(monkeypatch, TrackedStream(payload.encode()))
+
+    def exhausted(value):
+        raise RecursionError
+
+    monkeypatch.setattr(collector, "dumps", exhausted)
+    with pytest.raises(RuntimeError, match="json_depth") as unsupported:
+        collector.collect_runtime_evidence(
+            "http://127.0.0.1:8000", plan, episode_timeout_s=2
+        )
+    assert unsupported.value.evidence.schema_response_json == payload
 
 
 def test_uncompressed_schema_still_obeys_total_byte_budget(monkeypatch, plan):

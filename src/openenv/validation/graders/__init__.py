@@ -13,7 +13,7 @@ from typing import Protocol, runtime_checkable
 from ..manifest import CapabilitiesSpec, NormalizedManifest
 from ..providers import RunningSubject
 from ..report import CheckResult
-from ..runtime.contracts import RuntimeEvidence
+from ..runtime.contracts import HttpProbe, IsolationEvidence, RuntimeEvidence
 from ..types import Level, ProviderCapability
 
 ENTRY_POINT_GROUP = "openenv.validation.graders"
@@ -42,6 +42,10 @@ class Subject:
             Provider-measured [`~openenv.validation.runtime.contracts.ContainmentEvidence`].
         resource_evidence_json (`str`, *optional*):
             Provider-measured [`~openenv.validation.runtime.contracts.ResourceEvidence`].
+        isolation_evidence ([`~openenv.validation.runtime.contracts.IsolationEvidence`], *optional*):
+            Same-session and fresh episodes on the running subject.
+        oracle_http (`tuple[HttpProbe, ...]`):
+            GET probes for the declared oracle path on the control endpoint.
     """
 
     root: Path
@@ -53,6 +57,8 @@ class Subject:
     network_evidence_json: str | None = None
     containment_evidence_json: str | None = None
     resource_evidence_json: str | None = None
+    isolation_evidence: IsolationEvidence | None = None
+    oracle_http: tuple[HttpProbe, ...] = ()
 
 
 @runtime_checkable

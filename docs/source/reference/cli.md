@@ -49,7 +49,8 @@ opens one WebSocket session, measures reward values, observation schemas and
 state continuity, and removes the container even if a check fails.
 
 The runtime level implements startup, reward, observation, state, network
-policy, host containment and resource bounds checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
+policy, host containment, resource bounds, episode isolation and oracle
+containment checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
@@ -91,10 +92,40 @@ probe requires a trusted helper to observe a live parent and child with the
 fresh stimulus nonce before timeout, followed by verified removal. A printed
 descendant marker alone leaves qualification unproven. It does not qualify
 enforcement of the declared `episode_timeout_s` for a served episode.
+`runtime.episode_isolation` runs the replay plan twice on one session, as episode A
+and then a reset into episode B, and once more on a new session. Episode B must
+match the fresh episode exchange for exchange. Messages are compared as decoded
+JSON values, so key order and formatting do not count. If episode A or the fresh
+episode differs from the original measured episode, the subject is not
+deterministic under fixed inputs and the check reports `SKIP`. Each episode gets
+its own `episode_timeout_s` deadline and trace size bound. When an episode stops
+early before any response differs, the experiment is incomplete and the check
+also reports `SKIP`.
+`runtime.oracle_containment` applies when `capabilities.oracle` is declared. It
+compares complete declared oracle files with collected reset, step and state
+responses, the complete `/schema` response, and unauthenticated HTTP probes of
+each inventoried file's package-relative URL. It decodes JSON string values and
+compares structured JSON independent of formatting. Isolated source lines are
+ignored because ordinary boilerplate does not establish disclosure. A matching
+complete artifact fails regardless of HTTP status or incomplete evidence elsewhere.
+
+Oracle inventory reads at most 64 files and 1 MiB. HTTP probes share a 10 second
+wall deadline and 1 MiB body budget, follow at most three same-origin redirects,
+and reject compressed responses before decoding. Missing or failed probes,
+unresolved redirects, incomplete transcripts or schemas, unreadable inventory
+entries, unsupported structured JSON comparisons, files too short to trace
+reliably, and omitted files or bytes report
+`SKIP` unless a disclosure was found. Coverage counts are recorded for each limit.
+A pass establishes only that complete artifacts did not match
+these measured responses. It does not test arbitrary MCP tool reads, partial or
+transformed disclosures, or writes to reward artifacts; it does not certify the
+full agent boundary.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,
 with dependent contract checks skipped and the completed trace retained.
+Validator JSON numeric-range and depth limits report named capability `SKIP`s,
+preserving the received evidence.
 
 Credential delivery is deferred for this release. Set
 `validation.execution.requires_credentials: true` when the environment needs an

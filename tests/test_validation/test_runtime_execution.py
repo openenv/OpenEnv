@@ -12,7 +12,11 @@ from openenv.validation.providers import ProviderError, StartupError
 from openenv.validation.report import CheckResult
 from openenv.validation.runner import run_validation, source_digest
 from openenv.validation.runtime.artifacts import write_runtime_bundle
-from openenv.validation.runtime.contracts import RuntimeEvidence
+from openenv.validation.runtime.collector import (
+    RuntimeCollectionInterrupted,
+    RuntimeCollectionUnsupported,
+)
+from openenv.validation.runtime.contracts import HttpProbe, RuntimeEvidence
 from openenv.validation.runtime.scheduler import execute_graders, order_graders
 from openenv.validation.types import CheckStatus, Level, ProviderCapability
 from support.runtime import evidence, exchange, FakeRuntimeProvider
@@ -70,7 +74,7 @@ def measured_episode():
     )
 
 
-def test_runtime_collects_once_cleans_up_and_marks_remaining_work(
+def test_runtime_collects_episode_and_isolation_cleans_up_and_marks_remaining_work(
     package, monkeypatch, tmp_path
 ):
     provider = FakeRuntimeProvider()
@@ -86,7 +90,8 @@ def test_runtime_collects_once_cleans_up_and_marks_remaining_work(
         package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
     )
     results = {r.check_id: r.status for r in report.results}
-    assert len(calls) == 1
+    # The measured episode, then a same-session pair and a fresh episode.
+    assert [kwargs.get("episodes", 1) for _, kwargs in calls] == [1, 2, 1]
     assert len(provider.builds) == len(provider.launches) == 1
     assert provider.subject.stopped
     assert report.report_schema_version == "2"
@@ -119,6 +124,115 @@ def test_runtime_collection_uses_declared_episode_timeout(package, monkeypatch):
     run_validation(package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider())
 
     assert calls[0]["episode_timeout_s"] == 600.0
+
+
+def test_unsupported_schema_numbers_skip_and_keep_the_received_schema(
+    package, monkeypatch, tmp_path
+):
+    prefix = RuntimeEvidence(
+        schema_response_json='{"observation":{"minimum":1e9999999999999999999}}',
+        failure_phase="schema",
+        failure_reason="schema JSON numeric range exceeds validator support",
+    )
+
+    def collect(*args, **kwargs):
+        raise RuntimeCollectionUnsupported(prefix)
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    provider = FakeRuntimeProvider()
+    report = run_validation(
+        package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=tmp_path / "bundle",
+    )
+    startup = next(
+        result for result in report.results if result.check_id == "runtime.startup"
+    )
+    assert startup.status is CheckStatus.SKIP
+    assert "json_numeric_range" in startup.evidence[0]
+    assert provider.subject.stopped
+    metadata = json.loads((tmp_path / "bundle/collector-evidence.json").read_text())
+    assert metadata["schema_response_available"] is True
+    assert metadata["schema_response_parse_failed"] is True
+
+
+@pytest.mark.parametrize("interrupted_call", [2, 3])
+def test_interrupted_isolation_retains_every_completed_session(
+    package, monkeypatch, tmp_path, interrupted_call
+):
+    original = measured_episode()
+    prefix = replace(
+        original,
+        exchanges=original.exchanges[:2],
+        failure_phase="step",
+        failure_reason="step failed (KeyboardInterrupt)",
+    )
+    calls = 0
+
+    def collect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == interrupted_call:
+            raise RuntimeCollectionInterrupted(prefix)
+        return original
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    bundle = tmp_path / "bundle"
+    provider = FakeRuntimeProvider()
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    assert provider.subject.stopped
+    startup = next(r for r in report.results if r.check_id == "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert len(json.loads((bundle / "collector-trace.json").read_text())) == 4
+    sequential = json.loads((bundle / "isolation-sequential-trace.json").read_text())
+    fresh = json.loads((bundle / "isolation-fresh-trace.json").read_text())
+    assert len(sequential) == (2 if interrupted_call == 2 else 4)
+    assert len(fresh) == (0 if interrupted_call == 2 else 2)
+    metadata = json.loads((bundle / "isolation-fresh-evidence.json").read_text())
+    assert metadata["complete"] is False
+    assert metadata["failure_phase"] == (
+        "not_started" if interrupted_call == 2 else "step"
+    )
+
+
+def test_interrupted_oracle_collection_retains_completed_probes(
+    package, monkeypatch, tmp_path
+):
+    manifest = package / "openenv.yaml"
+    manifest.write_text(
+        manifest.read_text().replace("location: oracle/solve.sh", "location: oracle")
+    )
+    (package / "oracle/00_first.txt").write_text("completed-probe-prefix")
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence",
+        lambda *args, **kwargs: measured_episode(),
+    )
+
+    def get(base_url, path, *args):
+        if path == "oracle/00_first.txt":
+            return HttpProbe("/" + path, 403, b"completed-probe-prefix")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("openenv.validation.runner._get", get)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    assert provider.subject.stopped
+    assert (
+        next(r for r in report.results if r.check_id == "runtime.startup").status
+        is CheckStatus.ERROR
+    )
+    probes = json.loads((bundle / "oracle-http.json").read_text())
+    assert len(probes) == 2
+    assert probes[0]["body"] == "completed-probe-prefix"
+    assert probes[0]["status"] == 403
+    assert probes[1]["path"] == "/oracle/solve.sh"
+    assert probes[1]["failure"] == "KeyboardInterrupt"
 
 
 def test_skip_build_has_no_provider_side_effects(package):

@@ -13,7 +13,13 @@ from openenv.validation.graders.runtime import (
 from openenv.validation.manifest import NormalizedManifest
 from openenv.validation.report import ValidationReportV2
 from openenv.validation.runtime.artifacts import write_runtime_bundle
-from openenv.validation.runtime.contracts import RuntimeEvidence, WireExchange
+from openenv.validation.runtime.contracts import (
+    HttpProbe,
+    IsolationEvidence,
+    RuntimeEvidence,
+    WireExchange,
+)
+from openenv.validation.runtime.json_values import dumps, loads
 from openenv.validation.types import Lane, Level, SignatureKind, Verdict
 from support.runtime import evidence, exchange
 
@@ -71,26 +77,31 @@ def measured():
     )
 
 
-def rebuild(directory):
-    metadata = json.loads((directory / "collector-evidence.json").read_text())
-    trace = json.loads((directory / metadata["trace_file"]).read_text())
+def rebuild(directory, session="collector"):
+    metadata = loads((directory / f"{session}-evidence.json").read_text())
+    trace = loads((directory / metadata["trace_file"]).read_text())
     return RuntimeEvidence(
         exchanges=tuple(
             WireExchange(
                 row["operation"],
-                json.dumps(row["request_json"]),
-                json.dumps(row["response_json"]),
+                dumps(row["request_json"]),
+                dumps(row["response_json"]),
             )
             for row in trace
         ),
         observation_schema_json=(
-            json.dumps(metadata["observation_schema"])
+            dumps(metadata["observation_schema"])
             if metadata["schema_available"]
             else None
         ),
         reset_observation_schema_json=(
-            json.dumps(metadata["reset_observation_schema"])
+            dumps(metadata["reset_observation_schema"])
             if metadata["reset_schema_available"]
+            else None
+        ),
+        schema_response_json=(
+            dumps(metadata["schema_response"])
+            if metadata["schema_response_available"]
             else None
         ),
         failure_phase=metadata["failure_phase"],
@@ -145,6 +156,269 @@ def test_saved_schema_reproduces_observation_schema_failure(tmp_path):
     assert original_result.status.value == "fail"
     assert original_result.status == replayed_result.status
     assert original_result.evidence == replayed_result.evidence
+
+
+def test_bundle_keeps_each_isolation_session_and_its_completion(tmp_path):
+    original = measured()
+    interrupted = replace(
+        original,
+        exchanges=original.exchanges[:2],
+        failure_phase="step",
+        failure_reason="step failed (KeyboardInterrupt)",
+    )
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        evidence=original,
+        isolation=IsolationEvidence(sequential=interrupted, fresh=original),
+    )
+    sequential = json.loads(
+        (tmp_path / "isolation-sequential-evidence.json").read_text()
+    )
+    fresh = json.loads((tmp_path / "isolation-fresh-evidence.json").read_text())
+    assert sequential["session"] != fresh["session"]
+    assert sequential["complete"] is False
+    assert sequential["failure_reason"] == interrupted.failure_reason
+    assert fresh["complete"] is True
+    assert len(json.loads((tmp_path / sequential["trace_file"]).read_text())) == 2
+    assert len(json.loads((tmp_path / fresh["trace_file"]).read_text())) == 4
+    sums = (tmp_path / "SHA256SUMS").read_text()
+    assert "isolation-sequential-trace.json" in sums
+    assert "isolation-fresh-trace.json" in sums
+
+
+def test_bundle_redacts_oracle_body_and_records_original_digest(tmp_path):
+    body = b'{"api_key":"opaque-credential","answer":"canary"}'
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        oracle_http=(HttpProbe(path="oracle/solve.sh", status=403, body=body),),
+    )
+    probe = json.loads((tmp_path / "oracle-http.json").read_text())[0]
+    assert probe["status"] == 403
+    assert probe["body"] == {"api_key": "[REDACTED]", "answer": "canary"}
+    assert probe["body_sha256"] == hashlib.sha256(body).hexdigest()
+    assert probe["retained_bytes"] == len(body)
+    assert probe["redacted"] is True
+    assert "opaque-credential" not in (tmp_path / "oracle-http.json").read_text()
+    assert "oracle-http.json" in (tmp_path / "SHA256SUMS").read_text()
+
+
+@pytest.mark.parametrize("depth", [60, 61, 62, 63, 64, 65])
+def test_http_truncation_flags_describe_the_final_serialized_body(tmp_path, depth):
+    original = "canary"
+    for _ in range(depth):
+        original = [original]
+    body = json.dumps(original).encode()
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        oracle_http=(HttpProbe("/oracle", 200, body, redirect_bodies=(body,)),),
+    )
+    probe = json.loads((tmp_path / "oracle-http.json").read_text())[0]
+    for retained in (probe, *probe["redirect_bodies"]):
+        if retained["body"] != original:
+            assert retained["redacted"] is True
+        assert retained["body_sha256"] == hashlib.sha256(body).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"api_key":"opaque-credential", BROKEN}',
+        b'{"api_\\u006bey":"opaque-credential", BROKEN}',
+        b"#!/bin/sh\nexport API_KEY=opaque-credential\n",
+        b"export PASSWORD=opaque-credential\n",
+        b'{"stdout":"export API_KEY=opaque-credential","answer":"canary"}',
+        b'["canary", {"stdout":"export PASSWORD=opaque-credential"}]',
+        b'\xef\xbb\xbf{"api_\\u006bey":"opaque-credential", BROKEN}',
+    ],
+)
+def test_unsafe_unstructured_http_bodies_are_omitted_in_every_hop(tmp_path, body):
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        oracle_http=(HttpProbe("/oracle", 200, body, redirect_bodies=(body,)),),
+    )
+    text = (tmp_path / "oracle-http.json").read_text()
+    assert "opaque-credential" not in text
+    probe = json.loads(text)[0]
+    for retained in (probe, *probe["redirect_bodies"]):
+        assert retained["body_omitted"] is True
+        assert retained["redacted"] is True
+        assert retained["body_sha256"] == hashlib.sha256(body).hexdigest()
+        assert retained["retained_bytes"] == len(body)
+
+
+def test_bundle_keeps_separate_redacted_redirect_documents_and_failure(tmp_path):
+    redirect = b'{"api_key":"opaque-credential","answer":"redirect-canary"}'
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        oracle_http=(
+            HttpProbe(
+                path="oracle/solve.sh",
+                status=302,
+                body=b"final prefix",
+                failure="TimeoutError",
+                redirect_bodies=(redirect,),
+            ),
+        ),
+    )
+    probe = json.loads((tmp_path / "oracle-http.json").read_text())[0]
+    assert probe["failure"] == "TimeoutError"
+    assert probe["body"] == "final prefix"
+    hop = probe["redirect_bodies"][0]
+    assert hop["body"] == {"api_key": "[REDACTED]", "answer": "redirect-canary"}
+    assert hop["body_sha256"] == hashlib.sha256(redirect).hexdigest()
+    assert hop["redacted"] is probe["redacted"] is True
+
+
+@pytest.mark.parametrize("prefix", [b"", b"\xef\xbb\xbf"])
+def test_nested_harmless_http_strings_survive_every_hop(tmp_path, prefix):
+    body = prefix + b'{"output":["completed-probe-prefix", {"answer":"canary"}]}'
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        oracle_http=(HttpProbe("/oracle", 200, body, redirect_bodies=(body,)),),
+    )
+    probe = json.loads((tmp_path / "oracle-http.json").read_text())[0]
+    for hop in (probe, *probe["redirect_bodies"]):
+        assert hop["body"] == json.loads(body)
+        assert hop["body_omitted"] is hop["redacted"] is False
+
+
+@pytest.mark.parametrize("prefix", ["", "\ufeff"])
+def test_bundle_preserves_exact_numbers_and_types_in_all_json_surfaces(
+    tmp_path, prefix
+):
+    from decimal import Decimal
+
+    raw = (
+        prefix
+        + '{"number":1.0000000000000001,"float":1e0,"huge":1e400,"integer":1,"text":"1.0000000000000001","api_key":"opaque-credential"}'
+    )
+    original = RuntimeEvidence(
+        exchanges=(WireExchange("step", raw, raw),),
+        observation_schema_json=raw,
+        reset_observation_schema_json=raw,
+        schema_response_json=raw,
+    )
+    body = raw.encode()
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        evidence=original,
+        oracle_http=(HttpProbe("/oracle", 200, body, redirect_bodies=(body,)),),
+    )
+    trace = json.loads(
+        (tmp_path / "collector-trace.json").read_text(), parse_float=Decimal
+    )
+    metadata = json.loads(
+        (tmp_path / "collector-evidence.json").read_text(), parse_float=Decimal
+    )
+    probe = json.loads(
+        (tmp_path / "oracle-http.json").read_text(), parse_float=Decimal
+    )[0]
+    for value in (
+        trace[0]["request_json"],
+        trace[0]["response_json"],
+        metadata["observation_schema"],
+        metadata["reset_observation_schema"],
+        metadata["schema_response"],
+        probe["body"],
+        probe["redirect_bodies"][0]["body"],
+    ):
+        assert value["number"] == Decimal("1.0000000000000001")
+        assert value["huge"] == Decimal("1e400")
+        assert type(value["float"]) is Decimal
+        assert type(value["integer"]) is int
+        assert value["text"] == "1.0000000000000001"
+        assert value["api_key"] == "[REDACTED]"
+    assert metadata["redacted"] is probe["redacted"] is True
+    for hop in (probe, *probe["redirect_bodies"]):
+        assert hop["body_sha256"] == hashlib.sha256(body).hexdigest()
+        assert hop["retained_bytes"] == len(body)
+    manifest = json.loads((tmp_path / "run-manifest.json").read_text())
+    assert (
+        manifest["json_numbers"]
+        == "exact integer and decimal tokens; decode with Decimal"
+    )
+    assert "opaque-credential" not in "".join(
+        path.read_text() for path in tmp_path.iterdir()
+    )
+    replay = rebuild(tmp_path)
+    assert loads(replay.exchanges[0].response_json)["number"] == Decimal(
+        "1.0000000000000001"
+    )
+    for schema in (
+        replay.observation_schema_json,
+        replay.reset_observation_schema_json,
+        replay.schema_response_json,
+    ):
+        assert loads(schema)["number"] == Decimal("1.0000000000000001")
+
+
+def test_json_bom_handling_matches_bytes_without_stripping_other_prefixes():
+    from decimal import Decimal
+
+    raw = '\ufeff{"number":1.0000000000000001,"text":"\ufeffvalue"}'
+    expected = {"number": Decimal("1.0000000000000001"), "text": "\ufeffvalue"}
+    for document in (raw, raw.encode(), bytearray(raw.encode())):
+        assert loads(document) == expected
+    for prefix in ("\ufeff\ufeff", " \ufeff"):
+        with pytest.raises(ValueError):
+            loads(prefix + "{}")
+
+
+def test_unsupported_decimal_range_is_visibly_omitted(tmp_path):
+    raw = '{"answer":1e9999999999999999999}'
+    original = RuntimeEvidence(
+        exchanges=(WireExchange("step", raw, raw),),
+        observation_schema_json=raw,
+        reset_observation_schema_json=raw,
+        schema_response_json=raw,
+    )
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        evidence=original,
+        oracle_http=(HttpProbe("/oracle", 200, raw.encode()),),
+    )
+    metadata = json.loads((tmp_path / "collector-evidence.json").read_text())
+    assert metadata["redacted"] is True
+    assert metadata["schema_parse_failed"] is True
+    assert metadata["reset_schema_parse_failed"] is True
+    assert metadata["schema_response_parse_failed"] is True
+    assert len(metadata["omitted_trace_fields"]) == 2
+    probe = json.loads((tmp_path / "oracle-http.json").read_text())[0]
+    assert probe["redacted"] is probe["body_omitted"] is True
+
+
+@pytest.mark.parametrize("schema", [None, '{"action":{"default":"canary"}}'])
+def test_bundle_replays_the_complete_schema_response(tmp_path, schema):
+    original = replace(measured(), schema_response_json=schema)
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    replay = rebuild(tmp_path)
+    assert json.loads(replay.schema_response_json or "null") == json.loads(
+        schema or "null"
+    )
+
+
+def test_full_schema_redaction_and_parse_failure_are_visible(tmp_path):
+    for schema in ('{"api_key":"opaque-credential"}', "not JSON"):
+        directory = tmp_path / ("malformed" if schema == "not JSON" else "secret")
+        write_runtime_bundle(
+            directory,
+            report(),
+            evidence=replace(measured(), schema_response_json=schema),
+        )
+        text = (directory / "collector-evidence.json").read_text()
+        metadata = json.loads(text)
+        assert metadata["schema_response_available"] is True
+        assert metadata["schema_response_parse_failed"] is (schema == "not JSON")
+        assert metadata["redacted"] is True
+        assert "opaque-credential" not in text
 
 
 def test_truncated_trace_metadata_preserves_the_collection_failure(tmp_path):

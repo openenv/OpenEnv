@@ -10,6 +10,7 @@ from websockets.sync.client import connect
 
 from ...core.env_server.types import WSErrorCode
 from .contracts import RuntimeEvidence, RuntimePlan, WireExchange
+from .json_values import dumps, loads
 from .transport import abort_socket, http_deadline
 
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -54,12 +55,21 @@ class RuntimeCollectionInterrupted(KeyboardInterrupt):
         self.evidence = evidence
 
 
+class RuntimeCollectionUnsupported(RuntimeError):
+    """A validator JSON limit carrying the retained collection prefix."""
+
+    def __init__(self, evidence: RuntimeEvidence, *, capability="json_numeric_range"):
+        super().__init__(f"{capability}: runtime JSON exceeds validator support")
+        self.evidence = evidence
+
+
 def collect_runtime_evidence(
     base_url: str,
     plan: RuntimePlan,
     *,
     episode_timeout_s: float,
     request_timeout_s: float | None = None,
+    episodes: int = 1,
 ) -> RuntimeEvidence:
     """
     Preserve schema and reset/step/state responses without model coercion.
@@ -74,17 +84,23 @@ def collect_runtime_evidence(
         plan ([`~openenv.validation.runtime.contracts.RuntimePlan`]):
             Validated, bounded reset and action inputs.
         episode_timeout_s (`float`):
-            Deadline for the complete collection, including schema retrieval.
+            Deadline for each episode. The first episode's budget also covers
+            schema retrieval and connecting.
         request_timeout_s (`float`, *optional*):
             Optional per-operation cap. By default, each operation may use the
             remaining declared episode budget.
+        episodes (`int`, *optional*, defaults to `1`):
+            Run the plan this many times on the same session, resetting between
+            episodes. Each later episode gets a fresh deadline and trace budget
+            at its reset, so one episode never spends what another saved and the
+            collection is bounded by `episodes` single-episode budgets.
 
     Returns:
         [`~openenv.validation.runtime.contracts.RuntimeEvidence`]: raw evidence.
     """
     deadline = time.monotonic() + episode_timeout_s
     exchanges = []
-    schema_json = reset_schema_json = None
+    schema_json = reset_schema_json = schema_response_json = None
     phase = "schema"
     trace_bytes = 0
     server_code = None
@@ -124,23 +140,14 @@ def collect_runtime_evidence(
                     if len(payload) + len(chunk) > MAX_MESSAGE_BYTES:
                         raise ValueError("schema exceeds size bound")
                     payload.extend(chunk)
-            schema = json.loads(payload)
+            schema_response_json = payload.decode("utf-8")
+            schema = loads(payload)
             if not isinstance(schema, dict) or "observation" not in schema:
                 raise ValueError("missing observation schema")
-            schema_json = json.dumps(
-                schema["observation"],
-                allow_nan=False,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+            schema_json = dumps(schema["observation"])
 
             if "reset_observation" in schema:
-                reset_schema_json = json.dumps(
-                    schema["reset_observation"],
-                    allow_nan=False,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
+                reset_schema_json = dumps(schema["reset_observation"])
 
         endpoint = urlsplit(base_url)
         ws_url = urlunsplit(
@@ -182,7 +189,7 @@ def collect_runtime_evidence(
                     request_json.encode("utf-8")
                 )
                 if trace_bytes > MAX_TRACE_BYTES:
-                    raise ValueError("trace exceeds total size bound")
+                    raise ValueError("episode trace exceeds size bound")
                 exchanges.append(
                     WireExchange(
                         operation=operation,
@@ -212,13 +219,17 @@ def collect_runtime_evidence(
 
             reset = dict(plan.reset.options)
             reset.update(seed=plan.reset.seed, episode_id=plan.reset.episode_id)
-            observation = exchange("reset", reset)
-            exchange("state")
-            for action in plan.actions:
-                if observation.get("done") is True:
-                    break
-                observation = exchange("step", action)
+            for episode in range(episodes):
+                if episode:
+                    deadline = time.monotonic() + episode_timeout_s
+                    trace_bytes = 0
+                observation = exchange("reset", reset)
                 exchange("state")
+                for action in plan.actions:
+                    if observation.get("done") is True:
+                        break
+                    observation = exchange("step", action)
+                    exchange("state")
             complete = True
         finally:
             # Teardown is best effort and cannot replace an in-episode failure
@@ -239,6 +250,7 @@ def collect_runtime_evidence(
         return RuntimeEvidence(
             exchanges=tuple(exchanges),
             observation_schema_json=schema_json,
+            schema_response_json=schema_response_json,
             reset_observation_schema_json=reset_schema_json,
         )
     except KeyboardInterrupt:
@@ -246,16 +258,33 @@ def collect_runtime_evidence(
             RuntimeEvidence(
                 exchanges=tuple(exchanges),
                 observation_schema_json=schema_json,
+                schema_response_json=schema_response_json,
                 reset_observation_schema_json=reset_schema_json,
                 failure_phase=phase,
                 failure_reason=f"{phase} failed (KeyboardInterrupt)",
             )
+        ) from None
+    except (ArithmeticError, RecursionError) as exc:
+        capability = (
+            "json_numeric_range" if isinstance(exc, ArithmeticError) else "json_depth"
+        )
+        raise RuntimeCollectionUnsupported(
+            RuntimeEvidence(
+                exchanges=tuple(exchanges),
+                observation_schema_json=schema_json,
+                reset_observation_schema_json=reset_schema_json,
+                schema_response_json=schema_response_json,
+                failure_phase=phase,
+                failure_reason=f"{phase} JSON exceeds validator support ({capability})",
+            ),
+            capability=capability,
         ) from None
     except Exception as exc:
         # Exception text may include submitted payloads or URL credentials.
         return RuntimeEvidence(
             exchanges=tuple(exchanges),
             observation_schema_json=schema_json,
+            schema_response_json=schema_response_json,
             reset_observation_schema_json=reset_schema_json,
             failure_phase=phase,
             failure_reason=f"{phase} failed ({server_code or type(exc).__name__})",
