@@ -137,6 +137,18 @@ def test_contained_oracle_passes(tmp_path):
     assert result.status is CheckStatus.PASS, result.evidence
 
 
+def test_common_oracle_lines_in_an_observation_pass(tmp_path):
+    subject = oracle_subject(
+        tmp_path,
+        responses=[{"template": "#!/usr/bin/env python3\nset -euo pipefail"}],
+    )
+    (tmp_path / "oracle" / "solve.sh").write_text(
+        f'#!/usr/bin/env python3\nset -euo pipefail\necho "{CANARY}"\n'
+    )
+    result = grade_oracle(subject)
+    assert result.status is CheckStatus.PASS, result.evidence
+
+
 def test_oracle_in_an_observation_fails_even_when_json_escaped(tmp_path):
     leaked = {"metadata": {"hint": f'echo "{CANARY}"'}}
     result = grade_oracle(oracle_subject(tmp_path, responses=[leaked]))

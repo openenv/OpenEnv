@@ -10,6 +10,7 @@ from ...types import CheckStatus, Level
 MAX_ORACLE_BYTES = 1024 * 1024
 MAX_ORACLE_FILES = 64
 _MIN_FINGERPRINT = 16
+_MIN_LINE_FINGERPRINT = 32
 
 
 def _fingerprints(root: Path, location: str) -> list[str] | None:
@@ -39,7 +40,7 @@ def _fingerprints(root: Path, location: str) -> list[str] | None:
         found.update(
             line.strip()
             for line in text.splitlines()
-            if len(line.strip()) >= _MIN_FINGERPRINT
+            if len(line.strip()) >= _MIN_LINE_FINGERPRINT
         )
     return sorted(found)
 
