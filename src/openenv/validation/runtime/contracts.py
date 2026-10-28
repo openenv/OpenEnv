@@ -450,6 +450,24 @@ class MountRecord(BaseModel):
     size_bytes: int | None = Field(ge=1)
 
 
+class DeviceStorage(BaseModel):
+    """
+    Subject storage access on an otherwise exempt device filesystem.
+
+    Attributes:
+        complete (`bool`):
+            Whether all accessible directories and regular files were inventoried.
+        writable (`bool`):
+            Whether the subject could create a file or open a regular file for writing.
+            Positive evidence is retained even when enumeration is incomplete.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    complete: bool
+    writable: bool
+
+
 class ContainmentEvidence(BaseModel):
     """
     Provider-neutral evidence for `runtime.host_containment`.
@@ -468,8 +486,11 @@ class ContainmentEvidence(BaseModel):
         allotted_writable (`list[str]`):
             Allotted roots the probe could write as the subject's identity.
         writable (`list[str]`):
-            Read-write mount points outside the allotted roots where the probe could
-            create a file as the subject's identity.
+            Bounded diagnostic sample of paths outside the allotted roots where
+            the subject could create a file or open a regular file for writing.
+        device_storage (`dict[str, DeviceStorage]`):
+            Bounded directory and regular-file inventories keyed by device identity.
+            Missing or incomplete inventories cannot establish storage denial.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -481,3 +502,6 @@ class ContainmentEvidence(BaseModel):
     allotted: list[str]
     allotted_writable: list[str]
     writable: list[str] = Field(max_length=1024)
+    device_storage: dict[str, DeviceStorage] = Field(
+        default_factory=dict, max_length=1024
+    )

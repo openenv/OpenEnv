@@ -124,6 +124,38 @@ def test_writable_image_root_is_detected(image, monkeypatch):
     assert "the image root is writable" in result.evidence
 
 
+@pytest.mark.parametrize("storage", ["directory", "file"])
+def test_nested_device_storage_is_detected(image, storage):
+    spec = launch(image)
+    running = DockerValidationProvider().start(spec)
+    path = "/dev/nested/data"
+    setup = "mkdir -p /dev/nested && "
+    setup += (
+        f"mkdir {path} && chmod 777 {path}"
+        if storage == "directory"
+        else f"touch {path} && chmod 666 {path}"
+    )
+    target = path + "/escape" if storage == "directory" else path
+    try:
+        subprocess.run(
+            ["docker", "exec", "--user", "0", running.name, "sh", "-c", setup],
+            capture_output=True,
+            timeout=30,
+            check=True,
+        )
+        escape = running.exec(
+            ["python", "-c", f"open({target!r}, 'wb').write(bytes(2**20))"], 30
+        )
+        measured = running.measure_containment()
+    finally:
+        running.stop()
+    assert owned(spec.run_id) == []
+    assert escape.exit_code == 0, escape.stderr
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL, result.evidence
+    assert any(path in line for line in result.evidence)
+
+
 def test_root_process_in_the_subject_is_detected(image):
     spec = launch(image)
     running = DockerValidationProvider().start(spec)

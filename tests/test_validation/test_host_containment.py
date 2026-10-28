@@ -78,6 +78,7 @@ def contained(**changes):
         "allotted_writable": ["/tmp", "/dev/shm"],
         # Creating a file in /dev/mqueue creates a message queue, not stored data.
         "writable": ["/dev/mqueue"],
+        "device_storage": {"0:180": {"complete": True, "writable": False}},
     }
     measured.update(changes)
     return measured
@@ -203,6 +204,23 @@ def test_subject_writable_dev_fails():
     result = grade(contained(writable=["/dev", "/dev/mqueue"]))
     assert result.status is CheckStatus.FAIL
     assert result.evidence == ["subject can write outside its allotted roots: /dev"]
+
+
+@pytest.mark.parametrize(
+    "inventory", [{}, {"0:180": {"complete": False, "writable": False}}]
+)
+def test_incomplete_device_inventory_cannot_pass(inventory):
+    result = grade(contained(device_storage=inventory))
+    assert result.status is CheckStatus.SKIP
+    assert "the device filesystem storage inventory is incomplete" in result.evidence
+
+
+def test_partial_device_inventory_preserves_positive_storage_evidence():
+    result = grade(
+        contained(device_storage={"0:180": {"complete": False, "writable": True}})
+    )
+    assert result.status is CheckStatus.FAIL
+    assert "device filesystem 0:180 permits subject storage" in result.evidence
 
 
 def test_allotted_root_backed_by_host_storage_fails():

@@ -107,8 +107,8 @@ class HostContainmentGrader:
         # The read-write mounts are every filesystem the subject could store data in.
         if any(m.mount_point == "/" and not m.read_only for m in evidence.mounts):
             problems.append("the image root is writable")
-        # Docker's root-owned /dev tmpfs, also bound as /dev/null over masked /proc
-        # files. The write probe below shows whether the subject can use it.
+        # Docker's /dev tmpfs is also bound as /dev/null over masked /proc files.
+        # Only a complete subtree inventory can establish storage denial.
         dev = {
             m.device
             for m in evidence.mounts
@@ -136,10 +136,20 @@ class HostContainmentGrader:
             for path in evidence.writable
             if path not in not_storage
         ]
+        problems += [
+            f"device filesystem {device} permits subject storage"
+            for device in dev
+            if device in evidence.device_storage
+            and evidence.device_storage[device].writable
+        ]
         measured = {
             "processes": len(evidence.processes),
             "mounts": len(evidence.mounts),
             "allotted_writable": evidence.allotted_writable,
+            "device_storage": {
+                device: reading.model_dump()
+                for device, reading in evidence.device_storage.items()
+            },
         }
         # A failed control cannot erase an independently proven violation.
         if problems:
@@ -158,6 +168,16 @@ class HostContainmentGrader:
                 [
                     "the probe could not write an allotted root, so write denial is unproven"
                 ],
+                measured,
+            )
+        if any(
+            device not in evidence.device_storage
+            or not evidence.device_storage[device].complete
+            for device in dev
+        ):
+            return (
+                CheckStatus.SKIP,
+                ["the device filesystem storage inventory is incomplete"],
                 measured,
             )
         return CheckStatus.PASS, [], measured

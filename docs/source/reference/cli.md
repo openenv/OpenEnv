@@ -69,9 +69,12 @@ namespace, holds capabilities, runs as root or has an unexpected mount. The prob
 also reads every writable filesystem from the subject's mount table. The image root
 must be read-only. Besides `/tmp` and `/dev/shm`, only Docker's `/proc`, `/dev/pts`
 and `/dev/mqueue` pseudo-filesystems and its root-owned `/dev` may be writable, and
-the subject must not be able to create files in `/dev`. A probe that cannot write an
-allotted root, or a mount table that cannot be read in full, leaves containment
-unproven and reports `SKIP`.
+the subject must not be able to create files or write existing regular files on
+that device filesystem. The helper inventories at most 1024 entries to depth 32,
+without following symlinks or entering separate mounts such as `/dev/shm`.
+An unreadable or exhausted inventory, a probe that cannot write an allotted root,
+or a mount table that cannot be read in full leaves containment unproven and
+reports `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,
