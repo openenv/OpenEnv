@@ -75,18 +75,21 @@ def collect_runtime_evidence(
         plan ([`~openenv.validation.runtime.contracts.RuntimePlan`]):
             Validated, bounded reset and action inputs.
         episode_timeout_s (`float`):
-            Deadline for the complete collection, including schema retrieval.
+            Deadline for each episode. The first episode's budget also covers
+            schema retrieval and connecting.
         request_timeout_s (`float`, *optional*):
             Optional per-operation cap. By default, each operation may use the
             remaining declared episode budget.
         episodes (`int`, *optional*, defaults to `1`):
             Run the plan this many times on the same session, resetting between
-            episodes. The whole collection then has `episodes` episode budgets.
+            episodes. Each later episode gets a fresh deadline and trace budget
+            at its reset, so one episode never spends what another saved and the
+            collection is bounded by `episodes` single-episode budgets.
 
     Returns:
         [`~openenv.validation.runtime.contracts.RuntimeEvidence`]: raw evidence.
     """
-    deadline = time.monotonic() + episode_timeout_s * episodes
+    deadline = time.monotonic() + episode_timeout_s
     exchanges = []
     schema_json = reset_schema_json = None
     phase = "schema"
@@ -186,7 +189,7 @@ def collect_runtime_evidence(
                     request_json.encode("utf-8")
                 )
                 if trace_bytes > MAX_TRACE_BYTES:
-                    raise ValueError("trace exceeds total size bound")
+                    raise ValueError("episode trace exceeds size bound")
                 exchanges.append(
                     WireExchange(
                         operation=operation,
@@ -216,7 +219,10 @@ def collect_runtime_evidence(
 
             reset = dict(plan.reset.options)
             reset.update(seed=plan.reset.seed, episode_id=plan.reset.episode_id)
-            for _ in range(episodes):
+            for episode in range(episodes):
+                if episode:
+                    deadline = time.monotonic() + episode_timeout_s
+                    trace_bytes = 0
                 observation = exchange("reset", reset)
                 exchange("state")
                 for action in plan.actions:

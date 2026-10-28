@@ -97,7 +97,10 @@ and then a reset into episode B, and once more on a new session. Episode B must
 match the fresh episode exchange for exchange. Messages are compared as decoded
 JSON values, so key order and formatting do not count. If episode A or the fresh
 episode differs from the original measured episode, the subject is not
-deterministic under fixed inputs and the check reports `SKIP`.
+deterministic under fixed inputs and the check reports `SKIP`. Each episode gets
+its own `episode_timeout_s` deadline and trace size bound. When an episode stops
+early before any response differs, the experiment is incomplete and the check
+also reports `SKIP`.
 `runtime.oracle_containment` applies when `capabilities.oracle` is declared. It
 fails when distinctive text from the oracle artifact appears in any reset, step,
 state or schema response, or when `GET` on the oracle's declared path returns it.

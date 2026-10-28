@@ -127,27 +127,67 @@ def test_value_type_order_and_malformed_differences_remain(fresh, after_reset):
     assert "exchange 2 (step)" in result.evidence[0]
 
 
-def test_failed_second_episode_fails_and_failed_reference_skips():
+def incomplete_subject(*rows, reason):
+    """A same-session collection that stopped with `reason` after `rows`."""
     subject = isolation_subject()
-    broken = replace(
-        subject.isolation_evidence.sequential,
-        failure_reason="reset failed (ValueError)",
+    subject.isolation_evidence = replace(
+        subject.isolation_evidence,
+        sequential=replace(evidence(*rows), failure_reason=reason),
     )
-    failed = grade_isolation(
-        SimpleNamespace(
-            runtime_evidence=subject.runtime_evidence,
-            isolation_evidence=replace(subject.isolation_evidence, sequential=broken),
-        )
+    return subject
+
+
+@pytest.mark.parametrize(
+    "rows, reason",
+    [
+        (episode()[:2], "step failed (TimeoutError)"),
+        (episode(), "reset failed (ConnectionClosedError)"),
+        (episode() + episode()[:2], "step failed (ValueError)"),
+    ],
+    ids=["in_episode_a", "at_second_reset", "in_episode_b"],
+)
+def test_incomplete_same_session_experiment_is_unproven_not_a_leak(rows, reason):
+    # A deadline, the trace size bound or a lost connection records no response.
+    result = grade_isolation(incomplete_subject(*rows, reason=reason))
+    assert result.status is CheckStatus.SKIP
+    assert result.evidence == [f"the same-session episodes did not complete: {reason}"]
+
+
+@pytest.mark.parametrize(
+    "rows, reason, where",
+    [
+        (episode() + episode(2)[:3], "state failed (TimeoutError)", "exchange 2"),
+        (
+            episode()
+            + [exchange("reset", {"type": "reset"}, {"type": "error", "data": {}})],
+            "reset failed (ValueError)",
+            "exchange 0",
+        ),
+        (
+            episode()
+            + episode()[:2]
+            + [replace(episode()[2], response_json='{"type": "observation"')],
+            "step failed (JSONDecodeError)",
+            "exchange 2",
+        ),
+    ],
+    ids=["leak", "error_response", "malformed_response"],
+)
+def test_differing_response_before_the_failure_still_fails(rows, reason, where):
+    result = grade_isolation(incomplete_subject(*rows, reason=reason))
+    assert result.status is CheckStatus.FAIL
+    assert f"differs from a fresh one at {where}" in result.evidence[0]
+
+
+def test_failed_fresh_reference_skips():
+    subject = isolation_subject()
+    subject.isolation_evidence = replace(
+        subject.isolation_evidence,
+        fresh=replace(evidence(), failure_reason="reset failed (ValueError)"),
     )
-    assert failed.status is CheckStatus.FAIL
-    assert "reset failed" in failed.evidence[0]
-    skipped = grade_isolation(
-        SimpleNamespace(
-            runtime_evidence=subject.runtime_evidence,
-            isolation_evidence=replace(subject.isolation_evidence, fresh=broken),
-        )
-    )
-    assert skipped.status is CheckStatus.SKIP
+    result = grade_isolation(subject)
+    assert result.status is CheckStatus.SKIP
+    assert "the fresh reference episode failed" in result.evidence[0]
 
 
 def test_missing_isolation_evidence_or_second_episode_is_a_skip():

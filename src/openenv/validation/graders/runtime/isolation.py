@@ -22,12 +22,16 @@ def _trace(evidence):
     ]
 
 
-def _divergence(left, right):
-    """Describe the first differing exchange, or `None` when the traces match."""
+def _divergence(left, right, complete=True):
+    """
+    Describe the first differing exchange, or `None` when the traces match.
+
+    When `left` is an incomplete recording, only its recorded exchanges count.
+    """
     for index, (a, b) in enumerate(zip(left, right)):
         if a != b:
             return f"exchange {index} ({a[0]})"
-    if len(left) != len(right):
+    if complete and len(left) != len(right):
         return f"exchange {min(len(left), len(right))} (trace length)"
     return None
 
@@ -67,15 +71,6 @@ class EpisodeIsolationGrader:
         reference = subject.runtime_evidence
         if isolation is None or reference is None:
             return CheckStatus.SKIP, ["isolation evidence is unavailable"], {}
-        if isolation.sequential.failure_reason:
-            return (
-                CheckStatus.FAIL,
-                [
-                    "a second episode on the same session failed: "
-                    + isolation.sequential.failure_reason
-                ],
-                {},
-            )
         if isolation.fresh.failure_reason:
             return (
                 CheckStatus.SKIP,
@@ -85,30 +80,42 @@ class EpisodeIsolationGrader:
                 ],
                 {},
             )
+        failure = isolation.sequential.failure_reason
         sequential = _trace(isolation.sequential)
         resets = [i for i, x in enumerate(sequential) if x[0] == "reset"]
-        if len(resets) < 2:
+        if len(resets) < 2 and not failure:
             return CheckStatus.SKIP, ["no second episode was recorded"], {}
-        first, after_reset = sequential[: resets[1]], sequential[resets[1] :]
+        split = resets[1] if len(resets) > 1 else len(sequential)
+        first, after_reset = sequential[:split], sequential[split:]
         fresh = _trace(isolation.fresh)
         measured = {"exchanges": len(after_reset)}
         # Isolation is only observable when fixed inputs give a fixed trace, so
         # the first episode of every session must agree.
         baseline = _trace(reference)
-        drift = _divergence(baseline, first) or _divergence(baseline, fresh)
+        drift = _divergence(baseline, fresh) or _divergence(
+            first, baseline, complete=not failure
+        )
         if drift:
             return (
                 CheckStatus.SKIP,
                 [f"two fresh episodes differ at {drift}, so isolation is unproven"],
                 measured,
             )
-        leak = _divergence(after_reset, fresh)
+        leak = _divergence(after_reset, fresh, complete=not failure)
         if leak:
             return (
                 CheckStatus.FAIL,
                 [
                     f"the episode after a same-session reset differs from a fresh one at {leak}"
                 ],
+                measured,
+            )
+        if failure:
+            # A deadline, size bound or transport failure that left no
+            # differing response is a gap in the experiment, not a leak.
+            return (
+                CheckStatus.SKIP,
+                [f"the same-session episodes did not complete: {failure}"],
                 measured,
             )
         return CheckStatus.PASS, [], measured

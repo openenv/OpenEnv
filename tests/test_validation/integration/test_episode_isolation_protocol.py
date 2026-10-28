@@ -1,5 +1,6 @@
 """Episode isolation over real WebSocket sessions whose resets leak nothing."""
 
+import asyncio
 import json
 import socket
 import threading
@@ -10,7 +11,10 @@ from types import SimpleNamespace
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from openenv.validation.graders.runtime.isolation import EpisodeIsolationGrader
-from openenv.validation.runtime.collector import collect_runtime_evidence
+from openenv.validation.runtime.collector import (
+    collect_runtime_evidence,
+    MAX_TRACE_BYTES,
+)
 from openenv.validation.runtime.contracts import IsolationEvidence, RuntimePlan
 
 PLAN = RuntimePlan.model_validate(
@@ -20,6 +24,9 @@ PLAN = RuntimePlan.model_validate(
         "actions": [{"increment": 1}] * 5,
     }
 )
+EPISODE_TIMEOUT_S = 1.0
+# Longer than one episode budget, but A and B together fit in two.
+SLOW_STEP_S = 1.5
 
 
 @contextmanager
@@ -46,11 +53,16 @@ def served(mode):
                     steps = 0
                 elif request["type"] == "step":
                     steps += 1
+                    if mode == "slow_after_reset" and resets == 2 and steps == 1:
+                        await asyncio.sleep(SLOW_STEP_S)
                 if request["type"] == "state":
                     data = {"episode_id": "same", "step_count": steps}
                     response = {"type": "state", "data": data}
                 else:
                     observation = {"counter": steps, "session_value": session_value}
+                    if mode == "large":
+                        # Under the message bound; each episode is about 5.4 MB.
+                        observation["payload"] = "x" * 900_000
                     data = {"observation": observation, "reward": 0, "done": steps == 5}
                     response = {"type": "observation", "data": data}
                 # The same values, encoded with another key order after a reset.
@@ -79,10 +91,10 @@ def served(mode):
             assert not thread.is_alive()
 
 
-def measure(mode):
+def measure(mode, episode_timeout_s=10):
     with served(mode) as base_url:
         collect = lambda **k: collect_runtime_evidence(  # noqa: E731
-            base_url, PLAN, episode_timeout_s=10, **k
+            base_url, PLAN, episode_timeout_s=episode_timeout_s, **k
         )
         return SimpleNamespace(
             runtime_evidence=collect(),
@@ -114,3 +126,29 @@ def test_per_session_variation_is_unproven_not_a_leak():
     result = EpisodeIsolationGrader().run(subject)
     assert result.status.value == "skip", result.evidence
     assert "two fresh episodes differ at exchange 0 (reset)" in result.evidence[0]
+
+
+def test_each_episode_gets_the_full_trace_budget():
+    subject = measure("large")
+    episode = subject.runtime_evidence.exchanges
+    size = sum(len(x.request_json) + len(x.response_json) for x in episode)
+    assert MAX_TRACE_BYTES / 2 < size < MAX_TRACE_BYTES
+    sequential = subject.isolation_evidence.sequential
+    assert sequential.failure_reason is None
+    assert len(sequential.exchanges) == 2 * len(episode)
+    result = EpisodeIsolationGrader().run(subject)
+    assert result.status.value == "pass", result.evidence
+
+
+def test_each_episode_gets_its_own_deadline():
+    # Time episode A saves must not let episode B outlast its own budget.
+    subject = measure("slow_after_reset", episode_timeout_s=EPISODE_TIMEOUT_S)
+    sequential = subject.isolation_evidence.sequential
+    first = len(subject.runtime_evidence.exchanges)
+    assert sequential.failure_reason == "step failed (TimeoutError)"
+    assert [x.operation for x in sequential.exchanges[first:]] == ["reset", "state"]
+    result = EpisodeIsolationGrader().run(subject)
+    assert result.status.value == "skip", result.evidence
+    assert result.evidence == [
+        "the same-session episodes did not complete: step failed (TimeoutError)"
+    ]
