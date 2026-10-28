@@ -192,7 +192,8 @@ class LaunchSpec(BaseModel):
 
     Attributes:
         image_ref (`str`):
-            Immutable local image ID or repository digest.
+            Immutable local image ID or repository digest, or `hf.co/spaces/<id>` for
+            a Hub-built Space image pinned by its validated revision.
         resources ([`~openenv.validation.manifest.ResourceDeclaration`]):
             Subject CPU, memory, writable-storage and episode budgets.
         network ([`~openenv.validation.manifest.NetworkPolicy`]):
@@ -207,7 +208,9 @@ class LaunchSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    image_ref: str = Field(pattern=r"^(?:[^@\s]+@)?sha256:[0-9a-f]{64}$")
+    image_ref: str = Field(
+        pattern=r"^(?:(?:[^@\s]+@)?sha256:[0-9a-f]{64}|hf\.co/spaces/[\w.-]+/[\w.-]+)$"
+    )
     resources: ResourceDeclaration
     network: NetworkPolicy
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
