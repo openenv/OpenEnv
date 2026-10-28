@@ -5,6 +5,9 @@ from decimal import Decimal
 
 
 def loads(text):
+    # Match the stdlib's BOM handling for bytes after UTF-8 text retention.
+    if isinstance(text, str):
+        text = text.removeprefix("\ufeff")
     return json.loads(text, parse_float=Decimal, parse_constant=Decimal)
 
 

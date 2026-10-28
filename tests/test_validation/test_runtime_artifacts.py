@@ -288,10 +288,16 @@ def test_nested_harmless_http_strings_survive_every_hop(tmp_path, prefix):
         assert hop["body_omitted"] is hop["redacted"] is False
 
 
-def test_bundle_preserves_exact_numbers_and_types_in_all_json_surfaces(tmp_path):
+@pytest.mark.parametrize("prefix", ["", "\ufeff"])
+def test_bundle_preserves_exact_numbers_and_types_in_all_json_surfaces(
+    tmp_path, prefix
+):
     from decimal import Decimal
 
-    raw = '{"number":1.0000000000000001,"float":1e0,"huge":1e400,"integer":1,"text":"1.0000000000000001","api_key":"opaque-credential"}'
+    raw = (
+        prefix
+        + '{"number":1.0000000000000001,"float":1e0,"huge":1e400,"integer":1,"text":"1.0000000000000001","api_key":"opaque-credential"}'
+    )
     original = RuntimeEvidence(
         exchanges=(WireExchange("step", raw, raw),),
         observation_schema_json=raw,
@@ -330,6 +336,9 @@ def test_bundle_preserves_exact_numbers_and_types_in_all_json_surfaces(tmp_path)
         assert value["text"] == "1.0000000000000001"
         assert value["api_key"] == "[REDACTED]"
     assert metadata["redacted"] is probe["redacted"] is True
+    for hop in (probe, *probe["redirect_bodies"]):
+        assert hop["body_sha256"] == hashlib.sha256(body).hexdigest()
+        assert hop["retained_bytes"] == len(body)
     manifest = json.loads((tmp_path / "run-manifest.json").read_text())
     assert (
         manifest["json_numbers"]
@@ -348,6 +357,18 @@ def test_bundle_preserves_exact_numbers_and_types_in_all_json_surfaces(tmp_path)
         replay.schema_response_json,
     ):
         assert loads(schema)["number"] == Decimal("1.0000000000000001")
+
+
+def test_json_bom_handling_matches_bytes_without_stripping_other_prefixes():
+    from decimal import Decimal
+
+    raw = '\ufeff{"number":1.0000000000000001,"text":"\ufeffvalue"}'
+    expected = {"number": Decimal("1.0000000000000001"), "text": "\ufeffvalue"}
+    for document in (raw, raw.encode(), bytearray(raw.encode())):
+        assert loads(document) == expected
+    for prefix in ("\ufeff\ufeff", " \ufeff"):
+        with pytest.raises(ValueError):
+            loads(prefix + "{}")
 
 
 def test_unsupported_decimal_range_is_visibly_omitted(tmp_path):

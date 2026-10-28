@@ -39,7 +39,14 @@ class AlterWire:
             if (
                 scope["type"] == "http"
                 and scope["path"] == "/schema"
-                and self.mode in {"action_schema", "state_schema", "reset_schema"}
+                and self.mode
+                in {
+                    "action_schema",
+                    "state_schema",
+                    "reset_schema",
+                    "bom_schema",
+                    "bom_json_schema",
+                }
             ):
                 if message["type"] == "http.response.start":
                     message = {
@@ -56,9 +63,18 @@ class AlterWire:
                         "action_schema": ("action", "description"),
                         "state_schema": ("state", "default"),
                         "reset_schema": ("reset", "default"),
+                        "bom_schema": ("action", "description"),
+                        "bom_json_schema": ("action", "default"),
                     }[self.mode]
-                    data.setdefault(field, {})[attribute] = self.artifact
-                    message = {**message, "body": json.dumps(data).encode()}
+                    data.setdefault(field, {})[attribute] = (
+                        json.loads(self.artifact)
+                        if self.mode == "bom_json_schema"
+                        else self.artifact
+                    )
+                    raw = json.dumps(data)
+                    if self.mode in {"bom_schema", "bom_json_schema"}:
+                        raw = "\ufeff" + raw.replace("oracle", r"\u006fracle")
+                    message = {**message, "body": raw.encode()}
             if (
                 message["type"] == "websocket.send"
                 and message.get("text")
@@ -125,6 +141,8 @@ def serve(app):
         "action_schema",
         "state_schema",
         "reset_schema",
+        "bom_schema",
+        "bom_json_schema",
         "unicode_ws",
         "json_state",
         "common_line",
@@ -135,7 +153,7 @@ def test_real_runner(mode, tmp_path):
     root = tmp_path / "package"
     shutil.copytree(FIXTURE, root)
     artifact = SCRIPT
-    if mode == "json_state":
+    if mode in {"json_state", "bom_json_schema"}:
         artifact = json.dumps({"answer": CANARY}, indent=2) + "\n"
         manifest = (
             (root / "openenv.yaml")
@@ -215,6 +233,34 @@ def test_real_runner(mode, tmp_path):
                 "reset_schema": ("reset", "default"),
             }[mode]
             assert saved["schema_response"][field][attribute] == artifact
+        if mode in {"bom_schema", "bom_json_schema"}:
+            from openenv.validation.graders import Subject
+            from openenv.validation.graders.runtime.oracle import (
+                OracleContainmentGrader,
+            )
+            from openenv.validation.runtime.collector import collect_runtime_evidence
+            from openenv.validation.runtime.contracts import RuntimePlan
+            from test_runtime_artifacts import rebuild
+
+            raw = httpx.get(url + "/schema", trust_env=False).content
+            assert raw.startswith(b"\xef\xbb\xbf")
+            plan = RuntimePlan.model_validate_json(
+                (root / "validation/runtime.json").read_text()
+            )
+            collected = collect_runtime_evidence(url, plan, episode_timeout_s=5)
+            assert collected.failure_reason is None
+            assert collected.schema_response_json.encode("utf-8") == raw
+            original = Subject(root, report.manifest, None, None, bundle, collected)
+            assert OracleContainmentGrader().run(original).status.value == "fail"
+            saved = json.loads((bundle / "collector-evidence.json").read_text())
+            assert saved["schema_response_available"] is True
+            assert saved["schema_response_parse_failed"] is False
+            assert saved["redacted"] is False
+            field = "default" if mode == "bom_json_schema" else "description"
+            expected = json.loads(artifact) if mode == "bom_json_schema" else artifact
+            assert saved["schema_response"]["action"][field] == expected
+            replay = Subject(root, report.manifest, None, None, bundle, rebuild(bundle))
+            assert OracleContainmentGrader().run(replay).status.value == "fail"
         if mode == "redirect_body":
             probe = json.loads((bundle / "oracle-http.json").read_text())[0]
             assert probe["redirect_bodies"][0]["body"] == artifact

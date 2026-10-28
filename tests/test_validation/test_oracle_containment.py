@@ -509,6 +509,44 @@ def test_string_json_artifacts_match_equivalent_escaping(tmp_path):
     assert grade(subject).status.value == "fail"
 
 
+@pytest.mark.parametrize("source", ["schema", "http", "redirect"])
+@pytest.mark.parametrize("structured", [False, True])
+def test_bom_json_disclosure_cannot_pass(tmp_path, source, structured):
+    import json
+    from dataclasses import replace
+
+    subject = oracle_subject(tmp_path)
+    artifact = {"answer": ANSWER, "values": [2, 3]} if structured else SCRIPT
+    if structured:
+        (tmp_path / "oracle/solve.py").write_text(
+            "\ufeff" + json.dumps(artifact, indent=2)
+        )
+
+    def expose(text):
+        if source == "schema":
+            subject.runtime_evidence = replace(
+                subject.runtime_evidence, schema_response_json=text
+            )
+        else:
+            body = text.encode()
+            subject.oracle_http = (
+                HttpProbe("/oracle/solve.py", 200, body)
+                if source == "http"
+                else HttpProbe(
+                    "/oracle/solve.py", 404, b"nothing", redirect_bodies=(body,)
+                ),
+            )
+
+    expose('\ufeff{"value":"public documentation"}')
+    assert grade(subject).status.value == "pass"
+    expose("\ufeff" + json.dumps({"value": artifact}).replace("print", r"\u0070rint"))
+    result = grade(subject)
+    assert result.status.value == "fail", result.evidence
+    assert result.measured["json_comparison_complete"] is True
+    label = "schema response" if source == "schema" else "GET /oracle/solve.py"
+    assert any(label in item for item in result.evidence)
+
+
 @pytest.mark.parametrize("unreadable", ["binary", "symlink", "permission"])
 def test_unreadable_inventory_siblings_do_not_erase_a_confirmed_leak(
     tmp_path, monkeypatch, unreadable
