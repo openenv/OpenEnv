@@ -5,6 +5,8 @@ from decimal import Decimal
 
 
 def loads(text):
+    if isinstance(text, str):
+        text = text.lstrip("\ufeff")
     return json.loads(text, parse_float=Decimal, parse_constant=Decimal)
 
 

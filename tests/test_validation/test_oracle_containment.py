@@ -474,6 +474,22 @@ def test_non_ascii_json_strings_and_structured_values_match(tmp_path):
     assert grade(subject).status.value == "fail"
 
 
+@pytest.mark.parametrize("surface", ["schema", "http"])
+def test_bom_prefixed_json_disclosures_match(tmp_path, surface):
+    import json
+    from dataclasses import replace
+
+    encoded = "\ufeff" + json.dumps({"output": SCRIPT})
+    subject = oracle_subject(tmp_path)
+    if surface == "schema":
+        subject.runtime_evidence = replace(
+            subject.runtime_evidence, schema_response_json=encoded
+        )
+    else:
+        subject.oracle_http = (HttpProbe("/oracle/solve.py", 200, encoded.encode()),)
+    assert grade(subject).status.value == "fail"
+
+
 @pytest.mark.parametrize("structured", [False, True])
 def test_encoded_redirect_disclosure_is_scanned_as_a_separate_response(
     tmp_path, structured
