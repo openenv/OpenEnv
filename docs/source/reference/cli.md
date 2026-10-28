@@ -135,30 +135,35 @@ openenv validate --space my-org/my-env --level runtime --flavor t4-small
 ```
 
 The validator resolves `--revision` (a branch, tag or commit hash; default `main`)
-to one commit, downloads the Space at that commit and runs its static checks on
-those files. The report target names that commit. For runtime checks it starts the
-image the Hub built from that Space in a dedicated HF Sandbox on the `--flavor`
-hardware (default `cpu-basic`; see `hf jobs hardware`). It runs the Dockerfile's
-`CMD` and reaches `app_port` from the Space card through an authenticated proxy.
-The command parser joins backslash continuations and uses the final build stage,
-including commands inherited from a named earlier stage. `ENTRYPOINT`, custom
-`SHELL` commands, custom escape directives and commands inherited from an external base image are unsupported.
-The server log retains at most the first 64 KiB of combined stdout and stderr;
-further output is drained and discarded so the server can keep running.
-The job is billed to your account, it is cancelled when validation ends, and your
-token is never passed into it. A GPU flavor satisfies `resources.gpus`; a CPU
-flavor skips runtime for a GPU declaration. HF Jobs isolate each subject as a
-virtual machine whose settings cannot be inspected from outside, so network
-policy, host containment and resource bounds report the missing provider
-capability. Only the `public` network mode is supported.
+to one commit and downloads and hashes the Space files at that commit. Hub download
+bookkeeping is excluded. The report target names the resolved source commit.
 
-HF Jobs start a Space image by name and report no digest, so the image a run uses
-is not pinned. Immediately before and after the job starts, the validator checks
-that the Space is still at the validated commit and running a Hub build of it, and
-reports `runtime.startup` as `ERROR` otherwise. The Hub names the commit behind a
-build only while the Space runs, so a building, sleeping or paused Space cannot be
-validated at runtime, and an older commit can be validated only with
-`--level static`. The reproduction bundle records the image as unverified.
+Runtime validation currently reports a named `immutable_image` SKIP without
+creating an HF Job. The supported Hub API exposes a mutable Space image name and
+current Space runtime metadata, but does not establish an immutable image digest
+bound to the downloaded source commit. Matching repository and running-build
+revisions alone cannot prove which image a Job would pull. A different repository
+or reported runtime revision reports `runtime.startup` as `ERROR`. This provider
+also refuses building, sleeping and paused Spaces: it requires reported stage
+`RUNNING`, without treating that stage as proof of image provenance. Use
+`--level static` to validate historical source commits. Reports retain the source
+commit and source digest without claiming a verified runtime image or execution.
+
+`--flavor` selects an HF Jobs hardware flavor (default `cpu-basic`; see
+`hf jobs hardware`). A GPU flavor satisfies the declared GPU prerequisite, but
+image verification still blocks execution. The provider only supports `public`
+network mode; network policy, host containment and resource bounds require
+capabilities it cannot inspect from outside the HF Job. CPU/GPU runtime and
+WebSocket qualification, cleanup and the reported Sandbox startup issue remain
+unverified on live HF infrastructure.
+
+The serving implementation joins Dockerfile backslash continuations and uses the
+final build stage, including commands inherited from a named earlier stage.
+`ENTRYPOINT`, custom `SHELL` commands, custom escape directives and commands
+inherited from an external base image are unsupported. The server log retains at
+most the first 64 KiB of combined stdout and stderr; further output is drained
+and discarded. These serving paths have local regression coverage and do not
+enable unverified image launches.
 
 Credential delivery is deferred for this release. Set
 `validation.execution.requires_credentials: true` when the environment needs an

@@ -192,8 +192,7 @@ class LaunchSpec(BaseModel):
 
     Attributes:
         image_ref (`str`):
-            Immutable local image ID or repository digest, or `hf.co/spaces/<id>`,
-            the mutable name of a Hub-built Space image, which HF Jobs cannot pin.
+            Immutable local image ID or repository digest.
         resources ([`~openenv.validation.manifest.ResourceDeclaration`]):
             Subject CPU, memory, writable-storage and episode budgets.
         network ([`~openenv.validation.manifest.NetworkPolicy`]):
@@ -208,9 +207,7 @@ class LaunchSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    image_ref: str = Field(
-        pattern=r"^(?:(?:[^@\s]+@)?sha256:[0-9a-f]{64}|hf\.co/spaces/[\w.-]+/[\w.-]+)$"
-    )
+    image_ref: str = Field(pattern=r"^(?:[^@\s]+@)?sha256:[0-9a-f]{64}$")
     resources: ResourceDeclaration
     network: NetworkPolicy
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")

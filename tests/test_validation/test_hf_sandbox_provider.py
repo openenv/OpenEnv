@@ -2,6 +2,7 @@
 
 import json
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,7 @@ from openenv.validation.providers.hf_sandbox import (
 from openenv.validation.runner import source_digest
 from openenv.validation.runtime.contracts import LaunchSpec
 from openenv.validation.types import ProviderCapability
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 GPU = SimpleNamespace(quantity="1")
@@ -113,22 +115,33 @@ def space(tmp_path, cmd='CMD ["python", "-m", "served_probe.app"]'):
     (tmp_path / "Dockerfile").write_text(f"FROM python:3.12-slim\n{cmd}\n")
     (tmp_path / "README.md").write_text("---\nsdk: docker\napp_port: 8000\n---\n")
     (tmp_path / "openenv.yaml").write_text((PROBE / "openenv.yaml").read_text())
+    shutil.copytree(PROBE / "validation", tmp_path / "validation", dirs_exist_ok=True)
     return tmp_path
 
 
 @pytest.fixture
-def downloads(provider, monkeypatch):
-    """`snapshot_download` into `local_dir`, recording each requested revision."""
+def downloads(provider, monkeypatch, tmp_path_factory):
+    """Repository snapshots with real SDK bookkeeping kept in a separate cache."""
     revisions = []
+    cache_root = tmp_path_factory.mktemp("hf-cache")
 
-    def snapshot_download(repo_id, *, repo_type, revision, local_dir):
+    def snapshot_download(repo_id, *, repo_type, revision, local_dir=None):
         revisions.append(revision)
-        for path in list(space(Path(local_dir)).iterdir()):
-            # The Hub client records each download, with its time, in the folder.
+        cache = cache_root / f"download-{len(revisions)}"
+        root = Path(local_dir) if local_dir else cache / "snapshot"
+        root.mkdir(parents=True, exist_ok=True)
+        metadata_root = Path(local_dir) if local_dir else cache
+        for path in list(space(root).rglob("*")):
+            if not path.is_file():
+                continue
+            # SDK bookkeeping contains download timestamps.
             _local_folder.write_download_metadata(
-                Path(local_dir), path.name, revision, "etag"
+                metadata_root,
+                path.relative_to(root).as_posix(),
+                revision,
+                "etag",
             )
-        return local_dir
+        return str(root)
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
     return revisions
@@ -143,7 +156,7 @@ def validate_space(*args):
     return json.loads(result.output)
 
 
-def spec(image, gpus=0):
+def spec(image="sha256:" + "0" * 64, gpus=0):
     return LaunchSpec(
         image_ref=image,
         resources=ResourceDeclaration(
@@ -186,7 +199,8 @@ def test_revision_must_be_a_commit_hash(provider):
         HFSandboxValidationProvider("openenv-testing/probe", "main")
 
 
-def test_named_revision_is_validated_as_its_commit(downloads, monkeypatch):
+@pytest.mark.parametrize("revision", ["main", "release/v1", "a" * 40])
+def test_named_revision_is_validated_as_its_commit(downloads, monkeypatch, revision):
     revisions = []
     real = hf_sandbox.HFSandboxValidationProvider
 
@@ -195,7 +209,7 @@ def test_named_revision_is_validated_as_its_commit(downloads, monkeypatch):
         return real(space_id, revision, **kwargs)
 
     monkeypatch.setattr(hf_sandbox, "HFSandboxValidationProvider", recording)
-    report = validate_space("--revision", "main")
+    report = validate_space("--revision", revision)
     assert downloads == revisions == ["a" * 40]
     assert report["target"] == "spaces/openenv-testing/probe@" + "a" * 40
 
@@ -211,8 +225,9 @@ def test_repeat_downloads_hash_only_the_space_files(downloads, monkeypatch, tmp_
 
 def test_build_reads_the_space_command_and_port(provider, tmp_path):
     hf = provider()
-    image = hf.build(space(tmp_path), ExecutionDeclaration())
-    assert image == "hf.co/spaces/openenv-testing/probe"
+    with pytest.raises(UnsupportedCapability, match="immutable_image"):
+        hf.build(space(tmp_path), ExecutionDeclaration())
+    assert not FakeSandbox.created
     assert hf._command == ["python", "-m", "served_probe.app"]
     assert hf._port == 8000
 
@@ -221,7 +236,7 @@ def test_build_reads_the_space_command_and_port(provider, tmp_path):
     "hub, error",
     [
         ({"sha": "b" * 40, "built": "b" * 40}, "is at revision b"),
-        ({"built": "c" * 40}, "built from c"),
+        ({"built": "c" * 40}, "runtime revision c"),
         ({"space_stage": "BUILDING", "built": None}, "stage BUILDING"),
         ({"space_stage": "SLEEPING", "built": None}, "stage SLEEPING"),
     ],
@@ -232,43 +247,37 @@ def test_start_needs_a_running_build_of_the_validated_commit(
 ):
     healthy(monkeypatch)
     hf = provider()
-    image = hf.build(space(tmp_path), ExecutionDeclaration())
+    with pytest.raises(UnsupportedCapability, match="immutable_image"):
+        hf.build(space(tmp_path), ExecutionDeclaration())
     vars(hf._api).update(hub)
     with pytest.raises(ProviderError, match=error) as refused:
-        hf.start(spec(image))
+        hf.start(spec())
     assert type(refused.value) is ProviderError
     assert FakeSandbox.created == []
 
 
-def test_start_stops_the_job_if_the_space_moves_while_it_starts(
-    provider, tmp_path, monkeypatch
-):
-    healthy(monkeypatch)
+def test_start_refuses_even_a_digest_without_source_provenance(provider):
     hf = provider()
-    image = hf.build(space(tmp_path), ExecutionDeclaration())
-    create = FakeSandbox.create.__func__
-
-    def push_during_create(cls, **kwargs):
-        hf._api.sha = hf._api.built = "b" * 40
-        return create(cls, **kwargs)
-
-    monkeypatch.setattr(FakeSandbox, "create", classmethod(push_during_create))
-    with pytest.raises(ProviderError, match="is at revision b"):
-        hf.start(spec(image))
-    assert FakeSandbox.created[0].killed
+    with pytest.raises(UnsupportedCapability, match="immutable_image"):
+        hf.start(spec())
+    assert not FakeSandbox.created
 
 
-def test_start_serves_the_space_command_and_stop_verifies_the_job(
+def test_mutable_space_image_is_not_a_launch_spec():
+    with pytest.raises(ValidationError, match="image_ref"):
+        spec("hf.co/spaces/openenv-testing/probe")
+
+
+def test_subject_serves_the_space_command_and_stop_verifies_the_job(
     provider, tmp_path, monkeypatch
 ):
     healthy(monkeypatch)
     hf = provider("t4-small")
-    image = hf.build(space(tmp_path), ExecutionDeclaration())
-    running = hf.start(spec(image, gpus=1))
-    sandbox = FakeSandbox.created[0]
-    assert sandbox.kwargs["flavor"] == "t4-small"
-    assert sandbox.kwargs["image"] == "hf.co/spaces/openenv-testing/probe"
-    assert "forward_hf_token" not in sandbox.kwargs
+    with pytest.raises(UnsupportedCapability, match="immutable_image"):
+        hf.build(space(tmp_path), ExecutionDeclaration())
+    sandbox = FakeSandbox()
+    running = hf_sandbox.HFSandboxSubject(sandbox, hf)
+    running._serve(hf._command, hf._port, 1)
     command, options = sandbox.commands[0]
     assert command.startswith("python -m served_probe.app")
     assert options == {"shell": True, "background": True}
@@ -278,34 +287,29 @@ def test_start_serves_the_space_command_and_stop_verifies_the_job(
         "image": "hf.co/spaces/openenv-testing/probe",
         "image_verified": False,
         "space_revision": "a" * 40,
-        "built_revision": "a" * 40,
+        "built_revision": None,
         "flavor": "t4-small",
     }
     running.stop()
     assert sandbox.killed
 
 
-def test_unhealthy_start_kills_the_job(provider, tmp_path, monkeypatch):
+def test_subject_rejects_an_unhealthy_server(provider, monkeypatch):
     healthy(monkeypatch, status=503)
-    hf = provider()
-    image = hf.build(space(tmp_path), ExecutionDeclaration())
+    running = hf_sandbox.HFSandboxSubject(FakeSandbox(), provider())
     with pytest.raises(StartupError, match="/health"):
-        hf.start(spec(image).model_copy(update={"startup_timeout_s": 0.01}))
-    assert FakeSandbox.created[0].killed
+        running._serve(["serve"], 8000, 0.01)
 
 
-def test_gpu_declaration_needs_a_gpu_flavor(provider, tmp_path):
-    hf = provider()
-    image = hf.build(space(tmp_path), ExecutionDeclaration())
+def test_gpu_declaration_needs_a_gpu_flavor(provider):
     with pytest.raises(UnsupportedCapability, match="0 GPUs"):
-        hf.start(spec(image, gpus=1))
+        provider().start(spec(gpus=1))
     assert FakeSandbox.created == []
 
 
-def test_unverified_cleanup_is_an_error(provider, tmp_path, monkeypatch):
-    healthy(monkeypatch)
+def test_unverified_cleanup_is_an_error(provider, monkeypatch):
     hf = provider()
-    running = hf.start(spec(hf.build(space(tmp_path), ExecutionDeclaration())))
+    running = hf_sandbox.HFSandboxSubject(FakeSandbox(), hf)
     hf._api.stages = ["RUNNING"]
     clock = iter(range(0, 1000, 30))
     monkeypatch.setattr(hf_sandbox.time, "monotonic", lambda: next(clock))
@@ -403,3 +407,47 @@ def test_server_command_rejects_custom_shell_and_escape_directive():
         _server_command('FROM python\nSHELL ["bash", "-c"]\nCMD echo hello')
     with pytest.raises(UnsupportedCapability, match="escapes"):
         _server_command("# escape=`\nFROM python\nCMD echo hello")
+
+
+def test_runtime_skips_unverified_image_before_launch(downloads, monkeypatch, tmp_path):
+    from openenv.validation import runner
+
+    def unexpected_collection(*args, **kwargs):
+        raise AssertionError("unverified image must never collect runtime evidence")
+
+    monkeypatch.setattr(runner, "collect_runtime_evidence", unexpected_collection)
+    healthy(monkeypatch)
+    output = tmp_path / "report.json"
+    report = validate_space("--level", "runtime", "--output", str(output))
+    startup = next(r for r in report["results"] if r["check_id"] == "runtime.startup")
+    assert startup["status"] == "skip"
+    assert "immutable_image" in " ".join(startup["evidence"])
+    assert "a" * 40 in " ".join(startup["evidence"])
+    assert not FakeSandbox.created
+    assert report["target"] == "spaces/openenv-testing/probe@" + "a" * 40
+    assert report["source_digest"]
+    assert report["verdict"] != "pass"
+    bundle = json.loads((tmp_path / "report.artifacts/run-manifest.json").read_text())
+    assert not bundle["provider"].get("image_verified")
+
+
+def test_download_preserves_repository_files_in_the_sdk_metadata_path(
+    downloads, monkeypatch, tmp_path
+):
+    original = huggingface_hub.snapshot_download
+
+    def snapshot_with_repository_cache_file(*args, **kwargs):
+        root = Path(original(*args, **kwargs))
+        path = root / ".cache/huggingface/repository.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("tracked repository content")
+        return str(root)
+
+    monkeypatch.setattr(
+        huggingface_hub, "snapshot_download", snapshot_with_repository_cache_file
+    )
+    expected = space(tmp_path)
+    tracked = expected / ".cache/huggingface/repository.txt"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("tracked repository content")
+    assert validate_space()["source_digest"] == source_digest(expected)

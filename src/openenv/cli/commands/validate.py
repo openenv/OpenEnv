@@ -299,19 +299,17 @@ def validate(
                     HFSandboxValidationProvider,
                 )
 
-                # Download, run and report one commit, even if a branch moves.
+                # Download and report one commit, even if a branch moves.
                 revision = HfApi().space_info(space, revision=revision).sha
-                package_root = Path(
-                    snapshot_download(
-                        space,
-                        repo_type="space",
-                        revision=revision,
-                        local_dir=stack.enter_context(tempfile.TemporaryDirectory()),
-                    )
+                package_root = (
+                    Path(stack.enter_context(tempfile.TemporaryDirectory())) / "source"
                 )
-                # Validate only the Space's files, not the timestamped download
-                # metadata the Hub client keeps in the folder.
-                shutil.rmtree(package_root / ".cache" / "huggingface")
+                # Copy the repository snapshot out of the SDK cache, dereferencing
+                # its blob links without adding local_dir download metadata.
+                shutil.copytree(
+                    snapshot_download(space, repo_type="space", revision=revision),
+                    package_root,
+                )
                 provider = HFSandboxValidationProvider(space, revision, flavor=flavor)
             stack.enter_context(_sigterm_as_interrupt())
             validation_report = run_validation(
