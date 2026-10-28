@@ -1,12 +1,14 @@
 """Small, bounded reproduction bundles; reports remain the public result contract."""
 
 import hashlib
-import json
 import math
 import platform
 import re
 from dataclasses import asdict
+from decimal import Decimal
 from pathlib import Path
+
+from .json_values import dumps, loads
 
 _SECRET_KEY = re.compile(r"(?i)(password|secret|token|authorization|api[_-]?key)")
 _TOKEN_METADATA_KEYS = {"max_tokens", "prompt_token_ids"}
@@ -32,6 +34,8 @@ def _redact(value, *, depth=0):
         return _TOKEN.sub("[REDACTED]", value)
     if isinstance(value, float) and not math.isfinite(value):
         return {"invalid_number": str(value)}
+    if isinstance(value, Decimal) and not value.is_finite():
+        return {"invalid_number": str(value).lower()}
     return value
 
 
@@ -45,31 +49,31 @@ def _recording(evidence, trace_file):
             row = asdict(exchange)
             for key in ("request_json", "response_json"):
                 try:
-                    row[key] = json.loads(row[key])
-                except (ValueError, RecursionError):
-                    row[key] = "[malformed response omitted]"
+                    row[key] = loads(row[key])
+                except (ValueError, ArithmeticError, RecursionError):
+                    row[key] = "[malformed or unsupported response omitted]"
                     omitted_fields.append({"exchange_index": index, "field": key})
             trace.append(row)
         schema = None
         schema_parse_failed = False
         if evidence.observation_schema_json is not None:
             try:
-                schema = json.loads(evidence.observation_schema_json)
-            except (ValueError, RecursionError):
+                schema = loads(evidence.observation_schema_json)
+            except (ValueError, ArithmeticError, RecursionError):
                 schema_parse_failed = True
         reset_schema = None
         reset_schema_parse_failed = False
         if evidence.reset_observation_schema_json is not None:
             try:
-                reset_schema = json.loads(evidence.reset_observation_schema_json)
-            except (ValueError, RecursionError):
+                reset_schema = loads(evidence.reset_observation_schema_json)
+            except (ValueError, ArithmeticError, RecursionError):
                 reset_schema_parse_failed = True
         schema_response = None
         schema_response_parse_failed = False
         if evidence.schema_response_json is not None:
             try:
-                schema_response = json.loads(evidence.schema_response_json)
-            except (ValueError, RecursionError):
+                schema_response = loads(evidence.schema_response_json)
+            except (ValueError, ArithmeticError, RecursionError):
                 schema_response_parse_failed = True
         collector_metadata = {
             "evidence_schema_version": "1",
@@ -105,13 +109,20 @@ def _http_body(body):
     text = body.decode("utf-8", errors="replace")
     omitted = False
     try:
-        value = json.loads(text)
-    except (ValueError, RecursionError):
+        value = loads(text.lstrip("\ufeff"))
+    except (ValueError, ArithmeticError, RecursionError):
         value = text
         # Unparseable JSON loses the key context used by the structured redactor.
-        omitted = text.lstrip().startswith(("{", "[", '"'))
-    if isinstance(value, str) and _SECRET_KEY.search(value):
-        omitted = True
+        omitted = text.lstrip("\ufeff \t\r\n").startswith(("{", "[", '"'))
+    pending = [value]
+    while pending and not omitted:
+        child = pending.pop()
+        if isinstance(child, dict):
+            pending.extend(child.values())
+        elif isinstance(child, list):
+            pending.extend(child)
+        elif isinstance(child, str) and _SECRET_KEY.search(child):
+            omitted = True
     if omitted:
         value = "[unstructured body omitted]"
     return {
@@ -151,6 +162,7 @@ def write_runtime_bundle(
         files["runtime-plan.json"] = plan.model_dump(mode="json")
     files["run-manifest.json"] = {
         "bundle_schema_version": "1",
+        "json_numbers": "exact integer and decimal tokens; decode with Decimal",
         "source_digest": report.source_digest,
         "policy_version": report.policy_version,
         "manifest_schema_version": report.manifest.manifest_schema_version
@@ -192,9 +204,7 @@ def write_runtime_bundle(
     files["oracle-http.json"] = probes
     digests = []
     for name, value in files.items():
-        payload = (
-            json.dumps(_redact(value), indent=2, sort_keys=True, allow_nan=False) + "\n"
-        ).encode()
+        payload = (dumps(_redact(value)) + "\n").encode()
         (directory / name).write_bytes(payload)
         digests.append(f"{hashlib.sha256(payload).hexdigest()}  {name}\n")
     (directory / "SHA256SUMS").write_text("".join(digests))

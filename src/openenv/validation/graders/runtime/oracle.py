@@ -1,12 +1,12 @@
 """`runtime.oracle_containment`: trace declared artifacts through collected responses."""
 
-import json
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from ...report import CheckResult
+from ...runtime.json_values import loads, typed_json
 from ...types import CheckStatus, Level
 
 MAX_ORACLE_BYTES = 1024 * 1024
@@ -78,8 +78,8 @@ def oracle_inventory(root: Path, location: str) -> OracleInventory:
 def _json_values(text):
     """Walk JSON values iteratively, retaining raw text for non-JSON responses."""
     try:
-        pending = [json.loads(text)]
-    except (ValueError, RecursionError):
+        pending = [loads(text)]
+    except (ValueError, ArithmeticError, RecursionError):
         return
     while pending:
         value = pending.pop()
@@ -90,20 +90,22 @@ def _json_values(text):
             pending.extend(value)
 
 
-def _appears(artifacts, text):
+def _appears(artifacts, strings, structured, text):
     # Whole artifacts avoid conclusive failures from ordinary source-code lines.
     if any(artifact in text for artifact in artifacts):
         return True
+    parsed = False
     for value in _json_values(text):
-        if isinstance(value, str) and any(artifact in value for artifact in artifacts):
+        parsed = True
+        if isinstance(value, str) and any(artifact in value for artifact in strings):
             return True
-        if isinstance(value, (dict, list)):
-            normalized = json.dumps(
-                value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-            )
-            if normalized in artifacts:
-                return True
-    return False
+        if structured and isinstance(value, (dict, list)):
+            try:
+                if typed_json(value) in structured:
+                    return True
+            except ValueError:
+                pass
+    return not parsed and any(artifact in text for artifact in strings)
 
 
 class OracleContainmentGrader:
@@ -162,21 +164,16 @@ class OracleContainmentGrader:
             for _, text in inventory.files
         )
         # Structured artifacts are independent of indentation, key order and escaping.
+        structured = set()
+        strings = set(artifacts)
         for text in tuple(artifacts):
             try:
-                value = json.loads(text)
+                value = loads(text)
                 if isinstance(value, str) and len(value.strip()) >= _MIN_FINGERPRINT:
-                    artifacts.add(value.strip())
+                    strings.add(value.strip())
                 elif isinstance(value, (dict, list)):
-                    artifacts.add(
-                        json.dumps(
-                            value,
-                            sort_keys=True,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        )
-                    )
-            except (ValueError, RecursionError):
+                    structured.add(typed_json(value))
+            except (ValueError, ArithmeticError, RecursionError):
                 pass
         runs = [subject.runtime_evidence]
         if subject.isolation_evidence:
@@ -199,7 +196,13 @@ class OracleContainmentGrader:
             for probe in subject.oracle_http
             for body in (*probe.redirect_bodies, probe.body)
         ]
-        leaks = sorted({label for label, text in sources if _appears(artifacts, text)})
+        leaks = sorted(
+            {
+                label
+                for label, text in sources
+                if _appears(artifacts, strings, structured, text)
+            }
+        )
         measured = {
             "artifacts": len(inventory.files),
             "bytes_read": inventory.bytes_read,

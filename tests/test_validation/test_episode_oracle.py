@@ -94,6 +94,37 @@ def first_step_subject(after_reset, fresh=STEP):
     )
 
 
+@pytest.mark.parametrize("changed_leaf", [False, True])
+def test_deep_valid_json_encoding_is_not_episode_state(changed_leaf):
+    raw = '{"type":"observation","data":{"c":' + "[" * 500 + "0" + "]" * 500 + "}}"
+    after = raw.replace(":", ": ")
+    if changed_leaf:
+        after = after.replace("0", "1")
+    result = grade_isolation(first_step_subject(after, raw))
+    assert result.status is (CheckStatus.FAIL if changed_leaf else CheckStatus.PASS), (
+        result.evidence
+    )
+
+
+def test_json_beyond_parser_depth_is_explicitly_unproven(monkeypatch):
+    def depth_exceeded(text):
+        raise RecursionError("decoder nesting limit")
+
+    monkeypatch.setattr(
+        "openenv.validation.graders.runtime.isolation.loads", depth_exceeded
+    )
+    raw = '{"data": [0]}'
+    result = grade_isolation(first_step_subject(raw.replace(":", ": "), raw))
+    assert result.status is CheckStatus.SKIP
+    assert "JSON nesting exceeds the parser depth" in result.evidence[0]
+
+
+def test_json_beyond_decimal_range_is_unproven():
+    raw = '{"data":1e9999999999999999999}'
+    result = grade_isolation(first_step_subject(raw.replace(":", ": "), raw))
+    assert result.status is CheckStatus.SKIP
+
+
 @pytest.mark.parametrize(
     "after_reset",
     [
@@ -250,6 +281,57 @@ def oracle_subject(tmp_path, *, responses=(), http=(), location="oracle/solve.sh
 
 def grade_oracle(subject):
     return OracleContainmentGrader().run(subject)
+
+
+@pytest.mark.parametrize(
+    "private,public,status",
+    [
+        ("1.0000000000000001", "1.0", CheckStatus.PASS),
+        ("1e400", "2e400", CheckStatus.PASS),
+        ("1e400", "Infinity", CheckStatus.PASS),
+        ("1", "true", CheckStatus.PASS),
+        ("1", "1.0", CheckStatus.PASS),
+        ("1.0000000000000001", '"1.0000000000000001"', CheckStatus.PASS),
+        ("1.0000000000000001", "1.0000000000000001", CheckStatus.FAIL),
+        ("1.00e400", "1.0e400", CheckStatus.FAIL),
+    ],
+)
+def test_oracle_structured_numbers_are_exact_and_typed(
+    tmp_path, private, public, status
+):
+    from openenv.validation.runtime.contracts import WireExchange
+
+    subject = oracle_subject(tmp_path, http=[HttpProbe("/oracle/solve.sh", 404)])
+    (tmp_path / "oracle/solve.sh").write_text('{"private_answer":' + private + "}")
+    subject.runtime_evidence = replace(
+        subject.runtime_evidence,
+        exchanges=(
+            WireExchange("step", "{}", '{"data": {"private_answer": ' + public + "}}"),
+        ),
+    )
+    result = grade_oracle(subject)
+    assert result.status is status, result.evidence
+
+
+@pytest.mark.parametrize(
+    "public,status",
+    [
+        ('{"data":1234567890123456}', CheckStatus.PASS),
+        ('{"data":"1234567890123456"}', CheckStatus.FAIL),
+        ("1234567890123456", CheckStatus.PASS),
+        ("plain output: 1234567890123456", CheckStatus.FAIL),
+    ],
+)
+def test_string_oracle_is_not_a_json_number(tmp_path, public, status):
+    from openenv.validation.runtime.contracts import WireExchange
+
+    subject = oracle_subject(tmp_path, http=[HttpProbe("/oracle/solve.sh", 404)])
+    (tmp_path / "oracle/solve.sh").write_text('"1234567890123456"')
+    subject.runtime_evidence = replace(
+        subject.runtime_evidence, exchanges=(WireExchange("step", "{}", public),)
+    )
+    result = grade_oracle(subject)
+    assert result.status is status, result.evidence
 
 
 def test_contained_oracle_passes(tmp_path):

@@ -1,6 +1,7 @@
 """Episode isolation over real WebSocket sessions whose resets leak nothing."""
 
 import asyncio
+import hashlib
 import json
 import socket
 import threading
@@ -11,11 +12,16 @@ from types import SimpleNamespace
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from openenv.validation.graders.runtime.isolation import EpisodeIsolationGrader
+from openenv.validation.runner import run_validation
 from openenv.validation.runtime.collector import (
     collect_runtime_evidence,
     MAX_TRACE_BYTES,
 )
 from openenv.validation.runtime.contracts import IsolationEvidence, RuntimePlan
+from openenv.validation.types import Level
+from support.runtime import FakeRuntimeProvider
+from test_runtime_artifacts import rebuild
+from test_runtime_execution import FIXTURE
 
 PLAN = RuntimePlan.model_validate(
     {
@@ -67,7 +73,20 @@ def served(mode):
                     response = {"type": "observation", "data": data}
                 # The same values, encoded with another key order after a reset.
                 reordered = mode == "reordered" and resets == 2
-                await connection.send_text(json.dumps(response, sort_keys=reordered))
+                raw = json.dumps(response, sort_keys=reordered)
+                if request["type"] == "step" and mode == "precise_number":
+                    number = "1.0" if resets == 2 else "1.0000000000000001"
+                    raw = raw.replace(
+                        '"counter": ' + str(steps), '"counter": ' + number
+                    )
+                if request["type"] == "step" and mode == "deep_json":
+                    nested = "[" * 500 + "0" + "]" * 500
+                    raw = raw.replace(
+                        '"counter": ' + str(steps), '"counter": ' + nested
+                    )
+                    if resets == 2:
+                        raw = raw.replace(":", ": ")
+                await connection.send_text(raw)
         except WebSocketDisconnect:
             pass
 
@@ -115,6 +134,43 @@ def test_reencoded_responses_after_reset_match_a_fresh_episode():
     ]
     result = EpisodeIsolationGrader().run(subject)
     assert result.status.value == "pass", result.evidence
+
+
+def test_deep_wire_json_ignores_only_formatting():
+    subject = measure("deep_json")
+    assert subject.isolation_evidence.sequential.failure_reason is None
+    result = EpisodeIsolationGrader().run(subject)
+    assert result.status.value == "pass", result.evidence
+
+
+def test_precise_wire_divergence_survives_bundle_replay(tmp_path):
+    with served("precise_number") as base_url:
+        provider = FakeRuntimeProvider()
+        provider.subject.base_url = base_url
+        report = run_validation(
+            FIXTURE, max_level=Level.RUNTIME, provider=provider, artifacts_dir=tmp_path
+        )
+    results = {result.check_id: result for result in report.results}
+    assert results["runtime.startup"].status.value == "pass"
+    assert provider.subject.stopped
+    original = results["runtime.episode_isolation"]
+    assert original.status.value == "fail", original.evidence
+    replay = SimpleNamespace(
+        runtime_evidence=rebuild(tmp_path),
+        isolation_evidence=IsolationEvidence(
+            sequential=rebuild(tmp_path, "isolation-sequential"),
+            fresh=rebuild(tmp_path, "isolation-fresh"),
+        ),
+    )
+    result = EpisodeIsolationGrader().run(replay)
+    assert result.status == original.status
+    assert result.evidence == original.evidence
+    for session in ("collector", "isolation-sequential", "isolation-fresh"):
+        metadata = json.loads((tmp_path / f"{session}-evidence.json").read_text())
+        assert metadata["redacted"] is False
+    for line in (tmp_path / "SHA256SUMS").read_text().splitlines():
+        digest, filename = line.split(maxsplit=1)
+        assert hashlib.sha256((tmp_path / filename).read_bytes()).hexdigest() == digest
 
 
 def test_per_session_variation_is_unproven_not_a_leak():

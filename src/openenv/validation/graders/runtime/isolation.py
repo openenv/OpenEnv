@@ -1,30 +1,17 @@
 """`runtime.episode_isolation`: a reset must leave no trace of the previous episode."""
 
-import json
 import time
-from decimal import Decimal
 
 from ...report import CheckResult
+from ...runtime.json_values import loads, typed_json
 from ...types import CheckStatus, Level
-
-
-def _typed_json(value):
-    if isinstance(value, dict):
-        return dict, {key: _typed_json(child) for key, child in value.items()}
-    if isinstance(value, list):
-        return list, tuple(_typed_json(child) for child in value)
-    if isinstance(value, Decimal) and not value.is_finite():
-        raise ValueError("non-finite JSON constant")
-    return type(value), value
 
 
 def _canonical(text):
     """Compare exact decoded values while preserving JSON types and malformed text."""
     try:
-        return _typed_json(
-            json.loads(text, parse_float=Decimal, parse_constant=Decimal)
-        )
-    except (ValueError, ArithmeticError, RecursionError):
+        return typed_json(loads(text))
+    except ValueError:
         return text  # Malformed text is compared exactly as it was sent.
 
 
@@ -94,17 +81,32 @@ class EpisodeIsolationGrader:
                 {},
             )
         failure = isolation.sequential.failure_reason
-        sequential = _trace(isolation.sequential)
+        try:
+            sequential = _trace(isolation.sequential)
+            fresh = _trace(isolation.fresh)
+            baseline = _trace(reference)
+        except RecursionError:
+            return (
+                CheckStatus.SKIP,
+                ["JSON nesting exceeds the parser depth, so isolation is unproven"],
+                {},
+            )
+        except ArithmeticError:
+            return (
+                CheckStatus.SKIP,
+                [
+                    "JSON numeric range exceeds Decimal support, so isolation is unproven"
+                ],
+                {},
+            )
         resets = [i for i, x in enumerate(sequential) if x[0] == "reset"]
         if len(resets) < 2 and not failure:
             return CheckStatus.SKIP, ["no second episode was recorded"], {}
         split = resets[1] if len(resets) > 1 else len(sequential)
         first, after_reset = sequential[:split], sequential[split:]
-        fresh = _trace(isolation.fresh)
         measured = {"exchanges": len(after_reset)}
         # Isolation is only observable when fixed inputs give a fixed trace, so
         # the first episode of every session must agree.
-        baseline = _trace(reference)
         drift = _divergence(baseline, fresh) or _divergence(
             first, baseline, complete=not failure
         )
