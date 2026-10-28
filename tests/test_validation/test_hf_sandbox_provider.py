@@ -37,6 +37,8 @@ class FakeApi:
     def __init__(self, token=None):
         self.token = token
         self.sha = "a" * 40
+        self.space_stage = "RUNNING"
+        self.built = "a" * 40
         self.stages = ["RUNNING", "CANCELED"]
 
     def list_jobs_hardware(self):
@@ -46,7 +48,8 @@ class FakeApi:
         ]
 
     def space_info(self, space_id, revision=None):
-        return SimpleNamespace(sha=self.sha)
+        runtime = SimpleNamespace(raw={"stage": self.space_stage, "sha": self.built})
+        return SimpleNamespace(sha=self.sha, runtime=runtime)
 
     def inspect_job(self, job_id):
         stage = self.stages.pop(0) if len(self.stages) > 1 else self.stages[0]
@@ -203,15 +206,53 @@ def test_repeat_downloads_hash_only_the_space_files(downloads, monkeypatch, tmp_
     assert digests == [source_digest(space(tmp_path))] * 2
 
 
-def test_build_pins_the_validated_revision(provider, tmp_path):
+def test_build_reads_the_space_command_and_port(provider, tmp_path):
     hf = provider()
     image = hf.build(space(tmp_path), ExecutionDeclaration())
     assert image == "hf.co/spaces/openenv-testing/probe"
     assert hf._command == ["python", "-m", "served_probe.app"]
     assert hf._port == 8000
-    hf._api.sha = "b" * 40
-    with pytest.raises(StartupError, match="moved"):
-        hf.build(tmp_path, ExecutionDeclaration())
+
+
+@pytest.mark.parametrize(
+    "hub, error",
+    [
+        ({"sha": "b" * 40, "built": "b" * 40}, "is at revision b"),
+        ({"built": "c" * 40}, "built from c"),
+        ({"space_stage": "BUILDING", "built": None}, "stage BUILDING"),
+        ({"space_stage": "SLEEPING", "built": None}, "stage SLEEPING"),
+    ],
+    ids=["moved", "older-build", "building", "sleeping"],
+)
+def test_start_needs_a_running_build_of_the_validated_commit(
+    provider, tmp_path, monkeypatch, hub, error
+):
+    healthy(monkeypatch)
+    hf = provider()
+    image = hf.build(space(tmp_path), ExecutionDeclaration())
+    vars(hf._api).update(hub)
+    with pytest.raises(ProviderError, match=error) as refused:
+        hf.start(spec(image))
+    assert type(refused.value) is ProviderError
+    assert FakeSandbox.created == []
+
+
+def test_start_stops_the_job_if_the_space_moves_while_it_starts(
+    provider, tmp_path, monkeypatch
+):
+    healthy(monkeypatch)
+    hf = provider()
+    image = hf.build(space(tmp_path), ExecutionDeclaration())
+    create = FakeSandbox.create.__func__
+
+    def push_during_create(cls, **kwargs):
+        hf._api.sha = hf._api.built = "b" * 40
+        return create(cls, **kwargs)
+
+    monkeypatch.setattr(FakeSandbox, "create", classmethod(push_during_create))
+    with pytest.raises(ProviderError, match="is at revision b"):
+        hf.start(spec(image))
+    assert FakeSandbox.created[0].killed
 
 
 def test_start_serves_the_space_command_and_stop_verifies_the_job(
@@ -229,7 +270,14 @@ def test_start_serves_the_space_command_and_stop_verifies_the_job(
     assert command.startswith("python -m served_probe.app")
     assert options == {"shell": True, "background": True}
     assert running.base_url == "http://127.0.0.1:9"
-    assert running.inspect()["space_revision"] == "a" * 40
+    assert running.inspect() == {
+        "job_id": "job-1",
+        "image": "hf.co/spaces/openenv-testing/probe",
+        "image_verified": False,
+        "space_revision": "a" * 40,
+        "built_revision": "a" * 40,
+        "flavor": "t4-small",
+    }
     running.stop()
     assert sandbox.killed
 

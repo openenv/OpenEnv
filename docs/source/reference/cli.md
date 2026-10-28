@@ -140,13 +140,20 @@ those files. The report target names that commit. For runtime checks it starts t
 image the Hub built from that Space in a dedicated HF Sandbox on the `--flavor`
 hardware (default `cpu-basic`; see `hf jobs hardware`). It runs the Dockerfile's
 `CMD` and reaches `app_port` from the Space card through an authenticated proxy.
-The run stops if the Space has moved past the validated revision. The job is
-billed to your account, it is cancelled when validation ends, and your token is
-never passed into it. A GPU flavor satisfies `resources.gpus`; a CPU flavor skips
-runtime for a GPU declaration. HF Jobs isolate each subject as a virtual machine
-whose settings cannot be inspected from outside, so network policy, host
-containment and resource bounds report the missing provider capability. Only the
-`public` network mode is supported.
+The job is billed to your account, it is cancelled when validation ends, and your
+token is never passed into it. A GPU flavor satisfies `resources.gpus`; a CPU
+flavor skips runtime for a GPU declaration. HF Jobs isolate each subject as a
+virtual machine whose settings cannot be inspected from outside, so network
+policy, host containment and resource bounds report the missing provider
+capability. Only the `public` network mode is supported.
+
+HF Jobs start a Space image by name and report no digest, so the image a run uses
+is not pinned. Immediately before and after the job starts, the validator checks
+that the Space is still at the validated commit and running a Hub build of it, and
+reports `runtime.startup` as `ERROR` otherwise. The Hub names the commit behind a
+build only while the Space runs, so a building, sleeping or paused Space cannot be
+validated at runtime, and an older commit can be validated only with
+`--level static`. The reproduction bundle records the image as unverified.
 
 Credential delivery is deferred for this release. Set
 `validation.execution.requires_credentials: true` when the environment needs an

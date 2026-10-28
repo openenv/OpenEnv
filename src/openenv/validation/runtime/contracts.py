@@ -192,8 +192,8 @@ class LaunchSpec(BaseModel):
 
     Attributes:
         image_ref (`str`):
-            Immutable local image ID or repository digest, or `hf.co/spaces/<id>` for
-            a Hub-built Space image pinned by its validated revision.
+            Immutable local image ID or repository digest, or `hf.co/spaces/<id>`,
+            the mutable name of a Hub-built Space image, which HF Jobs cannot pin.
         resources ([`~openenv.validation.manifest.ResourceDeclaration`]):
             Subject CPU, memory, writable-storage and episode budgets.
         network ([`~openenv.validation.manifest.NetworkPolicy`]):

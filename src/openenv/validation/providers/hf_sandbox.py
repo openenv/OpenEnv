@@ -1,10 +1,13 @@
 """Run a Hugging Face Space as a validation subject in a dedicated HF Sandbox.
 
 Each subject is one dedicated `huggingface_hub.Sandbox`: one HF Job on the requested
-hardware flavor, running the image the Hub built from the Space. The host token
-starts and stops the job but is never forwarded into it. Jobs isolate subjects as
-virtual machines; their settings cannot be inspected from outside, so containment,
-resource and network-policy checks report the missing provider capability.
+hardware flavor, running the image the Hub built from the Space. HF Jobs start a
+Space image by name and report no digest, so the image is not pinned: immediately
+before and after the job starts, the provider checks that the Space is at the
+validated commit and running a Hub build of it. The host token starts and stops the
+job but is never forwarded into it. Jobs isolate subjects as virtual machines; their
+settings cannot be inspected from outside, so containment, resource and
+network-policy checks report the missing provider capability.
 """
 
 import json
@@ -61,7 +64,8 @@ class HFSandboxValidationProvider:
             The Space to run, e.g. `"openenv/echo_env"`.
         revision (`str`):
             The full commit hash of the validated Space files; resolve a branch or
-            tag first. The run refuses to start if the Space has moved on.
+            tag first. The run refuses to start unless the Space is at this commit
+            and running a Hub build of it.
         flavor (`str`, *optional*, defaults to `"cpu-basic"`):
             HF Jobs hardware flavor, as listed by `hf jobs hardware`.
         token (`str`, *optional*):
@@ -103,17 +107,28 @@ class HFSandboxValidationProvider:
         self._command: list[str] = []
         self._port = 7860
 
-    def build(self, root: Path, execution: ExecutionDeclaration) -> str:
-        """Resolve the Hub-built image of the validated Space revision."""
+    def _check_space(self) -> None:
+        """Refuse unless the Space is at the revision and running a Hub build of it."""
         try:
-            current = self._api.space_info(self.space_id).sha
+            info = self._api.space_info(self.space_id)
         except Exception as exc:
             raise ProviderError(f"Could not read Space {self.space_id}") from exc
-        if current != self.revision:
-            raise StartupError(
-                f"Space {self.space_id} moved from {self.revision} to {current} "
-                "during validation"
+        if info.sha != self.revision:
+            raise ProviderError(
+                f"Space {self.space_id} is at revision {info.sha}, not the "
+                f"validated revision {self.revision}"
             )
+        # The Hub names the commit a Space was built from only while it runs.
+        runtime = info.runtime.raw if info.runtime else {}
+        stage, built = runtime.get("stage"), runtime.get("sha")
+        if stage != "RUNNING" or built != self.revision:
+            raise ProviderError(
+                f"Space {self.space_id} is not running a Hub build of revision "
+                f"{self.revision} (stage {stage}, built from {built})"
+            )
+
+    def build(self, root: Path, execution: ExecutionDeclaration) -> str:
+        """Read the server command and port from the validated Space files."""
         try:
             dockerfile = (root / execution.dockerfile).read_text()
         except OSError:
@@ -137,6 +152,7 @@ class HFSandboxValidationProvider:
                 f"flavor {self.flavor} has {self.gpus} GPUs, "
                 f"{spec.resources.gpus} declared"
             )
+        self._check_space()
         try:
             sandbox = Sandbox.create(
                 image=spec.image_ref,
@@ -152,6 +168,8 @@ class HFSandboxValidationProvider:
             ) from exc
         subject = HFSandboxSubject(sandbox, self)
         try:
+            # The job pulled the Space image by name; refuse if the Space changed.
+            self._check_space()
             subject._serve(self._command, self._port, spec.startup_timeout_s)
         except BaseException:
             subject.stop()
@@ -207,7 +225,10 @@ class HFSandboxSubject:
         return {
             "job_id": self._sandbox.id,
             "image": f"hf.co/spaces/{self._provider.space_id}",
+            # Which build the job pulled is unverified: HF Jobs report no digest.
+            "image_verified": False,
             "space_revision": self._provider.revision,
+            "built_revision": self._provider.revision,
             "flavor": self._provider.flavor,
         }
 
