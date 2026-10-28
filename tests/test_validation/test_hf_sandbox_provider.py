@@ -1,5 +1,7 @@
 """The HF Sandbox provider: Space revision pinning, server start and verified cleanup."""
 
+import hashlib
+import importlib
 import json
 import shlex
 import shutil
@@ -221,6 +223,41 @@ def test_repeat_downloads_hash_only_the_space_files(downloads, monkeypatch, tmp_
     )
     digests = [validate_space()["source_digest"] for _ in range(2)]
     assert digests == [source_digest(space(tmp_path))] * 2
+
+
+@pytest.mark.parametrize("level", ["static", "runtime"])
+def test_space_reports_share_durable_source_identity(
+    downloads, monkeypatch, tmp_path, level
+):
+    command = importlib.import_module("openenv.cli.commands.validate")
+    run = command.run_validation
+    returned = []
+    source_paths = []
+
+    def record_report(package_root, **kwargs):
+        source_paths.append(package_root)
+        report = run(package_root, **kwargs)
+        returned.append(json.loads(report.model_dump_json()))
+        return report
+
+    monkeypatch.setattr(command, "run_validation", record_report)
+    output = tmp_path / "report.json"
+    printed = validate_space("--level", level, "--output", str(output))
+    bundled_path = tmp_path / "report.artifacts/report.json"
+    bundled = json.loads(bundled_path.read_text())
+    assert printed == returned[0] == bundled == json.loads(output.read_text())
+    assert printed["target"] == "spaces/openenv-testing/probe@" + "a" * 40
+    expected = tmp_path / "expected"
+    expected.mkdir()
+    assert printed["source_digest"] == source_digest(space(expected))
+    assert not source_paths[0].exists()
+    assert not FakeSandbox.created
+    for line in (bundled_path.parent / "SHA256SUMS").read_text().splitlines():
+        expected_hash, name = line.split(maxsplit=1)
+        assert (
+            hashlib.sha256((bundled_path.parent / name).read_bytes()).hexdigest()
+            == expected_hash
+        )
 
 
 def test_build_reads_the_space_command_and_port(provider, tmp_path):

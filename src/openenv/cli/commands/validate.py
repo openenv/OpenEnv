@@ -321,9 +321,10 @@ def validate(
                 artifacts_dir=(
                     output.parent / (output.stem + ".artifacts") if output else None
                 ),
+                report_target=f"spaces/{space}@{revision}"
+                if space is not None
+                else None,
             )
-            if space is not None:
-                validation_report.target = f"spaces/{space}@{revision}"
         report_json = write_report(validation_report, output)
     except (SignatureError, UnsupportedPackageError) as exc:
         typer.echo(f"Error: {exc}", err=True)
