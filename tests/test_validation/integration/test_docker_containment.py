@@ -77,6 +77,50 @@ def test_good_host_containment(image, mode):
     assert result.status is CheckStatus.PASS, result.evidence
     assert sorted(measured["allotted_writable"]) == ["/dev/shm", "/tmp"]
     assert {p["name"] for p in measured["processes"]} >= {"docker-init"}
+    mounts = measured["mounts"]
+    assert [m["read_only"] for m in mounts if m["mount_point"] == "/"] == [True]
+    # The allotted roots together hold the declared writable-storage budget.
+    sizes = {m["mount_point"]: m["size_bytes"] for m in mounts if not m["read_only"]}
+    assert sizes["/tmp"] + sizes["/dev/shm"] == 64 * 1024 * 1024
+
+
+def test_writable_image_root_is_detected(image, monkeypatch):
+    # Fault injection: the effective launch loses --read-only.
+    original = docker._command
+
+    def without_read_only(argv, *args, **kwargs):
+        if argv[:2] == ["docker", "create"]:
+            argv = [arg for arg in argv if arg != "--read-only"]
+        return original(argv, *args, **kwargs)
+
+    monkeypatch.setattr(docker, "_command", without_read_only)
+    spec = launch(image)
+    running = DockerValidationProvider().start(spec)
+    try:
+        # A world-writable directory below root-owned top-level directories.
+        subprocess.run(
+            ["docker", "exec", "--user", "0", running.name, "sh", "-c"]
+            + ["mkdir -p /opt/nested/data && chmod 777 /opt/nested/data"],
+            capture_output=True,
+            timeout=30,
+            check=True,
+        )
+        escape = running.exec(
+            [
+                "python",
+                "-c",
+                "open('/opt/nested/data/escape', 'wb').write(bytes(2**20))",
+            ],
+            30,
+        )
+        measured = running.measure_containment()
+    finally:
+        running.stop()
+    assert owned(spec.run_id) == []
+    assert escape.exit_code == 0, escape.stderr
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    assert "the image root is writable" in result.evidence
 
 
 def test_root_process_in_the_subject_is_detected(image):

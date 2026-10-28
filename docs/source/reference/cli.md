@@ -65,9 +65,13 @@ the control reaches the sink, and a denial that is not proven is a `SKIP`.
 `runtime.host_containment` inspects the launch from outside the subject and runs a
 probe from the validator image that joins only the subject's PID namespace, as the
 subject's own user. It fails when the subject runs privileged, shares a host
-namespace, holds capabilities, runs as root, has an unexpected mount, or can write
-outside `/tmp` and `/dev/shm`. A probe that cannot write an allotted root leaves
-write denial unproven and reports `SKIP`.
+namespace, holds capabilities, runs as root or has an unexpected mount. The probe
+also reads every writable filesystem from the subject's mount table. The image root
+must be read-only. Besides `/tmp` and `/dev/shm`, only Docker's `/proc`, `/dev/pts`
+and `/dev/mqueue` pseudo-filesystems and its root-owned `/dev` may be writable, and
+the subject must not be able to create files in `/dev`. A probe that cannot write an
+allotted root, or a mount table that cannot be read in full, leaves containment
+unproven and reports `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,

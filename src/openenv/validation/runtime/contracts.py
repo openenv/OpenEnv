@@ -422,20 +422,32 @@ class MountRecord(BaseModel):
     """
     One mount in the subject's mount namespace.
 
+    The mounts that are not read-only are the subject's complete writable-filesystem
+    inventory.
+
     Attributes:
         mount_point (`str`):
             Path inside the subject.
         fstype (`str`):
             Filesystem type.
+        device (`str`):
+            `major:minor` of the mounted filesystem; bind mounts of one filesystem
+            share it.
         read_only (`bool`):
-            Whether the mount is read-only.
+            Whether the mount or its filesystem is read-only.
+        size_bytes (`int`, *optional*):
+            Capacity of the mounted filesystem from `statvfs`. `None` when unknown,
+            including kernel pseudo-filesystems and unbounded tmpfs, which report no
+            capacity.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     mount_point: str = Field(max_length=4096)
     fstype: str = Field(max_length=64)
+    device: str = Field(pattern=r"^\d+:\d+$")
     read_only: bool
+    size_bytes: int | None = Field(ge=1)
 
 
 class ContainmentEvidence(BaseModel):
@@ -450,13 +462,14 @@ class ContainmentEvidence(BaseModel):
         processes (`list[ProcessIdentity]`):
             Every process measured in the subject's PID namespace.
         mounts (`list[MountRecord]`):
-            The subject's mount table.
+            The subject's complete mount table; empty if it could not be read.
         allotted (`list[str]`):
             Writable roots the provider grants the subject.
         allotted_writable (`list[str]`):
             Allotted roots the probe could write as the subject's identity.
         writable (`list[str]`):
-            Paths outside the allotted roots the probe could write.
+            Read-write mount points outside the allotted roots where the probe could
+            create a file as the subject's identity.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

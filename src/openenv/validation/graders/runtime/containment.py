@@ -17,6 +17,15 @@ _RUNTIME_MOUNTS = {
 }
 _PSEUDO_ROOTS = ("/proc", "/sys", "/dev")
 _PSEUDO_FS = {"proc", "sysfs", "tmpfs", "devpts", "mqueue", "cgroup", "cgroup2"}
+# Read-write filesystems of a hardened Docker launch that hold no subject files.
+_NOT_STORAGE = {
+    # Kernel interfaces; Docker makes the sensitive entries read-only or masks them.
+    ("/proc", "proc"),
+    # Pseudo-terminal device nodes.
+    ("/dev/pts", "devpts"),
+    # POSIX message queues, bounded by the subject's own IPC namespace limits.
+    ("/dev/mqueue", "mqueue"),
+}
 
 
 class HostContainmentGrader:
@@ -40,8 +49,9 @@ class HostContainmentGrader:
             evidence=problems or ["measured isolation matches the agent boundary"],
             measured=measured,
             remediation=(
-                "Run the subject unprivileged, without host namespaces, mounts or "
-                "devices, and with writes confined to its allotted roots."
+                "Run the subject unprivileged from a read-only image, without host "
+                "namespaces, mounts or devices, and with writes confined to its "
+                "allotted roots."
                 if status is CheckStatus.FAIL
                 else None
             ),
@@ -84,17 +94,44 @@ class HostContainmentGrader:
                 mount.mount_point == root or mount.mount_point.startswith(root + "/")
                 for root in _PSEUDO_ROOTS
             )
-            if (
-                mount.mount_point not in _RUNTIME_MOUNTS
-                and mount.mount_point not in evidence.allotted
-                and not pseudo
-            ):
+            allotted = (
+                mount.mount_point in evidence.allotted and mount.fstype == "tmpfs"
+            )
+            if mount.mount_point not in _RUNTIME_MOUNTS and not allotted and not pseudo:
                 problems.append(
                     f"unexpected mount at {mount.mount_point} ({mount.fstype})"
                 )
+        # The read-write mounts are every filesystem the subject could store data in.
+        if any(m.mount_point == "/" and not m.read_only for m in evidence.mounts):
+            problems.append("the image root is writable")
+        # Docker's root-owned /dev tmpfs, also bound as /dev/null over masked /proc
+        # files. The write probe below shows whether the subject can use it.
+        dev = {
+            m.device
+            for m in evidence.mounts
+            if (m.mount_point, m.fstype) == ("/dev", "tmpfs")
+        }
+        for mount in evidence.mounts:
+            if (
+                mount.read_only
+                or mount.mount_point in ("/", *evidence.allotted)
+                or (mount.mount_point, mount.fstype) in _NOT_STORAGE
+                or mount.device in dev
+            ):
+                continue
+            problems.append(
+                "writable filesystem outside the allotted roots: "
+                f"{mount.mount_point} ({mount.fstype})"
+            )
+        not_storage = {
+            m.mount_point
+            for m in evidence.mounts
+            if (m.mount_point, m.fstype) in _NOT_STORAGE
+        }
         problems += [
             f"subject can write outside its allotted roots: {path}"
             for path in evidence.writable
+            if path not in not_storage
         ]
         measured = {
             "processes": len(evidence.processes),
@@ -106,10 +143,10 @@ class HostContainmentGrader:
             return CheckStatus.FAIL, problems, measured
         if not evidence.processes:
             return CheckStatus.SKIP, ["no subject process could be measured"], measured
-        if not evidence.mounts:
+        if not any(m.mount_point == "/" for m in evidence.mounts):
             return (
                 CheckStatus.SKIP,
-                ["the subject's mount table could not be read"],
+                ["the subject's mount table could not be read in full"],
                 measured,
             )
         if sorted(evidence.allotted_writable) != sorted(evidence.allotted):

@@ -15,9 +15,21 @@ from openenv.validation.runner import run_validation
 from openenv.validation.types import CheckStatus, Level, ProviderCapability
 from support.runtime import evidence, FakeRunningSubject, FakeRuntimeProvider
 
+MIB = 1024 * 1024
+
+
+def mount(mount_point, fstype, device, read_only, size_bytes=None):
+    return {
+        "mount_point": mount_point,
+        "fstype": fstype,
+        "device": device,
+        "read_only": read_only,
+        "size_bytes": size_bytes,
+    }
+
 
 def contained(**changes):
-    """Evidence shaped like a hardened Docker-local subject."""
+    """Evidence measured from a hardened Docker-local subject."""
     measured = {
         "schema_version": 1,
         "launch": {
@@ -46,18 +58,26 @@ def contained(**changes):
             },
         ],
         "mounts": [
-            {"mount_point": "/", "fstype": "overlay", "read_only": True},
-            {"mount_point": "/proc", "fstype": "proc", "read_only": False},
-            {"mount_point": "/proc/kcore", "fstype": "tmpfs", "read_only": True},
-            {"mount_point": "/dev", "fstype": "tmpfs", "read_only": False},
-            {"mount_point": "/dev/shm", "fstype": "tmpfs", "read_only": False},
-            {"mount_point": "/sys/fs/cgroup", "fstype": "cgroup2", "read_only": True},
-            {"mount_point": "/etc/hosts", "fstype": "ext4", "read_only": False},
-            {"mount_point": "/tmp", "fstype": "tmpfs", "read_only": False},
+            mount("/", "overlay", "0:105", True, 60000 * MIB),
+            mount("/proc", "proc", "0:179", False),
+            mount("/proc/sys", "proc", "0:179", True),
+            # Docker masks files in /proc by binding /dev/null over them.
+            mount("/proc/kcore", "tmpfs", "0:180", False, 64 * MIB),
+            mount("/proc/scsi", "tmpfs", "0:249", True, 4096),
+            mount("/dev", "tmpfs", "0:180", False, 64 * MIB),
+            mount("/dev/pts", "devpts", "0:181", False),
+            mount("/dev/mqueue", "mqueue", "0:176", False),
+            mount("/dev/shm", "tmpfs", "0:184", False, 32 * MIB),
+            mount("/sys", "sysfs", "0:183", True),
+            mount("/sys/fs/cgroup", "cgroup2", "0:41", True),
+            mount("/usr/sbin/docker-init", "overlay", "0:26", True, 60000 * MIB),
+            mount("/etc/hosts", "ext4", "254:1", True, 60000 * MIB),
+            mount("/tmp", "tmpfs", "0:185", False, 32 * MIB),
         ],
         "allotted": ["/tmp", "/dev/shm"],
         "allotted_writable": ["/tmp", "/dev/shm"],
-        "writable": [],
+        # Creating a file in /dev/mqueue creates a message queue, not stored data.
+        "writable": ["/dev/mqueue"],
     }
     measured.update(changes)
     return measured
@@ -120,11 +140,9 @@ def test_unsafe_process_fails(process, expected):
 def test_host_mount_and_out_of_root_write_fail():
     measured = contained(writable=["/app"])
     measured["mounts"].append(
-        {"mount_point": "/var/run/docker.sock", "fstype": "tmpfs", "read_only": False}
+        mount("/var/run/docker.sock", "tmpfs", "0:300", False, 64 * MIB)
     )
-    measured["mounts"].append(
-        {"mount_point": "/dev/host", "fstype": "ext4", "read_only": False}
-    )
+    measured["mounts"].append(mount("/dev/host", "ext4", "254:1", False, 60000 * MIB))
     result = grade(measured)
     assert result.status is CheckStatus.FAIL
     evidence = " ".join(result.evidence)
@@ -133,11 +151,61 @@ def test_host_mount_and_out_of_root_write_fail():
     assert "outside its allotted roots: /app" in evidence
 
 
+def test_writable_image_root_fails():
+    measured = contained()
+    measured["mounts"][0]["read_only"] = False
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    assert result.evidence == ["the image root is writable"]
+    assert result.remediation
+
+
+@pytest.mark.parametrize(
+    "extra, expected",
+    [
+        # A tmpfs below /dev passes the mount check yet can hold subject files.
+        (
+            mount("/dev/cache", "tmpfs", "0:300", False, 1024 * MIB),
+            "/dev/cache (tmpfs)",
+        ),
+        # Runtime bind mounts are expected only read-only.
+        (
+            mount("/etc/resolv.conf", "ext4", "254:1", False, 60000 * MIB),
+            "/etc/resolv.conf (ext4)",
+        ),
+    ],
+)
+def test_writable_filesystem_outside_the_allotted_roots_fails(extra, expected):
+    measured = contained()
+    measured["mounts"].append(extra)
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    assert result.evidence == [
+        f"writable filesystem outside the allotted roots: {expected}"
+    ]
+
+
+def test_subject_writable_dev_fails():
+    result = grade(contained(writable=["/dev", "/dev/mqueue"]))
+    assert result.status is CheckStatus.FAIL
+    assert result.evidence == ["subject can write outside its allotted roots: /dev"]
+
+
+def test_allotted_root_backed_by_host_storage_fails():
+    measured = contained()
+    measured["mounts"][-1] = mount("/tmp", "ext4", "254:1", False, 60000 * MIB)
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    assert result.evidence == ["unexpected mount at /tmp (ext4)"]
+
+
 @pytest.mark.parametrize(
     "changes, reason",
     [
         ({"processes": []}, "no subject process"),
-        ({"mounts": []}, "mount table"),
+        # Write candidates come from the mount table, so none are tried without it.
+        ({"mounts": [], "writable": []}, "mount table"),
+        ({"mounts": contained()["mounts"][1:]}, "mount table"),
         ({"allotted_writable": ["/dev/shm"]}, "write denial is unproven"),
     ],
 )

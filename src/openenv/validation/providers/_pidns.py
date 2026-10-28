@@ -6,9 +6,9 @@ each subject process from `/proc` and reaches the subject's mount namespace thro
 `/proc/1/root`, as the subject's own user.
 """
 
-# Measures process identity, mounts and writable paths. argv: allotted roots.
+# Measures process identity, the mount table and writable mounts. argv: allotted roots.
 PROBE_SCRIPT = """
-import json, os, sys, uuid
+import json, os, re, sys, uuid
 me = os.getpid()
 allotted = sys.argv[1:]
 processes = []
@@ -28,20 +28,31 @@ for entry in sorted(os.listdir("/proc"), key=lambda e: (len(e), e)):
         "no_new_privs": status.get("NoNewPrivs", "0").strip() == "1",
         "seccomp": int(status.get("Seccomp", "0")),
     })
-mounts = []
+root = "/proc/1/root"
+def size(path):
+    try:
+        info = os.statvfs(root + path)
+    except OSError:
+        return None
+    return info.f_blocks * info.f_frsize or None
 try:
+    mounts = []
     with open("/proc/1/mountinfo") as f:
         for line in f:
             fields = line.split()
             separator = fields.index("-")
+            mount_point = re.sub(r"\\\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4])
             mounts.append({
-                "mount_point": fields[4].replace("\\\\040", " "),
+                "mount_point": mount_point,
                 "fstype": fields[separator + 1],
-                "read_only": "ro" in fields[5].split(","),
+                "device": fields[2],
+                # Writes need both the mount and its filesystem to be read-write.
+                "read_only": "ro" in fields[5].split(",") + fields[separator + 3].split(","),
+                "size_bytes": size(mount_point),
             })
 except (OSError, ValueError, IndexError):
-    pass
-root = "/proc/1/root"
+    # A partial table could omit a writable filesystem.
+    mounts = []
 def writable(path):
     target = os.path.join(root + path, ".openenv-containment-" + uuid.uuid4().hex)
     try:
@@ -51,24 +62,14 @@ def writable(path):
     os.close(fd)
     os.unlink(target)
     return True
-candidates = {"/"}
-try:
-    for name in os.listdir(root):
-        path = "/" + name
-        if path not in ("/proc", "/sys") and os.path.isdir(root + path) and not os.path.islink(root + path):
-            candidates.add(path)
-except OSError:
-    pass
-for process in processes:
-    try:
-        candidates.add(os.readlink(f"/proc/{process['pid']}/cwd"))
-    except OSError:
-        pass
-inside = lambda path: any(path == a or path.startswith(a + "/") for a in allotted)
+# Every writable filesystem is a mount, so try each one outside the allotted roots.
+candidates = {
+    m["mount_point"] for m in mounts if not m["read_only"] and m["mount_point"] not in allotted
+}
 print(json.dumps({
     "processes": processes,
     "mounts": mounts,
     "allotted_writable": [a for a in allotted if writable(a)],
-    "writable": sorted(p for p in candidates if not inside(p) and writable(p)),
+    "writable": sorted(p for p in candidates if writable(p)),
 }))
 """
