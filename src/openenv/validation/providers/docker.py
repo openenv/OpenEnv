@@ -347,6 +347,8 @@ class DockerValidationProvider:
             "--stop-timeout",
             "0",
             "--init",
+            "--cgroupns",
+            "private",
             "--user",
             "65532:65532",
             "--read-only",

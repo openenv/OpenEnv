@@ -12,6 +12,7 @@ _RUNTIME_MOUNTS = {
     "/etc/hosts",
     "/etc/hostname",
     "/etc/resolv.conf",
+    "/sbin/docker-init",
     "/usr/sbin/docker-init",
     "/run/podman-init",
 }

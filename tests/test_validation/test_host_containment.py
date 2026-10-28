@@ -53,6 +53,7 @@ def contained(**changes):
             {"mount_point": "/dev/shm", "fstype": "tmpfs", "read_only": False},
             {"mount_point": "/sys/fs/cgroup", "fstype": "cgroup2", "read_only": True},
             {"mount_point": "/etc/hosts", "fstype": "ext4", "read_only": False},
+            {"mount_point": "/sbin/docker-init", "fstype": "ext4", "read_only": True},
             {"mount_point": "/tmp", "fstype": "tmpfs", "read_only": False},
         ],
         "allotted": ["/tmp", "/dev/shm"],
