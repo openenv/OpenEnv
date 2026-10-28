@@ -15,5 +15,6 @@ jobs:
       commit_sha: ${{ github.event.pull_request.head.sha }}
       pr_number: ${{ github.event.number }}
       package: openenv
+      repo_owner: openenv
       version_tag_suffix: ""
 # doc-builder registry now provides tomli for the light install

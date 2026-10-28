@@ -72,7 +72,7 @@ need a contamination check after the run.
 
 HF Jobs has no egress control, and its containers can't create network
 namespaces or firewall rules. So the broker sends
-[`server/job_launcher.py`](https://github.com/huggingface/OpenEnv/blob/main/envs/posttrain_env/server/job_launcher.py) as the job's script, with the
+[`server/job_launcher.py`](https://github.com/openenv/OpenEnv/blob/main/envs/posttrain_env/server/job_launcher.py) as the job's script, with the
 agent's script and packages embedded. Once it has installed the packages, the
 launcher installs a seccomp filter that refuses every socket except `AF_UNIX`,
 and io_uring and cross-process memory access; systemd's
@@ -235,7 +235,7 @@ with PostTrainEnv(
     print(final.observation.metadata["service_spend"])
 ```
 
-[`examples/posttrain_env_agent.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/posttrain_env_agent.py)
+[`examples/posttrain_env_agent.py`](https://github.com/openenv/OpenEnv/blob/main/examples/posttrain_env_agent.py)
 plays a whole episode with an LLM through any OpenAI-compatible endpoint,
 Hugging Face Inference Providers by default. The agent's API key is its own;
 it never needs the broker's token.

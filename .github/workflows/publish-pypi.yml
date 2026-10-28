@@ -1,7 +1,7 @@
 name: Publish OpenEnv to PyPI
 
 # Requires a PyPI Trusted Publisher for:
-# - repository: huggingface/OpenEnv
+# - repository: openenv/OpenEnv
 # - workflow: publish-pypi.yml
 # - environment: pypi
 on:

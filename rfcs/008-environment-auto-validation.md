@@ -12,7 +12,7 @@ defect classes — verifiers awarding max reward to an empty solution, correct s
 below max, answers leaked in observations, nondeterministic rewards. This RFC specifies
 **environment auto-validation**: a single local command (`openenv validate`) that grades an
 environment or task package against the quality bar defined in
-[#778](https://github.com/huggingface/openenv/issues/778), plus the **contracts** — signature
+[#778](https://github.com/openenv/openenv/issues/778), plus the **contracts** — signature
 detection, parser interface, normalized manifest schema, grader registry, report schema, versioned
 severity policy, provider interface — that let any operator build a validation hub on top.
 
@@ -49,7 +49,7 @@ A second, converging problem: task packages. PostTrain/BenchFlow packages (`task
 tasks (`task.toml`, already consumed by `envs/tbench2_env`) are one-shot lifecycles — agent runs
 to completion, verifier reads artifacts — that need the same validation bar as served OpenEnv
 environments, without pretending to be served environments.
-[#898](https://github.com/huggingface/openenv/issues/898) is that lane; this RFC subsumes it under
+[#898](https://github.com/openenv/openenv/issues/898) is that lane; this RFC subsumes it under
 one mechanism (the grader registry, below) rather than a parallel validation core.
 
 ### Goals
@@ -661,9 +661,9 @@ mapping).
 
 ## References
 
-- [#778 — RFC 008: Environment auto validation](https://github.com/huggingface/openenv/issues/778)
+- [#778 — RFC 008: Environment auto validation](https://github.com/openenv/openenv/issues/778)
   (the bar: six properties, 44 acceptance tests)
-- [#898 — Task validation for external task packages](https://github.com/huggingface/openenv/issues/898)
+- [#898 — Task validation for external task packages](https://github.com/openenv/openenv/issues/898)
   (the one-shot lane, subsumed here as parsers under the grader registry)
 - [RFC 004 — Rubrics](./004-rubrics.md) (leveraged as the served-format `llm_judged` path)
 - Design review: "Automatic validation of OpenEnv environments" (Zach Wentz · Reflection, 2026-08)

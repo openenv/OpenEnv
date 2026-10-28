@@ -23,7 +23,7 @@ OpenEnv uses Claude Code as the primary development tool. We follow a two-phase 
 Skills and agents are auto-discovered when you run Claude Code in this repo:
 
 ```bash
-git clone https://github.com/huggingface/OpenEnv
+git clone https://github.com/openenv/OpenEnv
 cd OpenEnv
 # Install git hooks for the team
 bash .claude/hooks/install.sh
