@@ -94,8 +94,10 @@ descendant marker alone leaves qualification unproven. It does not qualify
 enforcement of the declared `episode_timeout_s` for a served episode.
 `runtime.episode_isolation` runs the replay plan twice on one session, as episode A
 and then a reset into episode B, and once more on a new session. Episode B must
-match the fresh episode exchange for exchange. If two fresh episodes differ, the
-subject is not deterministic under fixed inputs and the check reports `SKIP`.
+match the fresh episode exchange for exchange. Messages are compared as decoded
+JSON values, so key order and formatting do not count. If episode A or the fresh
+episode differs from the original measured episode, the subject is not
+deterministic under fixed inputs and the check reports `SKIP`.
 `runtime.oracle_containment` applies when `capabilities.oracle` is declared. It
 fails when distinctive text from the oracle artifact appears in any reset, step,
 state or schema response, or when `GET` on the oracle's declared path returns it.

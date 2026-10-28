@@ -67,6 +67,66 @@ def test_nondeterministic_subject_is_unproven_not_failed():
     assert "two fresh episodes differ" in result.evidence[0]
 
 
+def test_first_episode_variation_on_the_reset_session_is_unproven_not_a_leak():
+    # A per-session value: the reset session's episodes agree with each other,
+    # but not with the two fresh sessions, so the reset itself leaked nothing.
+    varied = episode(extra="session 2")
+    result = grade_isolation(isolation_subject(sequential=varied + varied))
+    assert result.status is CheckStatus.SKIP
+    assert "two fresh episodes differ at exchange 2 (step)" in result.evidence[0]
+
+
+STEP = '{"type": "observation", "data": {"c": 1}}'
+
+
+def first_step_subject(after_reset, fresh=STEP):
+    """Episode B's first step response as raw text; other episodes send `fresh`."""
+
+    def with_first_step(raw):
+        rows = episode()
+        rows[2] = replace(rows[2], response_json=raw)
+        return rows
+
+    return isolation_subject(
+        reference=with_first_step(fresh),
+        sequential=with_first_step(fresh) + with_first_step(after_reset),
+        fresh=with_first_step(fresh),
+    )
+
+
+@pytest.mark.parametrize(
+    "after_reset",
+    [
+        '{"data": {"c": 1}, "type": "observation"}',
+        '{\n  "type" : "observation",\n  "data" : {"c": 1}\n}',
+        '{"type": "\\u006fbservation", "data": {"\\u0063": 1}}',
+    ],
+    ids=["key_order", "whitespace", "escapes"],
+)
+def test_equivalent_json_encodings_are_the_same_response(after_reset):
+    result = grade_isolation(first_step_subject(after_reset))
+    assert result.status is CheckStatus.PASS, result.evidence
+
+
+@pytest.mark.parametrize(
+    "fresh, after_reset",
+    [
+        (STEP, '{"type": "observation", "data": {"c": true}}'),
+        (STEP, '{"type": "observation", "data": {"c": 1.0}}'),
+        (
+            '{"type": "observation", "data": {"c": [1, 2]}}',
+            '{"type": "observation", "data": {"c": [2, 1]}}',
+        ),
+        (STEP, '{"type": "observation", "data": {"c": 1}'),
+    ],
+    ids=["bool_for_int", "float_for_int", "array_order", "malformed"],
+)
+def test_value_type_order_and_malformed_differences_remain(fresh, after_reset):
+    result = grade_isolation(first_step_subject(after_reset, fresh))
+    assert result.status is CheckStatus.FAIL
+    assert "exchange 2 (step)" in result.evidence[0]
+
+
 def test_failed_second_episode_fails_and_failed_reference_skips():
     subject = isolation_subject()
     broken = replace(

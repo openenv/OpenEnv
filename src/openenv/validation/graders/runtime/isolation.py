@@ -1,13 +1,25 @@
 """`runtime.episode_isolation`: a reset must leave no trace of the previous episode."""
 
+import json
 import time
 
 from ...report import CheckResult
 from ...types import CheckStatus, Level
 
 
+def _canonical(text):
+    """Re-encode a JSON value so key order and formatting do not count."""
+    try:
+        return json.dumps(json.loads(text), sort_keys=True)
+    except (ValueError, RecursionError):
+        return text  # Malformed text is compared exactly as it was sent.
+
+
 def _trace(evidence):
-    return [(x.operation, x.request_json, x.response_json) for x in evidence.exchanges]
+    return [
+        (x.operation, _canonical(x.request_json), _canonical(x.response_json))
+        for x in evidence.exchanges
+    ]
 
 
 def _divergence(left, right):
@@ -77,11 +89,13 @@ class EpisodeIsolationGrader:
         resets = [i for i, x in enumerate(sequential) if x[0] == "reset"]
         if len(resets) < 2:
             return CheckStatus.SKIP, ["no second episode was recorded"], {}
-        after_reset = sequential[resets[1] :]
+        first, after_reset = sequential[: resets[1]], sequential[resets[1] :]
         fresh = _trace(isolation.fresh)
         measured = {"exchanges": len(after_reset)}
-        # Isolation is only observable when fixed inputs give a fixed trace.
-        drift = _divergence(_trace(reference), fresh)
+        # Isolation is only observable when fixed inputs give a fixed trace, so
+        # the first episode of every session must agree.
+        baseline = _trace(reference)
+        drift = _divergence(baseline, first) or _divergence(baseline, fresh)
         if drift:
             return (
                 CheckStatus.SKIP,
