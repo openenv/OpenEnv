@@ -182,7 +182,10 @@ def test_real_runner(mode, tmp_path):
     with serve(AlterWire(wire_app, mode, artifact)) as url:
         provider = FakeRuntimeProvider()
         provider.subject.base_url = url
-        report = run_validation(root, max_level=Level.RUNTIME, provider=provider)
+        bundle = tmp_path / "evidence"
+        report = run_validation(
+            root, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+        )
         results = {r.check_id: r for r in report.results}
         assert results["runtime.startup"].status.value == "pass", results[
             "runtime.startup"
@@ -204,6 +207,17 @@ def test_real_runner(mode, tmp_path):
                 ]
                 == artifact
             )
+        if mode in {"action_schema", "state_schema", "reset_schema"}:
+            saved = json.loads((bundle / "collector-evidence.json").read_text())
+            field, attribute = {
+                "action_schema": ("action", "description"),
+                "state_schema": ("state", "default"),
+                "reset_schema": ("reset", "default"),
+            }[mode]
+            assert saved["schema_response"][field][attribute] == artifact
+        if mode == "redirect_body":
+            probe = json.loads((bundle / "oracle-http.json").read_text())[0]
+            assert probe["redirect_bodies"][0]["body"] == artifact
         outcome = results["runtime.oracle_containment"]
         expected = "pass" if mode == "common_line" else "fail"
         assert outcome.status.value == expected, outcome

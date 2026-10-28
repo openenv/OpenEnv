@@ -20,7 +20,19 @@
       "tests.test_validation.integration.test_episode_isolation_protocol::test_each_episode_gets_the_full_trace_budget",
       "tests.test_validation.integration.test_episode_isolation_protocol::test_each_episode_gets_its_own_deadline",
       "tests.test_validation.integration.test_episode_oracle_protocol::test_bundle_keeps_the_real_failure_evidence[sticky_episode]",
-      "tests.test_validation.integration.test_episode_oracle_protocol::test_bundle_keeps_the_real_failure_evidence[exposed_oracle]"
+      "tests.test_validation.integration.test_episode_oracle_protocol::test_bundle_keeps_the_real_failure_evidence[exposed_oracle]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[http403]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[http206]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[redirect]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[redirect_body]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[directory]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[action_schema]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[state_schema]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[reset_schema]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[unicode_ws]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[json_state]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[common_line]",
+      "tests.test_validation.integration.test_oracle_disclosures_protocol::test_real_runner[state_only]"
     ],
     "docker": [
       "tests.test_validation.integration.test_docker_lifecycle::test_docker_lifecycle_effective_limits_and_owned_cleanup",

@@ -98,6 +98,11 @@ def rebuild(directory):
             if metadata["reset_schema_available"]
             else None
         ),
+        schema_response_json=(
+            json.dumps(metadata["schema_response"])
+            if metadata["schema_response_available"]
+            else None
+        ),
         failure_phase=metadata["failure_phase"],
         failure_reason=metadata["failure_reason"],
     )
@@ -196,6 +201,56 @@ def test_bundle_redacts_oracle_body_and_records_original_digest(tmp_path):
     assert probe["redacted"] is True
     assert "opaque-credential" not in (tmp_path / "oracle-http.json").read_text()
     assert "oracle-http.json" in (tmp_path / "SHA256SUMS").read_text()
+
+
+def test_bundle_keeps_separate_redacted_redirect_documents_and_failure(tmp_path):
+    redirect = b'{"api_key":"opaque-credential","answer":"redirect-canary"}'
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        oracle_http=(
+            HttpProbe(
+                path="oracle/solve.sh",
+                status=302,
+                body=b"final prefix",
+                failure="TimeoutError",
+                redirect_bodies=(redirect,),
+            ),
+        ),
+    )
+    probe = json.loads((tmp_path / "oracle-http.json").read_text())[0]
+    assert probe["failure"] == "TimeoutError"
+    assert probe["body"] == "final prefix"
+    hop = probe["redirect_bodies"][0]
+    assert hop["body"] == {"api_key": "[REDACTED]", "answer": "redirect-canary"}
+    assert hop["body_sha256"] == hashlib.sha256(redirect).hexdigest()
+    assert hop["redacted"] is probe["redacted"] is True
+
+
+@pytest.mark.parametrize("schema", [None, '{"action":{"default":"canary"}}'])
+def test_bundle_replays_the_complete_schema_response(tmp_path, schema):
+    original = replace(measured(), schema_response_json=schema)
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    replay = rebuild(tmp_path)
+    assert json.loads(replay.schema_response_json or "null") == json.loads(
+        schema or "null"
+    )
+
+
+def test_full_schema_redaction_and_parse_failure_are_visible(tmp_path):
+    for schema in ('{"api_key":"opaque-credential"}', "not JSON"):
+        directory = tmp_path / ("malformed" if schema == "not JSON" else "secret")
+        write_runtime_bundle(
+            directory,
+            report(),
+            evidence=replace(measured(), schema_response_json=schema),
+        )
+        text = (directory / "collector-evidence.json").read_text()
+        metadata = json.loads(text)
+        assert metadata["schema_response_available"] is True
+        assert metadata["schema_response_parse_failed"] is (schema == "not JSON")
+        assert metadata["redacted"] is True
+        assert "opaque-credential" not in text
 
 
 def test_truncated_trace_metadata_preserves_the_collection_failure(tmp_path):

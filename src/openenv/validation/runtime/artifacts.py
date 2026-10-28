@@ -64,6 +64,13 @@ def _recording(evidence, trace_file):
                 reset_schema = json.loads(evidence.reset_observation_schema_json)
             except (ValueError, RecursionError):
                 reset_schema_parse_failed = True
+        schema_response = None
+        schema_response_parse_failed = False
+        if evidence.schema_response_json is not None:
+            try:
+                schema_response = json.loads(evidence.schema_response_json)
+            except (ValueError, RecursionError):
+                schema_response_parse_failed = True
         collector_metadata = {
             "evidence_schema_version": "1",
             "trace_file": trace_file,
@@ -74,6 +81,9 @@ def _recording(evidence, trace_file):
             "reset_schema_available": evidence.reset_observation_schema_json
             is not None,
             "reset_schema_parse_failed": reset_schema_parse_failed,
+            "schema_response": schema_response,
+            "schema_response_available": evidence.schema_response_json is not None,
+            "schema_response_parse_failed": schema_response_parse_failed,
             "omitted_trace_fields": omitted_fields,
             "failure_phase": evidence.failure_phase,
             "failure_reason": evidence.failure_reason,
@@ -84,10 +94,25 @@ def _recording(evidence, trace_file):
             bool(omitted_fields)
             or schema_parse_failed
             or reset_schema_parse_failed
+            or schema_response_parse_failed
             or _redact(trace) != trace
             or _redact(collector_metadata) != collector_metadata
         )
     return trace, collector_metadata
+
+
+def _http_body(body):
+    text = body.decode("utf-8", errors="replace")
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError):
+        value = text
+    return {
+        "body": value,
+        "body_sha256": hashlib.sha256(body).hexdigest(),
+        "retained_bytes": len(body),
+        "redacted": _redact(value) != value or text.encode("utf-8") != body,
+    }
 
 
 def write_runtime_bundle(
@@ -152,18 +177,9 @@ def write_runtime_bundle(
     probes = []
     for probe in oracle_http:
         row = asdict(probe)
-        body = row.pop("body")
-        text = body.decode("utf-8", errors="replace")
-        try:
-            value = json.loads(text)
-        except (ValueError, RecursionError):
-            value = text
-        row.update(
-            body=value,
-            body_sha256=hashlib.sha256(body).hexdigest(),
-            retained_bytes=len(body),
-            redacted=_redact(value) != value or text.encode("utf-8") != body,
-        )
+        row.update(_http_body(row.pop("body")))
+        row["redirect_bodies"] = [_http_body(body) for body in row["redirect_bodies"]]
+        row["redacted"] |= any(body["redacted"] for body in row["redirect_bodies"])
         probes.append(row)
     files["oracle-http.json"] = probes
     digests = []
