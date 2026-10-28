@@ -132,6 +132,14 @@ def _outcome(check_id, status, reason, *, started=None, measured=None):
     )
 
 
+class _OracleCollectionInterrupted(KeyboardInterrupt):
+    """Cancellation carrying the bounded HTTP evidence already received."""
+
+    def __init__(self, probes):
+        super().__init__("oracle collection interrupted")
+        self.probes = tuple(probes)
+
+
 def _get(base_url, location, deadline, max_bytes=MAX_ORACLE_PROBE_BYTES):
     """
     GET a package-relative path from the control endpoint, unproxied and bounded.
@@ -192,6 +200,8 @@ def _get(base_url, location, deadline, max_bytes=MAX_ORACLE_PROBE_BYTES):
                 retained += len(body)
                 body.clear()
                 status = None
+    except KeyboardInterrupt:
+        raise _OracleCollectionInterrupted((probe("KeyboardInterrupt"),)) from None
     except (httpx.HTTPError, httpx.InvalidURL, TimeoutError) as exc:
         # Exception text may include subject-controlled URLs.
         return probe(type(exc).__name__)
@@ -210,7 +220,15 @@ def _oracle_probes(base_url, root, location):
         if remaining <= 0 or time.monotonic() >= deadline:
             probe = HttpProbe("/" + path, None, failure="oracle probe budget exhausted")
         else:
-            probe = _get(base_url, path, deadline, remaining)
+            try:
+                probe = _get(base_url, path, deadline, remaining)
+            except KeyboardInterrupt as exc:
+                interrupted = (
+                    exc.probes
+                    if isinstance(exc, _OracleCollectionInterrupted)
+                    else (HttpProbe("/" + path, None, failure="KeyboardInterrupt"),)
+                )
+                raise _OracleCollectionInterrupted((*probes, *interrupted)) from None
         probes.append(probe)
         remaining -= len(probe.body) + sum(map(len, probe.redirect_bodies))
     return tuple(probes)
@@ -414,6 +432,8 @@ def _runtime(subject, graders, *, skip_build, provider):
     except KeyboardInterrupt as exc:
         if isinstance(exc, RuntimeCollectionInterrupted):
             evidence = exc.evidence
+        elif isinstance(exc, _OracleCollectionInterrupted):
+            oracle_http = exc.probes
         result = _outcome(
             "runtime.startup",
             CheckStatus.ERROR,

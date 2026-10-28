@@ -103,15 +103,23 @@ def _recording(evidence, trace_file):
 
 def _http_body(body):
     text = body.decode("utf-8", errors="replace")
+    omitted = False
     try:
         value = json.loads(text)
     except (ValueError, RecursionError):
         value = text
+        # Unparseable JSON loses the key context used by the structured redactor.
+        omitted = text.lstrip().startswith(("{", "[", '"'))
+    if isinstance(value, str) and _SECRET_KEY.search(value):
+        omitted = True
+    if omitted:
+        value = "[unstructured body omitted]"
     return {
         "body": value,
         "body_sha256": hashlib.sha256(body).hexdigest(),
         "retained_bytes": len(body),
-        "redacted": _redact(value) != value or text.encode("utf-8") != body,
+        "body_omitted": omitted,
+        "redacted": omitted or _redact(value) != value or text.encode("utf-8") != body,
     }
 
 

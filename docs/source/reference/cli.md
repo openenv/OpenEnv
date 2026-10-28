@@ -113,8 +113,9 @@ Oracle inventory reads at most 64 files and 1 MiB. HTTP probes share a 10 second
 wall deadline and 1 MiB body budget, follow at most three same-origin redirects,
 and reject compressed responses before decoding. Missing or failed probes,
 unresolved redirects, incomplete transcripts or schemas, unreadable inventory
-entries, and omitted files or bytes report `SKIP` unless a disclosure was found. Omitted file and byte
-counts are recorded. A pass establishes only that complete artifacts did not match
+entries, files too short to trace reliably, and omitted files or bytes report
+`SKIP` unless a disclosure was found. Coverage counts are recorded for each limit.
+A pass establishes only that complete artifacts did not match
 these measured responses. It does not test arbitrary MCP tool reads, partial or
 transformed disclosures, or writes to reward artifacts; it does not certify the
 full agent boundary.

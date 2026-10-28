@@ -13,7 +13,7 @@ from openenv.validation.report import CheckResult
 from openenv.validation.runner import run_validation, source_digest
 from openenv.validation.runtime.artifacts import write_runtime_bundle
 from openenv.validation.runtime.collector import RuntimeCollectionInterrupted
-from openenv.validation.runtime.contracts import RuntimeEvidence
+from openenv.validation.runtime.contracts import HttpProbe, RuntimeEvidence
 from openenv.validation.runtime.scheduler import execute_graders, order_graders
 from openenv.validation.types import CheckStatus, Level, ProviderCapability
 from support.runtime import evidence, exchange, FakeRuntimeProvider
@@ -162,6 +162,43 @@ def test_interrupted_isolation_retains_every_completed_session(
     assert metadata["failure_phase"] == (
         "not_started" if interrupted_call == 2 else "step"
     )
+
+
+def test_interrupted_oracle_collection_retains_completed_probes(
+    package, monkeypatch, tmp_path
+):
+    manifest = package / "openenv.yaml"
+    manifest.write_text(
+        manifest.read_text().replace("location: oracle/solve.sh", "location: oracle")
+    )
+    (package / "oracle/00_first.txt").write_text("completed-probe-prefix")
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence",
+        lambda *args, **kwargs: measured_episode(),
+    )
+
+    def get(base_url, path, *args):
+        if path == "oracle/00_first.txt":
+            return HttpProbe("/" + path, 403, b"completed-probe-prefix")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("openenv.validation.runner._get", get)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    assert provider.subject.stopped
+    assert (
+        next(r for r in report.results if r.check_id == "runtime.startup").status
+        is CheckStatus.ERROR
+    )
+    probes = json.loads((bundle / "oracle-http.json").read_text())
+    assert len(probes) == 2
+    assert probes[0]["body"] == "completed-probe-prefix"
+    assert probes[0]["status"] == 403
+    assert probes[1]["path"] == "/oracle/solve.sh"
+    assert probes[1]["failure"] == "KeyboardInterrupt"
 
 
 def test_skip_build_has_no_provider_side_effects(package):

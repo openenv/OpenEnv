@@ -82,7 +82,9 @@ Reproduction bundles keep the measured session, the same-session A/B recording,
 the fresh isolation session, and bounded oracle HTTP responses in separate files.
 Each recording includes completion and redaction metadata. Oracle responses also
 record a digest of the retained bytes before redaction. Interrupted experiments
-keep their completed prefix.
+keep their completed prefix, including HTTP probes and the current response's
+received bytes. Unsafe unstructured HTTP bodies are omitted with an explicit flag;
+their byte counts and original digests remain available.
 The validation subject never receives a host socket, host credentials or host
 directory mount. Tests verify run-owned containers disappear after normal completion,
 failed readiness and exec timeout. No global prune is used.

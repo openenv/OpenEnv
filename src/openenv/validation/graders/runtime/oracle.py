@@ -157,6 +157,10 @@ class OracleContainmentGrader:
             for _, text in inventory.files
             if text and len(text.strip()) >= _MIN_FINGERPRINT
         }
+        untraceable = sum(
+            text is not None and len(text.strip()) < _MIN_FINGERPRINT
+            for _, text in inventory.files
+        )
         # Structured artifacts are independent of indentation, key order and escaping.
         for text in tuple(artifacts):
             try:
@@ -202,6 +206,7 @@ class OracleContainmentGrader:
             "omitted_files": inventory.omitted_files,
             "omitted_bytes": inventory.omitted_bytes,
             "inventory_errors": len(inventory.errors),
+            "untraceable_files": untraceable,
             "sources": len(sources),
             "http_probes": len(subject.oracle_http),
             "mcp_tool_access_tested": False,
@@ -219,6 +224,10 @@ class OracleContainmentGrader:
         incomplete = list(inventory.errors)
         if inventory.omitted_files:
             incomplete.append("oracle inventory exceeds the file or byte bound")
+        if untraceable:
+            incomplete.append(
+                "some oracle files have no distinctive complete content to trace"
+            )
         if not artifacts:
             incomplete.append(
                 "the oracle artifact has no distinctive complete content to trace"

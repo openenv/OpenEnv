@@ -8,6 +8,7 @@ import tracemalloc
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import httpx
 import pytest
 from openenv.validation.runner import _get, MAX_REDIRECTS
 from openenv.validation.runtime.contracts import HttpProbe
@@ -154,6 +155,24 @@ def test_probe_follows_only_bounded_same_origin_redirects():
     assert requests.count("/oracle/loop.py") == MAX_REDIRECTS + 1
 
 
+def test_interrupted_http_read_keeps_its_received_prefix(monkeypatch):
+    original = httpx.Response.iter_raw
+
+    def interrupt(response, *args, **kwargs):
+        for chunk in original(response, *args, **kwargs):
+            yield chunk
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(httpx.Response, "iter_raw", interrupt)
+    with http_server({"/oracle": (200, {}, b"received-prefix")}) as (url, _):
+        with pytest.raises(KeyboardInterrupt) as interrupted:
+            _get(url, "oracle", time.monotonic() + 5)
+    probe = interrupted.value.probes[0]
+    assert probe.body == b"received-prefix"
+    assert probe.status == 200
+    assert probe.failure == "KeyboardInterrupt"
+
+
 def oracle_subject(tmp_path, *, responses=(), probes=None, location="oracle/solve.py"):
     from types import SimpleNamespace
 
@@ -176,6 +195,27 @@ def oracle_subject(tmp_path, *, responses=(), probes=None, location="oracle/solv
         if probes is not None
         else (HttpProbe("/oracle/solve.py", 404),),
     )
+
+
+def test_untraceable_file_keeps_a_mixed_inventory_incomplete(tmp_path):
+    from openenv.validation.graders.runtime.oracle import OracleContainmentGrader
+
+    short = b'{"answer":42}'
+    subject = oracle_subject(
+        tmp_path,
+        location="oracle",
+        probes=(
+            HttpProbe("/oracle/answer.json", 200, short),
+            HttpProbe("/oracle/solve.py", 404),
+        ),
+    )
+    (tmp_path / "oracle/answer.json").write_bytes(short)
+    result = OracleContainmentGrader().run(subject)
+    assert result.status.value == "skip", result.evidence
+    assert result.measured["untraceable_files"] == 1
+    # Incomplete coverage must not erase a confirmed disclosure of another file.
+    subject.oracle_http += (HttpProbe("/oracle/solve.py", 200, SCRIPT.encode()),)
+    assert OracleContainmentGrader().run(subject).status.value == "fail"
 
 
 def grade(subject):

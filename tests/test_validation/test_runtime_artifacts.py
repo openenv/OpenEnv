@@ -203,6 +203,31 @@ def test_bundle_redacts_oracle_body_and_records_original_digest(tmp_path):
     assert "oracle-http.json" in (tmp_path / "SHA256SUMS").read_text()
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"api_key":"opaque-credential", BROKEN}',
+        b'{"api_\\u006bey":"opaque-credential", BROKEN}',
+        b"#!/bin/sh\nexport API_KEY=opaque-credential\n",
+        b"export PASSWORD=opaque-credential\n",
+    ],
+)
+def test_unsafe_unstructured_http_bodies_are_omitted_in_every_hop(tmp_path, body):
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        oracle_http=(HttpProbe("/oracle", 200, body, redirect_bodies=(body,)),),
+    )
+    text = (tmp_path / "oracle-http.json").read_text()
+    assert "opaque-credential" not in text
+    probe = json.loads(text)[0]
+    for retained in (probe, *probe["redirect_bodies"]):
+        assert retained["body_omitted"] is True
+        assert retained["redacted"] is True
+        assert retained["body_sha256"] == hashlib.sha256(body).hexdigest()
+        assert retained["retained_bytes"] == len(body)
+
+
 def test_bundle_keeps_separate_redacted_redirect_documents_and_failure(tmp_path):
     redirect = b'{"api_key":"opaque-credential","answer":"redirect-canary"}'
     write_runtime_bundle(
