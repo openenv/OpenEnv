@@ -1,3 +1,4 @@
+import io
 import json
 import sys
 import time
@@ -12,10 +13,12 @@ from openenv.validation.manifest import (
 )
 from openenv.validation.providers import (
     docker,
+    ExecResult,
     ProviderError,
     StartupError,
     UnsupportedCapability,
 )
+from openenv.validation.providers._pidns import LIMITS_SCRIPT
 from openenv.validation.runtime.contracts import LaunchSpec
 
 
@@ -356,6 +359,79 @@ def test_exec_preserves_argv_and_redacts_credentials(commands, monkeypatch):
     assert commands[-1][-1] == "$(cat /host/key); anything"
     assert "private-value" not in result.stdout and "hf_" not in result.stdout
     assert "bad-secret" not in result.stderr
+
+
+def test_resource_probe_only_accepts_sigkill_for_memory(monkeypatch):
+    subject = docker.DockerRunningSubject("subject", launch_spec())
+    monkeypatch.setattr(docker, "_ensure_image", lambda image: None)
+    monkeypatch.setattr(
+        subject,
+        "_pidns_probe",
+        lambda *args: json.dumps(
+            {
+                "schema_version": 1,
+                "cgroup": {
+                    "memory_max": 128 * 1024**2,
+                    "swap_max": 0,
+                    "cpu_quota": 50000,
+                    "cpu_period": 100000,
+                    "pids_max": 256,
+                },
+                "writable": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(subject, "_raw_inspect", lambda *args: details("subject"))
+
+    class Sibling:
+        def exec(self, argv, timeout_s):
+            if argv[-1] == "pass":
+                return ExecResult(0, "", "", 0)
+            if argv[2] == docker.QUALIFY_SCRIPT:
+                return ExecResult(137, "contained", "", 0)
+            return ExecResult(0, "", "", 0)
+
+        def _raw_inspect(self, timeout_s):
+            return {"State": {"Running": True}}
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(
+        docker.DockerValidationProvider, "start", lambda provider, spec: Sibling()
+    )
+    measured = subject.measure_resources()
+    results = {probe["kind"]: probe["result"] for probe in measured["qualification"]}
+    assert results["memory"] == "contained"
+    assert results["pids"] == results["disk"] == "inconclusive"
+
+
+def test_limits_probe_keeps_readable_cgroup_limits_when_swap_is_missing(
+    monkeypatch, capsys
+):
+    values = {
+        "memory.max": "max",
+        "cpu.max": "50000 100000",
+        "pids.max": "256",
+    }
+
+    def open_cgroup(path):
+        name = str(path).rsplit("/", 1)[-1]
+        if name not in values:
+            raise FileNotFoundError(path)
+        return io.StringIO(values[name])
+
+    monkeypatch.setattr("builtins.open", open_cgroup)
+    monkeypatch.setattr(sys, "argv", ["limits-probe"])
+    exec(LIMITS_SCRIPT, {})
+    measured = json.loads(capsys.readouterr().out)
+    assert measured["cgroup"] == {
+        "memory_max": None,
+        "swap_max": None,
+        "cpu_quota": 50000,
+        "cpu_period": 100000,
+        "pids_max": 256,
+    }
 
 
 @pytest.mark.parametrize("uppercase_secret_names", [False, True])

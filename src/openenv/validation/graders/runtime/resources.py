@@ -62,7 +62,7 @@ class ResourceBoundsGrader:
                 )
             if cgroup.swap_max != 0:
                 problems.append("swap is not disabled")
-            if cgroup.cpu_quota is None:
+            if cgroup.cpu_quota is None or cgroup.cpu_period is None:
                 problems.append("CPU is unlimited")
             elif cgroup.cpu_quota / cgroup.cpu_period > declared.cpu + 1e-9:
                 problems.append(

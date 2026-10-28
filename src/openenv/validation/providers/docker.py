@@ -762,8 +762,9 @@ class DockerRunningSubject:
                         remaining(),
                     )
                     if result.exit_code == 137:
-                        # The kernel killed the probe: the limit held.
-                        outcome = "contained"
+                        if kind == "memory":
+                            # This probe is designed to be stopped by the OOM killer.
+                            outcome = "contained"
                     elif result.stdout.strip() in {"contained", "escaped"}:
                         outcome = result.stdout.strip()
                 qualification.append({"kind": kind, "result": outcome})

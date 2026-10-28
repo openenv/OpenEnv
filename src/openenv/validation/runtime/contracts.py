@@ -474,7 +474,7 @@ class CgroupLimits(BaseModel):
     """
     Effective cgroup v2 limits read from inside the subject.
 
-    `None` means the limit is `max`, i.e. not enforced.
+    `None` means the limit is `max` or could not be read.
 
     Attributes:
         memory_max (`int`, *optional*):
@@ -483,7 +483,7 @@ class CgroupLimits(BaseModel):
             `memory.swap.max` in bytes.
         cpu_quota (`int`, *optional*):
             CPU time allowed per period, in microseconds.
-        cpu_period (`int`):
+        cpu_period (`int`, *optional*):
             CPU period in microseconds.
         pids_max (`int`, *optional*):
             `pids.max`.
@@ -494,7 +494,7 @@ class CgroupLimits(BaseModel):
     memory_max: int | None = Field(ge=0)
     swap_max: int | None = Field(ge=0)
     cpu_quota: int | None = Field(ge=0)
-    cpu_period: int = Field(gt=0)
+    cpu_period: int | None = Field(gt=0)
     pids_max: int | None = Field(ge=0)
 
 

@@ -75,6 +75,7 @@ def test_enforced_budget_passes():
         ({"swap_max": None}, "swap is not disabled"),
         ({"swap_max": 512 * MIB}, "swap is not disabled"),
         ({"cpu_quota": None}, "CPU is unlimited"),
+        ({"cpu_period": None}, "CPU is unlimited"),
         ({"cpu_quota": 200000}, "CPU limit 2 exceeds 1"),
         ({"pids_max": None}, "process count is unlimited"),
     ],

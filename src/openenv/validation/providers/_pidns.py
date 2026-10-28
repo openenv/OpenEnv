@@ -82,17 +82,30 @@ def read(name):
         return f.read().split()
 def limit(value):
     return None if value == "max" else int(value)
+def read_limit(name):
+    try:
+        return True, limit(read(name)[0])
+    except (OSError, ValueError, IndexError):
+        return False, None
+memory_read, memory_max = read_limit("memory.max")
+swap_read, swap_max = read_limit("memory.swap.max")
+pids_read, pids_max = read_limit("pids.max")
 try:
     quota, period = read("cpu.max")
+    cpu_quota, cpu_period = limit(quota), int(period)
+    cpu_read = True
+except (OSError, ValueError, IndexError):
+    cpu_quota, cpu_period = None, None
+    cpu_read = False
+cgroup = None
+if memory_read or swap_read or cpu_read or pids_read:
     cgroup = {
-        "memory_max": limit(read("memory.max")[0]),
-        "swap_max": limit(read("memory.swap.max")[0]),
-        "cpu_quota": limit(quota),
-        "cpu_period": int(period),
-        "pids_max": limit(read("pids.max")[0]),
+        "memory_max": memory_max,
+        "swap_max": swap_max,
+        "cpu_quota": cpu_quota,
+        "cpu_period": cpu_period,
+        "pids_max": pids_max,
     }
-except (OSError, ValueError):
-    cgroup = None
 writable = []
 for path in sys.argv[1:]:
     try:
@@ -103,8 +116,8 @@ for path in sys.argv[1:]:
 print(json.dumps({"cgroup": cgroup, "writable": writable}))
 """
 
-# Runs inside a disposable subject. argv: kind, budget. Prints the outcome; a
-# kill by the kernel (exit 137) also means the limit held.
+# Runs inside a disposable subject. argv: kind, budget. Prints the outcome; the
+# memory probe may instead be killed by the kernel when its limit holds.
 QUALIFY_SCRIPT = """
 import errno, os, sys, time
 kind, budget = sys.argv[1], int(sys.argv[2])
