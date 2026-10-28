@@ -4,6 +4,9 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from queue import Queue
+from tempfile import TemporaryDirectory
+from threading import Thread
 from typing import Any
 
 import uvicorn
@@ -29,6 +32,22 @@ class ProbeEnvironment(Environment):
         super().__init__()
         self._state = State(episode_id="uninitialized", step_count=0)
         self.counter = 0
+        self.mode = os.environ.get("VALIDATION_FAULT", "good")
+        if self.mode == "sticky_file":
+            self.files = TemporaryDirectory(prefix="openenv-probe-")
+            self.marker = Path(self.files.name) / "counter"
+        if self.mode == "sticky_background":
+            self.requests = Queue()
+            self.responses = Queue()
+
+            def worker():
+                counter = 0
+                while (increment := self.requests.get()) is not None:
+                    counter += increment
+                    self.responses.put(counter)
+
+            self.worker = Thread(target=worker, daemon=True)
+            self.worker.start()
 
     def reset(self, seed=None, episode_id=None, **kwargs):
         if os.environ.get("VALIDATION_FAULT") != "sticky_episode":
@@ -37,7 +56,15 @@ class ProbeEnvironment(Environment):
         return ProbeObservation(counter=0, reward=0.0, done=False)
 
     def step(self, action, timeout_s=None, **kwargs):
-        self.counter += action.increment
+        if self.mode == "sticky_file":
+            previous = int(self.marker.read_text()) if self.marker.exists() else 0
+            self.counter = previous + action.increment
+            self.marker.write_text(str(self.counter))
+        elif self.mode == "sticky_background":
+            self.requests.put(action.increment)
+            self.counter = self.responses.get(timeout=2)
+        else:
+            self.counter += action.increment
         self._state.step_count += 1
         return ProbeObservation(
             counter=self.counter,
@@ -48,6 +75,15 @@ class ProbeEnvironment(Environment):
     @property
     def state(self):
         return self._state
+
+    def close(self):
+        if self.mode == "sticky_file":
+            self.files.cleanup()
+        if self.mode == "sticky_background":
+            self.requests.put(None)
+            self.worker.join(timeout=2)
+            if self.worker.is_alive():
+                raise RuntimeError("probe worker did not stop")
 
 
 class WireFault:
@@ -113,6 +149,8 @@ def make_app(mode="good"):
         "hung_step",
         "slow_step",
         "sticky_episode",
+        "sticky_file",
+        "sticky_background",
         "exposed_oracle",
     }:
         raise ValueError(f"Unknown fixture mode: {mode}")

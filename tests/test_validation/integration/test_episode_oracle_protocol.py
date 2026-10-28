@@ -81,6 +81,8 @@ def measure(base_url):
     [
         ("good", "pass", "pass"),
         ("sticky_episode", "fail", "pass"),
+        ("sticky_file", "fail", "pass"),
+        ("sticky_background", "fail", "pass"),
         ("exposed_oracle", "pass", "fail"),
     ],
 )
@@ -91,7 +93,7 @@ def test_real_session_isolation_and_oracle(monkeypatch, mode, isolation, oracle)
     contained = OracleContainmentGrader().run(subject)
     assert isolated.status.value == isolation, isolated.evidence
     assert contained.status.value == oracle, contained.evidence
-    if mode == "sticky_episode":
+    if mode in {"sticky_episode", "sticky_file", "sticky_background"}:
         assert "exchange 2 (step)" in isolated.evidence[0]
     if mode == "exposed_oracle":
         assert contained.evidence == [

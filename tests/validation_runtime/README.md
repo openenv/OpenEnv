@@ -31,8 +31,9 @@ production OpenEnv `/ws` endpoint. Each launch uses a fresh subject.
 
 The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
 `bad_observation`, `missing_done`, `bad_state`, `hung_step`, `slow_step`,
-`sticky_episode`, `exposed_oracle`, and `startup_failure`. `sticky_episode` keeps the
-counter across a reset; `exposed_oracle` serves the fixture's harmless oracle canary
+`sticky_episode`, `sticky_file`, `sticky_background`, `exposed_oracle`, and
+`startup_failure`. The sticky modes retain a counter in memory, a file or a worker
+thread across reset. Fresh sessions start clean; `exposed_oracle` serves the fixture's harmless oracle canary
 at its declared path. All fault
 switches and wire corruption remain inside test assets. They share one fixture
 and one public runtime plan, so a defect changes one property at a time.
