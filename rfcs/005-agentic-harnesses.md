@@ -2,7 +2,7 @@
 
 **Status**: In Review
 **Created**: 2026-02-16
-**Revised**: 2026-10-07, reconciled with the implementation merged in [#1097](https://github.com/huggingface/OpenEnv/pull/1097), [#1098](https://github.com/huggingface/OpenEnv/pull/1098), [#1099](https://github.com/huggingface/OpenEnv/pull/1099) and [#1100](https://github.com/huggingface/OpenEnv/pull/1100)
+**Revised**: 2026-10-07, reconciled with the implementation merged in [#1097](https://github.com/openenv/OpenEnv/pull/1097), [#1098](https://github.com/openenv/OpenEnv/pull/1098), [#1099](https://github.com/openenv/OpenEnv/pull/1099) and [#1100](https://github.com/openenv/OpenEnv/pull/1100)
 **Authors**: @Darktex
 **RFC ID**: 005
 
@@ -738,13 +738,13 @@ app = create_fastapi_app(
 
 The implementation left these open. Each is a decision for this RFC.
 
-1. **The environment's own step after a turn.** The rubric runs as soon as the harness answers. An environment that adds its own step between turns, such as a simulated user replying to the harness, has no hook for it. It has to override the private `_run_turn`, run that step and apply the rubric again ([#1291](https://github.com/huggingface/OpenEnv/pull/1291) does this for τ²-bench's simulated customer). A public async hook called inside `_run_turn`, before the rubric, would remove the override and run the rubric once.
+1. **The environment's own step after a turn.** The rubric runs as soon as the harness answers. An environment that adds its own step between turns, such as a simulated user replying to the harness, has no hook for it. It has to override the private `_run_turn`, run that step and apply the rubric again ([#1291](https://github.com/openenv/OpenEnv/pull/1291) does this for τ²-bench's simulated customer). A public async hook called inside `_run_turn`, before the rubric, would remove the override and run the rubric once.
 2. **Turn logic in production.** Should production turns go through the environment, so rubrics, the trajectory and a subclass's turn logic run there too (for example through the hook above)?
 3. **`/ws` and `/mcp` in production.** Should production stop registering them for harness environments, so clients cannot reset, step or call domain tools around the harness, or should this RFC allow them?
 4. **Network isolation.** How should the Harness Security Boundary be enforced: a separate network namespace for the harness, or sandbox providers such as `ACASandboxProvider.deny_all_egress()`? Until it is, harness environments rely on the harness's own tool configuration for the agent isolation and network access [security invariants](../.claude/docs/INVARIANTS.md#security-invariants).
 5. **A client for `/harness`.** There is no `HarnessEnvClient`, so clients speak the WebSocket protocol by hand, and `env.trajectory` is not reachable remotely.
 6. **Token capture.** `LLM_REQUEST` and `LLM_RESPONSE` events are defined but nothing captures tokens through this path, so it is an evaluation path. Training a harness's policy goes through the capture layer of [RFC 006](./006-agentic-rl-harness-interception.md).
-7. **Naming.** Should the rollout layer be renamed (e.g., `RolloutDriver`, as [#1097](https://github.com/huggingface/OpenEnv/pull/1097) proposed), so this adapter can take the plain name `HarnessAdapter`?
+7. **Naming.** Should the rollout layer be renamed (e.g., `RolloutDriver`, as [#1097](https://github.com/openenv/OpenEnv/pull/1097) proposed), so this adapter can take the plain name `HarnessAdapter`?
 
 ## Future Work (Out of Scope)
 
@@ -757,17 +757,17 @@ The implementation left these open. Each is a decision for this RFC.
 
 | Planned PR | Status |
 |---|---|
-| PR 1: this RFC | [#387](https://github.com/huggingface/OpenEnv/pull/387), merged |
-| PR 2: foundation types (`HarnessConfig`, the adapter ABC, events, `HarnessAction`, tool conflict resolution) | [#1097](https://github.com/huggingface/OpenEnv/pull/1097) (package split) and [#1098](https://github.com/huggingface/OpenEnv/pull/1098), merged |
-| PR 3: core implementation (`HarnessEnvironment`, `HarnessProcess`, the MCP bridge, production routing) | [#1100](https://github.com/huggingface/OpenEnv/pull/1100) and [#1099](https://github.com/huggingface/OpenEnv/pull/1099) (bridge shutdown), merged |
-| PR 4: OpenClaw adapter | not in core ([#389](https://github.com/huggingface/OpenEnv/pull/389) is open) |
-| PR 5: documentation and an example | [#1291](https://github.com/huggingface/OpenEnv/pull/1291), merged: a Claude Code adapter and a τ²-bench evaluation recipe, with a tutorial |
+| PR 1: this RFC | [#387](https://github.com/openenv/OpenEnv/pull/387), merged |
+| PR 2: foundation types (`HarnessConfig`, the adapter ABC, events, `HarnessAction`, tool conflict resolution) | [#1097](https://github.com/openenv/OpenEnv/pull/1097) (package split) and [#1098](https://github.com/openenv/OpenEnv/pull/1098), merged |
+| PR 3: core implementation (`HarnessEnvironment`, `HarnessProcess`, the MCP bridge, production routing) | [#1100](https://github.com/openenv/OpenEnv/pull/1100) and [#1099](https://github.com/openenv/OpenEnv/pull/1099) (bridge shutdown), merged |
+| PR 4: OpenClaw adapter | not in core ([#389](https://github.com/openenv/OpenEnv/pull/389) is open) |
+| PR 5: documentation and an example | [#1291](https://github.com/openenv/OpenEnv/pull/1291), merged: a Claude Code adapter and a τ²-bench evaluation recipe, with a tutorial |
 
 ---
 
 ## References
 
-- [GitHub Issue #385](https://github.com/huggingface/OpenEnv/issues/385): Add support for agentic harnesses
+- [GitHub Issue #385](https://github.com/openenv/OpenEnv/issues/385): Add support for agentic harnesses
 - RFC 001: OpenEnv Basic Abstractions
 - RFC 002: OpenEnv Framework Spec
 - RFC 003: MCP Support

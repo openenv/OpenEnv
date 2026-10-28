@@ -69,7 +69,7 @@ the reward-hacking measurement. By default it holds **seven** components; `corre
 
 ## Training
 
-[`examples/sophistry_bench_sprint_grpo.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/sophistry_bench_sprint_grpo.py)
+[`examples/sophistry_bench_sprint_grpo.py`](https://github.com/openenv/OpenEnv/blob/main/examples/sophistry_bench_sprint_grpo.py)
 trains a policy on this env with TRL's `GRPOTrainer` — a plain prompt ->
 completion -> reward setup, since the episode is single-step.
 

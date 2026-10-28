@@ -35,8 +35,8 @@ frontier model over an API scores a 0.6B model mid-training, the reward is dense
 enough to run GRPO against, and the whole thing deploys as a Space. That is the
 part a prompt cannot do:
 
-- [`examples/pelican_svg_eval.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/pelican_svg_eval.py) scores any set of models through HF Inference Providers.
-- [`examples/pelican_svg_grpo.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/pelican_svg_grpo.py) trains against it with TRL, runnable on HF Jobs.
+- [`examples/pelican_svg_eval.py`](https://github.com/openenv/OpenEnv/blob/main/examples/pelican_svg_eval.py) scores any set of models through HF Inference Providers.
+- [`examples/pelican_svg_grpo.py`](https://github.com/openenv/OpenEnv/blob/main/examples/pelican_svg_grpo.py) trains against it with TRL, runnable on HF Jobs.
 
 The interesting question stops being "which model draws the best pelican" and
 becomes "can a small model be taught to, and does it learn to draw or to game

@@ -728,7 +728,7 @@ class QEDMathEnvironment(MCPEnvironment):
         **kwargs: Any,
     ) -> Any:
         """Async step override — fixes the run_async_safely event-loop deadlock
-        described in https://github.com/huggingface/OpenEnv/issues/455.
+        described in https://github.com/openenv/OpenEnv/issues/455.
 
         The WebSocket server detects this override and calls it directly on the
         outer event loop instead of dispatching step() into a thread executor,
