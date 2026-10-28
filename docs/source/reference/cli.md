@@ -140,6 +140,11 @@ those files. The report target names that commit. For runtime checks it starts t
 image the Hub built from that Space in a dedicated HF Sandbox on the `--flavor`
 hardware (default `cpu-basic`; see `hf jobs hardware`). It runs the Dockerfile's
 `CMD` and reaches `app_port` from the Space card through an authenticated proxy.
+The command parser joins backslash continuations and uses the final build stage,
+including commands inherited from a named earlier stage. `ENTRYPOINT`, custom
+`SHELL` commands, custom escape directives and commands inherited from an external base image are unsupported.
+The server log retains at most the first 64 KiB of combined stdout and stderr;
+further output is drained and discarded so the server can keep running.
 The job is billed to your account, it is cancelled when validation ends, and your
 token is never passed into it. A GPU flavor satisfies `resources.gpus`; a CPU
 flavor skips runtime for a GPU declaration. HF Jobs isolate each subject as a

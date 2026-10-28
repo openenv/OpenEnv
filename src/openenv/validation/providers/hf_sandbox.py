@@ -30,20 +30,50 @@ _MAX_OUTPUT = 65536
 
 def _server_command(dockerfile: str) -> list[str]:
     """The effective `CMD` of a Dockerfile, which a Sandbox job does not run itself."""
-    command = None
-    for line in dockerfile.splitlines():
-        instruction, _, rest = line.strip().partition(" ")
-        if instruction.upper() == "ENTRYPOINT":
-            raise UnsupportedCapability("hf-sandbox does not run Dockerfile ENTRYPOINT")
-        if instruction.upper() == "CMD":
-            rest = rest.strip()
-            command = ["/bin/sh", "-c", rest]
-            if rest.startswith("["):
-                try:
-                    command = json.loads(rest)
-                except ValueError:
-                    pass  # Not valid exec form, so Docker runs it as shell form.
-    if not command or not all(isinstance(part, str) for part in command):
+    if re.search(r"(?im)^#\s*escape\s*=\s*`\s*$", dockerfile):
+        raise UnsupportedCapability("hf-sandbox requires backslash Dockerfile escapes")
+    stages = {}
+    stage = {}
+    stage_number = 0
+    lines = "\n".join(
+        line for line in dockerfile.splitlines() if not line.lstrip().startswith("#")
+    )
+    # Docker removes escaped newlines before interpreting an instruction.
+    lines = lines.replace("\\\n", "")
+    for line in lines.splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        instruction, rest = parts[0].upper(), parts[1]
+        if instruction == "FROM":
+            base = rest.split()
+            if base[0].startswith("--platform="):
+                base = base[1:]
+            stage = stages.get(base[0].lower(), {}).copy()
+            stages[str(stage_number)] = stage
+            stage_number += 1
+            if len(base) == 3 and base[1].upper() == "AS":
+                stages[base[2].lower()] = stage
+        elif instruction in {"CMD", "ENTRYPOINT", "SHELL"}:
+            stage[instruction] = rest
+    if stage.get("ENTRYPOINT") not in (None, "[]"):
+        raise UnsupportedCapability("hf-sandbox does not run Dockerfile ENTRYPOINT")
+    rest = stage.get("CMD")
+    if rest is None:
+        raise StartupError("The Space Dockerfile declares no CMD to start the server")
+    command = ["/bin/sh", "-c", rest]
+    if rest.startswith("["):
+        try:
+            command = json.loads(rest)
+        except ValueError:
+            pass  # Not valid exec form, so Docker runs it as shell form.
+    if command[:2] == ["/bin/sh", "-c"] and "SHELL" in stage:
+        raise UnsupportedCapability("hf-sandbox does not run Dockerfile SHELL")
+    if (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(part, str) for part in command)
+    ):
         raise StartupError("The Space Dockerfile declares no CMD to start the server")
     return command
 
@@ -189,7 +219,9 @@ class HFSandboxSubject:
 
     def _serve(self, command: list[str], port: int, timeout_s: float) -> None:
         self._sandbox.run(
-            shlex.join(command) + " > /tmp/openenv-server.log 2>&1",
+            shlex.join(command)
+            + f" 2>&1 | {{ head -c {_MAX_OUTPUT} > /tmp/openenv-server.log; "
+            "cat > /dev/null; }",
             shell=True,
             background=True,
         )

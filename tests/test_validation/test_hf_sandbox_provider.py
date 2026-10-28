@@ -1,6 +1,9 @@
 """The HF Sandbox provider: Space revision pinning, server start and verified cleanup."""
 
 import json
+import shlex
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -335,3 +338,68 @@ def test_server_command_rejects_entrypoint_and_missing_cmd():
 def test_app_port_defaults_to_the_hub_default():
     assert _app_port("---\napp_port: 8000\n---\n") == 8000
     assert _app_port("no front matter") == 7860
+
+
+@pytest.mark.parametrize(
+    "dockerfile, expected",
+    [
+        (
+            'FROM python:3.12\nCMD ["python", \\\n    "-m", \\\n    "app"]',
+            ["python", "-m", "app"],
+        ),
+        (
+            'FROM python AS build\nENTRYPOINT ["build"]\nCMD ["old"]\nFROM python\nCMD ["serve"]',
+            ["serve"],
+        ),
+        ('FROM python AS build\nCMD ["serve"]\nFROM build', ["serve"]),
+        ("FROM python\nCMD echo \\\n    hello", ["/bin/sh", "-c", "echo     hello"]),
+    ],
+)
+def test_server_command_continuations_and_stages(dockerfile, expected):
+    assert _server_command(dockerfile) == expected
+
+
+def test_final_stage_does_not_inherit_an_unrelated_stage_cmd():
+    with pytest.raises(StartupError, match="no CMD"):
+        _server_command('FROM python AS build\nCMD ["old"]\nFROM python')
+
+
+def test_final_stage_inherits_unsupported_entrypoint():
+    with pytest.raises(UnsupportedCapability, match="ENTRYPOINT"):
+        _server_command('FROM python AS build\nENTRYPOINT ["x"]\nFROM build\nCMD ["y"]')
+
+
+def test_server_log_file_is_bounded_while_output_is_drained(
+    provider, tmp_path, monkeypatch
+):
+    healthy(monkeypatch)
+    log = tmp_path / "server.log"
+    completed = tmp_path / "completed"
+    producer = (
+        "import os; from pathlib import Path; "
+        "[os.write(fd, b'x' * 8192) for fd in (1, 2) for _ in range(128)]; "
+        f"Path({str(completed)!r}).write_text('done')"
+    )
+    hf = provider()
+    sandbox = FakeSandbox()
+    subject = hf_sandbox.HFSandboxSubject(sandbox, hf)
+    subject._serve([sys.executable, "-c", producer], 8000, 1)
+    command, options = sandbox.commands[0]
+    assert options == {"shell": True, "background": True}
+    result = subprocess.run(
+        command.replace("/tmp/openenv-server.log", shlex.quote(str(log))),
+        shell=True,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0
+    assert completed.read_text() == "done"
+    assert log.stat().st_size == hf_sandbox._MAX_OUTPUT
+    assert result.stdout == result.stderr == b""
+
+
+def test_server_command_rejects_custom_shell_and_escape_directive():
+    with pytest.raises(UnsupportedCapability, match="SHELL"):
+        _server_command('FROM python\nSHELL ["bash", "-c"]\nCMD echo hello')
+    with pytest.raises(UnsupportedCapability, match="escapes"):
+        _server_command("# escape=`\nFROM python\nCMD echo hello")
