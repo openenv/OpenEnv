@@ -753,12 +753,17 @@ class DockerRunningSubject:
             )
         except ValueError as exc:
             raise ProviderError("Limits probe returned invalid evidence") from exc
-        containment = self.measure_containment(remaining())
+        try:
+            containment = self.measure_containment(remaining())
+        except CleanupError:
+            raise
+        except ProviderError:
+            containment = None
         # Keep the original capacities and the full inventory that establishes coverage.
         measured["containment"] = containment
         measured["writable"] = [
             {"path": mount["mount_point"], "size_bytes": mount["size_bytes"]}
-            for mount in containment["mounts"]
+            for mount in (containment["mounts"] if containment is not None else [])
             if mount["mount_point"] in _ALLOTTED and mount["size_bytes"] is not None
         ]
         resources = self._spec.resources

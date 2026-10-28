@@ -349,3 +349,107 @@ def test_recovered_exec_removal_failure_remains_fatal(image, tmp_path, monkeypat
         monkeypatch.setattr(docker, "_command", original_command)
         for subject in reversed(subjects):
             subject.stop()
+
+
+def test_known_limit_survives_storage_failure(image, tmp_path, monkeypatch):
+    import shutil
+
+    import yaml
+    from conftest import FIXTURES
+    from openenv.validation import runner
+    from openenv.validation.types import Level, ProviderCapability
+    from support.runtime import evidence
+
+    subjects, readings = [], []
+    original = docker._command
+
+    class Provider(docker.DockerValidationProvider):
+        capabilities = frozenset(
+            {
+                ProviderCapability.IMAGE_BUILD,
+                ProviderCapability.EXEC,
+                ProviderCapability.RESOURCE_ENFORCEMENT,
+            }
+        )
+
+        def build(self, *args):
+            return image
+
+        def start(self, spec):
+            resources = spec.resources.model_copy(update={"memory_mb": 256})
+            subject = super().start(spec.model_copy(update={"resources": resources}))
+            subjects.append(subject)
+            return subject
+
+    def command(argv, *args, **kwargs):
+        if docker.PIDNS_PROBE_SCRIPT in argv:
+            return 1, "", "injected independent storage helper failure"
+        result = original(argv, *args, **kwargs)
+        if docker.LIMITS_SCRIPT in argv:
+            readings.append(json.loads(result[1]))
+        return result
+
+    package = tmp_path / "subject"
+    shutil.copytree(FIXTURES / "runtime" / "served_probe", package)
+    path = package / "openenv.yaml"
+    manifest = yaml.safe_load(path.read_text())
+    manifest["validation"]["resources"].update(memory_mb=128, disk_mb=64)
+    path.write_text(yaml.safe_dump(manifest))
+    monkeypatch.setattr(docker, "_command", command)
+    monkeypatch.setattr(runner, "collect_runtime_evidence", lambda *a, **k: evidence())
+    try:
+        report = runner.run_validation(
+            package,
+            max_level=Level.RUNTIME,
+            provider=Provider(),
+            artifacts_dir=tmp_path / "artifacts",
+        )
+        results = {result.check_id: result for result in report.results}
+        cleanup = json.loads((tmp_path / "artifacts" / "cleanup.json").read_text())
+        assert results["runtime.startup"].status is CheckStatus.PASS, results[
+            "runtime.startup"
+        ].evidence
+        assert readings[0]["cgroup"]["memory_max"] == 256 * 2**20
+
+        class Manifest:
+            resources = subjects[0]._spec.resources.model_copy(
+                update={"memory_mb": 128}
+            )
+
+        same = Subject(
+            root=Path("."),
+            manifest=Manifest(),
+            image_ref=None,
+            running=None,
+            outputs_dir=Path("."),
+            resource_evidence_json=json.dumps(
+                {
+                    **readings[0],
+                    "writable": [],
+                    "containment": None,
+                    "qualification": [],
+                }
+            ),
+        )
+        direct = ResourceBoundsGrader().run(same)
+        assert results["runtime.startup"].status is CheckStatus.PASS
+        assert results["runtime.resource_bounds"].status is CheckStatus.FAIL
+        assert direct.status is CheckStatus.FAIL
+        assert cleanup["completed"] is True
+    finally:
+        for subject in subjects:
+            subject.stop()
+            listing = subprocess.run(
+                [
+                    "docker",
+                    "ps",
+                    "-aq",
+                    "--filter",
+                    f"label={docker._LABEL}={subject.run_id}",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert listing.stdout.split() == []

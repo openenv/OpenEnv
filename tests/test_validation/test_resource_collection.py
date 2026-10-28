@@ -3,12 +3,16 @@
 import json
 import shutil
 
+import pytest
 from conftest import FIXTURES
 from openenv.validation import runner
-from openenv.validation.providers import docker
+from openenv.validation.manifest import NetworkPolicy, ResourceDeclaration
+from openenv.validation.providers import CleanupError, docker, ProviderError
+from openenv.validation.runtime.contracts import LaunchSpec
 from openenv.validation.types import CheckStatus, Level, ProviderCapability
 from support.runtime import evidence
 from test_host_containment import contained
+from test_resource_bounds import bounded, grade
 
 
 def test_recovered_exec_cleanup_error_remains_fatal(tmp_path, monkeypatch):
@@ -127,3 +131,42 @@ def test_recovered_exec_cleanup_error_remains_fatal(tmp_path, monkeypatch):
         for result in report.results
         for item in result.evidence
     )
+
+
+@pytest.mark.parametrize("memory_mb", [1024, 2048])
+def test_storage_failure_preserves_collected_limits(monkeypatch, memory_mb):
+    spec = LaunchSpec(
+        image_ref="sha256:" + "a" * 64,
+        resources=ResourceDeclaration(
+            cpu=1, memory_mb=1024, disk_mb=64, episode_timeout_s=10
+        ),
+        network=NetworkPolicy(),
+        run_id="test-resource-limits",
+    )
+    subject = docker.DockerRunningSubject("test-resource-limits", spec)
+    monkeypatch.setattr(docker, "_ensure_image", lambda *a: None)
+    monkeypatch.setattr(
+        subject, "_raw_inspect", lambda *a: {"Config": {"User": "65532:65532"}}
+    )
+    limits = bounded(memory_max=memory_mb * 2**20)["cgroup"]
+    monkeypatch.setattr(
+        subject, "_pidns_probe", lambda *a: json.dumps({"cgroup": limits})
+    )
+
+    def unavailable(*args, **kwargs):
+        raise ProviderError("independent storage probe failed")
+
+    monkeypatch.setattr(subject, "measure_containment", unavailable)
+    monkeypatch.setattr(docker.DockerValidationProvider, "start", unavailable)
+    measured = subject.measure_resources()
+    assert measured["cgroup"]["memory_max"] == memory_mb * 2**20
+    assert measured["containment"] is None
+    result = grade(measured)
+    assert result.status is (CheckStatus.FAIL if memory_mb > 1024 else CheckStatus.SKIP)
+
+    def cleanup_failed(*args):
+        raise CleanupError("storage helper teardown failed")
+
+    monkeypatch.setattr(subject, "measure_containment", cleanup_failed)
+    with pytest.raises(CleanupError, match="storage helper teardown"):
+        subject.measure_resources()
