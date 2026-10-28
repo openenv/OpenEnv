@@ -60,6 +60,7 @@ def collect_runtime_evidence(
     *,
     episode_timeout_s: float,
     request_timeout_s: float | None = None,
+    episodes: int = 1,
 ) -> RuntimeEvidence:
     """
     Preserve schema and reset/step/state responses without model coercion.
@@ -78,11 +79,14 @@ def collect_runtime_evidence(
         request_timeout_s (`float`, *optional*):
             Optional per-operation cap. By default, each operation may use the
             remaining declared episode budget.
+        episodes (`int`, *optional*, defaults to `1`):
+            Run the plan this many times on the same session, resetting between
+            episodes. The whole collection then has `episodes` episode budgets.
 
     Returns:
         [`~openenv.validation.runtime.contracts.RuntimeEvidence`]: raw evidence.
     """
-    deadline = time.monotonic() + episode_timeout_s
+    deadline = time.monotonic() + episode_timeout_s * episodes
     exchanges = []
     schema_json = reset_schema_json = None
     phase = "schema"
@@ -212,13 +216,14 @@ def collect_runtime_evidence(
 
             reset = dict(plan.reset.options)
             reset.update(seed=plan.reset.seed, episode_id=plan.reset.episode_id)
-            observation = exchange("reset", reset)
-            exchange("state")
-            for action in plan.actions:
-                if observation.get("done") is True:
-                    break
-                observation = exchange("step", action)
+            for _ in range(episodes):
+                observation = exchange("reset", reset)
                 exchange("state")
+                for action in plan.actions:
+                    if observation.get("done") is True:
+                        break
+                    observation = exchange("step", action)
+                    exchange("state")
             complete = True
         finally:
             # Teardown is best effort and cannot replace an in-episode failure

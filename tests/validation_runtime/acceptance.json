@@ -9,7 +9,10 @@
       "tests.test_validation.integration.test_served_probe::test_fault_is_visible_in_raw_wire_response[bad_state]",
       "tests.test_validation.integration.test_served_probe::test_failed_start_is_explicit",
       "tests.test_validation.integration.test_served_probe::test_real_echo_reset_schema_and_unscored_rewards[False]",
-      "tests.test_validation.integration.test_served_probe::test_real_echo_reset_schema_and_unscored_rewards[True]"
+      "tests.test_validation.integration.test_served_probe::test_real_echo_reset_schema_and_unscored_rewards[True]",
+      "tests.test_validation.integration.test_episode_oracle_protocol::test_real_session_isolation_and_oracle[good-pass-pass]",
+      "tests.test_validation.integration.test_episode_oracle_protocol::test_real_session_isolation_and_oracle[sticky_episode-fail-pass]",
+      "tests.test_validation.integration.test_episode_oracle_protocol::test_real_session_isolation_and_oracle[exposed_oracle-pass-fail]"
     ],
     "docker": [
       "tests.test_validation.integration.test_docker_lifecycle::test_docker_lifecycle_effective_limits_and_owned_cleanup",
@@ -49,6 +52,8 @@
       "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[bad_observation-runtime.observation_schema]",
       "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[missing_done-runtime.observation_schema]",
       "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[bad_state-runtime.state_contract]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[sticky_episode-runtime.episode_isolation]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[exposed_oracle-runtime.oracle_containment]",
       "tests.test_validation.integration.test_runtime_cli::test_cli_hung_step_times_out_with_partial_evidence",
       "tests.test_validation.integration.test_runtime_cli::test_cli_sigint_retains_partial_evidence_and_cleans_up",
       "tests.test_validation.integration.test_runtime_cli::test_cli_sigterm_retains_partial_evidence_and_cleans_up",

@@ -70,7 +70,7 @@ def measured_episode():
     )
 
 
-def test_runtime_collects_once_cleans_up_and_marks_remaining_work(
+def test_runtime_collects_episode_and_isolation_cleans_up_and_marks_remaining_work(
     package, monkeypatch, tmp_path
 ):
     provider = FakeRuntimeProvider()
@@ -86,7 +86,8 @@ def test_runtime_collects_once_cleans_up_and_marks_remaining_work(
         package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
     )
     results = {r.check_id: r.status for r in report.results}
-    assert len(calls) == 1
+    # The measured episode, then a same-session pair and a fresh episode.
+    assert [kwargs.get("episodes", 1) for _, kwargs in calls] == [1, 2, 1]
     assert len(provider.builds) == len(provider.launches) == 1
     assert provider.subject.stopped
     assert report.report_schema_version == "2"

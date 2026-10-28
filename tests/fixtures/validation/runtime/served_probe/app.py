@@ -3,9 +3,11 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import uvicorn
+from fastapi.responses import PlainTextResponse
 from openenv.core.env_server.http_server import create_app
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
@@ -29,7 +31,8 @@ class ProbeEnvironment(Environment):
         self.counter = 0
 
     def reset(self, seed=None, episode_id=None, **kwargs):
-        self.counter = 0
+        if os.environ.get("VALIDATION_FAULT") != "sticky_episode":
+            self.counter = 0
         self._state = State(episode_id=episode_id or "probe", step_count=0)
         return ProbeObservation(counter=0, reward=0.0, done=False)
 
@@ -109,18 +112,23 @@ def make_app(mode="good"):
         "bad_state",
         "hung_step",
         "slow_step",
+        "sticky_episode",
+        "exposed_oracle",
     }:
         raise ValueError(f"Unknown fixture mode: {mode}")
-    return WireFault(
-        create_app(
-            ProbeEnvironment,
-            ProbeAction,
-            ProbeObservation,
-            env_name="validation_probe",
-            max_concurrent_envs=2,
-        ),
-        mode,
+    application = create_app(
+        ProbeEnvironment,
+        ProbeAction,
+        ProbeObservation,
+        env_name="validation_probe",
+        max_concurrent_envs=2,
     )
+    if mode == "exposed_oracle":
+        oracle = Path(__file__).parent / "oracle" / "solve.sh"
+        application.add_api_route(
+            "/oracle/solve.sh", lambda: PlainTextResponse(oracle.read_text())
+        )
+    return WireFault(application, mode)
 
 
 def main():
