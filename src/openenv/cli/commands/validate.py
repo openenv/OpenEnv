@@ -178,7 +178,10 @@ def validate(
     ] = None,
     revision: Annotated[
         str | None,
-        typer.Option("--revision", help="Space revision to validate (default: latest)"),
+        typer.Option(
+            "--revision",
+            help="Space branch, tag or commit hash to validate (default: main)",
+        ),
     ] = None,
     flavor: Annotated[
         str,
@@ -295,7 +298,8 @@ def validate(
                     HFSandboxValidationProvider,
                 )
 
-                revision = revision or HfApi().space_info(space).sha
+                # Download, run and report one commit, even if a branch moves.
+                revision = HfApi().space_info(space, revision=revision).sha
                 package_root = Path(
                     snapshot_download(
                         space,

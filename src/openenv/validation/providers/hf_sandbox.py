@@ -60,8 +60,8 @@ class HFSandboxValidationProvider:
         space_id (`str`):
             The Space to run, e.g. `"openenv/echo_env"`.
         revision (`str`):
-            The Space commit whose files were validated; the run refuses to start
-            if the Space has moved on.
+            The full commit hash of the validated Space files; resolve a branch or
+            tag first. The run refuses to start if the Space has moved on.
         flavor (`str`, *optional*, defaults to `"cpu-basic"`):
             HF Jobs hardware flavor, as listed by `hf jobs hardware`.
         token (`str`, *optional*):
@@ -81,6 +81,8 @@ class HFSandboxValidationProvider:
     ):
         from huggingface_hub import HfApi
 
+        if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise ValueError(f"revision must be a full commit hash, not {revision!r}")
         self.space_id = space_id
         self.revision = revision
         self.flavor = flavor

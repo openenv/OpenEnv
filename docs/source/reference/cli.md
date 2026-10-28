@@ -134,18 +134,19 @@ openenv validate --space openenv/echo_env --level runtime
 openenv validate --space my-org/my-env --level runtime --flavor t4-small
 ```
 
-The validator downloads the Space at `--revision` (default: the latest commit) and
-runs its static checks on those files. For runtime checks it starts the image the
-Hub built from that Space in a dedicated HF Sandbox on the `--flavor` hardware
-(default `cpu-basic`; see `hf jobs hardware`). It runs the Dockerfile's `CMD` and
-reaches `app_port` from the Space card through an authenticated proxy. The run
-stops if the Space has moved past the validated revision. The job is billed to
-your account, it is cancelled when validation ends, and your token is never
-passed into it. A GPU flavor satisfies `resources.gpus`; a CPU flavor skips
+The validator resolves `--revision` (a branch, tag or commit hash; default `main`)
+to one commit, downloads the Space at that commit and runs its static checks on
+those files. The report target names that commit. For runtime checks it starts the
+image the Hub built from that Space in a dedicated HF Sandbox on the `--flavor`
+hardware (default `cpu-basic`; see `hf jobs hardware`). It runs the Dockerfile's
+`CMD` and reaches `app_port` from the Space card through an authenticated proxy.
+The run stops if the Space has moved past the validated revision. The job is
+billed to your account, it is cancelled when validation ends, and your token is
+never passed into it. A GPU flavor satisfies `resources.gpus`; a CPU flavor skips
 runtime for a GPU declaration. HF Jobs isolate each subject as a virtual machine
 whose settings cannot be inspected from outside, so network policy, host
-containment and resource bounds report the missing provider capability. Only
-the `public` network mode is supported.
+containment and resource bounds report the missing provider capability. Only the
+`public` network mode is supported.
 
 Credential delivery is deferred for this release. Set
 `validation.execution.requires_credentials: true` when the environment needs an

@@ -1,9 +1,12 @@
 """The HF Sandbox provider: Space revision pinning, server start and verified cleanup."""
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import huggingface_hub
 import pytest
+from openenv.cli.__main__ import app
 from openenv.validation.manifest import (
     ExecutionDeclaration,
     NetworkPolicy,
@@ -22,8 +25,10 @@ from openenv.validation.providers.hf_sandbox import (
 )
 from openenv.validation.runtime.contracts import LaunchSpec
 from openenv.validation.types import ProviderCapability
+from typer.testing import CliRunner
 
 GPU = SimpleNamespace(quantity="1")
+PROBE = Path(__file__).parents[1] / "fixtures/validation/runtime/served_probe"
 
 
 class FakeApi:
@@ -38,7 +43,7 @@ class FakeApi:
             SimpleNamespace(name="t4-small", accelerator=GPU),
         ]
 
-    def space_info(self, space_id):
+    def space_info(self, space_id, revision=None):
         return SimpleNamespace(sha=self.sha)
 
     def inspect_job(self, job_id):
@@ -99,7 +104,31 @@ def provider(monkeypatch):
 def space(tmp_path, cmd='CMD ["python", "-m", "served_probe.app"]'):
     (tmp_path / "Dockerfile").write_text(f"FROM python:3.12-slim\n{cmd}\n")
     (tmp_path / "README.md").write_text("---\nsdk: docker\napp_port: 8000\n---\n")
+    (tmp_path / "openenv.yaml").write_text((PROBE / "openenv.yaml").read_text())
     return tmp_path
+
+
+@pytest.fixture
+def downloads(provider, monkeypatch):
+    """`snapshot_download` into `local_dir`, recording each requested revision."""
+    revisions = []
+
+    def snapshot_download(repo_id, *, repo_type, revision, local_dir):
+        revisions.append(revision)
+        space(Path(local_dir))
+        return local_dir
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
+    return revisions
+
+
+def validate_space(*args):
+    result = CliRunner().invoke(
+        app,
+        ["validate", "--space", "openenv-testing/probe", "--level", "static"]
+        + ["--json", *args],
+    )
+    return json.loads(result.output)
 
 
 def spec(image, gpus=0):
@@ -138,6 +167,25 @@ def test_flavor_hardware_sets_gpu_capability(provider):
     assert gpu.gpus == 1
     with pytest.raises(ValueError, match="unknown HF Jobs flavor"):
         provider("not-a-flavor")
+
+
+def test_revision_must_be_a_commit_hash(provider):
+    with pytest.raises(ValueError, match="full commit hash"):
+        HFSandboxValidationProvider("openenv-testing/probe", "main")
+
+
+def test_named_revision_is_validated_as_its_commit(downloads, monkeypatch):
+    revisions = []
+    real = hf_sandbox.HFSandboxValidationProvider
+
+    def recording(space_id, revision, **kwargs):
+        revisions.append(revision)
+        return real(space_id, revision, **kwargs)
+
+    monkeypatch.setattr(hf_sandbox, "HFSandboxValidationProvider", recording)
+    report = validate_space("--revision", "main")
+    assert downloads == revisions == ["a" * 40]
+    assert report["target"] == "spaces/openenv-testing/probe@" + "a" * 40
 
 
 def test_build_pins_the_validated_revision(provider, tmp_path):
