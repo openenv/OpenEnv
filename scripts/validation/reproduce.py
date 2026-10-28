@@ -511,7 +511,7 @@ def main():
                 ],
                 cwd=output,
                 env=environment,
-                timeout=600,
+                timeout=1200 if args.suite == "docker" else 600,
                 log=output / "logs/tests.log",
             )
             status = 0
