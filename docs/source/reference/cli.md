@@ -78,8 +78,9 @@ reports `SKIP`.
 `runtime.resource_bounds` reads the subject's cgroup v2 limits and writable-root
 sizes and compares them with the declared `cpu`, `memory_mb` and `disk_mb`; swap
 must be disabled and the process count bounded. Storage accounting uses the complete
-mount inventory, deduplicates bind mounts of one filesystem, and cannot pass with
-an unaccounted or unbounded writable filesystem. Each bounded memory, process,
+mount inventory and the device-storage inventory above, charges any usable device
+filesystem once across its aliases, and cannot pass with incomplete storage
+evidence or an unbounded writable filesystem. Each bounded memory, process,
 disk and Docker exec-timeout probe runs in its own disposable subject. A fresh
 start marker and trusted cgroup events or filesystem measurements must corroborate
 enforcement. Exit 137 alone proves no limit. Unreadable cgroup files preserve

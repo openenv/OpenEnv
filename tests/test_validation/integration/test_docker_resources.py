@@ -136,6 +136,45 @@ def test_writable_root_is_not_accounted_as_only_tmpfs(image, monkeypatch):
     assert "the image root is writable" in result.evidence
 
 
+@pytest.mark.parametrize("storage", ["directory", "file"])
+def test_nested_device_storage_is_accounted(image, storage):
+    spec = LaunchSpec(
+        image_ref=image,
+        resources=LAUNCHED,
+        network=NetworkPolicy(),
+        run_id="resources-dev-" + uuid.uuid4().hex[:12],
+        startup_timeout_s=60,
+    )
+    running = DockerValidationProvider().start(spec)
+    path = "/dev/nested/data"
+    setup = "mkdir -p /dev/nested && "
+    setup += (
+        f"mkdir {path} && chmod 777 {path}"
+        if storage == "directory"
+        else f"touch {path} && chmod 666 {path}"
+    )
+    target = path + "/escape" if storage == "directory" else path
+    try:
+        subprocess.run(
+            ["docker", "exec", "--user", "0", running.name, "sh", "-c", setup],
+            capture_output=True,
+            timeout=30,
+            check=True,
+        )
+        escape = running.exec(
+            ["python", "-c", f"open({target!r}, 'wb').write(bytes(2**20))"], 30
+        )
+        assert escape.exit_code == 0, escape.stderr
+        measured = running.measure_resources()
+    finally:
+        running.stop()
+    assert owned(spec.run_id) == []
+    assert "/dev" not in measured["containment"]["writable"]
+    result = grade(LAUNCHED, measured)
+    assert result.status is CheckStatus.FAIL, result.evidence
+    assert result.measured["writable_bytes"] == 128 * 1024 * 1024
+
+
 @pytest.mark.parametrize("failed_resource", ["subject", "helper", "startup"])
 def test_disposable_cleanup_failure_is_reported_and_retried(
     image, monkeypatch, tmp_path, failed_resource

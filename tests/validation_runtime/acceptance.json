@@ -33,6 +33,8 @@
       "tests.test_validation.integration.test_docker_resources::test_exit_137_without_enforcement_evidence_is_inconclusive[False]",
       "tests.test_validation.integration.test_docker_resources::test_exit_137_without_enforcement_evidence_is_inconclusive[True]",
       "tests.test_validation.integration.test_docker_resources::test_writable_root_is_not_accounted_as_only_tmpfs",
+      "tests.test_validation.integration.test_docker_resources::test_nested_device_storage_is_accounted[directory]",
+      "tests.test_validation.integration.test_docker_resources::test_nested_device_storage_is_accounted[file]",
       "tests.test_validation.integration.test_docker_resources::test_disposable_cleanup_failure_is_reported_and_retried[subject]",
       "tests.test_validation.integration.test_docker_resources::test_disposable_cleanup_failure_is_reported_and_retried[helper]",
       "tests.test_validation.integration.test_docker_resources::test_disposable_cleanup_failure_is_reported_and_retried[startup]",

@@ -256,6 +256,71 @@ def test_shared_filesystem_is_counted_once():
     assert result.measured["writable_bytes"] == 64 * MIB
 
 
+@pytest.mark.parametrize("path", ["/dev/nested/data", "/dev/existing-file"])
+def test_device_storage_counts_capacity_even_when_mount_root_is_not_writable(path):
+    measured = bounded()
+    measured["containment"]["writable"] = [path]
+    measured["containment"]["device_storage"]["0:180"]["writable"] = True
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    # /dev and its masked /proc aliases share one 64 MiB filesystem.
+    assert result.measured["writable_bytes"] == 128 * MIB
+
+
+@pytest.mark.parametrize(
+    "inventory", [{}, {"0:180": {"complete": False, "writable": False}}]
+)
+def test_incomplete_device_storage_cannot_pass(inventory):
+    measured = bounded()
+    measured["containment"]["device_storage"] = inventory
+    assert grade(measured).status is CheckStatus.SKIP
+
+
+def test_partial_device_storage_retains_a_known_budget_violation():
+    measured = bounded()
+    measured["containment"]["device_storage"]["0:180"] = {
+        "complete": False,
+        "writable": True,
+    }
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    assert result.measured["writable_bytes"] == 128 * MIB
+
+
+def test_allotted_mount_on_device_filesystem_is_always_accounted():
+    measured = bounded()
+    shm = next(
+        m for m in measured["containment"]["mounts"] if m["mount_point"] == "/dev/shm"
+    )
+    shm.update(device="0:180", size_bytes=64 * MIB)
+    result = grade(measured)
+    assert result.status is CheckStatus.FAIL
+    assert result.measured["writable_bytes"] == 96 * MIB
+
+
+def test_usable_device_storage_with_unknown_capacity_is_inconclusive():
+    measured = bounded()
+    measured["containment"]["device_storage"]["0:180"]["writable"] = True
+    for mount in measured["containment"]["mounts"]:
+        if mount["device"] == "0:180":
+            mount["size_bytes"] = None
+    assert grade(measured).status is CheckStatus.SKIP
+
+
+def test_incomplete_usable_device_inventory_within_budget_is_inconclusive():
+    measured = bounded()
+    measured["containment"]["device_storage"]["0:180"] = {
+        "complete": False,
+        "writable": True,
+    }
+    for mount in measured["containment"]["mounts"]:
+        if mount["device"] == "0:180":
+            mount["size_bytes"] = MIB
+        elif mount["mount_point"] in measured["containment"]["allotted"]:
+            mount["size_bytes"] = MIB
+    assert grade(measured).status is CheckStatus.SKIP
+
+
 @pytest.mark.parametrize("cpu", ["100000 100000", "100000 0", "invalid", ""])
 def test_limits_script_retains_independently_readable_values(monkeypatch, capsys, cpu):
     import io

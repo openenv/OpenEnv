@@ -91,12 +91,19 @@ class ResourceBoundsGrader:
         )
         filesystems = {}
         if inventory is not None:
-            # Docker's root-owned device tmpfs is also bound over masked /proc files.
+            # Docker's device tmpfs is also bound over masked /proc files. Denial
+            # at /dev alone says nothing about nested directories or regular files.
             dev = {
                 mount.device
                 for mount in inventory.mounts
                 if (mount.mount_point, mount.fstype) == ("/dev", "tmpfs")
             }
+            if any(
+                device not in inventory.device_storage
+                or not inventory.device_storage[device].complete
+                for device in dev
+            ):
+                storage_unknown = True
             for mount in inventory.mounts:
                 if mount.mount_point == "/" and not mount.read_only:
                     problems.append("the image root is writable")
@@ -106,8 +113,10 @@ class ResourceBoundsGrader:
                     ("/dev/mqueue", "mqueue"),
                 }:
                     continue
-                if mount.device in dev and "/dev" not in inventory.writable:
-                    continue
+                if mount.device in dev and mount.mount_point not in inventory.allotted:
+                    access = inventory.device_storage.get(mount.device)
+                    if access is None or not access.writable:
+                        continue
                 if mount.size_bytes is None:
                     storage_unknown = True
                 else:
