@@ -12,7 +12,10 @@ from openenv.validation.providers import ProviderError, StartupError
 from openenv.validation.report import CheckResult
 from openenv.validation.runner import run_validation, source_digest
 from openenv.validation.runtime.artifacts import write_runtime_bundle
-from openenv.validation.runtime.collector import RuntimeCollectionInterrupted
+from openenv.validation.runtime.collector import (
+    RuntimeCollectionInterrupted,
+    RuntimeCollectionUnsupported,
+)
 from openenv.validation.runtime.contracts import HttpProbe, RuntimeEvidence
 from openenv.validation.runtime.scheduler import execute_graders, order_graders
 from openenv.validation.types import CheckStatus, Level, ProviderCapability
@@ -121,6 +124,37 @@ def test_runtime_collection_uses_declared_episode_timeout(package, monkeypatch):
     run_validation(package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider())
 
     assert calls[0]["episode_timeout_s"] == 600.0
+
+
+def test_unsupported_schema_numbers_skip_and_keep_the_received_schema(
+    package, monkeypatch, tmp_path
+):
+    prefix = RuntimeEvidence(
+        schema_response_json='{"observation":{"minimum":1e9999999999999999999}}',
+        failure_phase="schema",
+        failure_reason="schema JSON numeric range exceeds validator support",
+    )
+
+    def collect(*args, **kwargs):
+        raise RuntimeCollectionUnsupported(prefix)
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    provider = FakeRuntimeProvider()
+    report = run_validation(
+        package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=tmp_path / "bundle",
+    )
+    startup = next(
+        result for result in report.results if result.check_id == "runtime.startup"
+    )
+    assert startup.status is CheckStatus.SKIP
+    assert "json_numeric_range" in startup.evidence[0]
+    assert provider.subject.stopped
+    metadata = json.loads((tmp_path / "bundle/collector-evidence.json").read_text())
+    assert metadata["schema_response_available"] is True
+    assert metadata["schema_response_parse_failed"] is True
 
 
 @pytest.mark.parametrize("interrupted_call", [2, 3])

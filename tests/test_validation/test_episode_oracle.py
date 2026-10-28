@@ -288,7 +288,7 @@ def grade_oracle(subject):
     [
         ("1.0000000000000001", "1.0", CheckStatus.PASS),
         ("1e400", "2e400", CheckStatus.PASS),
-        ("1e400", "Infinity", CheckStatus.PASS),
+        ("1e400", "Infinity", CheckStatus.SKIP),
         ("1", "true", CheckStatus.PASS),
         ("1", "1.0", CheckStatus.PASS),
         ("1.0000000000000001", '"1.0000000000000001"', CheckStatus.PASS),

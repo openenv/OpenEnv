@@ -113,7 +113,8 @@ Oracle inventory reads at most 64 files and 1 MiB. HTTP probes share a 10 second
 wall deadline and 1 MiB body budget, follow at most three same-origin redirects,
 and reject compressed responses before decoding. Missing or failed probes,
 unresolved redirects, incomplete transcripts or schemas, unreadable inventory
-entries, files too short to trace reliably, and omitted files or bytes report
+entries, unsupported structured JSON comparisons, files too short to trace
+reliably, and omitted files or bytes report
 `SKIP` unless a disclosure was found. Coverage counts are recorded for each limit.
 A pass establishes only that complete artifacts did not match
 these measured responses. It does not test arbitrary MCP tool reads, partial or
@@ -123,6 +124,8 @@ full agent boundary.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,
 with dependent contract checks skipped and the completed trace retained.
+Validator JSON numeric-range and depth limits report named capability `SKIP`s,
+preserving the received evidence.
 
 Credential delivery is deferred for this release. Set
 `validation.execution.requires_credentials: true` when the environment needs an

@@ -10,6 +10,7 @@ from websockets.sync.client import connect
 
 from ...core.env_server.types import WSErrorCode
 from .contracts import RuntimeEvidence, RuntimePlan, WireExchange
+from .json_values import dumps, loads
 from .transport import abort_socket, http_deadline
 
 MAX_MESSAGE_BYTES = 1024 * 1024
@@ -51,6 +52,14 @@ class RuntimeCollectionInterrupted(KeyboardInterrupt):
 
     def __init__(self, evidence: RuntimeEvidence):
         super().__init__("runtime collection interrupted")
+        self.evidence = evidence
+
+
+class RuntimeCollectionUnsupported(RuntimeError):
+    """A validator JSON limit carrying the retained collection prefix."""
+
+    def __init__(self, evidence: RuntimeEvidence, *, capability="json_numeric_range"):
+        super().__init__(f"{capability}: runtime JSON exceeds validator support")
         self.evidence = evidence
 
 
@@ -132,23 +141,13 @@ def collect_runtime_evidence(
                         raise ValueError("schema exceeds size bound")
                     payload.extend(chunk)
             schema_response_json = payload.decode("utf-8")
-            schema = json.loads(payload)
+            schema = loads(payload)
             if not isinstance(schema, dict) or "observation" not in schema:
                 raise ValueError("missing observation schema")
-            schema_json = json.dumps(
-                schema["observation"],
-                allow_nan=False,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+            schema_json = dumps(schema["observation"])
 
             if "reset_observation" in schema:
-                reset_schema_json = json.dumps(
-                    schema["reset_observation"],
-                    allow_nan=False,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
+                reset_schema_json = dumps(schema["reset_observation"])
 
         endpoint = urlsplit(base_url)
         ws_url = urlunsplit(
@@ -264,6 +263,21 @@ def collect_runtime_evidence(
                 failure_phase=phase,
                 failure_reason=f"{phase} failed (KeyboardInterrupt)",
             )
+        ) from None
+    except (ArithmeticError, RecursionError) as exc:
+        capability = (
+            "json_numeric_range" if isinstance(exc, ArithmeticError) else "json_depth"
+        )
+        raise RuntimeCollectionUnsupported(
+            RuntimeEvidence(
+                exchanges=tuple(exchanges),
+                observation_schema_json=schema_json,
+                reset_observation_schema_json=reset_schema_json,
+                schema_response_json=schema_response_json,
+                failure_phase=phase,
+                failure_reason=f"{phase} JSON exceeds validator support ({capability})",
+            ),
+            capability=capability,
         ) from None
     except Exception as exc:
         # Exception text may include submitted payloads or URL credentials.

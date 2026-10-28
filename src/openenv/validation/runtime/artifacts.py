@@ -201,7 +201,16 @@ def write_runtime_bundle(
         row["redirect_bodies"] = [_http_body(body) for body in row["redirect_bodies"]]
         row["redacted"] |= any(body["redacted"] for body in row["redirect_bodies"])
         probes.append(row)
-    files["oracle-http.json"] = probes
+    retained_probes = _redact(probes)
+    # Evaluate modification flags at their actual depth in the saved document.
+    for original, retained in zip(probes, retained_probes):
+        retained["redacted"] |= original["body"] != retained["body"]
+        for before, after in zip(
+            original["redirect_bodies"], retained["redirect_bodies"]
+        ):
+            after["redacted"] |= before["body"] != after["body"]
+            retained["redacted"] |= after["redacted"]
+    files["oracle-http.json"] = retained_probes
     digests = []
     for name, value in files.items():
         payload = (dumps(_redact(value)) + "\n").encode()

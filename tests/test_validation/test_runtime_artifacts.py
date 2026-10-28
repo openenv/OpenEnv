@@ -204,6 +204,24 @@ def test_bundle_redacts_oracle_body_and_records_original_digest(tmp_path):
     assert "oracle-http.json" in (tmp_path / "SHA256SUMS").read_text()
 
 
+@pytest.mark.parametrize("depth", [60, 61, 62, 63, 64, 65])
+def test_http_truncation_flags_describe_the_final_serialized_body(tmp_path, depth):
+    original = "canary"
+    for _ in range(depth):
+        original = [original]
+    body = json.dumps(original).encode()
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        oracle_http=(HttpProbe("/oracle", 200, body, redirect_bodies=(body,)),),
+    )
+    probe = json.loads((tmp_path / "oracle-http.json").read_text())[0]
+    for retained in (probe, *probe["redirect_bodies"]):
+        if retained["body"] != original:
+            assert retained["redacted"] is True
+        assert retained["body_sha256"] == hashlib.sha256(body).hexdigest()
+
+
 @pytest.mark.parametrize(
     "body",
     [

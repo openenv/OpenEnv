@@ -32,7 +32,11 @@ from .policy import apply_policy, load_policy, PolicyError, SeverityPolicy
 from .providers import CleanupError, ProviderError, StartupError, UnsupportedCapability
 from .report import CheckResult, ValidationReport, ValidationReportV2
 from .runtime.artifacts import write_runtime_bundle
-from .runtime.collector import collect_runtime_evidence, RuntimeCollectionInterrupted
+from .runtime.collector import (
+    collect_runtime_evidence,
+    RuntimeCollectionInterrupted,
+    RuntimeCollectionUnsupported,
+)
 from .runtime.contracts import (
     HttpProbe,
     IsolationEvidence,
@@ -410,6 +414,22 @@ def _runtime(subject, graders, *, skip_build, provider):
             subject,
             provider_capabilities=provider.capabilities,
             prior=[result],
+        )
+    except RuntimeCollectionUnsupported as exc:
+        if evidence is None:
+            evidence = exc.evidence
+        elif isolation is None:
+            isolation = IsolationEvidence(
+                sequential=exc.evidence,
+                fresh=RuntimeEvidence(
+                    failure_phase="not_started",
+                    failure_reason="collection stopped at an unsupported schema",
+                ),
+            )
+        else:
+            isolation = replace(isolation, fresh=exc.evidence)
+        result = _outcome(
+            "runtime.startup", CheckStatus.SKIP, str(exc), started=started
         )
     except UnsupportedCapability as exc:
         result = _outcome(

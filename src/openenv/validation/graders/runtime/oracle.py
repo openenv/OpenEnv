@@ -79,7 +79,7 @@ def _json_values(text):
     """Walk JSON values iteratively, retaining raw text for non-JSON responses."""
     try:
         pending = [loads(text)]
-    except (ValueError, ArithmeticError, RecursionError):
+    except ValueError:
         return
     while pending:
         value = pending.pop()
@@ -93,19 +93,24 @@ def _json_values(text):
 def _appears(artifacts, strings, structured, text):
     # Whole artifacts avoid conclusive failures from ordinary source-code lines.
     if any(artifact in text for artifact in artifacts):
-        return True
-    parsed = False
-    for value in _json_values(text):
-        parsed = True
-        if isinstance(value, str) and any(artifact in value for artifact in strings):
-            return True
-        if structured and isinstance(value, (dict, list)):
-            try:
-                if typed_json(value) in structured:
-                    return True
-            except ValueError:
-                pass
-    return not parsed and any(artifact in text for artifact in strings)
+        return True, True
+    parsed, complete = False, True
+    try:
+        for value in _json_values(text):
+            parsed = True
+            if isinstance(value, str) and any(
+                artifact in value for artifact in strings
+            ):
+                return True, complete
+            if structured and isinstance(value, (dict, list)):
+                try:
+                    if typed_json(value) in structured:
+                        return True, complete
+                except ValueError:
+                    complete = False
+    except (ArithmeticError, RecursionError):
+        complete = False
+    return not parsed and any(artifact in text for artifact in strings), complete
 
 
 class OracleContainmentGrader:
@@ -166,15 +171,22 @@ class OracleContainmentGrader:
         # Structured artifacts are independent of indentation, key order and escaping.
         structured = set()
         strings = set(artifacts)
+        comparison_complete = True
         for text in tuple(artifacts):
             try:
                 value = loads(text)
-                if isinstance(value, str) and len(value.strip()) >= _MIN_FINGERPRINT:
-                    strings.add(value.strip())
-                elif isinstance(value, (dict, list)):
+            except ValueError:
+                continue  # Scripts and other plain text use whole-content matching.
+            except (ArithmeticError, RecursionError):
+                comparison_complete = False
+                continue
+            if isinstance(value, str) and len(value.strip()) >= _MIN_FINGERPRINT:
+                strings.add(value.strip())
+            elif isinstance(value, (dict, list)):
+                try:
                     structured.add(typed_json(value))
-            except (ValueError, ArithmeticError, RecursionError):
-                pass
+                except ValueError:
+                    comparison_complete = False
         runs = [subject.runtime_evidence]
         if subject.isolation_evidence:
             runs += [
@@ -196,13 +208,12 @@ class OracleContainmentGrader:
             for probe in subject.oracle_http
             for body in (*probe.redirect_bodies, probe.body)
         ]
-        leaks = sorted(
-            {
-                label
-                for label, text in sources
-                if _appears(artifacts, strings, structured, text)
-            }
-        )
+        leaks = set()
+        for label, text in sources:
+            matched, complete = _appears(artifacts, strings, structured, text)
+            comparison_complete &= complete
+            if matched:
+                leaks.add(label)
         measured = {
             "artifacts": len(inventory.files),
             "bytes_read": inventory.bytes_read,
@@ -210,6 +221,7 @@ class OracleContainmentGrader:
             "omitted_bytes": inventory.omitted_bytes,
             "inventory_errors": len(inventory.errors),
             "untraceable_files": untraceable,
+            "json_comparison_complete": comparison_complete,
             "sources": len(sources),
             "http_probes": len(subject.oracle_http),
             "mcp_tool_access_tested": False,
@@ -220,11 +232,15 @@ class OracleContainmentGrader:
                 CheckStatus.FAIL,
                 [
                     f"oracle content is readable through the API: {label}"
-                    for label in leaks
+                    for label in sorted(leaks)
                 ],
                 measured,
             )
         incomplete = list(inventory.errors)
+        if not comparison_complete:
+            incomplete.append(
+                "structured oracle JSON exceeds supported comparison limits"
+            )
         if inventory.omitted_files:
             incomplete.append("oracle inventory exceeds the file or byte bound")
         if untraceable:

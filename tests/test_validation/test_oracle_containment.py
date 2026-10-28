@@ -218,6 +218,29 @@ def test_untraceable_file_keeps_a_mixed_inventory_incomplete(tmp_path):
     assert OracleContainmentGrader().run(subject).status.value == "fail"
 
 
+@pytest.mark.parametrize("unsupported", ["artifact", "response"])
+def test_unsupported_json_comparison_cannot_establish_containment(
+    tmp_path, unsupported
+):
+    from openenv.validation.graders.runtime.oracle import OracleContainmentGrader
+
+    if unsupported == "artifact":
+        artifact = '{"answer":1e9999999999999999999}'
+        response = '{ "answer" : 1e9999999999999999999 }'
+    else:
+        artifact = SCRIPT
+        encoded = '"' + "".join("\\u%04x" % ord(c) for c in SCRIPT) + '"'
+        response = '{"junk":1e9999999999999999999,"answer":' + encoded + "}"
+    subject = oracle_subject(tmp_path, responses=(response,))
+    (tmp_path / "oracle/solve.py").write_text(artifact)
+    result = OracleContainmentGrader().run(subject)
+    assert result.status.value == "skip", result.evidence
+    assert result.measured["json_comparison_complete"] is False
+    # Directly readable complete content remains a conclusive failure.
+    subject.oracle_http = (HttpProbe("/oracle/solve.py", 200, artifact.encode()),)
+    assert OracleContainmentGrader().run(subject).status.value == "fail"
+
+
 def grade(subject):
     from openenv.validation.graders.runtime.oracle import OracleContainmentGrader
 
