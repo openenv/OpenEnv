@@ -7,7 +7,7 @@
 
 ## Summary
 
-This addendum defines the evaluation and training APIs implemented in Harbor integration PR #1036. It extends RFC 005 and the capture design in [RFC 006 / PR #941](https://github.com/huggingface/OpenEnv/pull/941). Its change to RFC 006 decision D2 is explicit: hosted providers are supported for **evaluation**, while training export still requires exact engine tokens and processed log probabilities. Endpoint reachability is not training certification.
+This addendum defines the evaluation and training APIs implemented in Harbor integration PR #1036. It extends RFC 005 and the capture design in [RFC 006 / PR #941](https://github.com/openenv/OpenEnv/pull/941). Its change to RFC 006 decision D2 is explicit: hosted providers are supported for **evaluation**, while training export still requires exact engine tokens and processed log probabilities. Endpoint reachability is not training certification.
 
 ## Motivation
 

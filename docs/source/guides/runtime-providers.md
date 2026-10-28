@@ -152,7 +152,7 @@ image = DaytonaProvider.image_from_dockerfile("envs/echo_env/server/Dockerfile")
 results = await asyncio.gather(*(run_one(i, image) for i in range(20)))
 ```
 
-Full example: [`examples/daytona_tbench2_concurrent.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/daytona_tbench2_concurrent.py)
+Full example: [`examples/daytona_tbench2_concurrent.py`](https://github.com/openenv/OpenEnv/blob/main/examples/daytona_tbench2_concurrent.py)
 spins up N sandboxes concurrently and reports per-stage timing.
 
 ## Per-provider setup
@@ -191,8 +191,8 @@ image = DaytonaProvider.image_from_dockerfile("envs/echo_env/server/Dockerfile")
 provider = DaytonaProvider(image=image)
 ```
 
-Full examples: [`examples/daytona_tbench2_simple.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/daytona_tbench2_simple.py)
-and [`examples/daytona_tbench2_concurrent.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/daytona_tbench2_concurrent.py).
+Full examples: [`examples/daytona_tbench2_simple.py`](https://github.com/openenv/OpenEnv/blob/main/examples/daytona_tbench2_simple.py)
+and [`examples/daytona_tbench2_concurrent.py`](https://github.com/openenv/OpenEnv/blob/main/examples/daytona_tbench2_concurrent.py).
 
 ### DockerSwarmProvider
 
@@ -232,7 +232,7 @@ with CodingEnv(provider=provider).sync() as env:
 environment variables to the server. Providers with the same image and flavor
 in one process share a sandbox pool, which shuts down after 10 idle minutes.
 
-Full example: [`examples/hf_sandbox_coding_env.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/hf_sandbox_coding_env.py).
+Full example: [`examples/hf_sandbox_coding_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/hf_sandbox_coding_env.py).
 
 ### KubernetesProvider
 
@@ -277,7 +277,7 @@ image = ModalProvider.image_from_dockerfile("envs/echo_env/server/Dockerfile")
 provider = ModalProvider(app_name="openenv", image=image)
 ```
 
-Full example: [`examples/modal_echo_env.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/modal_echo_env.py).
+Full example: [`examples/modal_echo_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/modal_echo_env.py).
 
 ### NovitaSandboxProvider
 

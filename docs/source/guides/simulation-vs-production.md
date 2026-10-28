@@ -101,7 +101,7 @@ class MyEnv(MCPEnvironment):
 
 ## Harness Environments: `WS /harness`
 
-When the environment factory produces a [`HarnessEnvironment`](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md) (an agent harness such as Claude Code running inside the environment), production mode also registers a `/harness` WebSocket, so clients talk to the harness itself:
+When the environment factory produces a [`HarnessEnvironment`](https://github.com/openenv/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md) (an agent harness such as Claude Code running inside the environment), production mode also registers a `/harness` WebSocket, so clients talk to the harness itself:
 
 - Each connection gets its own session, which starts the harness and injects the environment's tools. The server answers with a `session_started` frame.
 - Each `{"type": "message", "content": "..."}` frame is one conversational turn, streamed back as harness events that end with `turn_complete`.
@@ -120,4 +120,4 @@ The WebSocket handler calls `step_async()` when the environment overrides it, an
 
 - [MCP Environments](../tutorials/mcp-environment), with [Echo](../environments/echo) and [FinQA](../environments/finqa) as examples
 - [Core API](../reference/core)
-- [RFC 002: Environment Spec](https://github.com/huggingface/OpenEnv/blob/main/rfcs/002-env-spec.md) and [RFC 005: Agentic Harnesses](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md)
+- [RFC 002: Environment Spec](https://github.com/openenv/OpenEnv/blob/main/rfcs/002-env-spec.md) and [RFC 005: Agentic Harnesses](https://github.com/openenv/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md)

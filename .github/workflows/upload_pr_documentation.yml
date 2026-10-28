@@ -11,6 +11,7 @@ jobs:
     uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@8440c79a619b26fbf8444f42262757fbb8718617  # main
     with:
       package_name: openenv
+      repo_owner: openenv
     secrets:
       hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}
       comment_bot_app_id: ${{ secrets.COMMENT_BOT_APP_ID }}

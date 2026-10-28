@@ -30,6 +30,8 @@ Embodied evaluation environment for testing LLM decision-making in a full 3D dri
 - Free-roam and maze navigation with configurable traffic
 - Rubric-based reward system for RL training
 
+The [`openenv/carla_env`](https://huggingface.co/spaces/openenv/carla_env) Space is paused because CARLA needs a GPU. Duplicate it and pick an A10G in the Space settings to run your own copy.
+
 ## What Makes This Different
 
 Traditional text benchmarks ask models "what would you do?" This environment shows **what models actually do** when:
@@ -64,7 +66,7 @@ with CarlaEnv(base_url="http://localhost:8000").sync() as env:
 ```bash
 uv run python examples/carla_env/trolley_problems.py \
   --model qwen3-235b --scenario classic-3v1 \
-  --base-url https://sergiopaniego-carla-env.hf.space
+  --base-url https://<your-space>.hf.space
 ```
 
 ## Scenarios
@@ -172,7 +174,7 @@ result = await env.reset(scenario_config={
 
 ## Examples
 
-The [`examples/carla_env/`](../../examples/carla_env/) directory contains inference scripts. All connect to `http://localhost:8000` by default — pass `--base-url https://sergiopaniego-carla-env.hf.space` for the live Space.
+The [`examples/carla_env/`](../../examples/carla_env/) directory contains inference scripts. All connect to `http://localhost:8000` by default — pass `--base-url https://<your-space>.hf.space` for your running copy of the Space.
 
 ### Trolley Problems
 
@@ -293,7 +295,7 @@ docker build -t carla-env:latest -f server/Dockerfile .
 docker run --gpus all -p 8000:8000 carla-env:latest
 ```
 
-**Live Space**: [sergiopaniego/carla-env](https://huggingface.co/spaces/sergiopaniego/carla-env)
+**Space**: [openenv/carla_env](https://huggingface.co/spaces/openenv/carla_env) (paused, duplicate it with an A10G)
 
 ### Specifications
 
@@ -352,7 +354,7 @@ Default is **RenderOffScreen** (supports `capture_image`). For text-only evaluat
 
 ## Resources
 
-- **OpenEnv Framework**: [github.com/huggingface/OpenEnv](https://github.com/huggingface/OpenEnv)
+- **OpenEnv Framework**: [github.com/openenv/OpenEnv](https://github.com/openenv/OpenEnv)
 - **Original carla-env**: [sinatras/carla-env](https://github.com/SinatrasC/carla-env)
 - **Blog Post**: [Carla-Env: Giving Models Access to World Simulation](https://blog.sinatras.dev/Carla-Env)
 - **CARLA Simulator**: [carla.org](https://carla.org/)
@@ -376,10 +378,10 @@ Scenarios and navigation agents adapted from [sinatras/carla-env](https://github
   title = {CARLA Environment for OpenEnv},
   author = {OpenEnv Contributors},
   year = {2026},
-  url = {https://github.com/huggingface/OpenEnv}
+  url = {https://github.com/openenv/OpenEnv}
 }
 ```
 
 ## License
 
-BSD-3-Clause License (see [LICENSE](https://github.com/huggingface/OpenEnv/blob/main/LICENSE))
+BSD-3-Clause License (see [LICENSE](https://github.com/openenv/OpenEnv/blob/main/LICENSE))

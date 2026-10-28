@@ -7,6 +7,8 @@ BrowserGym is a unified framework for web-based agent tasks that provides access
 
 *The `/web` playground on MiniWoB `click-test`: the goal, the page URL and the browser screenshot (screenshots on, 320×240 viewport).*
 
+Try it on the [`openenv/browsergym_env`](https://huggingface.co/spaces/openenv/browsergym_env) Space, or connect a client to `https://openenv-browsergym-env.hf.space`.
+
 ## Why BrowserGym?
 
 BrowserGym provides a complete pipeline for developing web agents: train on simple tasks, then evaluate on realistic websites.
@@ -66,7 +68,7 @@ env.close()
 
 To train a model on BrowserGym, pass a small environment class to TRL's `GRPOTrainer` through `environment_factory`. Its methods (`click`, `fill`, `send_keys`, `scroll`, `noop`) become the model's tools, and TRL runs the multi-turn loop. The [BrowserGym tutorial](https://huggingface.co/docs/openenv/tutorials/browsergym-harness) walks through it, and TRL's [`examples/grpo_browsergym`](https://github.com/huggingface/trl/tree/main/examples/grpo_browsergym) is the full script, with screenshots for vision-language models.
 
-`browsergym_env.harness.BrowserGymSessionFactory` exposes the same tools to OpenEnv's session runtime, which [`examples/browsergym_harness_eval.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/browsergym_harness_eval.py) uses to evaluate a chat model on BrowserGym.
+`browsergym_env.harness.BrowserGymSessionFactory` exposes the same tools to OpenEnv's session runtime, which [`examples/browsergym_harness_eval.py`](https://github.com/openenv/OpenEnv/blob/main/examples/browsergym_harness_eval.py) uses to evaluate a chat model on BrowserGym.
 
 ### Available Tasks by Benchmark
 
@@ -555,4 +557,4 @@ browsergym_env/
 - [WebArena Paper](https://arxiv.org/abs/2307.13854)
 - [WebArena Website](https://webarena.dev/)
 - [VisualWebArena Paper](https://jykoh.com/vwa)
-- [OpenEnv Documentation](https://github.com/huggingface/OpenEnv)
+- [OpenEnv Documentation](https://github.com/openenv/OpenEnv)

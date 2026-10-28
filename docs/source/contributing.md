@@ -6,7 +6,7 @@ We welcome contributions from the community! OpenEnv is an open-source project a
 
 ### 🐛 Report Bugs
 
-Found a bug? Please [open an issue](https://github.com/huggingface/OpenEnv/issues/new) with:
+Found a bug? Please [open an issue](https://github.com/openenv/OpenEnv/issues/new) with:
 
 - A clear description of the problem
 - Steps to reproduce
@@ -15,7 +15,7 @@ Found a bug? Please [open an issue](https://github.com/huggingface/OpenEnv/issue
 
 ### 💡 Suggest Features
 
-Have an idea? Open a [feature request](https://github.com/huggingface/OpenEnv/issues/new) describing:
+Have an idea? Open a [feature request](https://github.com/openenv/OpenEnv/issues/new) describing:
 
 - The problem you're trying to solve
 - Your proposed solution
@@ -83,9 +83,9 @@ uv run ruff format --check src/ tests/
 
 ## Coordination
 
-OpenEnv is openly governed by a technical committee that coordinates project direction, major technical decisions, RFCs, and release planning in public. The [charter](https://github.com/huggingface/OpenEnv/blob/main/GOVERNANCE.md) explains how it works, and the [README](https://github.com/huggingface/OpenEnv#community-support--acknowledgments) lists the committee members and supporters.
+OpenEnv is openly governed by a technical committee that coordinates project direction, major technical decisions, RFCs, and release planning in public. The [charter](https://github.com/openenv/OpenEnv/blob/main/GOVERNANCE.md) explains how it works, and the [README](https://github.com/openenv/OpenEnv#community-support--acknowledgments) lists the committee members and supporters.
 
-Use the [OpenEnv repository](https://github.com/huggingface/OpenEnv) to file
+Use the [OpenEnv repository](https://github.com/openenv/OpenEnv) to file
 issues, discuss substantial changes, and submit pull requests.
 
 ## License
