@@ -78,6 +78,11 @@ boundary without changing Echo or coercing its rewards. Inspect
 Evidence is written to `outputs/validation-runtime/<run-id>/`, including source,
 fixture, lock and wheel hashes; the retained wheelhouse; platform and toolchain
 details; test results and bounded logs; provider cleanup evidence; and checksums.
+Reproduction bundles keep the measured session, the same-session A/B recording,
+the fresh isolation session, and bounded oracle HTTP responses in separate files.
+Each recording includes completion and redaction metadata. Oracle responses also
+record a digest of the retained bytes before redaction. Interrupted experiments
+keep their completed prefix.
 The validation subject never receives a host socket, host credentials or host
 directory mount. Tests verify run-owned containers disappear after normal completion,
 failed readiness and exec timeout. No global prune is used.

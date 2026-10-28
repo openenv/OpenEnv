@@ -13,7 +13,12 @@ from openenv.validation.graders.runtime import (
 from openenv.validation.manifest import NormalizedManifest
 from openenv.validation.report import ValidationReportV2
 from openenv.validation.runtime.artifacts import write_runtime_bundle
-from openenv.validation.runtime.contracts import RuntimeEvidence, WireExchange
+from openenv.validation.runtime.contracts import (
+    HttpProbe,
+    IsolationEvidence,
+    RuntimeEvidence,
+    WireExchange,
+)
 from openenv.validation.types import Lane, Level, SignatureKind, Verdict
 from support.runtime import evidence, exchange
 
@@ -145,6 +150,52 @@ def test_saved_schema_reproduces_observation_schema_failure(tmp_path):
     assert original_result.status.value == "fail"
     assert original_result.status == replayed_result.status
     assert original_result.evidence == replayed_result.evidence
+
+
+def test_bundle_keeps_each_isolation_session_and_its_completion(tmp_path):
+    original = measured()
+    interrupted = replace(
+        original,
+        exchanges=original.exchanges[:2],
+        failure_phase="step",
+        failure_reason="step failed (KeyboardInterrupt)",
+    )
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        evidence=original,
+        isolation=IsolationEvidence(sequential=interrupted, fresh=original),
+    )
+    sequential = json.loads(
+        (tmp_path / "isolation-sequential-evidence.json").read_text()
+    )
+    fresh = json.loads((tmp_path / "isolation-fresh-evidence.json").read_text())
+    assert sequential["session"] != fresh["session"]
+    assert sequential["complete"] is False
+    assert sequential["failure_reason"] == interrupted.failure_reason
+    assert fresh["complete"] is True
+    assert len(json.loads((tmp_path / sequential["trace_file"]).read_text())) == 2
+    assert len(json.loads((tmp_path / fresh["trace_file"]).read_text())) == 4
+    sums = (tmp_path / "SHA256SUMS").read_text()
+    assert "isolation-sequential-trace.json" in sums
+    assert "isolation-fresh-trace.json" in sums
+
+
+def test_bundle_redacts_oracle_body_and_records_original_digest(tmp_path):
+    body = b'{"api_key":"opaque-credential","answer":"canary"}'
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        oracle_http=(HttpProbe(path="oracle/solve.sh", status=403, body=body),),
+    )
+    probe = json.loads((tmp_path / "oracle-http.json").read_text())[0]
+    assert probe["status"] == 403
+    assert probe["body"] == {"api_key": "[REDACTED]", "answer": "canary"}
+    assert probe["body_sha256"] == hashlib.sha256(body).hexdigest()
+    assert probe["retained_bytes"] == len(body)
+    assert probe["redacted"] is True
+    assert "opaque-credential" not in (tmp_path / "oracle-http.json").read_text()
+    assert "oracle-http.json" in (tmp_path / "SHA256SUMS").read_text()
 
 
 def test_truncated_trace_metadata_preserves_the_collection_failure(tmp_path):

@@ -35,8 +35,71 @@ def _redact(value, *, depth=0):
     return value
 
 
+def _recording(evidence, trace_file):
+    """Use the same redaction and completion metadata for every session."""
+    trace = []
+    collector_metadata = None
+    if evidence:
+        omitted_fields = []
+        for index, exchange in enumerate(evidence.exchanges):
+            row = asdict(exchange)
+            for key in ("request_json", "response_json"):
+                try:
+                    row[key] = json.loads(row[key])
+                except (ValueError, RecursionError):
+                    row[key] = "[malformed response omitted]"
+                    omitted_fields.append({"exchange_index": index, "field": key})
+            trace.append(row)
+        schema = None
+        schema_parse_failed = False
+        if evidence.observation_schema_json is not None:
+            try:
+                schema = json.loads(evidence.observation_schema_json)
+            except (ValueError, RecursionError):
+                schema_parse_failed = True
+        reset_schema = None
+        reset_schema_parse_failed = False
+        if evidence.reset_observation_schema_json is not None:
+            try:
+                reset_schema = json.loads(evidence.reset_observation_schema_json)
+            except (ValueError, RecursionError):
+                reset_schema_parse_failed = True
+        collector_metadata = {
+            "evidence_schema_version": "1",
+            "trace_file": trace_file,
+            "observation_schema": schema,
+            "schema_available": evidence.observation_schema_json is not None,
+            "schema_parse_failed": schema_parse_failed,
+            "reset_observation_schema": reset_schema,
+            "reset_schema_available": evidence.reset_observation_schema_json
+            is not None,
+            "reset_schema_parse_failed": reset_schema_parse_failed,
+            "omitted_trace_fields": omitted_fields,
+            "failure_phase": evidence.failure_phase,
+            "failure_reason": evidence.failure_reason,
+            "complete": evidence.failure_phase is None
+            and evidence.failure_reason is None,
+        }
+        collector_metadata["redacted"] = (
+            bool(omitted_fields)
+            or schema_parse_failed
+            or reset_schema_parse_failed
+            or _redact(trace) != trace
+            or _redact(collector_metadata) != collector_metadata
+        )
+    return trace, collector_metadata
+
+
 def write_runtime_bundle(
-    directory: Path, report, *, plan=None, evidence=None, provider=None, cleanup=None
+    directory: Path,
+    report,
+    *,
+    plan=None,
+    evidence=None,
+    provider=None,
+    cleanup=None,
+    isolation=None,
+    oracle_http=(),
 ):
     """Write a credential-filtered trace, source/policy/plan provenance and coverage."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -71,58 +134,38 @@ def write_runtime_bundle(
         "python": platform.python_version(),
         "provider": provider or {},
     }
-    trace = []
-    collector_metadata = None
-    if evidence:
-        omitted_fields = []
-        for index, exchange in enumerate(evidence.exchanges):
-            row = asdict(exchange)
-            for key in ("request_json", "response_json"):
-                try:
-                    row[key] = json.loads(row[key])
-                except (ValueError, RecursionError):
-                    row[key] = "[malformed response omitted]"
-                    omitted_fields.append({"exchange_index": index, "field": key})
-            trace.append(row)
-        schema = None
-        schema_parse_failed = False
-        if evidence.observation_schema_json is not None:
-            try:
-                schema = json.loads(evidence.observation_schema_json)
-            except (ValueError, RecursionError):
-                schema_parse_failed = True
-        reset_schema = None
-        reset_schema_parse_failed = False
-        if evidence.reset_observation_schema_json is not None:
-            try:
-                reset_schema = json.loads(evidence.reset_observation_schema_json)
-            except (ValueError, RecursionError):
-                reset_schema_parse_failed = True
-        collector_metadata = {
-            "evidence_schema_version": "1",
-            "trace_file": "collector-trace.json",
-            "observation_schema": schema,
-            "schema_available": evidence.observation_schema_json is not None,
-            "schema_parse_failed": schema_parse_failed,
-            "reset_observation_schema": reset_schema,
-            "reset_schema_available": evidence.reset_observation_schema_json
-            is not None,
-            "reset_schema_parse_failed": reset_schema_parse_failed,
-            "omitted_trace_fields": omitted_fields,
-            "failure_phase": evidence.failure_phase,
-            "failure_reason": evidence.failure_reason,
-            "complete": evidence.failure_phase is None
-            and evidence.failure_reason is None,
-        }
-        collector_metadata["redacted"] = (
-            bool(omitted_fields)
-            or schema_parse_failed
-            or reset_schema_parse_failed
-            or _redact(trace) != trace
-            or _redact(collector_metadata) != collector_metadata
+    recordings = [("collector", evidence)]
+    if isolation is not None:
+        recordings.extend(
+            [
+                ("isolation-sequential", isolation.sequential),
+                ("isolation-fresh", isolation.fresh),
+            ]
         )
-    files["collector-trace.json"] = trace
-    files["collector-evidence.json"] = collector_metadata
+    for session, recording in recordings:
+        trace_file = f"{session}-trace.json"
+        trace, metadata = _recording(recording, trace_file)
+        if metadata is not None:
+            metadata["session"] = session
+        files[trace_file] = trace
+        files[f"{session}-evidence.json"] = metadata
+    probes = []
+    for probe in oracle_http:
+        row = asdict(probe)
+        body = row.pop("body")
+        text = body.decode("utf-8", errors="replace")
+        try:
+            value = json.loads(text)
+        except (ValueError, RecursionError):
+            value = text
+        row.update(
+            body=value,
+            body_sha256=hashlib.sha256(body).hexdigest(),
+            retained_bytes=len(body),
+            redacted=_redact(value) != value or text.encode("utf-8") != body,
+        )
+        probes.append(row)
+    files["oracle-http.json"] = probes
     digests = []
     for name, value in files.items():
         payload = (

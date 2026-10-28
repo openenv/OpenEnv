@@ -1,6 +1,7 @@
 """Episode isolation and oracle containment over the real OpenEnv WebSocket endpoint."""
 
 import importlib.util
+import json
 import socket
 import threading
 import time
@@ -12,13 +13,15 @@ import pytest
 import uvicorn
 from openenv.validation.graders.runtime.isolation import EpisodeIsolationGrader
 from openenv.validation.graders.runtime.oracle import OracleContainmentGrader
-from openenv.validation.runner import _get
+from openenv.validation.runner import _get, run_validation
 from openenv.validation.runtime.collector import collect_runtime_evidence
 from openenv.validation.runtime.contracts import (
     IsolationEvidence,
     RuntimePlan,
     RuntimeReset,
 )
+from openenv.validation.types import Level
+from support.runtime import FakeRuntimeProvider
 
 ROOT = Path(__file__).parents[2] / "fixtures/validation/runtime/served_probe"
 spec = importlib.util.spec_from_file_location("served_probe_app", ROOT / "app.py")
@@ -99,3 +102,34 @@ def test_real_session_isolation_and_oracle(monkeypatch, mode, isolation, oracle)
         assert contained.evidence == [
             "oracle content is readable through the API: GET /oracle/solve.sh"
         ]
+
+
+@pytest.mark.parametrize("mode", ["sticky_episode", "exposed_oracle"])
+def test_bundle_keeps_the_real_failure_evidence(monkeypatch, tmp_path, mode):
+    with served(mode, monkeypatch) as base_url:
+        provider = FakeRuntimeProvider()
+        provider.subject.base_url = base_url
+        report = run_validation(
+            ROOT, max_level=Level.RUNTIME, provider=provider, artifacts_dir=tmp_path
+        )
+    results = {result.check_id: result for result in report.results}
+    if mode == "sticky_episode":
+        assert results["runtime.episode_isolation"].status.value == "fail"
+        rows = json.loads((tmp_path / "isolation-sequential-trace.json").read_text())
+        counters = [
+            row["response_json"]["data"]["observation"]["counter"]
+            for row in rows
+            if row["operation"] == "step"
+        ]
+        assert counters == [1, 2, 3, 4]
+    else:
+        assert results["runtime.oracle_containment"].status.value == "fail"
+        probe = json.loads((tmp_path / "oracle-http.json").read_text())[0]
+        assert probe["status"] == 200
+        assert probe["body"] == (ROOT / "oracle/solve.sh").read_text()
+    # Every saved experiment is covered by the same inventory as the main trace.
+    import hashlib
+
+    for line in (tmp_path / "SHA256SUMS").read_text().splitlines():
+        digest, name = line.split("  ")
+        assert hashlib.sha256((tmp_path / name).read_bytes()).hexdigest() == digest

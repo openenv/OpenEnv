@@ -12,6 +12,7 @@ from openenv.validation.providers import ProviderError, StartupError
 from openenv.validation.report import CheckResult
 from openenv.validation.runner import run_validation, source_digest
 from openenv.validation.runtime.artifacts import write_runtime_bundle
+from openenv.validation.runtime.collector import RuntimeCollectionInterrupted
 from openenv.validation.runtime.contracts import RuntimeEvidence
 from openenv.validation.runtime.scheduler import execute_graders, order_graders
 from openenv.validation.types import CheckStatus, Level, ProviderCapability
@@ -120,6 +121,47 @@ def test_runtime_collection_uses_declared_episode_timeout(package, monkeypatch):
     run_validation(package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider())
 
     assert calls[0]["episode_timeout_s"] == 600.0
+
+
+@pytest.mark.parametrize("interrupted_call", [2, 3])
+def test_interrupted_isolation_retains_every_completed_session(
+    package, monkeypatch, tmp_path, interrupted_call
+):
+    original = measured_episode()
+    prefix = replace(
+        original,
+        exchanges=original.exchanges[:2],
+        failure_phase="step",
+        failure_reason="step failed (KeyboardInterrupt)",
+    )
+    calls = 0
+
+    def collect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == interrupted_call:
+            raise RuntimeCollectionInterrupted(prefix)
+        return original
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    bundle = tmp_path / "bundle"
+    provider = FakeRuntimeProvider()
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    assert provider.subject.stopped
+    startup = next(r for r in report.results if r.check_id == "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert len(json.loads((bundle / "collector-trace.json").read_text())) == 4
+    sequential = json.loads((bundle / "isolation-sequential-trace.json").read_text())
+    fresh = json.loads((bundle / "isolation-fresh-trace.json").read_text())
+    assert len(sequential) == (2 if interrupted_call == 2 else 4)
+    assert len(fresh) == (0 if interrupted_call == 2 else 2)
+    metadata = json.loads((bundle / "isolation-fresh-evidence.json").read_text())
+    assert metadata["complete"] is False
+    assert metadata["failure_phase"] == (
+        "not_started" if interrupted_call == 2 else "step"
+    )
 
 
 def test_skip_build_has_no_provider_side_effects(package):

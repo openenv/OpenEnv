@@ -18,7 +18,9 @@
       "tests.test_validation.integration.test_episode_isolation_protocol::test_reencoded_responses_after_reset_match_a_fresh_episode",
       "tests.test_validation.integration.test_episode_isolation_protocol::test_per_session_variation_is_unproven_not_a_leak",
       "tests.test_validation.integration.test_episode_isolation_protocol::test_each_episode_gets_the_full_trace_budget",
-      "tests.test_validation.integration.test_episode_isolation_protocol::test_each_episode_gets_its_own_deadline"
+      "tests.test_validation.integration.test_episode_isolation_protocol::test_each_episode_gets_its_own_deadline",
+      "tests.test_validation.integration.test_episode_oracle_protocol::test_bundle_keeps_the_real_failure_evidence[sticky_episode]",
+      "tests.test_validation.integration.test_episode_oracle_protocol::test_bundle_keeps_the_real_failure_evidence[exposed_oracle]"
     ],
     "docker": [
       "tests.test_validation.integration.test_docker_lifecycle::test_docker_lifecycle_effective_limits_and_owned_cleanup",

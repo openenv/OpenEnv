@@ -36,6 +36,7 @@ from .runtime.contracts import (
     IsolationEvidence,
     LaunchSpec,
     load_runtime_plan,
+    RuntimeEvidence,
     RuntimePlanError,
 )
 from .runtime.scheduler import execute_graders, order_graders
@@ -158,6 +159,8 @@ def _runtime(subject, graders, *, skip_build, provider):
     manifest = subject.manifest
     plan = None
     evidence = None
+    isolation = None
+    oracle_http = ()
     running = None
     inspection = {}
     cleanup = {"required": False, "completed": True}
@@ -228,25 +231,33 @@ def _runtime(subject, graders, *, skip_build, provider):
                 evidence.failure_reason,
                 started=started,
             )
-        isolation = None
-        oracle_http = ()
         if result.status is CheckStatus.PASS:
+            not_started = RuntimeEvidence(
+                failure_phase="not_started",
+                failure_reason="validation interrupted before the fresh episode",
+            )
             try:
-                isolation = IsolationEvidence(
-                    sequential=collect_runtime_evidence(
-                        running.base_url,
-                        plan,
-                        episode_timeout_s=manifest.resources.episode_timeout_s,
-                        episodes=2,
-                    ),
+                sequential = collect_runtime_evidence(
+                    running.base_url,
+                    plan,
+                    episode_timeout_s=manifest.resources.episode_timeout_s,
+                    episodes=2,
+                )
+                isolation = IsolationEvidence(sequential=sequential, fresh=not_started)
+                isolation = replace(
+                    isolation,
                     fresh=collect_runtime_evidence(
                         running.base_url,
                         plan,
                         episode_timeout_s=manifest.resources.episode_timeout_s,
                     ),
                 )
-            except RuntimeCollectionInterrupted:
-                # Keep the measured episode, not this experiment, as the evidence.
+            except RuntimeCollectionInterrupted as exc:
+                isolation = (
+                    IsolationEvidence(sequential=exc.evidence, fresh=not_started)
+                    if isolation is None
+                    else replace(isolation, fresh=exc.evidence)
+                )
                 raise KeyboardInterrupt from None
             if manifest.capabilities.oracle is not None:
                 oracle_http = (
@@ -359,7 +370,16 @@ def _runtime(subject, graders, *, skip_build, provider):
                     result.status = CheckStatus.ERROR
                     result.evidence.append("subject teardown failed")
                     result.duration_s = time.monotonic() - started
-    return [result, *checks], attempted, plan, evidence, inspection, cleanup
+    return (
+        [result, *checks],
+        attempted,
+        plan,
+        evidence,
+        inspection,
+        cleanup,
+        isolation,
+        oracle_http,
+    )
 
 
 def run_validation(
@@ -443,7 +463,8 @@ def run_validation(
             )
 
     levels = [Level.STATIC]
-    plan = evidence = None
+    plan = evidence = isolation = None
+    oracle_http = ()
     inspection = {}
     cleanup = {"required": False, "completed": True}
     if manifest is not None:
@@ -468,7 +489,16 @@ def run_validation(
             )
         )
         if wants_runtime:
-            runtime_results, attempted, plan, evidence, inspection, cleanup = _runtime(
+            (
+                runtime_results,
+                attempted,
+                plan,
+                evidence,
+                inspection,
+                cleanup,
+                isolation,
+                oracle_http,
+            ) = _runtime(
                 subject,
                 [
                     grader
@@ -570,5 +600,7 @@ def run_validation(
             evidence=evidence,
             provider=inspection,
             cleanup=cleanup,
+            isolation=isolation,
+            oracle_http=oracle_http,
         )
     return report
