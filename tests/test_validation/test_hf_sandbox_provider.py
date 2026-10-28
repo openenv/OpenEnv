@@ -376,6 +376,58 @@ def test_server_command_rejects_entrypoint_and_missing_cmd():
         _server_command("FROM python:3.12")
 
 
+@pytest.mark.parametrize(
+    "heredoc",
+    [
+        "COPY <<EOF /tmp/example.txt\nFROM scratch\nEOF",
+        "RUN <<EOF\nFROM scratch\nEOF",
+        "COPY <<-'EOF' /tmp/example.txt\n\tFROM scratch\n\tEOF",
+        'RUN <<-"EOF"\n\tENTRYPOINT ["wrong"]\n\tEOF',
+        'COPY <<FIRST <<SECOND /tmp/\nCMD ["wrong"]\nFIRST\nFROM scratch\nSECOND',
+        "RUN echo ready \\\n+    && cat <<EOF\nFROM scratch\nEOF",
+    ],
+    ids=["copy", "run", "quoted-copy", "quoted-run", "multiple", "continued"],
+)
+def test_server_command_refuses_heredocs_before_reading_payload(heredoc):
+    dockerfile = 'FROM python:3.12-slim\nCMD ["python", "-m", "served_probe.app"]\n'
+    with pytest.raises(UnsupportedCapability, match="dockerfile_heredoc"):
+        _server_command(dockerfile + heredoc + "\n")
+
+
+def test_copy_heredoc_runtime_is_capability_skip(downloads, monkeypatch, tmp_path):
+    original = huggingface_hub.snapshot_download
+
+    def heredoc_snapshot(*args, **kwargs):
+        root = Path(original(*args, **kwargs))
+        with (root / "Dockerfile").open("a") as dockerfile:
+            dockerfile.write("COPY <<EOF /tmp/example.txt\nFROM scratch\nEOF\n")
+        return str(root)
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", heredoc_snapshot)
+    output = tmp_path / "report.json"
+    result = CliRunner().invoke(
+        app,
+        [
+            "validate",
+            "--space",
+            "openenv-testing/probe",
+            "--level",
+            "runtime",
+            "--json",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    startup = next(r for r in report["results"] if r["check_id"] == "runtime.startup")
+    assert startup["status"] == "skip"
+    assert "dockerfile_heredoc" in " ".join(startup["evidence"])
+    assert report["verdict"] == "warn"
+    assert report == json.loads((tmp_path / "report.artifacts/report.json").read_text())
+    assert not FakeSandbox.created
+
+
 def test_app_port_defaults_to_the_hub_default():
     assert _app_port("---\napp_port: 8000\n---\n") == 8000
     assert _app_port("no front matter") == 7860

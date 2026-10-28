@@ -37,6 +37,11 @@ def _server_command(dockerfile: str) -> list[str]:
     )
     # Docker removes escaped newlines before interpreting an instruction.
     lines = lines.replace("\\\n", "")
+    if "<<" in lines:
+        raise UnsupportedCapability(
+            "missing provider capability: dockerfile_heredoc; "
+            "hf-sandbox does not interpret heredocs or literal << markers"
+        )
     for line in lines.splitlines():
         parts = line.strip().split(maxsplit=1)
         if len(parts) != 2:

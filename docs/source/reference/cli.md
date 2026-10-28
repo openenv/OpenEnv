@@ -157,8 +157,10 @@ capabilities it cannot inspect from outside the HF Job. CPU/GPU runtime and
 WebSocket qualification, cleanup and the reported Sandbox startup issue remain
 unverified on live HF infrastructure.
 
-The serving implementation joins Dockerfile backslash continuations and uses the
-final build stage, including commands inherited from a named earlier stage.
+The serving implementation supports ordinary Dockerfile backslash continuations
+and final-stage commands, including inheritance from a named earlier stage.
+Heredocs are unsupported: a `<<` marker in any non-comment instruction, including
+a literal marker, reports a named `dockerfile_heredoc` SKIP before command parsing.
 `ENTRYPOINT`, custom `SHELL` commands, custom escape directives and commands
 inherited from an external base image are unsupported. The server log retains at
 most the first 64 KiB of combined stdout and stderr; further output is drained
