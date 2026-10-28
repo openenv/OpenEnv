@@ -2,7 +2,7 @@
 
 This tutorial measures how well an existing agent, [Claude Code](https://docs.anthropic.com/en/docs/claude-code), does a job that only your environment's tools can do, over a conversation with a simulated user. The job comes from [τ²-bench](../environments/tau2): Claude Code is an airline's customer service agent, it has to follow the airline's policy, and τ²-bench checks the database it leaves behind.
 
-It uses `HarnessEnvironment`, the agentic harness wrapper from [RFC 005](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md). Claude Code keeps its own agent loop and runs inside the environment, the environment serves its tools to it over MCP, and each `step()` is one message from the customer:
+It uses `HarnessEnvironment`, the agentic harness wrapper from [RFC 005](https://github.com/openenv/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md). Claude Code keeps its own agent loop and runs inside the environment, the environment serves its tools to it over MCP, and each `step()` is one message from the customer:
 
 ```
 step(customer message)
@@ -15,7 +15,7 @@ Claude Code  --tool calls over MCP-->  MCP bridge  -->  environment tools  -->  
 simulated customer  -->  next message, or done  -->  rubric scores the database and the conversation
 ```
 
-The full code is in [`examples/claude_code_harness_eval`](https://github.com/huggingface/OpenEnv/tree/main/examples/claude_code_harness_eval).
+The full code is in [`examples/claude_code_harness_eval`](https://github.com/openenv/OpenEnv/tree/main/examples/claude_code_harness_eval).
 
 > [!NOTE]
 > Use this path when the job is a conversation and the agent has to use your environment's tools. RFC 005 does not capture token ids, so it evaluates and serves, but does not train. To train the model behind an agent, or to evaluate it on tasks that a verifier checks, use [Harbor](harbor-harness). [Harnesses in OpenEnv](harnesses) compares the options.
@@ -39,7 +39,7 @@ pip install -e . -e envs/tau2_env
 
 ## The Adapter
 
-An `AgenticHarnessAdapter` tells `HarnessEnvironment` how to start a harness, how to hand it tools, and how to read a turn. [`claude_code_adapter.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/claude_code_harness_eval/claude_code_adapter.py) keeps one long-lived `claude -p --input-format stream-json --output-format stream-json` process per episode:
+An `AgenticHarnessAdapter` tells `HarnessEnvironment` how to start a harness, how to hand it tools, and how to read a turn. [`claude_code_adapter.py`](https://github.com/openenv/OpenEnv/blob/main/examples/claude_code_harness_eval/claude_code_adapter.py) keeps one long-lived `claude -p --input-format stream-json --output-format stream-json` process per episode:
 
 | `AgenticHarnessAdapter` | Claude Code |
 |---|---|
@@ -51,7 +51,7 @@ Claude Code's own tools are turned off (`--tools ""`), so the agent can only act
 
 ## Join It to τ²-bench
 
-[`tau2_harness.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/claude_code_harness_eval/tau2_harness.py) defines `Tau2Harness`, a `HarnessEnvironment` for one τ²-bench task:
+[`tau2_harness.py`](https://github.com/openenv/OpenEnv/blob/main/examples/claude_code_harness_eval/tau2_harness.py) defines `Tau2Harness`, a `HarnessEnvironment` for one τ²-bench task:
 
 - **The tools and the policy.** Claude Code gets the domain's tools over MCP, and the domain's policy appended to its system prompt. It does not get `respond_to_user` or `done`, because it talks to the customer through its replies.
 - **The customer.** After each Claude Code turn, the environment passes the reply to τ²-bench's simulated customer and returns the customer's next message in `observation.metadata["customer"]`. The customer is part of the environment, as in `tau2_env` itself.
@@ -131,7 +131,7 @@ python examples/claude_code_harness_eval/chat.py ws://localhost:8000/harness \
 
 ### Serve It in a Container
 
-RFC 005 runs the harness inside the environment's container, apart from the machine that serves it. [`examples/claude_code_harness_eval/Dockerfile`](https://github.com/huggingface/OpenEnv/blob/main/examples/claude_code_harness_eval/Dockerfile) does that for this recipe: Claude Code, `tau2_env` and `serve.py` run together in one image, as a non-root user. Build it from the repository root and pass the credentials at run time:
+RFC 005 runs the harness inside the environment's container, apart from the machine that serves it. [`examples/claude_code_harness_eval/Dockerfile`](https://github.com/openenv/OpenEnv/blob/main/examples/claude_code_harness_eval/Dockerfile) does that for this recipe: Claude Code, `tau2_env` and `serve.py` run together in one image, as a non-root user. Build it from the repository root and pass the credentials at run time:
 
 ```bash
 docker build -t claude-code-tau2 -f examples/claude_code_harness_eval/Dockerfile .

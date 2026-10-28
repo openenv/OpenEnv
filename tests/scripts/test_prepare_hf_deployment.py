@@ -317,7 +317,7 @@ def test_prepare_hf_deployment_pins_release_tag_not_matching_branch(
     pyproject_text = (
         staging_dir / "test" / "echo_env-0.8.0" / "pyproject.toml"
     ).read_text()
-    assert '"openenv @ git+https://github.com/huggingface/OpenEnv.git@v0.8.0"' in (
+    assert '"openenv @ git+https://github.com/openenv/OpenEnv.git@v0.8.0"' in (
         pyproject_text
     )
 
@@ -356,3 +356,78 @@ def test_prepare_hf_deployment_keeps_the_env_description_first(tmp_path: Path) -
     )
     assert _description(meta).startswith("A chess reinforcement learning environment")
     assert "This Space is built from OpenEnv environment `chess_env`" in readme
+
+
+@pytest.mark.parametrize(
+    ("current_private", "visibility_flag", "expected_settings_call"),
+    [
+        ("false", "--public", None),
+        ("true", "--private", None),
+        ("true", "--public", "--public"),
+        ("false", "--private", "--private"),
+    ],
+)
+def test_prepare_hf_deployment_updates_visibility_only_when_it_differs(
+    tmp_path: Path,
+    current_private: str,
+    visibility_flag: str,
+    expected_settings_call: str | None,
+) -> None:
+    """`hf repos settings` fails on an update that changes nothing and ignores
+    `--no-private`, so it only runs when visibility differs, with `--public`."""
+    repo_root = Path(__file__).resolve().parents[2]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "hf-calls.log"
+    fake_hf = bin_dir / "hf"
+    fake_hf.write_text(
+        "#!/usr/bin/env bash\n"
+        f'echo "$*" >> "{calls}"\n'
+        'if [ "$1 $2" = "spaces info" ]; then\n'
+        f'    echo \'{{"id": "openenv/echo_env", "private": {current_private}}}\'\n'
+        "fi\n"
+        'if [ "$1 $2" = "repos settings" ]; then\n'
+        f'    [ "{current_private}" = true ] && [[ " $* " == *" --private "* ]] && exit 1\n'
+        f'    [ "{current_private}" = false ] && [[ " $* " == *" --public "* ]] && exit 1\n'
+        '    [[ " $* " == *" --no-private "* ]] && exit 1\n'
+        "fi\n"
+        "exit 0\n"
+    )
+    fake_hf.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(repo_root / "scripts" / "prepare_hf_deployment.sh"),
+            "--env",
+            "echo_env",
+            "--repo-id",
+            "openenv/echo_env",
+            visibility_flag,
+            "--skip-collection",
+            "--staging-dir",
+            str(tmp_path / "hf-staging"),
+        ],
+        cwd=repo_root,
+        env={
+            **os.environ,
+            "OPENENV_VERSION": "main",
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Uploaded https://huggingface.co/spaces/openenv/echo_env" in result.stdout
+    settings_calls = [
+        line
+        for line in calls.read_text().splitlines()
+        if line.startswith("repos settings")
+    ]
+    if expected_settings_call is None:
+        assert settings_calls == []
+    else:
+        assert len(settings_calls) == 1
+        assert f" {expected_settings_call} " in f" {settings_calls[0]} "
