@@ -49,7 +49,7 @@ opens one WebSocket session, measures reward values, observation schemas and
 state continuity, and removes the container even if a check fails.
 
 The runtime level implements startup, reward, observation, state, network
-policy and host containment checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
+policy, host containment and resource bounds checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
@@ -75,6 +75,22 @@ without following symlinks or entering separate mounts such as `/dev/shm`.
 An unreadable or exhausted inventory, a probe that cannot write an allotted root,
 or a mount table that cannot be read in full leaves containment unproven and
 reports `SKIP`.
+`runtime.resource_bounds` reads the subject's cgroup v2 limits and writable-root
+sizes and compares them with the declared `cpu`, `memory_mb` and `disk_mb`; swap
+must be disabled and the process count bounded. Storage accounting uses the complete
+mount inventory and the device-storage inventory above, charges any usable device
+filesystem once across its aliases, and cannot pass with incomplete storage
+evidence or an unbounded writable filesystem. Each bounded memory, process,
+disk and Docker exec-timeout probe runs in its own disposable subject. A fresh
+start marker and trusted cgroup events or filesystem measurements must corroborate
+enforcement. Subject text cannot establish excess usage. Exit 137 alone proves no limit. Unreadable cgroup files preserve
+independently readable limits and leave the affected qualification unproven.
+Unavailable evidence reports `SKIP`; failed disposable teardown reports `ERROR`
+and outer cleanup retries every run-owned subject and helper. The exec-timeout
+probe requires a trusted helper to observe a live parent and child with the
+fresh stimulus nonce before timeout, followed by verified removal. A printed
+descendant marker alone leaves qualification unproven. It does not qualify
+enforcement of the declared `episode_timeout_s` for a served episode.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,
