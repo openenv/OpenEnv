@@ -31,8 +31,8 @@ The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
 switches and wire corruption remain inside test assets. They share one fixture
 and one public runtime plan, so a defect changes one property at a time.
 
-The Docker suite contains 38 required cases: three provider lifecycle tests,
-five network-policy tests, eight host-containment tests, ten resource-bounds
+The Docker suite contains 39 required cases: three provider lifecycle tests,
+five network-policy tests, eight host-containment tests, eleven resource-bounds
 tests, eleven CLI fault/control
 cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
@@ -48,7 +48,7 @@ subjects qualify memory, process, disk and exec-timeout cleanup. Tests detect
 limits above a smaller declaration, an unaccounted writable root, nested device
 directories and regular files, false exit-137
 signals, and failed disposable subject or no-network helper cleanup, including
-failed startup. The
+failed startup and recovered exec-timeout removal failures. The
 slow-step case completes a tool call taking more than five seconds within
 the declared episode budget. The hung-step case
 checks the episode deadline; the interruption case sends SIGINT only after a

@@ -995,7 +995,9 @@ class DockerRunningSubject:
             try:
                 self.stop()
             except ProviderError as cleanup:
-                raise cleanup from exc
+                raise CleanupError(
+                    "Subject exec teardown failed: " + str(cleanup)
+                ) from exc
             raise
         return ExecResult(
             code,

@@ -260,6 +260,7 @@ def test_exec_timeout_is_preserved_when_cleanup_verification_fails(
     monkeypatch.setattr(docker, "_command", fail_exec_and_verification)
     with pytest.raises(ProviderError, match="independently verified") as error:
         subject.exec(["sleep", "20"], 0.1)
+    assert isinstance(error.value, docker.CleanupError)
     assert error.value.__cause__ is timeout
     assert commands[-1][1:4] == ["rm", "--force", "--volumes"]
     assert not subject._stopped

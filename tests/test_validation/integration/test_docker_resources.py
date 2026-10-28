@@ -263,3 +263,89 @@ def test_disposable_cleanup_failure_is_reported_and_retried(
         for subject in reversed(created):
             subject.stop()
     assert owned(created[0].run_id) == []
+
+
+def test_recovered_exec_removal_failure_remains_fatal(image, tmp_path, monkeypatch):
+    import shutil
+
+    import yaml
+    from conftest import FIXTURES
+    from openenv.validation import runner
+    from openenv.validation.types import Level, ProviderCapability
+    from support.runtime import evidence
+
+    subjects = []
+    failed = []
+    original_start = docker.DockerValidationProvider.start
+    original_command = docker._command
+
+    class Provider(docker.DockerValidationProvider):
+        capabilities = frozenset(
+            {
+                ProviderCapability.IMAGE_BUILD,
+                ProviderCapability.EXEC,
+                ProviderCapability.RESOURCE_ENFORCEMENT,
+            }
+        )
+
+        def build(self, *args):
+            return image
+
+    def start(self, spec):
+        subject = original_start(self, spec)
+        subjects.append(subject)
+        return subject
+
+    def command(argv, *args, **kwargs):
+        if argv[:2] == ["docker", "rm"] and subjects and not failed:
+            disposables = subjects[0]._disposables
+            if len(disposables) == 4 and argv[-1] == disposables[-1].name:
+                failed.append(argv[-1])
+                return 1, "", "injected first exec-timeout removal failure"
+        return original_command(argv, *args, **kwargs)
+
+    package = tmp_path / "subject"
+    shutil.copytree(FIXTURES / "runtime" / "served_probe", package)
+    path = package / "openenv.yaml"
+    manifest = yaml.safe_load(path.read_text())
+    manifest["validation"]["resources"].update(memory_mb=256, disk_mb=64)
+    path.write_text(yaml.safe_dump(manifest))
+    monkeypatch.setattr(docker.DockerValidationProvider, "start", start)
+    monkeypatch.setattr(docker, "_command", command)
+    monkeypatch.setattr(runner, "collect_runtime_evidence", lambda *a, **k: evidence())
+    try:
+        report = runner.run_validation(
+            package,
+            max_level=Level.RUNTIME,
+            provider=Provider(),
+            artifacts_dir=tmp_path / "artifacts",
+        )
+        cleanup = json.loads((tmp_path / "artifacts" / "cleanup.json").read_text())
+        results = {result.check_id: result for result in report.results}
+        listing = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "-aq",
+                "--filter",
+                f"label={docker._LABEL}={subjects[0].run_id}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert failed
+        assert listing.stdout.split() == []
+        assert results["runtime.startup"].status is CheckStatus.ERROR
+        assert results["runtime.resource_bounds"].status is CheckStatus.SKIP
+        assert cleanup["completed"] is True
+        assert any(
+            "cleanup" in item.lower() or "teardown" in item.lower()
+            for result in report.results
+            for item in result.evidence
+        )
+    finally:
+        monkeypatch.setattr(docker, "_command", original_command)
+        for subject in reversed(subjects):
+            subject.stop()
