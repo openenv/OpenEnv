@@ -19,6 +19,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..manifest import ExecutionDeclaration
@@ -46,6 +47,7 @@ from ._netns import (
 )
 from ._pidns import (
     COUNTERS_SCRIPT,
+    DESCENDANTS_SCRIPT,
     LIMITS_SCRIPT,
     PROBE_SCRIPT as PIDNS_PROBE_SCRIPT,
     QUALIFY_SCRIPT,
@@ -659,6 +661,63 @@ class DockerRunningSubject:
             raise ProviderError(f"The {suffix} probe failed")
         return out
 
+    def _measure_exec_timeout(
+        self, argv: list[str], nonce: str, user: str, timeout_s: float
+    ) -> dict:
+        """Witness the stimulus's fork before timing out and removing its container."""
+        deadline = time.monotonic() + min(2.0, timeout_s)
+        witness = {}
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            # The caller must latch the witness before removal can destroy /proc.
+            stimulus = executor.submit(
+                _command,
+                ["docker", "exec", "--", self.name, *argv],
+                deadline - time.monotonic(),
+            )
+            try:
+                reading = json.loads(
+                    self._pidns_probe(
+                        "descendants",
+                        DESCENDANTS_SCRIPT,
+                        [nonce, "1"],
+                        user,
+                        deadline - time.monotonic(),
+                    )
+                )
+                if not stimulus.done() and isinstance(reading, dict):
+                    witness = reading
+            except CleanupError:
+                raise
+            except (ProviderError, ValueError):
+                pass
+            try:
+                stimulus.result()
+            except _OperationTimeout as exc:
+                try:
+                    self.stop()
+                except ProviderError as cleanup:
+                    raise CleanupError(
+                        "Subject exec teardown failed: " + str(cleanup)
+                    ) from exc
+                parent, child = witness.get("parent_pid"), witness.get("descendant_pid")
+                if (
+                    isinstance(parent, int)
+                    and isinstance(child, int)
+                    and parent > 0
+                    and child > 0
+                    and parent != child
+                ):
+                    return dict(
+                        started=True,
+                        result="contained",
+                        reason="exec_timeout",
+                        removed=True,
+                        parent_pid=parent,
+                        descendant_pid=child,
+                    )
+                return {"removed": True}
+        return {}
+
     def measure_containment(self, timeout_s: float = 60) -> dict:
         """
         Measure the subject's isolation from its inspected launch and its processes.
@@ -815,36 +874,23 @@ class DockerRunningSubject:
                         )
                     )
 
-                before = counters()
                 nonce = uuid.uuid4().hex
-                try:
-                    result = sibling.exec(
-                        [
-                            python,
-                            "-c",
-                            QUALIFY_SCRIPT,
-                            kind,
-                            str(budget),
-                            nonce,
-                            *_ALLOTTED,
-                        ],
-                        min(2.0, remaining())
-                        if kind == "exec_timeout"
-                        else remaining(),
+                argv = [
+                    python,
+                    "-c",
+                    QUALIFY_SCRIPT,
+                    kind,
+                    str(budget),
+                    nonce,
+                    *_ALLOTTED,
+                ]
+                if kind == "exec_timeout":
+                    probe.update(
+                        sibling._measure_exec_timeout(argv, nonce, user, remaining())
                     )
-                except _OperationTimeout as exc:
-                    probe["started"] = (
-                        "openenv-probe-descendant:" + nonce in exc.stdout.splitlines()
-                    )
-                    if (
-                        kind == "exec_timeout"
-                        and probe["started"]
-                        and sibling._owner() is None
-                    ):
-                        probe.update(
-                            result="contained", reason="exec_timeout", removed=True
-                        )
                     continue
+                before = counters()
+                result = sibling.exec(argv, remaining())
                 probe["started"] = (
                     "openenv-probe-start:" + nonce in result.stdout.splitlines()
                 )
@@ -890,10 +936,6 @@ class DockerRunningSubject:
                         )
                     ):
                         probe.update(result="contained", reason="filesystem_full")
-                if result.exit_code == 0 and result.stdout.splitlines()[-1:] == [
-                    "escaped"
-                ]:
-                    probe["result"] = "escaped"
             except CleanupError:
                 raise
             except (ProviderError, ValueError):

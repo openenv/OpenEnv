@@ -31,8 +31,8 @@ The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
 switches and wire corruption remain inside test assets. They share one fixture
 and one public runtime plan, so a defect changes one property at a time.
 
-The Docker suite contains 40 required cases: three provider lifecycle tests,
-five network-policy tests, eight host-containment tests, twelve resource-bounds
+The Docker suite contains 42 required cases: three provider lifecycle tests,
+five network-policy tests, eight host-containment tests, fourteen resource-bounds
 tests, eleven CLI fault/control
 cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
@@ -48,7 +48,8 @@ subjects qualify memory, process, disk and exec-timeout cleanup. Tests detect
 limits above a smaller declaration even when storage measurement fails, an unaccounted writable root, nested device
 directories and regular files, false exit-137
 signals, and failed disposable subject or no-network helper cleanup, including
-failed startup and recovered exec-timeout removal failures. The
+failed startup and recovered exec-timeout removal failures. Forged escape text and
+descendant markers leave qualification unproven. The
 slow-step case completes a tool call taking more than five seconds within
 the declared episode budget. The hung-step case
 checks the episode deadline; the interruption case sends SIGINT only after a
@@ -88,7 +89,8 @@ can add required cases. This checks the implemented slice's inventory, not compl
 measures host-containment settings, process privileges, the complete mount table
 and write access. Resource validation measures CPU, memory, PID and complete
 writable-storage ceilings with positive stress evidence and Docker exec descendant
-cleanup. It does not qualify served-episode deadline enforcement. Reproducible-build
+cleanup using a trusted kernel parent/child witness correlated by a fresh nonce
+before timeout. It does not qualify served-episode deadline enforcement. Reproducible-build
 qualification lands in a later slice. A host-read sentinel is not exercised: the current provider has
 no positive control for a file on the Docker daemon host, which can differ from
 the validator host on Docker Desktop or remote engines.

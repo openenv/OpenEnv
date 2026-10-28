@@ -204,3 +204,82 @@ def test_owner_changeable_denial_is_incomplete(
     assert path.stat().st_mode == mode
     if storage == "file":
         assert path.read_bytes() == b"preserve data"
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "fork",
+        "single",
+        "observer",
+        "server",
+        "wrong_nonce",
+        "wrong_ppid",
+        "zombie",
+        "vanished",
+        "reused",
+    ],
+)
+def test_descendant_probe_requires_a_live_correlated_fork(
+    tmp_path, monkeypatch, capsys, case
+):
+    from openenv.validation.providers._pidns import DESCENDANTS_SCRIPT
+
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    argv = [
+        "python",
+        "-c",
+        "stimulus",
+        "exec_timeout",
+        "1",
+        "fresh-nonce",
+        "/tmp",
+        "/dev/shm",
+    ]
+
+    def process(pid, ppid, args=argv, state="S", start=100):
+        path = proc / str(pid)
+        path.mkdir()
+        # Fields after comm begin with state; starttime is the twentieth field.
+        fields = [state, str(ppid)] + ["0"] * 17 + [str(start)]
+        (path / "stat").write_text(f"{pid} (python) " + " ".join(fields))
+        (path / "cmdline").write_bytes(b"\0".join(arg.encode() for arg in args) + b"\0")
+
+    process(100, 1)
+    if case != "single":
+        args = list(argv)
+        if case == "wrong_nonce":
+            args[-3] = "other-nonce"
+        if case == "server":
+            args = ["python", "server.py"]
+        process(
+            101,
+            1 if case == "wrong_ppid" else 100,
+            args,
+            "Z" if case == "zombie" else "S",
+        )
+    monkeypatch.setattr(sys, "argv", ["observer", "fresh-nonce", "0.04"])
+    monkeypatch.setattr(os, "getpid", lambda: 101 if case == "observer" else 999)
+    original = builtins.open
+    reads = 0
+
+    def read(path, *args, **kwargs):
+        nonlocal reads
+        if str(path) == str(proc / "101" / "stat"):
+            reads += 1
+            if reads > 1 and case == "vanished":
+                raise FileNotFoundError(path)
+            if reads > 1 and case == "reused":
+                return io.StringIO(
+                    original(path).read().rsplit(" ", 1)[0] + f" {100 + reads}"
+                )
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", read)
+    script = DESCENDANTS_SCRIPT.replace('proc = "/proc"', f"proc = {str(proc)!r}")
+    exec(compile(script, "<descendant-probe>", "exec"), {})
+    witness = json.loads(capsys.readouterr().out)
+    assert witness == (
+        {"parent_pid": 100, "descendant_pid": 101} if case == "fork" else {}
+    )

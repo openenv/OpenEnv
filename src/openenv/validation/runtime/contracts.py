@@ -566,7 +566,8 @@ class QualificationProbe(BaseModel):
             `"contained"` when the limit stopped the probe, `"escaped"` when it
             exceeded its budget, `"inconclusive"` otherwise.
         started (`bool`):
-            Whether the stimulus emitted its fresh start marker.
+            Whether the stimulus emitted its fresh start marker, or a trusted observer
+            witnessed the exec-timeout stimulus with a live descendant.
         reason (`str`, *optional*):
             Trusted corroboration of the outcome.
         counter_before (`int`, *optional*):
@@ -579,6 +580,10 @@ class QualificationProbe(BaseModel):
             Trusted free capacity before the disk stimulus, per allotted root.
         free_bytes (`dict[str, int or None]`):
             Trusted free capacity after the disk stimulus, per allotted root.
+        parent_pid (`int`, *optional*):
+            Stimulus PID observed by the trusted helper before timeout.
+        descendant_pid (`int`, *optional*):
+            Live child whose kernel PPID and nonce-bearing command matched the stimulus.
         removed (`bool`):
             Whether timeout cleanup independently verified container removal.
     """
@@ -594,6 +599,8 @@ class QualificationProbe(BaseModel):
     oom_killed: bool = False
     free_bytes_before: dict[str, int | None] = Field(default_factory=dict)
     free_bytes: dict[str, int | None] = Field(default_factory=dict)
+    parent_pid: int | None = Field(default=None, gt=0)
+    descendant_pid: int | None = Field(default=None, gt=0)
     removed: bool = False
 
 

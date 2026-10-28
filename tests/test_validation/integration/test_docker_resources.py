@@ -453,3 +453,82 @@ def test_known_limit_survives_storage_failure(image, tmp_path, monkeypatch):
                 timeout=30,
             )
             assert listing.stdout.split() == []
+
+
+@pytest.mark.parametrize("fault", ["escaped_text", "counterfeit_descendant"])
+def test_subject_output_cannot_invent_a_resource_verdict(image, fault, monkeypatch):
+    resources = ResourceDeclaration(
+        cpu=1, memory_mb=256, disk_mb=64, episode_timeout_s=10
+    )
+    spec = LaunchSpec(
+        image_ref=image,
+        resources=resources,
+        network=NetworkPolicy(),
+        run_id="final-output-" + uuid.uuid4().hex[:12],
+        startup_timeout_s=60,
+    )
+    original = docker._command
+    replaced = []
+
+    def command(argv, *args, **kwargs):
+        if docker.QUALIFY_SCRIPT in argv:
+            index = argv.index(docker.QUALIFY_SCRIPT)
+            kind = argv[index + 1]
+            if fault == "escaped_text" and kind != "exec_timeout":
+                script = "import sys; print('openenv-probe-start:'+sys.argv[3], flush=True); print('escaped', flush=True)"
+            elif fault == "counterfeit_descendant" and kind == "exec_timeout":
+                script = "import sys,time; print('openenv-probe-descendant:'+sys.argv[3], flush=True); time.sleep(300)"
+            else:
+                return original(argv, *args, **kwargs)
+            replaced.append({"kind": kind, "script": script})
+            argv = list(argv)
+            argv[index] = script
+        return original(argv, *args, **kwargs)
+
+    monkeypatch.setattr(docker, "_command", command)
+    running = docker.DockerValidationProvider().start(spec)
+    try:
+        measured = running.measure_resources()
+
+        class Manifest:
+            pass
+
+        manifest = Manifest()
+        manifest.resources = resources
+        subject = Subject(
+            root=Path("."),
+            manifest=manifest,
+            image_ref=spec.image_ref,
+            running=None,
+            outputs_dir=Path("."),
+            resource_evidence_json=json.dumps(measured),
+        )
+        result = ResourceBoundsGrader().run(subject)
+        probes = {probe["kind"]: probe for probe in measured["qualification"]}
+        if fault == "escaped_text":
+            assert result.status is CheckStatus.SKIP, result.evidence
+            assert (
+                probes["memory"]["counter_after"] == probes["memory"]["counter_before"]
+            )
+            assert not probes["memory"]["oom_killed"]
+            assert probes["pids"]["counter_after"] == probes["pids"]["counter_before"]
+            assert probes["disk"]["free_bytes"] == probes["disk"]["free_bytes_before"]
+        else:
+            assert result.status is CheckStatus.SKIP, result.evidence
+            assert probes["exec_timeout"]["result"] == "inconclusive"
+            assert replaced == [
+                {
+                    "kind": "exec_timeout",
+                    "script": "import sys,time; print('openenv-probe-descendant:'+sys.argv[3], flush=True); time.sleep(300)",
+                }
+            ]
+    finally:
+        running.stop()
+        listing = subprocess.run(
+            ["docker", "ps", "-aq", "--filter", f"label={docker._LABEL}={spec.run_id}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert listing.stdout.split() == []

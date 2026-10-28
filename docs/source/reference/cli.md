@@ -83,11 +83,13 @@ filesystem once across its aliases, and cannot pass with incomplete storage
 evidence or an unbounded writable filesystem. Each bounded memory, process,
 disk and Docker exec-timeout probe runs in its own disposable subject. A fresh
 start marker and trusted cgroup events or filesystem measurements must corroborate
-enforcement. Exit 137 alone proves no limit. Unreadable cgroup files preserve
+enforcement. Subject text cannot establish excess usage. Exit 137 alone proves no limit. Unreadable cgroup files preserve
 independently readable limits and leave the affected qualification unproven.
 Unavailable evidence reports `SKIP`; failed disposable teardown reports `ERROR`
 and outer cleanup retries every run-owned subject and helper. The exec-timeout
-probe checks removal of that command and its descendants. It does not qualify
+probe requires a trusted helper to observe a live parent and child with the
+fresh stimulus nonce before timeout, followed by verified removal. A printed
+descendant marker alone leaves qualification unproven. It does not qualify
 enforcement of the declared `episode_timeout_s` for a served episode.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use

@@ -47,6 +47,8 @@ def bounded(**cgroup):
                 "counter_before": 0,
                 "counter_after": 1,
                 "removed": True,
+                "parent_pid": 100,
+                "descendant_pid": 101,
                 "free_bytes_before": {"/tmp": 32 * MIB, "/dev/shm": 32 * MIB},
                 "free_bytes": {"/tmp": 0, "/dev/shm": 0},
             }
@@ -389,4 +391,13 @@ def test_missing_trusted_cause_cannot_qualify_a_claimed_result(kind):
     measured = bounded()
     probe = next(probe for probe in measured["qualification"] if probe["kind"] == kind)
     probe.update(counter_after=0, free_bytes_before={}, removed=False)
+    assert grade(measured).status is CheckStatus.SKIP
+
+
+@pytest.mark.parametrize("witness", [{}, {"parent_pid": 100, "descendant_pid": 100}])
+def test_timeout_removal_requires_a_trusted_descendant_witness(witness):
+    measured = bounded()
+    probe = measured["qualification"][-1]
+    probe.update(parent_pid=None, descendant_pid=None)
+    probe.update(witness)
     assert grade(measured).status is CheckStatus.SKIP

@@ -216,6 +216,57 @@ for path in sys.argv[1:]:
 print(json.dumps(result))
 """
 
+# Observe a live fork from the nonce-correlated stimulus using the trusted image.
+DESCENDANTS_SCRIPT = """
+import json, os, sys, time
+proc = "/proc"
+nonce, duration = sys.argv[1], float(sys.argv[2])
+expected = [b"exec_timeout", b"1", nonce.encode(), b"/tmp", b"/dev/shm"]
+me = os.getpid()
+def process(pid):
+    if pid == me:
+        return None
+    try:
+        with open(f"{proc}/{pid}/stat") as f:
+            before = f.read().rsplit(") ", 1)[1].split()
+        with open(f"{proc}/{pid}/cmdline", "rb") as f:
+            argv = f.read().rstrip(b"\\0").split(b"\\0")
+        with open(f"{proc}/{pid}/stat") as f:
+            after = f.read().rsplit(") ", 1)[1].split()
+        if (argv[-5:] != expected or before[0] in ("Z", "X")
+            or after[0] in ("Z", "X") or before[1] != after[1]
+            or before[19] != after[19]):
+            return None
+        return (pid, int(after[1]), int(after[19]))
+    except (OSError, ValueError, IndexError):
+        return None
+witness = {}
+deadline = time.monotonic() + duration
+while time.monotonic() < deadline:
+    try:
+        entries = os.listdir(proc)
+    except OSError:
+        break
+    if len(entries) > 4096:
+        break
+    processes = {}
+    for entry in entries:
+        if entry.isdigit():
+            reading = process(int(entry))
+            if reading is not None:
+                processes[reading[0]] = reading
+    for child in processes.values():
+        parent = processes.get(child[1])
+        if (parent is not None and child[0] != parent[0]
+            and process(parent[0]) == parent and process(child[0]) == child):
+            witness = {"parent_pid": parent[0], "descendant_pid": child[0]}
+            break
+    if witness:
+        break
+    time.sleep(0.02)
+print(json.dumps(witness), flush=True)
+"""
+
 # Subject-image code is only a stimulus. Trusted counters corroborate its result.
 QUALIFY_SCRIPT = """
 import errno, os, sys, time

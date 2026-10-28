@@ -181,7 +181,12 @@ class ResourceBoundsGrader:
                     and (probe.free_bytes_before.get(path) or 0) > 0
                     for path in inventory.allotted
                 ),
-                "exec_timeout": probe.removed,
+                "exec_timeout": (
+                    probe.removed
+                    and probe.parent_pid is not None
+                    and probe.descendant_pid is not None
+                    and probe.parent_pid != probe.descendant_pid
+                ),
             }[kind]
             if not corroborated:
                 unproven.append(kind)
