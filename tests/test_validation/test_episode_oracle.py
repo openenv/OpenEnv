@@ -217,7 +217,7 @@ def oracle_subject(tmp_path, *, responses=(), http=(), location="oracle/solve.sh
         manifest=SimpleNamespace(
             capabilities=SimpleNamespace(oracle=SimpleNamespace(location=location))
         ),
-        runtime_evidence=evidence(*rows),
+        runtime_evidence=replace(evidence(*rows), schema_response_json="{}"),
         isolation_evidence=None,
         oracle_http=tuple(http),
     )
@@ -238,7 +238,7 @@ def test_contained_oracle_passes(tmp_path):
 
 
 def test_oracle_in_an_observation_fails_even_when_json_escaped(tmp_path):
-    leaked = {"metadata": {"hint": f'echo "{CANARY}"'}}
+    leaked = {"metadata": {"hint": f'#!/bin/sh\necho "{CANARY}"\n'}}
     result = grade_oracle(oracle_subject(tmp_path, responses=[leaked]))
     assert result.status is CheckStatus.FAIL
     assert result.evidence == [
@@ -276,14 +276,17 @@ def test_runner_runs_both_experiments_and_probes_the_oracle_path(tmp_path, monke
 
     def collect(*args, **kwargs):
         calls.append(kwargs.get("episodes", 1))
-        return evidence(*(episode() * kwargs.get("episodes", 1)))
+        return replace(
+            evidence(*(episode() * kwargs.get("episodes", 1))),
+            schema_response_json="{}",
+        )
 
     probes = []
     monkeypatch.setattr(runner, "collect_runtime_evidence", collect)
     monkeypatch.setattr(
         runner,
         "_get",
-        lambda base_url, location: (
+        lambda base_url, location, *bounds: (
             probes.append(location) or HttpProbe("/" + location, 404)
         ),
     )

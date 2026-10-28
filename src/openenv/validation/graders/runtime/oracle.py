@@ -1,7 +1,9 @@
-"""`runtime.oracle_containment`: the oracle must not be readable through the API."""
+"""`runtime.oracle_containment`: trace declared artifacts through collected responses."""
 
 import json
+import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from ...report import CheckResult
@@ -12,45 +14,100 @@ MAX_ORACLE_FILES = 64
 _MIN_FINGERPRINT = 16
 
 
-def _fingerprints(root: Path, location: str) -> list[str] | None:
-    """Distinctive oracle text, or `None` when the artifact cannot be read safely."""
+@dataclass(frozen=True)
+class OracleInventory:
+    """Bounded file content and explicit coverage of the declared artifact."""
+
+    files: tuple[tuple[str, str | None], ...]
+    bytes_read: int
+    omitted_files: int
+    omitted_bytes: int
+    errors: tuple[str, ...] = ()
+
+
+def oracle_inventory(root: Path, location: str) -> OracleInventory:
+    """Read bounded regular files inside the package; never trace truncated content."""
     package = root.resolve()
-    target = (package / location).resolve()
-    if not target.is_relative_to(package) or not target.exists():
-        return None
-    files = (
-        sorted(p for p in target.rglob("*") if p.is_file())
-        if target.is_dir()
-        else [target]
+    target = package / location
+    if not target.resolve().is_relative_to(package) or target.is_symlink():
+        raise OSError("oracle is outside the package or is a symlink")
+    if not target.exists():
+        raise OSError("oracle does not exist")
+    errors = []
+    if target.is_dir():
+        paths = []
+        for directory, dirs, names in os.walk(
+            target, onerror=lambda exc: errors.append("oracle directory is unreadable")
+        ):
+            parent = Path(directory)
+            paths.extend(parent / name for name in names)
+            paths.extend(parent / name for name in dirs if (parent / name).is_symlink())
+        paths.sort()
+    else:
+        paths = [target]
+    files, total, omitted_files, omitted_bytes = [], 0, 0, 0
+    for index, path in enumerate(paths):
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise OSError("oracle entry is not a regular file")
+            size = path.stat().st_size
+            if index >= MAX_ORACLE_FILES or total >= MAX_ORACLE_BYTES:
+                omitted_files += 1
+                omitted_bytes += size
+                continue
+            with path.open("rb") as stream:
+                data = stream.read(min(size, MAX_ORACLE_BYTES - total))
+            total += len(data)
+            complete = len(data) == size
+            if not complete:
+                omitted_files += 1
+                omitted_bytes += size - len(data)
+            files.append(
+                (
+                    path.relative_to(package).as_posix(),
+                    data.decode("utf-8") if complete else None,
+                )
+            )
+        except (OSError, UnicodeError):
+            errors.append("oracle entry is unreadable or is not UTF-8 regular content")
+    return OracleInventory(
+        tuple(files), total, omitted_files, omitted_bytes, tuple(errors)
     )
-    texts, total = [], 0
-    for path in files[:MAX_ORACLE_FILES]:
-        if path.is_symlink():
-            return None
-        data = path.read_bytes()[: MAX_ORACLE_BYTES - total]
-        total += len(data)
-        texts.append(data.decode("utf-8", "ignore"))
-        if total >= MAX_ORACLE_BYTES:
-            break
-    found = set()
-    for text in texts:
-        if len(text.strip()) >= _MIN_FINGERPRINT:
-            found.add(text.strip())
-        found.update(
-            line.strip()
-            for line in text.splitlines()
-            if len(line.strip()) >= _MIN_FINGERPRINT
-        )
-    return sorted(found)
 
 
-def _appears(fingerprint: str, text: str) -> bool:
-    # Responses are JSON, so the oracle may appear in escaped form.
-    return fingerprint in text or json.dumps(fingerprint)[1:-1] in text
+def _json_values(text):
+    """Walk JSON values iteratively, retaining raw text for non-JSON responses."""
+    try:
+        pending = [json.loads(text)]
+    except (ValueError, RecursionError):
+        return
+    while pending:
+        value = pending.pop()
+        yield value
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+
+
+def _appears(artifacts, text):
+    # Whole artifacts avoid conclusive failures from ordinary source-code lines.
+    if any(artifact in text for artifact in artifacts):
+        return True
+    for value in _json_values(text):
+        if isinstance(value, str) and any(artifact in value for artifact in artifacts):
+            return True
+        if isinstance(value, (dict, list)):
+            normalized = json.dumps(
+                value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+            )
+            if normalized in artifacts:
+                return True
+    return False
 
 
 class OracleContainmentGrader:
-    """Check that no API response carries the declared oracle artifact."""
+    """Check for complete declared artifacts in the measured response surfaces."""
 
     check_id = "runtime.oracle_containment"
     level = Level.RUNTIME
@@ -67,11 +124,15 @@ class OracleContainmentGrader:
         return CheckResult(
             check_id=self.check_id,
             status=status,
-            evidence=problems or ["no API response carries the oracle artifact"],
+            evidence=problems
+            or [
+                "no complete oracle artifact matched collected reset/step/state responses, "
+                "complete /schema responses or bounded same-origin HTTP file probes; "
+                "MCP tool access and reward-artifact writes were not tested"
+            ],
             measured=measured,
             remediation=(
-                "Keep oracle and reward artifacts out of observations, state and "
-                "served files."
+                "Keep oracle and reward artifacts out of observations, state and served files."
                 if status is CheckStatus.FAIL
                 else None
             ),
@@ -84,21 +145,35 @@ class OracleContainmentGrader:
             return CheckStatus.SKIP, ["runtime evidence is unavailable"], {}
         location = subject.manifest.capabilities.oracle.location
         try:
-            fingerprints = _fingerprints(subject.root, location)
-        except OSError:
-            fingerprints = None
-        if fingerprints is None:
+            inventory = oracle_inventory(subject.root, location)
+        except (OSError, UnicodeError):
             return (
                 CheckStatus.SKIP,
                 [f"oracle artifact {location} is not readable inside the package"],
                 {},
             )
-        if not fingerprints:
-            return (
-                CheckStatus.SKIP,
-                ["the oracle artifact has no distinctive content to trace"],
-                {},
-            )
+        artifacts = {
+            text.strip()
+            for _, text in inventory.files
+            if text and len(text.strip()) >= _MIN_FINGERPRINT
+        }
+        # Structured artifacts are independent of indentation, key order and escaping.
+        for text in tuple(artifacts):
+            try:
+                value = json.loads(text)
+                if isinstance(value, str) and len(value.strip()) >= _MIN_FINGERPRINT:
+                    artifacts.add(value.strip())
+                elif isinstance(value, (dict, list)):
+                    artifacts.add(
+                        json.dumps(
+                            value,
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                    )
+            except (ValueError, RecursionError):
+                pass
         runs = [subject.runtime_evidence]
         if subject.isolation_evidence:
             runs += [
@@ -110,25 +185,28 @@ class OracleContainmentGrader:
             for run in runs
             for x in run.exchanges
         ]
-        for label, schema in (
-            ("observation schema", subject.runtime_evidence.observation_schema_json),
-            ("reset schema", subject.runtime_evidence.reset_observation_schema_json),
-        ):
-            if schema:
-                sources.append((label, schema))
         sources += [
-            (f"GET {probe.path}", probe.body.decode("utf-8", "ignore"))
-            for probe in subject.oracle_http
-            if probe.status == 200
+            ("schema response", run.schema_response_json)
+            for run in runs
+            if run.schema_response_json is not None
         ]
-        leaks = sorted(
-            {
-                label
-                for label, text in sources
-                if any(_appears(fp, text) for fp in fingerprints)
-            }
-        )
-        measured = {"fingerprints": len(fingerprints), "sources": len(sources)}
+        sources += [
+            (f"GET {probe.path}", body.decode("utf-8", "replace"))
+            for probe in subject.oracle_http
+            for body in (*probe.redirect_bodies, probe.body)
+        ]
+        leaks = sorted({label for label, text in sources if _appears(artifacts, text)})
+        measured = {
+            "artifacts": len(inventory.files),
+            "bytes_read": inventory.bytes_read,
+            "omitted_files": inventory.omitted_files,
+            "omitted_bytes": inventory.omitted_bytes,
+            "inventory_errors": len(inventory.errors),
+            "sources": len(sources),
+            "http_probes": len(subject.oracle_http),
+            "mcp_tool_access_tested": False,
+            "reward_artifact_writes_tested": False,
+        }
         if leaks:
             return (
                 CheckStatus.FAIL,
@@ -138,4 +216,34 @@ class OracleContainmentGrader:
                 ],
                 measured,
             )
+        incomplete = list(inventory.errors)
+        if inventory.omitted_files:
+            incomplete.append("oracle inventory exceeds the file or byte bound")
+        if not artifacts:
+            incomplete.append(
+                "the oracle artifact has no distinctive complete content to trace"
+            )
+        if any(
+            run.failure_reason or not run.exchanges or run.schema_response_json is None
+            for run in runs
+        ):
+            incomplete.append(
+                "runtime transcript or complete /schema response is unavailable or incomplete"
+            )
+        required = {"/" + path for path, _ in inventory.files}
+        if (
+            not required
+            or not required.issubset({probe.path for probe in subject.oracle_http})
+            or any(
+                probe.status is None
+                or probe.failure
+                or probe.status >= 500
+                or probe.status == 206
+                or 300 <= probe.status < 400
+                for probe in subject.oracle_http
+            )
+        ):
+            incomplete.append("required oracle HTTP probes are missing or incomplete")
+        if incomplete:
+            return CheckStatus.SKIP, incomplete, measured
         return CheckStatus.PASS, [], measured

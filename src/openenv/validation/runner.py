@@ -8,6 +8,7 @@ import time
 import uuid
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
+from urllib.parse import quote
 
 import httpx
 
@@ -22,6 +23,7 @@ from .graders.runtime import (
     RewardWellFormedGrader,
     StateContractGrader,
 )
+from .graders.runtime.oracle import oracle_inventory
 from .graders.static import StaticManifestGrader
 from .manifest import ManifestError, NormalizedManifest, NormalizedManifestV2
 from .parsers import ParserRegistry
@@ -40,12 +42,18 @@ from .runtime.contracts import (
     RuntimePlanError,
 )
 from .runtime.scheduler import execute_graders, order_graders
+from .runtime.transport import http_deadline
 from .signature import detect_signature
 from .types import CheckStatus, Lane, Level, ProviderCapability
 
 REPORT_SCHEMA_VERSION = "1"
 
 _DIGEST_EXCLUDED_DIRS = {".git", "__pycache__", ".venv", ".worktrees", "outputs"}
+
+# One deadline and one body budget cover the oracle's HTTP probes.
+ORACLE_PROBE_TIMEOUT_S = 10.0
+MAX_ORACLE_PROBE_BYTES = 1024 * 1024
+MAX_REDIRECTS = 3
 
 
 def source_digest(package_root: Path) -> str:
@@ -124,22 +132,88 @@ def _outcome(check_id, status, reason, *, started=None, measured=None):
     )
 
 
-def _get(base_url, location, max_bytes=1024 * 1024):
-    """Fetch a package-relative path from the control endpoint, bounded and unproxied."""
+def _get(base_url, location, deadline, max_bytes=MAX_ORACLE_PROBE_BYTES):
+    """
+    GET a package-relative path from the control endpoint, unproxied and bounded.
+
+    Same-origin redirects are followed up to `MAX_REDIRECTS` times. Every request
+    and body read ends at `deadline`, a `time.monotonic()` value. The probe keeps
+    bounded bodies from every redirect hop and names any incomplete response.
+    """
     path = "/" + PurePosixPath(location).as_posix()
+    url = httpx.URL(base_url.rstrip("/") + quote(path))
+    origin = (url.scheme, url.host, url.port)
+    status, body = None, bytearray()
+    redirects = []
+    retained = 0
+
+    def probe(failure=None):
+        return HttpProbe(path, status, bytes(body), failure, tuple(redirects))
+
     try:
-        with (
-            httpx.Client(trust_env=False, follow_redirects=False) as client,
-            client.stream("GET", base_url.rstrip("/") + path, timeout=10) as response,
-        ):
-            body = bytearray()
-            for chunk in response.iter_bytes():
-                body.extend(chunk[: max_bytes - len(body)])
-                if len(body) >= max_bytes:
-                    break
-            return HttpProbe(path, response.status_code, bytes(body))
-    except httpx.HTTPError:
-        return HttpProbe(path, None)
+        # Without keep-alive, every request opens a socket the deadline can abort.
+        with httpx.Client(
+            trust_env=False,
+            follow_redirects=False,
+            limits=httpx.Limits(max_keepalive_connections=0),
+        ) as client:
+            for hop in range(MAX_REDIRECTS + 1):
+                timeout = deadline - time.monotonic()
+                with (
+                    http_deadline(timeout) as extensions,
+                    client.stream(
+                        "GET",
+                        url,
+                        timeout=timeout,
+                        headers={"Accept-Encoding": "identity"},
+                        extensions=extensions,
+                    ) as response,
+                ):
+                    status = response.status_code
+                    # iter_bytes() would decompress before the byte bound applies.
+                    encoding = response.headers.get("Content-Encoding", "identity")
+                    if encoding.strip().lower() != "identity":
+                        return probe("compressed response")
+                    for chunk in response.iter_raw():
+                        if retained + len(body) + len(chunk) > max_bytes:
+                            body.extend(chunk[: max_bytes - retained - len(body)])
+                            return probe("body exceeds the byte bound")
+                        body.extend(chunk)
+                if not response.has_redirect_location:
+                    return probe()
+                if hop == MAX_REDIRECTS:
+                    return probe("too many redirects")
+                if retained + len(body) >= max_bytes:
+                    return probe("body exceeds the byte bound")
+                url = url.join(response.headers["Location"])
+                if (url.scheme, url.host, url.port) != origin:
+                    return probe("cross-origin redirect")
+                redirects.append(bytes(body))
+                retained += len(body)
+                body.clear()
+                status = None
+    except (httpx.HTTPError, httpx.InvalidURL, TimeoutError) as exc:
+        # Exception text may include subject-controlled URLs.
+        return probe(type(exc).__name__)
+
+
+def _oracle_probes(base_url, root, location):
+    """Share one deadline and body budget across the bounded file inventory."""
+    try:
+        inventory = oracle_inventory(root, location)
+    except (OSError, UnicodeError):
+        return ()
+    deadline = time.monotonic() + ORACLE_PROBE_TIMEOUT_S
+    remaining = MAX_ORACLE_PROBE_BYTES
+    probes = []
+    for path, _ in inventory.files:
+        if remaining <= 0 or time.monotonic() >= deadline:
+            probe = HttpProbe("/" + path, None, failure="oracle probe budget exhausted")
+        else:
+            probe = _get(base_url, path, deadline, remaining)
+        probes.append(probe)
+        remaining -= len(probe.body) + sum(map(len, probe.redirect_bodies))
+    return tuple(probes)
 
 
 def _applicable(check_id, manifest):
@@ -260,8 +334,10 @@ def _runtime(subject, graders, *, skip_build, provider):
                 )
                 raise KeyboardInterrupt from None
             if manifest.capabilities.oracle is not None:
-                oracle_http = (
-                    _get(running.base_url, manifest.capabilities.oracle.location),
+                oracle_http = _oracle_probes(
+                    running.base_url,
+                    subject.root,
+                    manifest.capabilities.oracle.location,
                 )
         network_json = None
         if (

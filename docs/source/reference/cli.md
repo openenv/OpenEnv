@@ -102,8 +102,22 @@ its own `episode_timeout_s` deadline and trace size bound. When an episode stops
 early before any response differs, the experiment is incomplete and the check
 also reports `SKIP`.
 `runtime.oracle_containment` applies when `capabilities.oracle` is declared. It
-fails when distinctive text from the oracle artifact appears in any reset, step,
-state or schema response, or when `GET` on the oracle's declared path returns it.
+compares complete declared oracle files with collected reset, step and state
+responses, the complete `/schema` response, and unauthenticated HTTP probes of
+each inventoried file's package-relative URL. It decodes JSON string values and
+compares structured JSON independent of formatting. Isolated source lines are
+ignored because ordinary boilerplate does not establish disclosure. A matching
+complete artifact fails regardless of HTTP status or incomplete evidence elsewhere.
+
+Oracle inventory reads at most 64 files and 1 MiB. HTTP probes share a 10 second
+wall deadline and 1 MiB body budget, follow at most three same-origin redirects,
+and reject compressed responses before decoding. Missing or failed probes,
+unresolved redirects, incomplete transcripts or schemas, unreadable inventory
+entries, and omitted files or bytes report `SKIP` unless a disclosure was found. Omitted file and byte
+counts are recorded. A pass establishes only that complete artifacts did not match
+these measured responses. It does not test arbitrary MCP tool reads, partial or
+transformed disclosures, or writes to reward artifacts; it does not certify the
+full agent boundary.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 The declared `episode_timeout_s` bounds collection; a reset or judged step may use
 its remaining budget. Collection failures appear once under `runtime.startup`,

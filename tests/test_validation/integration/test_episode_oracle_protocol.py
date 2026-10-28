@@ -75,7 +75,7 @@ def measure(base_url):
         isolation_evidence=IsolationEvidence(
             sequential=collect(episodes=2), fresh=collect()
         ),
-        oracle_http=(_get(base_url, "oracle/solve.sh"),),
+        oracle_http=(_get(base_url, "oracle/solve.sh", time.monotonic() + 10),),
     )
 
 

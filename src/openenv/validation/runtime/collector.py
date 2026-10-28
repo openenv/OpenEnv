@@ -91,7 +91,7 @@ def collect_runtime_evidence(
     """
     deadline = time.monotonic() + episode_timeout_s
     exchanges = []
-    schema_json = reset_schema_json = None
+    schema_json = reset_schema_json = schema_response_json = None
     phase = "schema"
     trace_bytes = 0
     server_code = None
@@ -131,6 +131,7 @@ def collect_runtime_evidence(
                     if len(payload) + len(chunk) > MAX_MESSAGE_BYTES:
                         raise ValueError("schema exceeds size bound")
                     payload.extend(chunk)
+            schema_response_json = payload.decode("utf-8")
             schema = json.loads(payload)
             if not isinstance(schema, dict) or "observation" not in schema:
                 raise ValueError("missing observation schema")
@@ -250,6 +251,7 @@ def collect_runtime_evidence(
         return RuntimeEvidence(
             exchanges=tuple(exchanges),
             observation_schema_json=schema_json,
+            schema_response_json=schema_response_json,
             reset_observation_schema_json=reset_schema_json,
         )
     except KeyboardInterrupt:
@@ -257,6 +259,7 @@ def collect_runtime_evidence(
             RuntimeEvidence(
                 exchanges=tuple(exchanges),
                 observation_schema_json=schema_json,
+                schema_response_json=schema_response_json,
                 reset_observation_schema_json=reset_schema_json,
                 failure_phase=phase,
                 failure_reason=f"{phase} failed (KeyboardInterrupt)",
@@ -267,6 +270,7 @@ def collect_runtime_evidence(
         return RuntimeEvidence(
             exchanges=tuple(exchanges),
             observation_schema_json=schema_json,
+            schema_response_json=schema_response_json,
             reset_observation_schema_json=reset_schema_json,
             failure_phase=phase,
             failure_reason=f"{phase} failed ({server_code or type(exc).__name__})",

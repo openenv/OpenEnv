@@ -267,6 +267,8 @@ class RuntimeEvidence:
             Credential-safe explanation of the collection failure.
         reset_observation_schema_json (`str`, *optional*):
             Explicit `/schema` reset_observation value; absent means use the step schema.
+        schema_response_json (`str`, *optional*):
+            Complete bounded `/schema` response, including action, state and reset inputs.
     """
 
     exchanges: tuple[WireExchange, ...] = ()
@@ -274,6 +276,7 @@ class RuntimeEvidence:
     failure_phase: str | None = None
     failure_reason: str | None = None
     reset_observation_schema_json: str | None = None
+    schema_response_json: str | None = None
 
 
 class ProbeOutcome(BaseModel):
@@ -655,11 +658,20 @@ class HttpProbe:
         path (`str`):
             Requested path.
         status (`int`, *optional*):
-            Response status; `None` when no response arrived.
+            Status of the last response, after same-origin redirects; `None` when no
+            response arrived.
         body (`bytes`):
-            At most the first MiB of the response body.
+            Bounded body of the final response, whatever its status.
+        failure (`str`, *optional*):
+            Why the probe is incomplete: a transport error, the deadline, a compressed
+            or oversized body, or a redirect that was not followed.
+        redirect_bodies (`tuple[bytes, ...]`):
+            Prior redirect response bodies, each retained separately for JSON decoding.
+            All bodies share the probe byte budget.
     """
 
     path: str
     status: int | None
     body: bytes = b""
+    failure: str | None = None
+    redirect_bodies: tuple[bytes, ...] = ()

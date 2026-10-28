@@ -88,7 +88,14 @@ def test_compressed_schema_is_rejected_before_body_read(monkeypatch, plan, encod
 )
 def test_uncompressed_schema_is_read_and_retained(monkeypatch, plan, headers):
     schema = {"type": "object"}
-    stream = TrackedStream(json.dumps({"observation": schema}).encode())
+    full_schema = {
+        "observation": schema,
+        "action": {"description": "oracle α"},
+        "state": {"default": "withheld-state"},
+        "reset": {"default": "reset-input"},
+    }
+    payload = json.dumps(full_schema, ensure_ascii=False, indent=2)
+    stream = TrackedStream(payload.encode())
     requests = schema_transport(monkeypatch, stream, headers)
     evidence = collector.collect_runtime_evidence(
         "http://127.0.0.1:8000", plan, episode_timeout_s=2
@@ -96,6 +103,7 @@ def test_uncompressed_schema_is_read_and_retained(monkeypatch, plan, headers):
     assert requests[0].headers["Accept-Encoding"] == "identity"
     assert stream.read and stream.closed
     assert json.loads(evidence.observation_schema_json) == schema
+    assert evidence.schema_response_json == payload
     assert evidence.failure_phase == "connect"
 
 
