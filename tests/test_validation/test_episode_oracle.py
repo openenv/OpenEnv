@@ -108,6 +108,16 @@ def test_equivalent_json_encodings_are_the_same_response(after_reset):
     assert result.status is CheckStatus.PASS, result.evidence
 
 
+def test_equivalent_decimal_spellings_are_the_same_response():
+    result = grade_isolation(
+        first_step_subject(
+            '{"type":"observation","data":{"c":1.00e400}}',
+            '{"type":"observation","data":{"c":1.0e400}}',
+        )
+    )
+    assert result.status is CheckStatus.PASS
+
+
 @pytest.mark.parametrize(
     "fresh, after_reset",
     [
@@ -118,8 +128,23 @@ def test_equivalent_json_encodings_are_the_same_response(after_reset):
             '{"type": "observation", "data": {"c": [2, 1]}}',
         ),
         (STEP, '{"type": "observation", "data": {"c": 1}'),
+        (
+            '{"type":"observation","data":{"c":1e400}}',
+            '{"type":"observation","data":{"c":Infinity}}',
+        ),
+        (
+            '{"type":"observation","data":{"c":1.0000000000000001}}',
+            '{"type":"observation","data":{"c":1.0}}',
+        ),
     ],
-    ids=["bool_for_int", "float_for_int", "array_order", "malformed"],
+    ids=[
+        "bool_for_int",
+        "float_for_int",
+        "array_order",
+        "malformed",
+        "nonfinite_constant",
+        "decimal_precision",
+    ],
 )
 def test_value_type_order_and_malformed_differences_remain(fresh, after_reset):
     result = grade_isolation(first_step_subject(after_reset, fresh))

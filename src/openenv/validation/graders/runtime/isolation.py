@@ -2,16 +2,29 @@
 
 import json
 import time
+from decimal import Decimal
 
 from ...report import CheckResult
 from ...types import CheckStatus, Level
 
 
+def _typed_json(value):
+    if isinstance(value, dict):
+        return dict, {key: _typed_json(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return list, tuple(_typed_json(child) for child in value)
+    if isinstance(value, Decimal) and not value.is_finite():
+        raise ValueError("non-finite JSON constant")
+    return type(value), value
+
+
 def _canonical(text):
-    """Re-encode a JSON value so key order and formatting do not count."""
+    """Compare exact decoded values while preserving JSON types and malformed text."""
     try:
-        return json.dumps(json.loads(text), sort_keys=True)
-    except (ValueError, RecursionError):
+        return _typed_json(
+            json.loads(text, parse_float=Decimal, parse_constant=Decimal)
+        )
+    except (ValueError, ArithmeticError, RecursionError):
         return text  # Malformed text is compared exactly as it was sent.
 
 
