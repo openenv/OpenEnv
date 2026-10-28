@@ -506,6 +506,7 @@ def run_validation(
     policy: SeverityPolicy | None = None,
     provider=None,
     artifacts_dir: Path | None = None,
+    report_target: str | None = None,
 ) -> ValidationReport | ValidationReportV2:
     """
     Validate a package end to end and return the report.
@@ -530,6 +531,8 @@ def run_validation(
             Validation-only provider; defaults to Docker-local for runtime runs.
         artifacts_dir (`Path`, *optional*):
             Write a redacted reproduction bundle to this directory.
+        report_target (`str`, *optional*):
+            Durable source identity for the report; defaults to the package path.
 
     Returns:
         [`~openenv.validation.report.ValidationReport`]: the completed report.
@@ -698,7 +701,7 @@ def run_validation(
         report_schema_version="2"
         if report_type is ValidationReportV2
         else REPORT_SCHEMA_VERSION,
-        target=str(target),
+        target=str(target) if report_target is None else report_target,
         source_digest=digest_before,
         signature=signature,
         manifest=manifest,

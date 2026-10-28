@@ -127,6 +127,48 @@ with dependent contract checks skipped and the completed trace retained.
 Validator JSON numeric-range and depth limits report named capability `SKIP`s,
 preserving the received evidence.
 
+`--space` validates a Hugging Face Space on HF Jobs instead of a local directory:
+
+```bash
+openenv validate --space openenv/echo_env --level runtime
+openenv validate --space my-org/my-env --level runtime --flavor t4-small
+```
+
+The validator resolves `--revision` (a branch, tag or commit hash; default `main`)
+to one commit and downloads and hashes the Space files at that commit. Hub download
+bookkeeping is excluded. The report target names the resolved source commit.
+
+Runtime validation currently reports a named `immutable_image` SKIP without
+creating an HF Job. The supported Hub API exposes a mutable Space image name and
+current Space runtime metadata, but does not establish an immutable image digest
+bound to the downloaded source commit. Matching repository and running-build
+revisions alone cannot prove which image a Job would pull. A different repository
+or reported runtime revision reports `runtime.startup` as `ERROR`. This provider
+also refuses building, sleeping and paused Spaces: it requires reported stage
+`RUNNING`, without treating that stage as proof of image provenance. Absent runtime
+stage or revision metadata yields a named `space_runtime_metadata` SKIP; explicit
+contradictory metadata still yields ERROR. Use
+`--level static` to validate historical source commits. Reports retain the source
+commit and source digest without claiming a verified runtime image or execution.
+
+`--flavor` selects an HF Jobs hardware flavor (default `cpu-basic`; see
+`hf jobs hardware`). A GPU flavor satisfies the declared GPU prerequisite, but
+image verification still blocks execution. The provider only supports `public`
+network mode; network policy, host containment and resource bounds require
+capabilities it cannot inspect from outside the HF Job. CPU/GPU runtime and
+WebSocket qualification, cleanup and the reported Sandbox startup issue remain
+unverified on live HF infrastructure.
+
+The serving implementation supports ordinary Dockerfile backslash continuations
+and final-stage commands, including inheritance from a named earlier stage.
+Heredocs are unsupported: a `<<` marker in any non-comment instruction, including
+a literal marker, reports a named `dockerfile_heredoc` SKIP before command parsing.
+`ENTRYPOINT`, custom `SHELL` commands, custom escape directives and commands
+inherited from an external base image are unsupported. The server log retains at
+most the first 64 KiB of combined stdout and stderr; further output is drained
+and discarded. These serving paths have local regression coverage and do not
+enable unverified image launches.
+
 Credential delivery is deferred for this release. Set
 `validation.execution.requires_credentials: true` when the environment needs an
 externally supplied credential, such as a judge API key. This boolean declaration

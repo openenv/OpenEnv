@@ -3,9 +3,11 @@
 """OpenEnv validate command."""
 
 import json
+import shutil
 import signal
+import tempfile
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -168,6 +170,27 @@ def validate(
             min=0.1,
         ),
     ] = 5.0,
+    space: Annotated[
+        str | None,
+        typer.Option(
+            "--space",
+            help="Validate a Hugging Face Space (e.g. openenv/echo_env) on HF Jobs",
+        ),
+    ] = None,
+    revision: Annotated[
+        str | None,
+        typer.Option(
+            "--revision",
+            help="Space branch, tag or commit hash to validate (default: main)",
+        ),
+    ] = None,
+    flavor: Annotated[
+        str,
+        typer.Option(
+            "--flavor",
+            help="HF Jobs hardware flavor for --space, e.g. cpu-basic or t4-small",
+        ),
+    ] = "cpu-basic",
 ) -> None:
     """
     Validate a local package or a running OpenEnv server.
@@ -194,8 +217,20 @@ def validate(
 
     # Probe a running server (legacy runtime probe)
     openenv validate --url http://localhost:8000
+
+    # Validate a Hub Space on HF Jobs GPU hardware
+    openenv validate --space openenv/echo_env --level runtime --flavor t4-small
     ```
     """
+    if space is not None and (target is not None or url is not None or local):
+        typer.echo(
+            "Error: --space cannot be combined with a path, --url or --local", err=True
+        )
+        raise typer.Exit(EXIT_FAIL)
+    if space is None and (revision is not None or flavor != "cpu-basic"):
+        typer.echo("Error: --revision and --flavor require --space", err=True)
+        raise typer.Exit(EXIT_FAIL)
+
     runtime_target = url
     if (
         runtime_target is not None
@@ -249,22 +284,46 @@ def validate(
         raise typer.Exit(EXIT_INTERNAL)
 
     package_root = Path(target) if target is not None else Path.cwd()
-    if not package_root.is_dir():
+    if space is None and not package_root.is_dir():
         typer.echo(f"Error: not a package directory: {package_root}", err=True)
         raise typer.Exit(EXIT_UNSUPPORTED)
 
     try:
         if output is not None and not output.parent.is_dir():
             raise OSError("report output directory does not exist")
-        with _sigterm_as_interrupt():
+        with ExitStack() as stack:
+            provider = None
+            if space is not None:
+                from huggingface_hub import HfApi, snapshot_download
+                from openenv.validation.providers.hf_sandbox import (
+                    HFSandboxValidationProvider,
+                )
+
+                # Download and report one commit, even if a branch moves.
+                revision = HfApi().space_info(space, revision=revision).sha
+                package_root = (
+                    Path(stack.enter_context(tempfile.TemporaryDirectory())) / "source"
+                )
+                # Copy the repository snapshot out of the SDK cache, dereferencing
+                # its blob links without adding local_dir download metadata.
+                shutil.copytree(
+                    snapshot_download(space, repo_type="space", revision=revision),
+                    package_root,
+                )
+                provider = HFSandboxValidationProvider(space, revision, flavor=flavor)
+            stack.enter_context(_sigterm_as_interrupt())
             validation_report = run_validation(
                 package_root,
                 max_level=_LEVELS[level],
                 skip_build=skip_build,
                 policy=load_policy(policy_version) if policy_version else None,
+                provider=provider,
                 artifacts_dir=(
                     output.parent / (output.stem + ".artifacts") if output else None
                 ),
+                report_target=f"spaces/{space}@{revision}"
+                if space is not None
+                else None,
             )
         report_json = write_report(validation_report, output)
     except (SignatureError, UnsupportedPackageError) as exc:
