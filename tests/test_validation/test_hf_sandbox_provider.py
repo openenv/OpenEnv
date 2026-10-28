@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import huggingface_hub
 import pytest
+from huggingface_hub import _local_folder
 from openenv.cli.__main__ import app
 from openenv.validation.manifest import (
     ExecutionDeclaration,
@@ -23,6 +24,7 @@ from openenv.validation.providers.hf_sandbox import (
     _server_command,
     HFSandboxValidationProvider,
 )
+from openenv.validation.runner import source_digest
 from openenv.validation.runtime.contracts import LaunchSpec
 from openenv.validation.types import ProviderCapability
 from typer.testing import CliRunner
@@ -115,7 +117,11 @@ def downloads(provider, monkeypatch):
 
     def snapshot_download(repo_id, *, repo_type, revision, local_dir):
         revisions.append(revision)
-        space(Path(local_dir))
+        for path in list(space(Path(local_dir)).iterdir()):
+            # The Hub client records each download, with its time, in the folder.
+            _local_folder.write_download_metadata(
+                Path(local_dir), path.name, revision, "etag"
+            )
         return local_dir
 
     monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
@@ -186,6 +192,15 @@ def test_named_revision_is_validated_as_its_commit(downloads, monkeypatch):
     report = validate_space("--revision", "main")
     assert downloads == revisions == ["a" * 40]
     assert report["target"] == "spaces/openenv-testing/probe@" + "a" * 40
+
+
+def test_repeat_downloads_hash_only_the_space_files(downloads, monkeypatch, tmp_path):
+    clock = iter(range(1, 100))
+    monkeypatch.setattr(
+        _local_folder, "time", SimpleNamespace(time=lambda: next(clock))
+    )
+    digests = [validate_space()["source_digest"] for _ in range(2)]
+    assert digests == [source_digest(space(tmp_path))] * 2
 
 
 def test_build_pins_the_validated_revision(provider, tmp_path):

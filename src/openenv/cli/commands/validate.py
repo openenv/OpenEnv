@@ -3,6 +3,7 @@
 """OpenEnv validate command."""
 
 import json
+import shutil
 import signal
 import tempfile
 import threading
@@ -308,6 +309,9 @@ def validate(
                         local_dir=stack.enter_context(tempfile.TemporaryDirectory()),
                     )
                 )
+                # Validate only the Space's files, not the timestamped download
+                # metadata the Hub client keeps in the folder.
+                shutil.rmtree(package_root / ".cache" / "huggingface")
                 provider = HFSandboxValidationProvider(space, revision, flavor=flavor)
             stack.enter_context(_sigterm_as_interrupt())
             validation_report = run_validation(
