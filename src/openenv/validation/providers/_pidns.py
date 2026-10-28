@@ -97,11 +97,13 @@ def scan(path, device, parent_fd, depth=0):
         if f"{os.major(info.st_dev)}:{os.minor(info.st_dev)}" != device:
             reading["complete"] = False
             return
+        # An owner can restore write permission without changing the launch.
         flags = os.O_RDONLY | os.O_DIRECTORY if directory else os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK
         try:
             fd = os.open(target, flags | os.O_NOFOLLOW, dir_fd=parent_fd)
         except OSError as error:
-            if directory or error.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
+            if (directory or error.errno not in (errno.EACCES, errno.EPERM, errno.EROFS)
+                or (info.st_uid == os.geteuid() and error.errno in (errno.EACCES, errno.EPERM))):
                 reading["complete"] = False
             return
         try:
@@ -114,7 +116,8 @@ def scan(path, device, parent_fd, depth=0):
                 try:
                     probe = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
                 except OSError as error:
-                    if error.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
+                    if (error.errno not in (errno.EACCES, errno.EPERM, errno.EROFS)
+                        or (opened.st_uid == os.geteuid() and error.errno in (errno.EACCES, errno.EPERM))):
                         reading["complete"] = False
                 else:
                     reading["writable"] = True

@@ -26,6 +26,7 @@ def device_probe(tmp_path, monkeypatch, capsys):
     original_open = builtins.open
     original_os_open = os.open
     original_listdir = os.listdir
+    monkeypatch.setattr(os, "geteuid", lambda: dev.stat().st_uid + 1)
 
     def open_file(path, *args, **kwargs):
         if path == "/proc/1/mountinfo":
@@ -174,3 +175,32 @@ def test_device_probe_incomplete_inventory_is_explicit(
         monkeypatch.setattr(os, "open", io_error)
     _, reading = run()
     assert reading == {"complete": False, "writable": False}
+
+
+@pytest.mark.parametrize("storage", ["directory", "file"])
+@pytest.mark.parametrize("denial", [errno.EACCES, errno.EPERM])
+def test_owner_changeable_denial_is_incomplete(
+    device_probe, monkeypatch, storage, denial
+):
+    dev, run = device_probe
+    path = dev / "subject-owned"
+    if storage == "directory":
+        path.mkdir(mode=0o500)
+    else:
+        path.write_bytes(b"preserve data")
+        path.chmod(0o400)
+    original = os.open
+
+    def denied(target, flags, *args, **kwargs):
+        if target == path.name and storage == "file":
+            raise PermissionError(denial, "denied")
+        return original(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", denied)
+    monkeypatch.setattr(os, "geteuid", lambda: path.stat().st_uid)
+    mode = path.stat().st_mode
+    _, reading = run()
+    assert reading == {"complete": False, "writable": False}
+    assert path.stat().st_mode == mode
+    if storage == "file":
+        assert path.read_bytes() == b"preserve data"

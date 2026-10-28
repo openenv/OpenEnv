@@ -178,3 +178,66 @@ def test_root_process_in_the_subject_is_detected(image):
     result = grade(measured)
     assert result.status is CheckStatus.FAIL
     assert any("runs as root" in line for line in result.evidence)
+
+
+@pytest.mark.parametrize("storage", ["directory", "file"])
+def test_owner_changeable_device_permissions_are_inconclusive(image, storage):
+    spec = launch(image)
+    running = DockerValidationProvider().start(spec)
+    path = "/dev/review-permission/subject-owned"
+    target = path + "/data" if storage == "directory" else path
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "exec",
+                "--user",
+                "0",
+                running.name,
+                "sh",
+                "-c",
+                "mkdir /dev/review-permission && chmod 777 /dev/review-permission",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        create = (
+            f"os.mkdir({path!r}); os.chmod({path!r}, 0o500)"
+            if storage == "directory"
+            else f"open({path!r}, 'wb').close(); os.chmod({path!r}, 0o400)"
+        )
+        prepared = running.exec(["python", "-c", "import os; " + create], 30)
+        assert prepared.exit_code == 0, prepared.stderr
+        subprocess.run(
+            [
+                "docker",
+                "exec",
+                "--user",
+                "0",
+                running.name,
+                "chmod",
+                "755",
+                "/dev/review-permission",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        denied = running.exec(["python", "-c", f"open({target!r}, 'ab')"], 30)
+        assert denied.exit_code != 0 and "PermissionError" in denied.stderr
+        measured = running.measure_containment()
+        enabled = running.exec(
+            [
+                "python",
+                "-c",
+                f"import os; os.chmod({path!r}, 0o700); open({target!r}, 'ab').write(bytes(2**20))",
+            ],
+            30,
+        )
+        assert enabled.exit_code == 0, enabled.stderr
+    finally:
+        running.stop()
+    assert owned(spec.run_id) == []
+    result = grade(measured)
+    assert result.status is CheckStatus.SKIP, result.evidence
