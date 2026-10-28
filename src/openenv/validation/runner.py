@@ -11,6 +11,7 @@ from pathlib import Path
 
 from .graders import GraderRegistry, Subject
 from .graders.runtime import (
+    HostContainmentGrader,
     NetworkPolicyGrader,
     ObservationSchemaGrader,
     RewardWellFormedGrader,
@@ -94,6 +95,7 @@ def default_grader_registry(policy: SeverityPolicy) -> GraderRegistry:
     registry.register(ObservationSchemaGrader())
     registry.register(StateContractGrader())
     registry.register(NetworkPolicyGrader())
+    registry.register(HostContainmentGrader())
     return registry
 
 
@@ -207,12 +209,24 @@ def _runtime(subject, graders, *, skip_build, provider):
                 inspection = {**inspection, "network": network}
             except ProviderError as exc:
                 inspection = {**inspection, "network_error": str(exc)[:1024]}
+        containment_json = None
+        if (
+            result.status is CheckStatus.PASS
+            and ProviderCapability.INSPECTED_ISOLATION in provider.capabilities
+        ):
+            try:
+                containment = running.measure_containment()
+                containment_json = json.dumps(containment, allow_nan=False)
+                inspection = {**inspection, "containment": containment}
+            except ProviderError as exc:
+                inspection = {**inspection, "containment_error": str(exc)[:1024]}
         subject = replace(
             subject,
             image_ref=image_ref,
             running=running,
             runtime_evidence=evidence,
             network_evidence_json=network_json,
+            containment_evidence_json=containment_json,
         )
         checks = execute_graders(
             graders,

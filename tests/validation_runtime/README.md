@@ -31,12 +31,17 @@ The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
 switches and wire corruption remain inside test assets. They share one fixture
 and one public runtime plan, so a defect changes one property at a time.
 
-The Docker suite contains 19 required cases: three provider lifecycle tests,
-five network-policy tests, ten CLI fault/control cases, and one real `echo_env`
+The Docker suite contains 28 required cases: three provider lifecycle tests,
+five network-policy tests, eight host-containment tests, eleven CLI fault/control
+cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
 validator-owned sink, detect a subject launched on the bridge while declared
 `no-network`, and confirm the no-network helper serves `/health` and `/ws` without
-giving the subject a route out. The slow-step case completes a tool call taking more than five seconds within
+giving the subject a route out. The host-containment tests measure the hardened
+fixture in both network modes, detect a launch whose image root is writable,
+detect writable nested directories and existing regular files on `/dev`, leave
+owner-changeable permission denials inconclusive, and
+detect a root process started inside the subject. The slow-step case completes a tool call taking more than five seconds within
 the declared episode budget. The hung-step case
 checks the episode deadline; the interruption case sends SIGINT only after a
 container log confirms the second step has begun. Both must retain the completed
@@ -71,8 +76,12 @@ skip. Protocol and Docker runs must also execute every named case in the committ
 clears inherited `PYTEST_ADDOPTS` and copies the inventory and its digest into the
 bundle. Verify a bundle using its recorded source revision, since later revisions
 can add required cases. This checks the implemented slice's inventory, not completion of all RFC
-008 checks. A successful image build is not evidence for reproducible-build,
-containment or resource-validation graders. Those checks land in later slices.
+008 checks. A successful image build does not establish any runtime qualification. This layer
+measures host-containment settings, process privileges, the complete mount table
+and write access. Resource validation and reproducible-build qualification land
+in later slices. A host-read sentinel is not exercised: the current provider has
+no positive control for a file on the Docker daemon host, which can differ from
+the validator host on Docker Desktop or remote engines.
 
 For changes after the first sync, reinstall the local wheel before fast/protocol
 tests: `uv sync --project tests/validation_runtime --frozen --reinstall-package
