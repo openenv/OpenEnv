@@ -85,10 +85,11 @@ while time.monotonic() < deadline and outcome(tcp)["result"] != "reachable":
     time.sleep(0.2)
 def up(name):
     # Kernels add down fallback tunnels (gre0, sit0, ...) to every namespace, and
-    # /sys/class/net can hold files such as bonding_masters. Only up links carry traffic.
+    # /sys/class/net can hold regular files such as bonding_masters. Only up links
+    # carry traffic. Any other read error leaves link state unknown and fails the probe.
     try:
         with open(f"/sys/class/net/{{name}}/flags") as f: return int(f.read(), 16) & 1
-    except OSError: return False
+    except NotADirectoryError: return False
 def lines(path):
     try:
         with open(path) as f: return f.read().splitlines()
