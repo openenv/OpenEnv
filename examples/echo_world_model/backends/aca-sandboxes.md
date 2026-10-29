@@ -1,6 +1,6 @@
 # ECHO rollouts in ACA Sandboxes
 
-> Illustrative. `ACASandboxProvider` ships in huggingface/OpenEnv#793 and is
+> Illustrative. `ACASandboxProvider` ships in openenv/OpenEnv#793 and is
 > not part of this PR. The snippet below is the wiring for when that provider lands;
 > the CPU demos in this folder run in-process and need none of it.
 
@@ -8,7 +8,7 @@ ECHO needs rollouts, and rollouts need somewhere to run the agent's commands. An
 **Azure Container Apps Sandbox** spins up an isolated container, runs the command,
 returns the observation, and runs the verifier for reward, with default-deny egress
 and governance. With the `ACASandboxProvider` from
-[huggingface/OpenEnv#793](https://github.com/huggingface/OpenEnv/pull/793) as the
+[openenv/OpenEnv#793](https://github.com/openenv/OpenEnv/pull/793) as the
 execution backend:
 
 ## The wiring

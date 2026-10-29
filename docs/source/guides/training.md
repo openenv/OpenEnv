@@ -15,7 +15,7 @@ None of these paths ties the environment to a framework. `openenv.core` does not
 
 ## Integrations
 
-These frameworks and platforms train on OpenEnv environments. If your project supports OpenEnv, open a PR to add it here and to the [README](https://github.com/huggingface/OpenEnv#integrations).
+These frameworks and platforms train on OpenEnv environments. If your project supports OpenEnv, open a PR to add it here and to the [README](https://github.com/openenv/OpenEnv#integrations).
 
 | Framework | Example |
 |---|---|
@@ -24,7 +24,7 @@ These frameworks and platforms train on OpenEnv environments. If your project su
 | [Miles](https://github.com/radixark/miles) | [GRPO on Terminal-Bench 2](https://github.com/radixark/miles/tree/main/examples/experimental/openenv) |
 | [Oumi](https://github.com/oumi-ai/oumi) | [OpenEnv GRPO notebook](https://github.com/oumi-ai/oumi/blob/main/notebooks/Oumi%20-%20OpenEnv%20GRPO%20with%20trl.ipynb) |
 | [SkyRL](https://github.com/NovaSky-AI/SkyRL) | [Training on OpenEnv environments](https://skyrl.readthedocs.io/en/latest/examples/openenv.html) |
-| [torchforge](https://meta-pytorch.org/torchforge/) | [GRPO on BlackJack](https://github.com/huggingface/OpenEnv/tree/main/examples/grpo_blackjack) |
+| [torchforge](https://meta-pytorch.org/torchforge/) | [GRPO on BlackJack](https://github.com/openenv/OpenEnv/tree/main/examples/grpo_blackjack) |
 | [TRL](https://huggingface.co/docs/trl) | [OpenEnv integration guide](https://huggingface.co/docs/trl/openenv): `environment_factory` with `GRPOTrainer`, several environments at once, and harness training through Harbor |
 | [Unsloth](https://unsloth.ai) | [2048 with gpt-oss](https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/OpenEnv_gpt_oss_(20B)_Reinforcement_Learning_2048_Game.ipynb) |
 

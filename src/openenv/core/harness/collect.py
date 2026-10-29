@@ -518,7 +518,7 @@ def build_dataset_readme(output_dir: Path) -> str:
         "",
         "# OpenEnv rollouts",
         "",
-        "Collected with [OpenEnv](https://github.com/huggingface/OpenEnv) "
+        "Collected with [OpenEnv](https://github.com/openenv/OpenEnv) "
         "(`openenv collect`).",
         "",
         f"- **Episodes:** {_count_episodes(results_path)}",

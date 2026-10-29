@@ -9,10 +9,10 @@ With [**Transformers Reinforcement Learning (TRL)**](https://github.com/huggingf
 - [TRL GitHub Repository](https://github.com/huggingface/trl)
 - [Official TRL Examples](https://huggingface.co/docs/trl/example_overview)
 - [Community Tutorials](https://huggingface.co/docs/trl/community_tutorials)
-- [OpenEnv](https://github.com/huggingface/OpenEnv)
+- [OpenEnv](https://github.com/openenv/OpenEnv)
 
 An **agentic environment** is a setting where a model can take actions, observe outcomes, and adjust its behavior based on feedback, similar to how humans learn from trial and error.
-In this case, the agent interacts with the **Wordle** environment through the [**OpenEnv**](https://github.com/huggingface/OpenEnv) framework, which standardizes multi-agent and RL-style text environments.
+In this case, the agent interacts with the **Wordle** environment through the [**OpenEnv**](https://github.com/openenv/OpenEnv) framework, which standardizes multi-agent and RL-style text environments.
 
 [Wordle](https://en.wikipedia.org/wiki/Wordle) is a popular word puzzle where the player must guess a secret five-letter word within six tries.
 After each guess, feedback indicates whether each letter is:
@@ -38,7 +38,7 @@ We will start by installing **TRL**, which automatically includes the main depen
 We will also install the **OpenEnv** framework (for the environment), **trackio** (for logging and monitoring training runs), and **vLLM** (for efficient generation).
 
 ```python
-!pip install -Uq git+https://github.com/huggingface/trl.git git+https://github.com/huggingface/OpenEnv.git trackio vllm==0.10.2 bitsandbytes
+!pip install -Uq git+https://github.com/huggingface/trl.git git+https://github.com/openenv/OpenEnv.git trackio vllm==0.10.2 bitsandbytes
 ```
 
 ---
