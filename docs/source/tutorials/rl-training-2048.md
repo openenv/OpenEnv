@@ -14,7 +14,7 @@ The recipe follows TRL's [`examples/grpo_2048`](https://github.com/huggingface/t
 
 ```python
 !pip install -Uq "trl[peft]" trackio open_spiel
-!pip install -q "openenv-openspiel-env @ git+https://github.com/huggingface/OpenEnv.git#subdirectory=envs/openspiel_env"
+!pip install -q "openenv-openspiel-env @ git+https://github.com/openenv/OpenEnv.git#subdirectory=envs/openspiel_env"
 ```
 
 `open_spiel` ships the game engine (wheels for Linux and macOS). `openenv-openspiel-env` installs the client (`OpenSpielEnv`) and the server.

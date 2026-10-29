@@ -45,8 +45,8 @@ def test_rewrites_files_directories_images_and_preserves_url_suffixes(repo):
 [![License](https://img.shields.io/badge/license-BSD-blue)](../../LICENSE)
 """
     result = sync_env_docs._rewrite_relative_links(source, "example_env")
-    github = "https://github.com/huggingface/OpenEnv"
-    raw = "https://raw.githubusercontent.com/huggingface/OpenEnv/main"
+    github = "https://github.com/openenv/OpenEnv"
+    raw = "https://raw.githubusercontent.com/openenv/OpenEnv/main"
     assert (
         result
         == f"""[client]({github}/blob/main/envs/example_env/client.py?plain=1#L2 "source")
@@ -103,7 +103,7 @@ def test_rewrites_links_in_deeply_indented_list_items(repo):
 
     [client](client.py)
 """
-    github = "https://github.com/huggingface/OpenEnv"
+    github = "https://github.com/openenv/OpenEnv"
     assert sync_env_docs._rewrite_relative_links(source, "example_env") == (
         "    - Client files:\n"
         f"      [client]({github}/blob/main/envs/example_env/client.py)\n"
@@ -119,7 +119,7 @@ def test_generate_stub_keeps_inline_code_labels_and_strips_frontmatter(repo):
     )
     assert sync_env_docs.generate_stub("example_env") == (
         "<!-- openenv-source: example_env -->\n# Example\n\n"
-        "[`client.py`](https://github.com/huggingface/OpenEnv/blob/main/envs/example_env/client.py)\n"
+        "[`client.py`](https://github.com/openenv/OpenEnv/blob/main/envs/example_env/client.py)\n"
     )
 
 

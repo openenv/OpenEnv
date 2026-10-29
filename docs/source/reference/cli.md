@@ -103,7 +103,7 @@ as author-validation evidence; this command does not issue certification.
 For a pinned, installed-wheel reproduction of the shared fixture and its fault
 cases, follow [the runtime lab](../../../tests/validation_runtime/README.md).
 The implementation and remaining check inventory are tracked in
-[the Level 2 umbrella](https://github.com/huggingface/OpenEnv/issues/1177).
+[the Level 2 umbrella](https://github.com/openenv/OpenEnv/issues/1177).
 
 [[autodoc]] openenv.cli.commands.validate.validate
 
@@ -237,7 +237,7 @@ repository, then search it before installing or running anything. See
 
 ```bash
 openenv catalog build --repository . \
-    --repository-uri https://github.com/huggingface/OpenEnv.git \
+    --repository-uri https://github.com/openenv/OpenEnv.git \
     --publisher example.org --output catalog.json
 
 openenv discover "client smoke test" --catalog catalog.json

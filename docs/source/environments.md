@@ -42,6 +42,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Terminal-first coding environment with high-contrast shell output and session controls for execute/verify/close flows.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/terminus" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/spaces/openenv/terminus_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -80,6 +81,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Traffic control scenarios with SUMO simulators for agents that reason about continuous control and scheduling.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/sumo" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/spaces/openenv/sumo_rl_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -94,7 +96,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Multi-task text arena for language-game competitions such as Wordle, reasoning puzzles, and program synthesis.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/textarena" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
-        <a href="https://huggingface.co/spaces/burtenshaw/textarena_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+        <a href="https://huggingface.co/spaces/openenv/wordle" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -109,7 +111,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Safety-critical diagnostics from the DIPG benchmark, highlighting guardrails, adversarial prompts, and risk scoring.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/dipg" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
-        <a href="https://huggingface.co/spaces/surfiniaburger/dipg-gym" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+        <a href="https://huggingface.co/spaces/openenv/dipg_safety_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -117,7 +119,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Classic snake game environment for RL research with configurable grids, partial observability, and customizable rewards.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/snake" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
-        <a href="https://huggingface.co/spaces/Crashbandicoote2/snake_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+        <a href="https://huggingface.co/spaces/openenv/snake_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -133,7 +135,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Browser automation environment for web agents with DOM interaction, navigation, and multi-step task completion.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/browsergym" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
-        <a href="https://huggingface.co/spaces/burtenshaw/browsergym-v2" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+        <a href="https://huggingface.co/spaces/openenv/browsergym_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -162,7 +164,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Embodied evaluation environment for testing LLM decision-making in a full 3D driving simulator with irreversible consequences and ethical trolley scenarios.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/carla" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
-        <a href="https://huggingface.co/spaces/sergiopaniego/carla-env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+        <a href="https://huggingface.co/spaces/openenv/carla_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -170,6 +172,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Chess RL environment powered by the moonfish engine with configurable opponents, position evaluation, and full chess rules.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/chess" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/spaces/openenv/chess_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -205,7 +208,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Simple 5×5 grid world RL testbed and step-by-step guide for building new OpenEnv environments from scratch.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/grid_world" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
-        <a href="https://huggingface.co/spaces/yuvrajpant56/grid_world_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+        <a href="https://huggingface.co/spaces/openenv/grid_world_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -241,6 +244,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Python REPL environment for code execution tasks based on the Recursive Language Models paradigm with sandboxed execution and context loading.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/repl" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/spaces/openenv/repl" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -255,6 +259,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">OpenEnv wrapper for Terminal-Bench 2 tasks with local and Docker execution modes for terminal-based agent evaluation.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/tbench2" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/spaces/openenv/tbench2" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
@@ -292,6 +297,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <div class="flex gap-2 mt-3">
         <a href="environments/pelican_svg" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
         <a href="https://huggingface.co/spaces/sergiopaniego/pelican-svg-env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Post-training (experimental)</div>
+      <p class="text-sm"><code>posttrain_env</code> lets an agent post-train a model on HF Jobs through a broker that holds the credentials and enforces a per-rollout budget. A grader-only evaluation on a hidden split is the reward. Eval-first prototype for RFC 014; private deployments only, excluded from Spaces releases and HF collections.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/posttrain" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
