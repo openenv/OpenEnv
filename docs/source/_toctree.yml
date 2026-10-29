@@ -48,7 +48,7 @@
     - local: tutorials/end-to-end-walkthrough
       title: Train a Reasoning Model
     - local: tutorials/wordle-grpo
-      title: Play Wordle with GRPO
+      title: Train a Wordle Agent
     - local: tutorials/rl-training-2048
       title: Play 2048 with GRPO
     - local: tutorials/sft-warmup
@@ -125,6 +125,8 @@
     title: DM Control
   - local: environments/finqa
     title: FinQA
+  - local: environments/fraud_triage
+    title: Fraud Triage
   - local: environments/grid_world
     title: Grid World
   - local: environments/julia
@@ -155,6 +157,8 @@
     title: Agent World Model
   - local: environments/pelican_svg
     title: Pelican SVG
+  - local: environments/posttrain
+    title: Post-training
   - local: environments/sophistry_bench_sprint
     title: Sophistry Bench Sprint
   title: Environments

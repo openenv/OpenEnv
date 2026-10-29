@@ -35,8 +35,8 @@ frontier model over an API scores a 0.6B model mid-training, the reward is dense
 enough to run GRPO against, and the whole thing deploys as a Space. That is the
 part a prompt cannot do:
 
-- [`examples/pelican_svg_eval.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/pelican_svg_eval.py) scores any set of models through HF Inference Providers.
-- [`examples/pelican_svg_grpo.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/pelican_svg_grpo.py) trains against it with TRL, runnable on HF Jobs.
+- [`examples/pelican_svg_eval.py`](https://github.com/openenv/OpenEnv/blob/main/examples/pelican_svg_eval.py) scores any set of models through HF Inference Providers.
+- [`examples/pelican_svg_grpo.py`](https://github.com/openenv/OpenEnv/blob/main/examples/pelican_svg_grpo.py) trains against it with TRL, runnable on HF Jobs.
 
 The interesting question stops being "which model draws the best pelican" and
 becomes "can a small model be taught to, and does it learn to draw or to game
@@ -264,8 +264,42 @@ PYTHONPATH=src:envs uv run uvicorn pelican_svg_env.server.app:app --port 8000
 
 Environment variables: `HF_TOKEN` for the judge, `PELICAN_SVG_JUDGE_MODEL` to
 change it from `Qwen/Qwen2.5-VL-72B-Instruct`, `PELICAN_SVG_DISABLE_JUDGE=1` to
-force offline scoring, `MAX_CONCURRENT_ENVS` for the maximum number of
+force offline scoring, and `PELICAN_SVG_JUDGE_BASE_URL` (with
+`PELICAN_SVG_JUDGE_API_KEY` where the endpoint wants one) to judge with a
+self-hosted model instead. `MAX_CONCURRENT_ENVS` sets the maximum number of
 concurrent WebSocket sessions (default `8`).
+
+### Judging with a local model
+
+The judge speaks the OpenAI-compatible chat API, so any server that does will
+do. Serving a vision model on one GPU keeps the judged component in the reward
+without paying per rollout:
+
+```bash
+vllm serve Qwen/Qwen2.5-VL-7B-Instruct --port 8000 --limit-mm-per-prompt '{"image":1}'
+
+export PELICAN_SVG_JUDGE_BASE_URL=http://localhost:8000/v1
+export PELICAN_SVG_JUDGE_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
+```
+
+`PELICAN_SVG_JUDGE_MODEL` is required here, since the hosted default names a
+72B repository the local server is unlikely to be serving, and a judge whose
+every call fails is worse than no judge at all; the server refuses to start
+without it. No Hugging Face token is needed, and an ambient one is never sent
+to the endpoint.
+
+Turn thinking off if the model has it. The caption call is capped at 120
+tokens and the checklist at 400, and a reasoning model spends that budget
+thinking and returns an empty caption, which scores the semantic component
+zero on every sample. With vLLM that is
+`--default-chat-template-kwargs '{"enable_thinking": false}'`. Instruct-only
+vision models need nothing.
+
+`huggingface_hub` sends the checklist schema to a custom endpoint in TGI's
+format, `{"type": "json_object", "value": <schema>}`. TGI enforces the schema;
+vLLM reads it as plain JSON mode, so the reply is asked to be JSON but not held
+to the keys. The prompt lists them and a missing key counts as `false`, so a
+drifting reply scores lower rather than failing.
 
 With no judge configured, structure carries the full weight. A judge that is
 configured but *fails* is treated differently: the semantic component stays at

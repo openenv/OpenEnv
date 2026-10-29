@@ -10,7 +10,7 @@ This module provides a pluggable architecture for different container providers
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Sequence, TypeVar
+from typing import Any, Dict, Mapping, Optional, Sequence, TypeVar
 
 _ContainerProviderT = TypeVar("_ContainerProviderT", bound="ContainerProvider")
 
@@ -21,7 +21,9 @@ class ContainerProvider(ABC):
 
     Providers implement this interface to support different container platforms:
     - LocalDockerProvider: Runs containers on local Docker daemon
-    - KubernetesProvider: Runs containers in Kubernetes cluster
+    - DockerSwarmProvider: Runs containers as a Docker Swarm service
+    - KubernetesProvider: optional ``openenv[kubernetes]`` extra
+      (``kubernetes_provider.py``)
     - FargateProvider: Runs containers on AWS Fargate
     - CloudRunProvider: Runs containers on Google Cloud Run
 
@@ -175,14 +177,18 @@ class LocalDockerProvider(ContainerProvider):
                 Port to expose. If `None`, finds an available port.
             env_vars (`dict`, *optional*):
                 Environment variables for the container.
-            **kwargs:
-                Additional Docker run options.
+            volumes (`dict`, *optional*):
+                Mapping of host paths or volume names to mount configuration.
+                Each configuration must contain a `bind` container path and may
+                contain a `mode` such as `"ro"` or `"rw"`.
 
         Returns:
             `str`: Base URL to connect to the container.
         """
         import subprocess
         import time
+
+        volumes: Optional[Mapping[str, Mapping[str, str]]] = kwargs.get("volumes")
 
         # Find available port if not specified
         if port is None:
@@ -206,6 +212,20 @@ class LocalDockerProvider(ContainerProvider):
         if env_vars:
             for key, value in env_vars.items():
                 cmd.extend(["-e", f"{key}={value}"])
+
+        # Add volume mounts before the image name.
+        if volumes:
+            for source, config in volumes.items():
+                bind = config.get("bind")
+                if not bind:
+                    raise ValueError(
+                        f"Volume config for {source!r} must include a non-empty 'bind'"
+                    )
+                mode = config.get("mode")
+                volume_spec = f"{source}:{bind}"
+                if mode:
+                    volume_spec = f"{volume_spec}:{mode}"
+                cmd.extend(["--volume", volume_spec])
 
         # Add image
         cmd.append(image)
@@ -642,19 +662,6 @@ class DockerSwarmProvider(ContainerProvider):
         clean_image = image.split("/")[-1].split(":")[0]
         timestamp = int(time.time() * 1000)
         return f"{clean_image}-swarm-{timestamp}"
-
-
-class KubernetesProvider(ContainerProvider):
-    """
-    Planned container provider for Kubernetes clusters.
-
-    Not yet implemented: this is a placeholder for the planned Kubernetes
-    backend and does not implement the abstract `ContainerProvider` methods, so
-    it cannot be instantiated. Use `LocalDockerProvider`, `DockerSwarmProvider`,
-    `DaytonaProvider`, or `ACASandboxProvider` instead.
-    """
-
-    pass
 
 
 class RuntimeProvider(ABC):

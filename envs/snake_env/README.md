@@ -19,6 +19,8 @@ A multi-agent snake game environment for OpenEnv, based on [marlenv](https://git
 
 *The `/web` playground after a few steps: the snake, the fruit and one button per move.*
 
+Try it on the [`openenv/snake_env`](https://huggingface.co/spaces/openenv/snake_env) Space, or connect a client to `https://openenv-snake-env.hf.space`.
+
 ## Overview
 
 The Snake environment wraps the marlenv Snake-v1 environment to provide a clean OpenEnv-compatible interface. Multiple snakes can battle on a fixed size grid map, but this implementation focuses on single-agent gameplay.

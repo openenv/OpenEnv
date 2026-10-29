@@ -19,6 +19,8 @@ A chess reinforcement learning environment for OpenEnv, powered by the [moonfish
 
 *The `/web` playground after a few moves: the board and one button per legal move.*
 
+Try it on the [`openenv/chess_env`](https://huggingface.co/spaces/openenv/chess_env) Space, or connect a client to `https://openenv-chess-env.hf.space`.
+
 ## Features
 
 - **Full chess rules** via python-chess library

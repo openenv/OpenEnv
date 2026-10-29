@@ -22,6 +22,8 @@ OpenEnv wrapper for [Terminal-Bench 2](https://github.com/laude-institute/termin
 | **Local** | Runs commands in the server process (no Docker) | Hugging Face Spaces, environments without Docker access |
 | **Docker** | Runs each task in its own container | Full TB2.0 fidelity with custom task images |
 
+Try it on the [`openenv/tbench2`](https://huggingface.co/spaces/openenv/tbench2) Space, or connect a client to `https://openenv-tbench2.hf.space`.
+
 ## Quick Start
 
 ```python

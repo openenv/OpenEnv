@@ -2,12 +2,16 @@
 
 """Tests for openenv build helpers."""
 
+import builtins
 from pathlib import Path
 
 from openenv.cli.commands.build import (
     _detect_build_context,
     _docker_build_command,
     _parse_build_args,
+    _prepare_inrepo_build,
+    _prepare_standalone_build,
+    tomllib,
 )
 
 
@@ -118,3 +122,40 @@ def test_docker_build_command_includes_no_cache_before_build_args(
         "TOKEN=a=b=c",
         str(build_dir),
     ]
+
+
+def test_standalone_build_checks_dependencies_without_tomli(
+    tmp_path, monkeypatch, capsys
+):
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyproject.toml").write_text(
+        '[project]\nname = "example"\ndependencies = []\n'
+    )
+    original_import = builtins.__import__
+
+    def without_tomli(name, *args, **kwargs):
+        if name == "tomli":
+            raise ImportError("tomli unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_tomli)
+    _prepare_standalone_build(env, tmp_path / "build")
+    assert "doesn't list the openenv dependency" in capsys.readouterr().out
+
+
+def test_inrepo_build_preserves_environment_dependencies(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src" / "openenv").mkdir(parents=True)
+    (repo / "src" / "openenv" / "__init__.py").touch()
+    env = repo / "envs" / "example"
+    env.mkdir(parents=True)
+    (env / "pyproject.toml").write_text(
+        '[project]\nname = "example"\ndependencies = ["openenv>=0.2.0", "openenv-echo-env"]\n'
+    )
+    (env / "uv.lock").write_text("old lock")
+    built = _prepare_inrepo_build(env, repo, tmp_path / "build")
+    with (built / "pyproject.toml").open("rb") as f:
+        dependencies = tomllib.load(f)["project"]["dependencies"]
+    assert dependencies == ["openenv-echo-env", "openenv @ file:///app/env/openenv"]
+    assert not (built / "uv.lock").exists()
