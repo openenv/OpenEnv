@@ -8,8 +8,8 @@ A generic OpenEnv environment for [dm_control.suite](https://github.com/google-d
 *The `/web` playground on cartpole balance after a few steps: the rendered camera frame.*
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/huggingface/OpenEnv/main/envs/dm_control_env/assets/cartpole.png" width="45%" alt="Cartpole Balance"/>
-  <img src="https://raw.githubusercontent.com/huggingface/OpenEnv/main/envs/dm_control_env/assets/quadruped.png" width="45%" alt="Quadruped Walk"/>
+  <img src="https://raw.githubusercontent.com/openenv/OpenEnv/main/envs/dm_control_env/assets/cartpole.png" width="45%" alt="Cartpole Balance"/>
+  <img src="https://raw.githubusercontent.com/openenv/OpenEnv/main/envs/dm_control_env/assets/quadruped.png" width="45%" alt="Quadruped Walk"/>
 </p>
 
 ## Supported Environments

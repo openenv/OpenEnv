@@ -2328,11 +2328,11 @@ HTTP API for interacting with OpenEnv environments through a standardized interf
         openapi_url="/openapi.json",
         contact={
             "name": "OpenEnv Team",
-            "url": "https://github.com/huggingface/OpenEnv",
+            "url": "https://github.com/openenv/OpenEnv",
         },
         license_info={
             "name": "BSD-3-Clause",
-            "url": "https://github.com/huggingface/OpenEnv/blob/main/LICENSE",
+            "url": "https://github.com/openenv/OpenEnv/blob/main/LICENSE",
         },
     )
 

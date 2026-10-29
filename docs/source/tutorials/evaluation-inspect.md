@@ -1,6 +1,6 @@
 # Evaluating with Environments
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/evaluation_inspect.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/openenv/OpenEnv/blob/main/examples/evaluation_inspect.ipynb)
 
 After training a model in an OpenEnv environment, you need to measure how it
 actually performs on a held-out set of episodes. OpenEnv integrates with
@@ -36,7 +36,7 @@ Run via InspectAIHarness → EvalResult with structured scores
 ## Install dependencies
 
 ```bash
-pip install "openenv[inspect] @ git+https://github.com/huggingface/OpenEnv.git"
+pip install "openenv[inspect] @ git+https://github.com/openenv/OpenEnv.git"
 ```
 
 The `inspect` extra pulls in `inspect-ai` (pinned to `>=0.3.0`).

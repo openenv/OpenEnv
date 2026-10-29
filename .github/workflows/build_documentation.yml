@@ -13,6 +13,7 @@ jobs:
     with:
       commit_sha: ${{ github.sha }}
       package: openenv
+      repo_owner: openenv
       version_tag_suffix: ""
     secrets:
       hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}

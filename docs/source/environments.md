@@ -42,6 +42,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <p class="text-sm">Terminal-first coding environment with high-contrast shell output and session controls for execute/verify/close flows.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/terminus" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/spaces/openenv/terminus_env" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">

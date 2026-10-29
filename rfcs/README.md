@@ -101,6 +101,9 @@ Each RFC should include the following sections:
 ### World Modeling
 - [010-echo-env-token-world-model.md](./010-echo-env-token-world-model.md) - Env-token World Modeling (ECHO): trajectory token-role masks + an optimizer world-loss seam
 
+### Environment Services
+- [014-environment-services.md](./014-environment-services.md) - Environment Services: brokered, budgeted access to external services (HF Jobs batch jobs and evaluators in v1)
+
 ### Discovery & Distribution
 - [011-ard-catalog-discovery.md](./011-ard-catalog-discovery.md) - Versioned environment metadata, ARD interchange, and a read-only producer-consumer path
 
