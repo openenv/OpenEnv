@@ -97,6 +97,7 @@ jobs:
             --ignore=tests/envs/test_browsergym_environment.py \
             --ignore=tests/envs/test_dipg_environment.py \
             --ignore=tests/envs/test_websearch_environment.py \
+            --ignore=tests/envs/test_sql_optim_environment.py \
             -m "not integration and not network and not docker" \
             -v \
             --tb=short
@@ -136,6 +137,42 @@ jobs:
             --frozen --project envs/thinkingbox_env \
             --all-groups --all-extras \
             pytest tests/envs/test_thinkingbox_env.py -v --tb=short
+        env:
+          PYTHONPATH: src:envs
+
+  test-sql-optim-env:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install SQL optimization environment dependencies
+        working-directory: envs/sql_optim_env
+        run: |
+          uv sync --python ${{ matrix.python-version }} \
+            --frozen --all-groups --all-extras
+
+      - name: Run SQL optimization environment tests
+        run: |
+          uv run --python ${{ matrix.python-version }} \
+            --frozen --project envs/sql_optim_env \
+            --all-groups --all-extras \
+            pytest tests/envs/test_sql_optim_environment.py -v --tb=short
         env:
           PYTHONPATH: src:envs
 

@@ -159,6 +159,8 @@
     title: Post-training
   - local: environments/sophistry_bench_sprint
     title: Sophistry Bench Sprint
+  - local: environments/sql_optim
+    title: SQL Query Optimization
   title: Environments
 - isExpanded: false
   sections:
