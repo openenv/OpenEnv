@@ -1,0 +1,40 @@
+spec_version: 1
+name: openenvd_echo_demo
+type: space
+runtime: fastapi
+app: echo_env.server.app:app
+port: 8000
+openenvd:
+  app: echo_env.server.app:app
+  kill_deadline_s: 10
+  privileged_assets:
+    oracle: assets/oracle.json
+  zones:
+    agent:
+      resources: { memory_mb: 1024, pids: 512 }
+      containers:
+        env:
+          env: { PYTHONPATH: /opt/envs }
+          resources: { memory_mb: 768 }
+        harness:
+          argv: [/usr/local/bin/python3, /opt/unit/harness.py]
+          resources: { memory_mb: 256 }
+    services:
+      containers:
+        airbnb-sim:
+          argv: [/usr/local/bin/python3, -m, http.server, "8080", --directory, /var/lib/sim]
+          expose: { host: airbnb.sim, port: 80 }
+          port: 8080
+          state: /var/lib/sim
+    observers:
+      containers:
+        runner:
+          argv: [/usr/local/bin/python3, /opt/unit/observers/runner.py]
+          reads: [workspace]
+          phases: [grading]
+          output: /out/report.json
+        grader:
+          argv: [/usr/local/bin/python3, /opt/unit/observers/grader.py]
+          reads: [assets.oracle, runner.output, services.airbnb-sim.state]
+          after: runner
+          phases: [grading]
