@@ -330,3 +330,28 @@ provider = UVProvider(project_path="path/to/env")
 base_url = provider.start()
 provider.wait_for_ready()
 ```
+
+
+## CoreWeave and W&B Sandbox limitations
+
+`CWSandboxProvider` and `WandbSandboxProvider` accept a constructor `image` for
+`GenericEnvClient(provider=provider)` startup. An image passed directly to
+`start_container(image)` overrides the stored image.
+
+Ingress has no implicit default. Supply a runner-supported `ingress_mode`;
+`ingress_mode="public"` explicitly opts into public access. Omitting it fails
+before provisioning. The provider does not assume a private mode exists.
+
+Startup requires an explicit `https://` service address from the backend.
+Plaintext and bare addresses fail before the OpenEnv server command runs, and
+startup cleanup stops/deletes the sandbox (subject to the configured cleanup
+policy). No episode connection is made. `url_scheme="https"` does not configure
+TLS, and exposed-port names are not proof of encrypted transport.
+
+The inspected cwsandbox v0.23.3 SDK documents bare `host:port` addresses and
+runner-dependent ingress modes, with no TLS configuration in `NetworkOptions`.
+That documented path is unsupported until a verified HTTPS ingress integration
+is available. A successful mocked lifecycle test does not establish hosted
+CoreWeave or W&B support. The W&B Echo example is conditional on that prerequisite.
+See the [SDK network options](https://github.com/coreweave/cwsandbox-client/blob/735e9cae7ba49db0e71577a3cae305753438a600/src/cwsandbox/_types.py#L114-L138)
+and [service address contract](https://github.com/coreweave/cwsandbox-client/blob/735e9cae7ba49db0e71577a3cae305753438a600/src/cwsandbox/_sandbox.py#L1433-L1464).
