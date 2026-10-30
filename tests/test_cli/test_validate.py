@@ -486,6 +486,18 @@ def test_validate_command_rejects_mixed_path_and_url(tmp_path: Path) -> None:
     assert "Cannot combine a local path argument with --url" in result.output
 
 
+def test_cleanup_images_rejects_legacy_url_without_connecting():
+    with patch(
+        "openenv.cli.commands.validate.validate_running_environment"
+    ) as validate_url:
+        result = runner.invoke(
+            app, ["validate", "--url", "http://localhost:8000", "--cleanup-images"]
+        )
+    assert result.exit_code == 1
+    assert "requires local package" in result.output
+    validate_url.assert_not_called()
+
+
 def test_write_report_validation_report_only() -> None:
     assert write_report.__annotations__["report"] is ValidationReport
     with pytest.raises(AttributeError):

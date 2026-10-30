@@ -55,7 +55,7 @@ telemetry, container identity and cleanup outcome. A process-only provider expli
 skips fresh-container determinism. Subject-emitted records are compared with the
 independently collected wire trace.
 
-The Docker suite contains 34 required cases: three provider lifecycle tests,
+The Docker suite contains 36 required cases: five provider lifecycle tests,
 six network-policy tests, 24 CLI fault/control cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
 validator-owned sink and verify the isolated namespace and helper. The slow-step
@@ -64,7 +64,9 @@ episode budget. The hung-step case
 checks the episode deadline; the interruption case sends SIGINT only after a
 container log confirms the second step has begun. Both must retain the completed
 reset/state/step/state prefix and remove their own containers. Each CLI case uses
-a unique image label for independent cleanup verification.
+a unique image label for independent cleanup verification. Image lifecycle cases
+also verify opt-in removal after image consumers exit, idempotent cleanup,
+and preservation of preexisting base images and independently added user tags.
 
 The Echo canary copies the actual `envs/echo_env` sources unchanged and records
 their hashes. A test overlay adds only the execution declaration, replay plan and
