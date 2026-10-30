@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import sys
 from pathlib import Path
@@ -17,10 +18,13 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from openenv.cli.__main__ import app
+from openenv.cli.importers.agentenv import detect_agentenv_bundles
 from openenv.cli.importers.base import safe_vendor_dir_name
 from openenv.cli.importers.ors import detect_ors_dependencies, detect_ors_environments
 from openenv.cli.importers.verifiers import detect_verifiers_environments
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
+from openenv.core.mcp_client import MCPToolClient
+from packaging.requirements import Requirement
 from typer.testing import CliRunner
 
 
@@ -213,6 +217,39 @@ def load_environment() -> vf.Environment:
         {"prompt": [{"role": "user", "content": "Say gamma"}], "answer": "gamma", "example_id": 0}
     ]
     return vf.SingleTurnEnv(dataset=train, eval_dataset=eval_rows)
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+
+def _write_agentenv_bundle(root: Path) -> None:
+    (root / "envs" / "echo").mkdir(parents=True)
+    (root / "envs" / "echo" / "server.py").write_text(
+        'raise RuntimeError("should not import")\n', encoding="utf-8"
+    )
+    (root / "tasks").mkdir()
+    steps = [
+        {"id": "env", "type": "deploy_env", "env_id": "echo"},
+        {"id": "policy", "type": "deploy_agent", "agent_name": "policy"},
+        {"id": "play", "type": "prompt_agent", "agent_name": "policy"},
+    ]
+    (root / "tasks" / "ping.json").write_text(json.dumps(steps), encoding="utf-8")
+
+
+def _write_fake_agentenv_sdk(root: Path) -> None:
+    package = root / "agent_env"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "openenv.py").write_text(
+        """
+from fastapi import FastAPI
+
+served = []
+
+
+def build_app(bundle, max_concurrent_envs=8):
+    served.append((bundle, max_concurrent_envs))
+    return FastAPI()
 """.lstrip(),
         encoding="utf-8",
     )
@@ -846,3 +883,294 @@ def test_imported_server_main_parses_host_and_port(
     importlib.import_module(f"{env_name}.server.app").main()
 
     assert calls == [{"host": "127.0.0.1", "port": 8001}]
+
+
+def test_agentenv_detector_finds_bundles_without_importing_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _write_agentenv_bundle(source / "bundles" / "desk")
+    _write_agentenv_bundle(source / ".venv" / "bundles" / "installed")
+    (source / "notes" / "tasks").mkdir(parents=True)
+    (source / "notes" / "tasks" / "todo.json").write_text(
+        '{"title": "not a task"}', encoding="utf-8"
+    )
+    (source / "jobs" / "tasks").mkdir(parents=True)
+    (source / "jobs" / "tasks" / "queue.json").write_text(
+        '[{"type": "build"}, {"type": "deploy"}]', encoding="utf-8"
+    )
+
+    matches = detect_agentenv_bundles(source)
+
+    assert [(m.source_type, m.class_name, m.module_path) for m in matches] == [
+        ("agentenv", "desk", "bundles/desk")
+    ]
+
+
+def test_import_command_detects_agentenv_bundle_and_generates_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import uvicorn
+
+    source = tmp_path / "echo-desk"
+    _write_agentenv_bundle(source)
+    (source / "requirements.txt").write_text(
+        "numpy>=1.26\nagentenv-framework\n", encoding="utf-8"
+    )
+    output_dir = tmp_path / "out"
+
+    with patch("openenv.cli.commands.import_env._generate_uv_lock", return_value=True):
+        result = runner.invoke(
+            app,
+            [
+                "import",
+                str(source),
+                "--name",
+                "desk_env",
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    env_dir = output_dir / "desk_env"
+    bundle = env_dir / "vendor" / "echo-desk"
+    assert (bundle / "tasks" / "ping.json").exists()
+    assert not (env_dir / "server" / "desk_env_environment.py").exists()
+    pyproject = (env_dir / "pyproject.toml").read_text(encoding="utf-8")
+    requirements = (env_dir / "server" / "requirements.txt").read_text(encoding="utf-8")
+    for text in (pyproject, requirements):
+        assert "agentenv-framework[openenv]>=0.9.1366" in text
+        assert text.count("agentenv-framework") == 1
+        assert "numpy>=1.26" in text
+    assert 'requires-python = ">=3.11.4"' in pyproject
+    assert "vendor/**/*" in pyproject
+
+    sdk = tmp_path / "sdk"
+    _write_fake_agentenv_sdk(sdk)
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(sys, "argv", ["server", "--port", "8001"])
+    monkeypatch.setenv("MAX_CONCURRENT_ENVS", "64")
+    sys.path[:0] = [str(sdk), str(output_dir)]
+    try:
+        generated = importlib.import_module("desk_env.server.app")
+        served = importlib.import_module("agent_env.openenv").served
+
+        assert served == [(bundle.resolve(), 64)]
+        package = importlib.import_module("desk_env")
+        assert issubclass(package.DeskEnv, MCPToolClient)
+        assert package.__all__ == ["DeskEnv", "CallToolAction", "ListToolsAction"]
+        assert TestClient(generated.app).get("/docs").status_code == 200
+        generated.main()
+        assert calls == [{"host": "0.0.0.0", "port": 8001}]
+    finally:
+        sys.path.remove(str(sdk))
+        sys.path.remove(str(output_dir))
+        for name in list(sys.modules):
+            if name.split(".", 1)[0] in {"agent_env", "desk_env"}:
+                sys.modules.pop(name)
+
+
+@pytest.mark.parametrize("dependency_file", ["requirements.txt", "pyproject.toml"])
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        "agentenv-framework @ https://example.invalid/agentenv_framework-0.9.1000-py3-none-any.whl",
+        "agentenv-framework @ https://example.invalid/agentenv_framework-0.9.1400-py3-none-any.whl",
+        "agentenv-framework @ https://example.invalid/framework.tar.gz",
+        "agentenv-framework @ git+https://example.invalid/framework.git@v0.9.1400",
+        "agentenv-framework @ file:///tmp/agentenv_framework-0.9.1400-py3-none-any.whl",
+        'AgentEnv_Framework[tools] @ https://user:secret@example.invalid/framework.whl ; python_version >= "3.11"',
+    ],
+)
+def test_import_command_rejects_agentenv_direct_references(
+    tmp_path: Path, dependency_file: str, dependency: str
+) -> None:
+    source = tmp_path / "bundle"
+    _write_agentenv_bundle(source)
+    content = (
+        "[project]\ndependencies = " + json.dumps([dependency]) + "\n"
+        if dependency_file == "pyproject.toml"
+        else dependency + "\n"
+    )
+    (source / dependency_file).write_text(content, encoding="utf-8")
+    output_dir = tmp_path / "out"
+
+    with (
+        patch("openenv.cli.commands.import_env._generate_uv_lock") as lock,
+        patch("socket.socket.connect", side_effect=AssertionError("network forbidden")),
+    ):
+        result = runner.invoke(
+            app,
+            ["import", str(source), "--name", "desk_env", "-o", str(output_dir)],
+        )
+
+    assert result.exit_code == 1, result.output
+    assert "Cannot verify agentenv-framework>=0.9.1366" in result.output
+    assert "direct reference" in result.output
+    assert "version constraint" in result.output
+    assert "secret" not in result.output
+    lock.assert_not_called()
+    assert not (output_dir / "desk_env").exists()
+
+
+@pytest.mark.parametrize("dependency_file", ["requirements.txt", "pyproject.toml"])
+@pytest.mark.parametrize("version_range", [">=0.9.1000,<1", ">=0.9.1400"])
+def test_import_command_merges_agentenv_floor_preserving_extras_and_marker(
+    tmp_path: Path, dependency_file: str, version_range: str
+) -> None:
+    import tomllib
+
+    source = tmp_path / "bundle"
+    _write_agentenv_bundle(source)
+    dependency = f'agentenv-framework[tools]{version_range}; python_version >= "3.11"'
+    content = (
+        "[project]\ndependencies = " + json.dumps([dependency]) + "\n"
+        if dependency_file == "pyproject.toml"
+        else dependency + "\n"
+    )
+    (source / dependency_file).write_text(content, encoding="utf-8")
+    output_dir = tmp_path / "out"
+
+    with (
+        patch("openenv.cli.commands.import_env._generate_uv_lock", return_value=True),
+        patch("socket.socket.connect", side_effect=AssertionError("network forbidden")),
+    ):
+        result = runner.invoke(
+            app,
+            ["import", str(source), "--name", "desk_env", "-o", str(output_dir)],
+        )
+
+    assert result.exit_code == 0, result.output
+    env_dir = output_dir / "desk_env"
+    project = tomllib.loads((env_dir / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = (env_dir / "server" / "requirements.txt").read_text(encoding="utf-8")
+    for dependencies in (project["project"]["dependencies"], requirements.splitlines()):
+        matches = [
+            Requirement(dep) for dep in dependencies if "agentenv-framework" in dep
+        ]
+        assert len(matches) == 1
+        requirement = matches[0]
+        assert requirement.url is None
+        assert requirement.extras == {"tools", "openenv"}
+        assert requirement.marker == Requirement(dependency).marker
+        assert (
+            requirement.specifier
+            == Requirement(f"agentenv-framework{version_range},>=0.9.1366").specifier
+        )
+        assert "0.9.1000" not in requirement.specifier
+
+
+def test_import_command_vendors_only_the_agentenv_bundle_it_picks(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "plugin"
+    _write_agentenv_bundle(source / "bundles" / "train")
+    _write_agentenv_bundle(source / "bundles" / "eval")
+    (source / "bundles" / "train" / "requirements.txt").write_text(
+        "agentenv-framework>=0.9.1400\nnumpy>=1.26\n", encoding="utf-8"
+    )
+    (source / "requirements.txt").write_text("torch>=2.0\n", encoding="utf-8")
+    (source / ".agentenv").mkdir()
+    (source / ".agentenv" / "config.toml").write_text("[stores]\n", encoding="utf-8")
+    output_dir = tmp_path / "out"
+    args = ["import", str(source), "--name", "picked_env", "--output-dir"]
+
+    with patch("openenv.cli.commands.import_env._generate_uv_lock", return_value=True):
+        ambiguous = runner.invoke(app, [*args, str(output_dir)])
+        picked = runner.invoke(app, [*args, str(output_dir), "--env-class", "train"])
+
+    assert ambiguous.exit_code != 0
+    assert "Multiple environment entrypoints" in ambiguous.output
+    assert picked.exit_code == 0, picked.output
+    env_dir = output_dir / "picked_env"
+    vendored = sorted(
+        path.relative_to(env_dir / "vendor").as_posix()
+        for path in (env_dir / "vendor").rglob("*")
+        if path.is_file()
+    )
+    assert vendored == [
+        "__init__.py",
+        "train/__init__.py",
+        "train/envs/echo/server.py",
+        "train/requirements.txt",
+        "train/tasks/ping.json",
+    ]
+    app_source = (env_dir / "server" / "app.py").read_text(encoding="utf-8")
+    assert '"vendor" / "train"' in app_source
+    requirements = (env_dir / "server" / "requirements.txt").read_text(encoding="utf-8")
+    assert "agentenv-framework[openenv]>=0.9.1366,>=0.9.1400" in requirements
+    assert "numpy>=1.26" in requirements
+    assert "torch" not in requirements
+
+
+@pytest.mark.parametrize(
+    ("bundle_name", "env_name"), [("echo-desk", "desk_env"), ("train", "picked_env")]
+)
+def test_agentenv_generated_readme_matches_paths_and_prerequisites(
+    tmp_path: Path, bundle_name: str, env_name: str
+) -> None:
+    import re
+
+    import tomli
+
+    source = tmp_path / bundle_name
+    _write_agentenv_bundle(source)
+    output_dir = tmp_path / "out"
+    with patch("openenv.cli.commands.import_env._generate_uv_lock", return_value=True):
+        result = runner.invoke(
+            app,
+            [
+                "import",
+                str(source),
+                "--name",
+                env_name,
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    env_dir = output_dir / env_name
+    readme = (env_dir / "README.md").read_text(encoding="utf-8")
+    # Check the published file inventory against the output, including the bundle
+    # whose name differs from the package and may contain a hyphen.
+    inventory = readme.split("## Generated files\n", 1)[1]
+    paths = re.findall(r"`([^`]+)`", inventory)
+    assert f"vendor/{bundle_name}" in paths
+    assert "server/app.py" in paths
+    for path in paths:
+        assert (env_dir / path).exists(), path
+    assert f"{env_name}_environment.py" not in readme
+    assert "from_docker_image" not in readme
+    assert "echoed_message" not in readme
+
+    project = tomli.loads((env_dir / "pyproject.toml").read_text())["project"]
+    assert (
+        "uv sync\nMAX_CONCURRENT_ENVS=8 uv run server --host 127.0.0.1 --port 8000"
+        in readme
+    )
+    assert project["scripts"]["server"] == f"{env_name}.server.app:main"
+    assert project["requires-python"] == ">=3.11.4"
+    assert "Python >=3.11.4" in readme
+    requirement = "agentenv-framework[openenv]>=0.9.1366"
+    assert requirement in project["dependencies"]
+    assert requirement in (env_dir / "server/requirements.txt").read_text()
+    assert requirement in readme
+    assert "agent_env.openenv.build_app" in readme
+    adapter = "https://github.com/scaleapi/agentenv-framework/blob/v0.9.1366/src/agent_env/openenv"
+    assert f"({adapter}/environment.py)" in readme
+    assert f"({adapter}/app.py)" in readme
+    client = {"desk_env": "DeskEnv", "picked_env": "PickedEnv"}[env_name]
+    assert f"from {env_name} import {client}" in readme
+    assert f"class {client}(MCPToolClient):" in (env_dir / "client.py").read_text()
+    assert not (env_dir / "models.py").exists()
+    assert "scaffolding" not in readme
+    for text in (readme, result.output):
+        normalized = " ".join(text.split())
+        assert "Docker CLI and a running daemon accessible to the server" in normalized
+        assert "openenv build" in text and "openenv push" in text
+        assert "do not produce a working deployment" in normalized
+    assert "server/Dockerfile" in result.output
+    assert "Warning:" in result.output

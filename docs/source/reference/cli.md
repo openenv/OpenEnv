@@ -10,8 +10,8 @@ The `openenv` CLI provides a set of commands for building, validating, and pushi
 
 Import a supported third-party source environment into a generated OpenEnv
 wrapper package. The command detects the source format from the directory
-contents, so ORS/OpenReward and Prime Intellect Verifiers sources do not
-require `--type` in the common case.
+contents, so ORS/OpenReward, Prime Intellect Verifiers and AgentEnv sources do
+not require `--type` in the common case.
 
 The generated wrapper vendors the source tree into the package and includes
 vendored files as package data, so non-secret fixture/data files are available to
@@ -25,6 +25,24 @@ wrapper.
 ```bash
 openenv import path/to/source --name my_env --output-dir ./envs
 openenv import path/to/source --name my_env --output-dir ./envs --env-class MyEnv
+```
+
+An [AgentEnv](https://github.com/scaleapi/agentenv-framework) bundle is a folder
+whose `tasks/` holds task files. When a source holds several bundles, pick one
+with `--env-class` and its folder name; only that folder is vendored. The
+generated server runs it with `build_app` from `agentenv-framework`, which by
+default deploys each episode using local Docker. The server needs a Docker CLI
+and a running daemon accessible for image builds and episode containers. The
+generated `server/Dockerfile` does not supply that runtime, so `openenv build`
+and `openenv push` alone do not produce a working deployment. The generated
+README describes local startup and these prerequisites. The generated client is
+an `MCPToolClient`, since the served environment takes MCP actions. See
+[AgentEnv's OpenEnv page](https://www.agentenvframework.com/docs/openenv) for
+what it serves and what it needs.
+
+```bash
+openenv import path/to/bundle --name my_env --output-dir ./envs
+openenv import path/to/plugin --name my_env --output-dir ./envs --env-class my-bundle
 ```
 
 [[autodoc]] openenv.cli.commands.import_env.import_env
