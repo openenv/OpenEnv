@@ -83,6 +83,8 @@
     title: Terminus
   - local: environments/coding_tools
     title: Coding Tools
+  - local: environments/openclaw
+    title: OpenClaw
   - local: environments/harbor
     title: Harbor
   - local: guides/harbor-provider-qualification
