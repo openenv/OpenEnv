@@ -28,7 +28,8 @@ REPO_DIR="${REPO_DIR:-.}"
 
 # Determine base branch (default: main) and the PR's head branch (default: the checked-out one).
 # grep -oE rather than grep -P, which macOS grep does not support.
-FLAGS=$(printf '%s\n' "$CMD_LINE" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g")
+# Unquote --base/--head values first, then drop the remaining quoted strings (--title, --body).
+FLAGS=$(printf '%s\n' "$CMD_LINE" | sed -E "s/(--(base|head)[[:space:]=]+)\"([^\"]*)\"/\1\3/g; s/(--(base|head)[[:space:]=]+)'([^']*)'/\1\3/g; s/\"[^\"]*\"//g; s/'[^']*'//g")
 BASE=$(printf '%s\n' "$FLAGS" | grep -oE -- '--base[[:space:]=]+[^[:space:]]+' | head -n1 | sed -E 's/^--base[[:space:]=]+//')
 BASE="${BASE:-main}"
 HEAD_BRANCH=$(printf '%s\n' "$FLAGS" | grep -oE -- '--head[[:space:]=]+[^[:space:]]+' | head -n1 | sed -E 's/^--head[[:space:]=]+//')
