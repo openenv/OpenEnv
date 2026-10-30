@@ -83,7 +83,7 @@ From the **environment directory** (`envs/openspiel_env/`):
 docker build -t openspiel-env:latest -f server/Dockerfile .
 ```
 
-This uses the pre-built `ghcr.io/huggingface/openenv-openspiel-base` image which already contains compiled OpenSpiel.
+This uses the pre-built `ghcr.io/openenv/openenv-openspiel-base` image which already contains compiled OpenSpiel.
 
 ### Building Your Own Base Image (Optional)
 
