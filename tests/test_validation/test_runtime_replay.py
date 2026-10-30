@@ -278,6 +278,23 @@ def test_retained_byte_budget_counts_primary_and_all_raw_fields(
             assert not container.evidence.exchanges
 
 
+@pytest.mark.parametrize("field", ["tools_json", "tasks_json"])
+@pytest.mark.parametrize("budget,collections", [(3, 0), (5, 1)])
+def test_discovery_payload_counts_toward_retained_replay_budget(
+    monkeypatch, field, budget, collections
+):
+    values = list(inputs(monkeypatch))
+    values[5] = RuntimeEvidence(**{field: '"é"'})  # Four UTF-8 bytes.
+    values[-1].return_value = RuntimeEvidence(observation_schema_json="{}")
+    monkeypatch.setattr(replay, "MAX_REPLAY_BYTES", budget)
+    result = run(values)
+    assert "total retained replay evidence exceeds" in result.replay_failure_reason
+    assert not result.replays
+    assert replay._evidence_bytes(result) <= budget
+    assert values[-1].call_count == collections
+    values[0].start.assert_not_called()
+
+
 def test_oversized_primary_evidence_is_explicitly_incomplete_and_not_retained(
     monkeypatch,
 ):

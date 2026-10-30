@@ -29,7 +29,7 @@ def test_registered_runtime_graders_use_metadata_throughout_run(
         level = Level.RUNTIME
         requires_provider = frozenset()
         requires_capabilities = (
-            frozenset({"task_api"}) if mode == "capability" else frozenset()
+            frozenset({"set_state"}) if mode == "capability" else frozenset()
         )
 
         def __init__(self, check_id, dependency):

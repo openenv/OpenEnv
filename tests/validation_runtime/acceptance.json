@@ -32,7 +32,17 @@
       "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[startup_failure-runtime.startup]",
       "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[ignored_seed-runtime.seed_control]",
       "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[missing_record-runtime.trajectory_record]",
-      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[trace_mismatch-runtime.trajectory_record]"
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[trace_mismatch-runtime.trajectory_record]",
+      "tests.test_validation.integration.test_discovery_protocol::test_real_tools_share_the_replayed_instance_and_tasks_allow_bounded_listing",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[missing_tool-runtime.tool_declaration_accuracy]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[extra_tool-runtime.tool_declaration_accuracy]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[tool_discovery_error-runtime.tool_declaration_accuracy]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[bad_task_count-runtime.task_declaration_accuracy]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[missing_rubric_config-runtime.rubric_introspectable]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[bad_attribution-runtime.reward_attribution]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[changed_rubric_config-runtime.reward_attribution]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[empty_tools-None]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[namespace_mismatch-None]"
     ],
     "docker": [
       "tests.test_validation.integration.test_docker_lifecycle::test_docker_lifecycle_effective_limits_and_owned_cleanup",
@@ -60,7 +70,15 @@
       "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[missing_record-runtime.trajectory_record]",
       "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[trace_mismatch-runtime.trajectory_record]",
       "tests.test_validation.integration.test_runtime_cli::test_cli_controlled_judge_requires_twenty_samples[judged_stable-pass]",
-      "tests.test_validation.integration.test_runtime_cli::test_cli_controlled_judge_requires_twenty_samples[judged_noisy-fail]"
+      "tests.test_validation.integration.test_runtime_cli::test_cli_controlled_judge_requires_twenty_samples[judged_noisy-fail]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[missing_tool-runtime.tool_declaration_accuracy]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[extra_tool-runtime.tool_declaration_accuracy]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[tool_discovery_error-runtime.tool_declaration_accuracy]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[bad_task_count-runtime.task_declaration_accuracy]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[missing_rubric_config-runtime.rubric_introspectable]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[bad_attribution-runtime.reward_attribution]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[changed_rubric_config-runtime.reward_attribution]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[empty_tools-None]"
     ]
   }
 }

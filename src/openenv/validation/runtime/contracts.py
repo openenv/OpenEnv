@@ -269,6 +269,16 @@ class RuntimeEvidence:
             Subject-emitted session snapshot, independent of the wire transcript.
         telemetry_error (`str`, *optional*):
             Bounded telemetry failure without invalidating completed wire evidence.
+        tools_json (`str`, *optional*):
+            Raw tools/list result from the measured WebSocket session.
+        tools_unavailable (`str`, *optional*):
+            Named capability absent from a subject that explicitly rejects discovery.
+        tools_error (`str`, *optional*):
+            Sanitized tool-discovery failure, distinct from a successful empty list.
+        tasks_json (`str`, *optional*):
+            Task split descriptors, counts and bounded item samples.
+        tasks_error (`str`, *optional*):
+            Sanitized task-discovery failure, independent of tool discovery.
         telemetry_unavailable (`str`, *optional*):
             Named capability absent from a subject that explicitly rejects telemetry.
         reset_observation_schema_json (`str`, *optional*):
@@ -284,6 +294,11 @@ class RuntimeEvidence:
     telemetry_unavailable: str | None = None
     replays: tuple["ReplayEvidence", ...] = ()
     replay_failure_reason: str | None = None
+    tools_json: str | None = None
+    tools_error: str | None = None
+    tools_unavailable: str | None = None
+    tasks_json: str | None = None
+    tasks_error: str | None = None
     reset_observation_schema_json: str | None = None
 
 

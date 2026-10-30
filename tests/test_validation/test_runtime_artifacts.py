@@ -11,14 +11,14 @@ from openenv.validation.graders.runtime import (
     StateContractGrader,
 )
 from openenv.validation.manifest import NormalizedManifest
-from openenv.validation.report import ValidationReportV2
+from openenv.validation.report import CheckResult, ValidationReportV2
 from openenv.validation.runtime.artifacts import write_runtime_bundle
 from openenv.validation.runtime.contracts import (
     ReplayEvidence,
     RuntimeEvidence,
     WireExchange,
 )
-from openenv.validation.types import Lane, Level, SignatureKind, Verdict
+from openenv.validation.types import CheckStatus, Lane, Level, SignatureKind, Verdict
 from support.runtime import evidence, exchange
 
 
@@ -384,6 +384,95 @@ def test_rewriting_bundle_removes_stale_optional_evidence(tmp_path):
     assert not (tmp_path / "replays.json").exists()
     assert not (tmp_path / "session-telemetry.json").exists()
     assert "replays.json" not in (tmp_path / "SHA256SUMS").read_text()
+
+
+def test_discovery_artifact_retains_true_counts_bounded_previews_and_digest(tmp_path):
+    tools = {"tools": []}
+    tasks = {
+        "splits": [{"name": "train"}],
+        "counts": {"train": 100},
+        "previews": {"train": ["task-0", "task-1"]},
+    }
+    original = replace(
+        measured(), tools_json=json.dumps(tools), tasks_json=json.dumps(tasks)
+    )
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    path = tmp_path / "discovery.json"
+    artifact = json.loads(path.read_text())
+    assert artifact["tools"] == tools and artifact["tasks"] == tasks
+    assert artifact["tools_available"] is artifact["tasks_available"] is True
+    assert artifact["tools_error"] is artifact["tasks_error"] is None
+    assert artifact["redacted"] is False
+    assert (
+        f"{hashlib.sha256(path.read_bytes()).hexdigest()}  discovery.json"
+        in (tmp_path / "SHA256SUMS").read_text()
+    )
+
+
+def test_discovery_artifact_redacts_tool_task_and_error_credentials(tmp_path):
+    original = replace(
+        measured(),
+        tools_json='{"tools":[{"api_key":"private-tool"}]}',
+        tasks_json='{"previews":{"train":[{"password":"private-task"}]}}',
+        tools_error="Authorization: Bearer private-error",
+    )
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    text = (tmp_path / "discovery.json").read_text()
+    assert "private-" not in text
+    assert json.loads(text)["redacted"] is True
+
+
+def test_token_redaction_preserves_task_check_identifiers(tmp_path):
+    validation_report = report()
+    validation_report.results = [
+        CheckResult(
+            check_id="runtime.task_declaration_accuracy",
+            status=CheckStatus.PASS,
+            duration_s=0,
+        )
+    ]
+    original = replace(
+        measured(),
+        tools_json='{"tools":[{"name":"task_declaration_accuracy","description":"sk_thisisafaketoken123"}]}',
+    )
+    write_runtime_bundle(tmp_path, validation_report, evidence=original)
+    assert json.loads(
+        (tmp_path / "report.json").read_text()
+    ) == validation_report.model_dump(mode="json")
+    artifact = json.loads((tmp_path / "discovery.json").read_text())
+    assert artifact["tools"]["tools"][0] == {
+        "name": "task_declaration_accuracy",
+        "description": "[REDACTED]",
+    }
+
+
+def test_malformed_discovery_omissions_preserve_collection_failures(tmp_path):
+    original = replace(
+        measured(),
+        tools_json="invalid-private-tool",
+        tasks_json="invalid-private-task",
+        tools_error="tool discovery failed (ValueError)",
+        tasks_error="task discovery failed (ValueError)",
+    )
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    text = (tmp_path / "discovery.json").read_text()
+    assert "invalid-private" not in text
+    artifact = json.loads(text)
+    assert artifact["redacted"] is True
+    assert artifact["omitted_fields"] == ["tools", "tasks"]
+    assert artifact["tools_error"] == original.tools_error
+    assert artifact["tasks_error"] == original.tasks_error
+
+
+def test_discovery_distinguishes_missing_from_null_and_removes_stale_artifact(tmp_path):
+    original = replace(measured(), tasks_json="null")
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    artifact = json.loads((tmp_path / "discovery.json").read_text())
+    assert artifact["tools"] is artifact["tasks"] is None
+    assert artifact["tools_available"] is False and artifact["tasks_available"] is True
+    write_runtime_bundle(tmp_path, report())
+    assert not (tmp_path / "discovery.json").exists()
+    assert "discovery.json" not in (tmp_path / "SHA256SUMS").read_text()
 
 
 def test_redaction_preserves_token_metadata_and_filters_secret_keys():
