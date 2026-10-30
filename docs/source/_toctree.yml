@@ -119,6 +119,8 @@
     title: CARLA
   - local: environments/chess
     title: Chess
+  - local: environments/cloud_sre
+    title: Cloud SRE & FinOps
   - local: environments/connect4
     title: Connect4
   - local: environments/dm_control
