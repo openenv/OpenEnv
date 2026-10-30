@@ -250,21 +250,22 @@ def run_verifier(
                 ):
                     # Answer-task baseline contract: rerun the same
                     # verifier with an empty answer on the same databases.
-                    # The two runs differ only in the answer, so any
+                    # The two runs differ only in the answer, so a
                     # different outcome is the answer's doing:
                     # - baseline "others": the answer earned the pass.
-                    # - baseline execution error: the verifier cannot
-                    #   evaluate the empty answer at all (for example
-                    #   float("") or json.loads("")), so the pass is the
-                    #   answer's as well.
-                    # - any other baseline error (compile, subprocess or
-                    #   infrastructure failure) fails closed below.
+                    # - any baseline error fails closed as judge_error.
+                    #   Verifiers for answer tasks must return "others"
+                    #   for an empty answer before parsing it (for
+                    #   example before float(final_answer) or
+                    #   json.loads(final_answer)). An execution error
+                    #   during the baseline, whether from parsing, a
+                    #   locked database, or an unrelated conversion,
+                    #   cannot be attributed to the answer, so it never
+                    #   preserves a pass.
                     baseline = execute_code_verifier(
                         code, func_name, initial_db_path, final_db_path, None
                     )
                     if baseline.get("execution_status") == "error":
-                        if baseline.get("error_kind") == "execution":
-                            return reward_type, result
                         return "judge_error", baseline
                     if baseline.get("result") == "others":
                         return reward_type, result

@@ -579,15 +579,18 @@ class TestVerifier:
             assert reward_type == "complete"
 
     def test_run_verifier_numeric_answer_stays_complete(self):
-        """Numeric answer verifiers keep their pass on an untouched db.
+        """Guarded numeric answer verifiers keep their pass on an untouched db.
 
-        The no-answer baseline cannot even evaluate float(''), so it
-        errors; that error is the answer's doing, not judge_error.
+        The verifier returns 'others' for an empty answer before calling
+        float(), so the no-answer baseline evaluates cleanly to 'others'
+        and the answer earns the pass.
         """
         verifier_entry = {
             "verification": {
                 "code": (
                     "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    if not final_answer:\n"
+                    "        return {'result': 'others'}\n"
                     "    if float(final_answer) == 42:\n"
                     "        return {'result': 'complete'}\n"
                     "    return {'result': 'others'}\n"
@@ -603,12 +606,18 @@ class TestVerifier:
             assert result["result"] == "complete"
 
     def test_run_verifier_json_answer_stays_complete(self):
-        """JSON answer verifiers keep their pass on an untouched db."""
+        """Guarded JSON answer verifiers keep their pass on an untouched db.
+
+        The verifier returns 'others' for an empty answer before calling
+        json.loads(), so the baseline evaluates cleanly to 'others'.
+        """
         verifier_entry = {
             "verification": {
                 "code": (
                     "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
                     "    import json\n"
+                    "    if not final_answer:\n"
+                    "        return {'result': 'others'}\n"
                     "    if json.loads(final_answer)['value'] == 42:\n"
                     "        return {'result': 'complete'}\n"
                     "    return {'result': 'others'}\n"
@@ -654,8 +663,8 @@ class TestVerifier:
     def test_run_verifier_baseline_infra_error_fails_closed(self, monkeypatch):
         """Infrastructure failure in the baseline run stays judge_error.
 
-        Only the verifier's own failure to evaluate the empty answer
-        exempts a pass; a subprocess timeout must fail closed.
+        Every baseline error fails closed, so a subprocess timeout in
+        the baseline preserves no pass either.
         """
         import envs.agent_world_model_env.server.verifier as verifier_module
 
@@ -695,6 +704,65 @@ class TestVerifier:
             )
             assert reward_type == "judge_error"
             assert result["execution_status"] == "error"
+
+    def test_run_verifier_baseline_execution_error_fails_closed(self, monkeypatch):
+        """A baseline error raised by verifier code still fails closed.
+
+        Regression for the two reproductions on #1477: an exclusive
+        SQLite lock during the baseline ("database is locked") and an
+        unrelated database-value conversion raising ValueError both
+        surface as execution errors. Neither can be attributed to the
+        answer, so neither preserves the pass.
+        """
+        import envs.agent_world_model_env.server.verifier as verifier_module
+
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    return {'result': 'complete'}\n"
+                ),
+            },
+        }
+        for error_message in (
+            "database is locked",
+            "could not convert string to float: 'n/a'",
+        ):
+            calls = []
+
+            def fake_execute_code_verifier(
+                code,
+                func_name,
+                initial_db_path,
+                final_db_path,
+                final_answer=None,
+                _message=error_message,
+            ):
+                calls.append(final_answer)
+                if len(calls) == 1:
+                    return {
+                        "result": "complete",
+                        "execution_status": "success",
+                        "uses_final_answer": True,
+                    }
+                return {
+                    "result": "others",
+                    "execution_status": "error",
+                    "error_kind": "execution",
+                    "error_message": _message,
+                }
+
+            monkeypatch.setattr(
+                verifier_module, "execute_code_verifier", fake_execute_code_verifier
+            )
+            with tempfile.TemporaryDirectory() as td:
+                initial, final = self._setup_db(td)
+                reward_type, result = run_verifier(
+                    verifier_entry, "code", initial, final, final_answer="42"
+                )
+                assert reward_type == "judge_error"
+                assert result["execution_status"] == "error"
+                assert result["error_kind"] == "execution"
 
     def test_run_verifier_corrupt_db_fails_closed(self):
         entry = {
