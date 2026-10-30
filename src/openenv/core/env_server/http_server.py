@@ -16,7 +16,7 @@ import logging
 import os
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AsyncExitStack
 from typing import (
     Any,
@@ -278,8 +278,10 @@ class HTTPEnvServer:
 
         self._requires_single_thread_executor = self._detect_single_thread_requirement()
         self._shared_session_executor: Optional[ThreadPoolExecutor] = None
+        self._shared_session_creation_lock: Optional[asyncio.Lock] = None
         if self._requires_single_thread_executor:
             self._shared_session_executor = ThreadPoolExecutor(max_workers=1)
+            self._shared_session_creation_lock = asyncio.Lock()
 
         # Idle session reaper configuration.
         # Timeout is taken from ConcurrencyConfig.session_timeout;
@@ -411,66 +413,158 @@ class HTTPEnvServer:
             self._session_executors[session_id] = executor
             self._sessions[session_id] = None  # placeholder until env is ready
 
+        # Every await from here to registration runs with the slot reserved, so
+        # cancellation has to release it. CancelledError is not an Exception, so
+        # the handlers below never see it, and a surviving reservation is
+        # permanent: capacity counts _sessions, while the idle reaper only scans
+        # sessions that reached _session_info.
+        env: Optional[Environment] = None
+        stack: Optional[AsyncExitStack] = None
+        factory_future: Optional[Future[Environment]] = None
+        creation_lock_acquired = False
         try:
-            # Create environment in the executor thread (outside lock)
-            loop = asyncio.get_event_loop()
-            env = await loop.run_in_executor(executor, self._env_factory)
-            mode_val = (
-                mode.value
-                if isinstance(mode, ServerMode)
-                else (str(mode) if mode is not None else None)
-            )
-            if mode_val is not None and hasattr(env, "set_mode"):
-                env.set_mode(mode_val)
-        except Exception as e:
-            async with self._session_lock:
-                if executor is not self._shared_session_executor:
-                    executor.shutdown(wait=False)
-                self._session_executors.pop(session_id, None)
-                self._sessions.pop(session_id, None)
-            factory_name = getattr(
-                self._env_factory, "__name__", str(self._env_factory)
-            )
-            raise EnvironmentFactoryError(factory_name) from e
+            if self._shared_session_creation_lock is not None:
+                await self._shared_session_creation_lock.acquire()
+                creation_lock_acquired = True
 
-        # Hold the MCP session open for the lifetime of this session,
-        # matching the WebSocket path's AsyncExitStack pattern.  This
-        # prevents per-request MCP transport teardown/reconnection and
-        # preserves FastMCP session state (ctx.set_state / ctx.get_state)
-        # across HTTP calls within the same OpenEnv session.
-        stack = AsyncExitStack()
-        try:
-            mcp_session_factory = getattr(env, "mcp_session", None)
-            if callable(mcp_session_factory):
-                mcp_session_cm = cast(AsyncContextManager[Any], mcp_session_factory())
-                await stack.enter_async_context(mcp_session_cm)
-        except Exception:
-            # MCP transport failed to start — clean up the reserved slot,
-            # the env, and the executor so they don't leak permanently
-            # against _max_concurrent_envs.
-            await stack.aclose()  # best-effort
+            try:
+                # Create environment in the executor thread (outside lock).
+                # submit() plus wrap_future() is what run_in_executor() does
+                # internally; spelling it out keeps the thread's future, which is
+                # the only handle on an environment still being built when the
+                # await is cancelled.
+                loop = asyncio.get_event_loop()
+                factory_future = executor.submit(self._env_factory)
+                env = await asyncio.wrap_future(factory_future, loop=loop)
+                mode_val = (
+                    mode.value
+                    if isinstance(mode, ServerMode)
+                    else (str(mode) if mode is not None else None)
+                )
+                if mode_val is not None and hasattr(env, "set_mode"):
+                    env.set_mode(mode_val)
+            except Exception as e:
+                async with self._session_lock:
+                    if executor is not self._shared_session_executor:
+                        executor.shutdown(wait=False)
+                    self._session_executors.pop(session_id, None)
+                    self._sessions.pop(session_id, None)
+                factory_name = getattr(
+                    self._env_factory, "__name__", str(self._env_factory)
+                )
+                raise EnvironmentFactoryError(factory_name) from e
+
+            # Hold the MCP session open for the lifetime of this session,
+            # matching the WebSocket path's AsyncExitStack pattern.  This
+            # prevents per-request MCP transport teardown/reconnection and
+            # preserves FastMCP session state (ctx.set_state / ctx.get_state)
+            # across HTTP calls within the same OpenEnv session.
+            stack = AsyncExitStack()
+            try:
+                mcp_session_factory = getattr(env, "mcp_session", None)
+                if callable(mcp_session_factory):
+                    mcp_session_cm = cast(
+                        AsyncContextManager[Any], mcp_session_factory()
+                    )
+                    await stack.enter_async_context(mcp_session_cm)
+            except Exception:
+                # MCP transport failed to start — clean up the reserved slot,
+                # the env, and the executor so they don't leak permanently
+                # against _max_concurrent_envs.
+                await stack.aclose()  # best-effort
+                async with self._session_lock:
+                    self._sessions.pop(session_id, None)
+                    self._session_executors.pop(session_id, None)
+                    self._session_info.pop(session_id, None)
+                await self._cleanup_session_resources(env, executor)
+                raise
+
             async with self._session_lock:
-                self._sessions.pop(session_id, None)
-                self._session_executors.pop(session_id, None)
-                self._session_info.pop(session_id, None)
-            await self._cleanup_session_resources(env, executor)
+                self._sessions[session_id] = env
+                self._session_stacks[session_id] = stack
+                if mode is not None:
+                    self._session_modes[session_id] = mode_val
+                now = time.time()
+                self._session_info[session_id] = SessionInfo(
+                    session_id=session_id,
+                    created_at=current_time,
+                    last_activity_at=now,
+                    step_count=0,
+                    environment_type=type(env).__name__,
+                )
+        except asyncio.CancelledError:
+            # ASGI cancel scopes may cancel a request repeatedly. Keep awaiting
+            # the shielded cleanup task until it reaches a terminal state so
+            # cancellation cannot escape while the reservation still exists.
+            cleanup = asyncio.create_task(
+                self._discard_reserved_session(
+                    session_id, executor, env, stack, factory_future
+                )
+            )
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        pass
+                cleanup.result()
             raise
-
-        async with self._session_lock:
-            self._sessions[session_id] = env
-            self._session_stacks[session_id] = stack
-            if mode is not None:
-                self._session_modes[session_id] = mode_val
-            now = time.time()
-            self._session_info[session_id] = SessionInfo(
-                session_id=session_id,
-                created_at=current_time,
-                last_activity_at=now,
-                step_count=0,
-                environment_type=type(env).__name__,
-            )
+        finally:
+            if creation_lock_acquired:
+                assert self._shared_session_creation_lock is not None
+                self._shared_session_creation_lock.release()
 
         return session_id, env
+
+    async def _discard_reserved_session(
+        self,
+        session_id: str,
+        executor: ThreadPoolExecutor,
+        env: Optional[Environment] = None,
+        stack: Optional[AsyncExitStack] = None,
+        factory_future: Optional[Future[Environment]] = None,
+    ) -> None:
+        """
+        Release a session slot reserved by `_create_session` that never opened.
+
+        Drops every mapping the slot may have reached and closes whatever the
+        interrupted creation built, so the slot stops counting against
+        `max_concurrent_envs` and no environment outlives it.
+
+        Args:
+            session_id (`str`):
+                The reserved session ID to release.
+            executor (`ThreadPoolExecutor`):
+                The executor reserved alongside the slot.
+            env (`Environment`, *optional*):
+                The environment, if the factory already returned one.
+            stack (`AsyncExitStack`, *optional*):
+                The MCP session stack, if one was already entered.
+            factory_future (`Future`, *optional*):
+                The factory's thread future, if the factory call was reached.
+                Used to close an environment the thread is still building.
+        """
+        if env is None and factory_future is not None:
+            # Cancelling the await can cancel a queued future, but cannot stop a
+            # factory whose executor thread is already running. In that case,
+            # keep the capacity reservation until its result can be disposed of.
+            if not factory_future.cancel():
+                try:
+                    env = await asyncio.wrap_future(factory_future)
+                except (asyncio.CancelledError, Exception):
+                    # A cancelled or failed factory produced no environment to
+                    # close. Its capacity reservation still has to be released.
+                    env = None
+
+        await self._cleanup_session_resources(env, executor, stack)
+        async with self._session_lock:
+            self._sessions.pop(session_id, None)
+            self._session_executors.pop(session_id, None)
+            self._session_stacks.pop(session_id, None)
+            self._session_info.pop(session_id, None)
+            self._session_modes.pop(session_id, None)
 
     async def _destroy_session(self, session_id: str) -> None:
         """
