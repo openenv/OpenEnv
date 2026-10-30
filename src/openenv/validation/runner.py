@@ -17,6 +17,11 @@ from .graders.runtime import (
     RewardWellFormedGrader,
     StateContractGrader,
 )
+from .graders.runtime.repeatability import (
+    EpisodeDeterminismGrader,
+    SeedControlGrader,
+    TrajectoryRecordGrader,
+)
 from .graders.static import StaticManifestGrader
 from .manifest import ManifestError, NormalizedManifest, NormalizedManifestV2
 from .parsers import ParserRegistry
@@ -27,6 +32,7 @@ from .report import CheckResult, ValidationReport, ValidationReportV2
 from .runtime.artifacts import write_runtime_bundle
 from .runtime.collector import collect_runtime_evidence, RuntimeCollectionInterrupted
 from .runtime.contracts import LaunchSpec, load_runtime_plan, RuntimePlanError
+from .runtime.replay import collect_replays, REPLAY_BUDGET_SECONDS
 from .runtime.scheduler import execute_graders, order_graders
 from .signature import detect_signature
 from .types import CheckStatus, Lane, Level, ProviderCapability
@@ -94,6 +100,10 @@ def default_grader_registry(policy: SeverityPolicy) -> GraderRegistry:
     registry.register(RewardWellFormedGrader())
     registry.register(ObservationSchemaGrader())
     registry.register(StateContractGrader())
+    registry.register(SeedControlGrader())
+    registry.register(EpisodeDeterminismGrader())
+    registry.register(TrajectoryRecordGrader())
+
     registry.register(NetworkPolicyGrader())
     return registry
 
@@ -171,9 +181,8 @@ def _runtime(subject, graders, *, skip_build, provider):
         )
         attempted = True
         image_ref = provider.build(subject.root, manifest.execution)
-        running = provider.start(
-            LaunchSpec.model_validate({**spec.model_dump(), "image_ref": image_ref})
-        )
+        spec = LaunchSpec.model_validate({**spec.model_dump(), "image_ref": image_ref})
+        running = provider.start(spec)
         cleanup = {"required": True, "completed": False}
         inspection = running.inspect()
         result = _outcome(
@@ -183,10 +192,13 @@ def _runtime(subject, graders, *, skip_build, provider):
             started=started,
             measured={"provider": provider.name, "image_ref": image_ref},
         )
+        replay_deadline = time.monotonic() + REPLAY_BUDGET_SECONDS
         evidence = collect_runtime_evidence(
             running.base_url,
             plan,
-            episode_timeout_s=manifest.resources.episode_timeout_s,
+            episode_timeout_s=min(
+                manifest.resources.episode_timeout_s, REPLAY_BUDGET_SECONDS
+            ),
             validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
         )
         # Protocol collection must finish before its dependent contract checks run.
@@ -197,6 +209,16 @@ def _runtime(subject, graders, *, skip_build, provider):
                 evidence.failure_reason,
                 started=started,
             )
+        evidence = collect_replays(
+            provider,
+            running,
+            spec,
+            plan,
+            evidence,
+            capabilities=manifest.capabilities,
+            deadline=replay_deadline,
+        )
+
         network_json = None
         if (
             result.status is CheckStatus.PASS
@@ -223,6 +245,11 @@ def _runtime(subject, graders, *, skip_build, provider):
             provider_capabilities=provider.capabilities,
             prior=[result],
         )
+        # Cleanup failure cannot invalidate evidence already collected from a
+        # healthy subject. Preserve its findings before failing the run closed.
+        if any(replay.cleanup_complete is False for replay in evidence.replays):
+            result.status = CheckStatus.ERROR
+            result.evidence.append("replay subject teardown failed")
     except UnsupportedCapability as exc:
         result = _outcome(
             "runtime.startup", CheckStatus.SKIP, str(exc), started=started
@@ -261,7 +288,12 @@ def _runtime(subject, graders, *, skip_build, provider):
         if running is not None:
             try:
                 running.stop()
-                cleanup["completed"] = True
+                cleanup["completed"] = not (
+                    evidence
+                    and any(
+                        replay.cleanup_complete is False for replay in evidence.replays
+                    )
+                )
             except (Exception, KeyboardInterrupt) as exc:
                 cleanup["completed"] = False
                 cleanup["reason"] = f"subject teardown failed ({type(exc).__name__})"

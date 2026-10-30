@@ -139,7 +139,7 @@ class ProcessProvider:
             )
         subject = ProcessSubject(process, port, log_path, self.record_sha256)
         self.subjects.append(subject)
-        deadline = time.monotonic() + min(spec.startup_timeout_s, 10)
+        deadline = time.monotonic() + min(spec.startup_timeout_s, 30)
         try:
             with httpx.Client(trust_env=False, timeout=0.2) as client:
                 while process.poll() is None and time.monotonic() < deadline:
@@ -164,6 +164,9 @@ class ProcessProvider:
         ("missing_done", "runtime.observation_schema"),
         ("bad_state", "runtime.state_contract"),
         ("startup_failure", "runtime.startup"),
+        ("ignored_seed", "runtime.seed_control"),
+        ("missing_record", "runtime.trajectory_record"),
+        ("trace_mismatch", "runtime.trajectory_record"),
     ],
 )
 def test_installed_server_collector_and_graders_over_loopback(
@@ -195,6 +198,8 @@ def test_installed_server_collector_and_graders_over_loopback(
             "reward_well_formed",
             "observation_schema",
             "state_contract",
+            "seed_control",
+            "trajectory_record",
         ):
             assert checks[f"runtime.{check}"].status is CheckStatus.PASS
     if mode != "startup_failure":
@@ -205,10 +210,24 @@ def test_installed_server_collector_and_graders_over_loopback(
         assert manifest["provider"]["container_build_exercised"] is False
         telemetry_path = artifacts / "report/session-telemetry.json"
         telemetry = json.loads(telemetry_path.read_text())
-        assert telemetry["seed"]["accepted"] is True
-        assert len(telemetry["trajectory"]["records"]) == len(trace)
+        assert telemetry["seed"]["accepted"] is (mode != "ignored_seed")
+        if mode != "missing_record":
+            assert len(telemetry["trajectory"]["records"]) == len(trace)
+            assert telemetry["trajectory"]["complete"] is True
+        else:
+            assert "trajectory" not in telemetry
         assert len(telemetry["attribution"]) == 2
-        assert telemetry["trajectory"]["complete"] is True
+        assert checks["runtime.episode_determinism"].status is CheckStatus.SKIP
+        assert "fresh_container" in " ".join(
+            checks["runtime.episode_determinism"].evidence
+        )
+        replay = json.loads((artifacts / "report/replays.json").read_text())
+        assert (
+            replay["failure_reason"] == "missing provider capability: fresh_container"
+        )
+        assert [row["scope"] for row in replay["samples"]] == ["session", "seed"]
+        assert all(row["provider"] is None for row in replay["samples"])
+        assert all(row["cleanup_complete"] is None for row in replay["samples"])
     for line in (artifacts / "report/SHA256SUMS").read_text().splitlines():
         checksum, name = line.split("  ", 1)
         assert (

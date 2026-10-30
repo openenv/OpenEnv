@@ -13,6 +13,7 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+import yaml
 
 
 pytestmark = pytest.mark.docker
@@ -22,13 +23,13 @@ IMPLEMENTED = {
     "runtime.reward_well_formed",
     "runtime.observation_schema",
     "runtime.state_contract",
+    "runtime.seed_control",
+    "runtime.episode_determinism",
+    "runtime.trajectory_record",
     "runtime.network_policy",
 }
 PENDING = {
-    "runtime.trajectory_record",
     "runtime.tool_declaration_accuracy",
-    "runtime.seed_control",
-    "runtime.episode_determinism",
     "runtime.host_containment",
     "runtime.resource_bounds",
     "runtime.episode_isolation",
@@ -295,6 +296,23 @@ def _invoke_cli(
     return result, report, checks, artifacts
 
 
+def _assert_fresh_replays(artifacts, identical_samples=3):
+    replay = artifacts["replays.json"]
+    assert replay["failure_reason"] is None
+    samples = replay["samples"]
+    assert len(samples) == identical_samples  # One extra different-seed control.
+    assert sum(row["scope"] != "seed" for row in samples) == identical_samples - 1
+    assert sum(row["scope"] == "seed" for row in samples) == 1
+    assert all(row["failure_reason"] is None for row in samples)
+    assert all(len(row["trace"]) == 6 for row in samples)
+    fresh = [row for row in samples if row["scope"] == "container"]
+    assert len(fresh) == 1 and fresh[0]["cleanup_complete"] is True
+    primary = artifacts["run-manifest.json"]["provider"]
+    assert fresh[0]["provider"]["container_id"] != primary["container_id"]
+    assert fresh[0]["provider"]["image_id"] == primary["image_id"]
+    assert fresh[0]["provider"]["container_id"]
+
+
 @pytest.mark.parametrize(
     "mode,failed_check",
     [
@@ -304,6 +322,10 @@ def _invoke_cli(
         ("bad_observation", "runtime.observation_schema"),
         ("missing_done", "runtime.observation_schema"),
         ("bad_state", "runtime.state_contract"),
+        ("ignored_seed", "runtime.seed_control"),
+        ("nondeterministic", "runtime.episode_determinism"),
+        ("missing_record", "runtime.trajectory_record"),
+        ("trace_mismatch", "runtime.trajectory_record"),
     ],
 )
 def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check):
@@ -317,6 +339,7 @@ def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check
     assert artifacts["cleanup.json"]["required"] is True
     assert artifacts["run-manifest.json"]["provider"]["container_id"]
     assert artifacts["run-manifest.json"]["source_digest"] == report["source_digest"]
+    _assert_fresh_replays(artifacts)
     trace = artifacts["collector-trace.json"]
     assert [row["operation"] for row in trace] == [
         "reset",
@@ -327,8 +350,9 @@ def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check
         "state",
     ]
     if failed_check:
-        assert result.returncode == 1
-        assert report["verdict"] == "fail"
+        warning_only = failed_check == "runtime.trajectory_record"
+        assert result.returncode == (0 if warning_only else 1)
+        assert report["verdict"] == ("warn" if warning_only else "fail")
         assert checks[failed_check]["status"] == "fail"
         assert checks[failed_check]["evidence"]
     else:
@@ -445,3 +469,43 @@ def test_cli_skip_build_does_not_invoke_docker(cli_context, tmp_path):
     assert artifacts["cleanup.json"]["required"] is False
     assert artifacts["run-manifest.json"]["provider"] == {}
     assert artifacts["collector-trace.json"] == []
+
+
+@pytest.mark.parametrize(
+    "mode,expected", [("judged_stable", "pass"), ("judged_noisy", "fail")]
+)
+def test_cli_controlled_judge_requires_twenty_samples(
+    cli_context, tmp_path, mode, expected
+):
+    with (cli_context / "Dockerfile").open("a") as stream:
+        stream.write(f"\nENV VALIDATION_FAULT={mode}\n")
+    manifest_path = cli_context / "openenv.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text())
+    validation = manifest["validation"]
+    validation["capabilities"]["llm_judged"] = True
+    validation["judge"] = {
+        "model": "controlled-test-judge",
+        "version": "1",
+        "params": {"mode": mode},
+    }
+    validation["reward"]["variance_tolerance"] = 0.01
+    manifest_path.unlink()
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False))
+    result, report, checks, artifacts = _invoke_cli(cli_context, tmp_path, mode)
+    assert checks["runtime.startup"]["status"] == "pass"
+    assert checks["runtime.seed_control"]["status"] == "pass"
+    assert checks["runtime.trajectory_record"]["status"] == "pass"
+    determinism = checks["runtime.episode_determinism"]
+    assert determinism["status"] == expected
+    assert determinism["measured"]["completed_replays"] == 20
+    _assert_fresh_replays(artifacts, identical_samples=20)
+    assert determinism["measured"]["variance_units"] == "reward_squared"
+    variances = determinism["measured"]["reward_population_variance"]
+    assert len(variances) == 2
+    if mode == "judged_stable":
+        assert variances == [0.0, 0.0]
+        assert result.returncode == 0 and report["verdict"] == "warn"
+    else:
+        assert all(value > 0.01 for value in variances)
+        assert result.returncode == 1 and report["verdict"] == "fail"
+    assert artifacts["cleanup.json"] == {"required": True, "completed": True}

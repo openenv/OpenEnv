@@ -29,11 +29,28 @@ class CounterRubric(Rubric):
         return {"threshold": 2}
 
 
+class ControlledJudge(Rubric):
+    """A fixed public test judge; this fixture performs no model inference."""
+
+    def __init__(self, score):
+        super().__init__()
+        self.score = score
+
+    def forward(self, action, observation):
+        return self.score
+
+    def validation_config(self):
+        return {"judge": "controlled-test-v1", "score": self.score}
+
+
 class ProbeEnvironment(Environment):
     SUPPORTS_CONCURRENT_SESSIONS = True
+    _reset_ordinal = 0
 
-    def __init__(self):
+    def __init__(self, mode="good"):
         super().__init__()
+        self.mode = mode
+        self.ordinal = 0
         self._state = State(episode_id="uninitialized", step_count=0)
         self.counter = 0
         self.rubric = WeightedSum([CounterRubric(), CounterRubric()], [0.5, 0.5])
@@ -41,7 +58,20 @@ class ProbeEnvironment(Environment):
     def reset(self, seed=None, episode_id=None, **kwargs):
         self.counter = 0
         self._state = State(episode_id=episode_id or "probe", step_count=0)
-        return ProbeObservation(counter=0, reward=0.0, done=False)
+        observation = ProbeObservation(counter=0, reward=0.0, done=False)
+        if self.mode in {
+            "nondeterministic",
+            "judged_stable",
+            "judged_noisy",
+        }:
+            ProbeEnvironment._reset_ordinal += 1
+            self.ordinal = ProbeEnvironment._reset_ordinal
+        if self.mode == "nondeterministic":
+            observation.metadata["session_ordinal"] = self.ordinal
+        if self.mode in {"judged_stable", "judged_noisy"}:
+            score = 0.5 if self.mode == "judged_stable" else float(self.ordinal % 2)
+            self.rubric = ControlledJudge(score)
+        return observation
 
     def step(self, action, timeout_s=None, **kwargs):
         self.counter += action.increment
@@ -57,6 +87,12 @@ class ProbeEnvironment(Environment):
     @property
     def state(self):
         return self._state
+
+
+class IgnoredSeedEnvironment(ProbeEnvironment):
+    # Deliberately exclude seed and **kwargs so framework filtering is observable.
+    def reset(self, episode_id=None):
+        return super().reset(episode_id=episode_id)
 
 
 class WireFault:
@@ -102,6 +138,13 @@ class WireFault:
                         payload.pop("done", None)
                 elif data.get("type") == "state" and self.mode == "bad_state":
                     data["data"]["episode_id"] = "wrong-episode"
+                elif data.get("type") == "validation":
+                    if self.mode == "missing_record":
+                        data["data"].pop("trajectory", None)
+                    elif self.mode == "trace_mismatch":
+                        data["data"]["trajectory"]["records"][0]["response"]["data"][
+                            "observation"
+                        ]["counter"] = 999
                 message = {**message, "text": json.dumps(data)}
             await send(message)
 
@@ -120,12 +163,19 @@ def make_app(mode="good"):
         "missing_done",
         "bad_state",
         "hung_step",
+        "ignored_seed",
+        "nondeterministic",
+        "missing_record",
+        "trace_mismatch",
+        "judged_stable",
+        "judged_noisy",
         "slow_step",
     }:
         raise ValueError(f"Unknown fixture mode: {mode}")
+    environment = IgnoredSeedEnvironment if mode == "ignored_seed" else ProbeEnvironment
     return WireFault(
         create_app(
-            ProbeEnvironment,
+            lambda: environment(mode),
             ProbeAction,
             ProbeObservation,
             env_name="validation_probe",

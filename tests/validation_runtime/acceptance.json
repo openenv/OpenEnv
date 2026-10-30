@@ -29,7 +29,10 @@
       "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[bad_observation-runtime.observation_schema]",
       "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[missing_done-runtime.observation_schema]",
       "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[bad_state-runtime.state_contract]",
-      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[startup_failure-runtime.startup]"
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[startup_failure-runtime.startup]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[ignored_seed-runtime.seed_control]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[missing_record-runtime.trajectory_record]",
+      "tests.test_validation.integration.test_runtime_process::test_installed_server_collector_and_graders_over_loopback[trace_mismatch-runtime.trajectory_record]"
     ],
     "docker": [
       "tests.test_validation.integration.test_docker_lifecycle::test_docker_lifecycle_effective_limits_and_owned_cleanup",
@@ -51,7 +54,13 @@
       "tests.test_validation.integration.test_runtime_cli::test_cli_sigint_retains_partial_evidence_and_cleans_up",
       "tests.test_validation.integration.test_runtime_cli::test_cli_sigterm_retains_partial_evidence_and_cleans_up",
       "tests.test_validation.integration.test_runtime_cli::test_cli_startup_failure_is_a_finding_and_leaves_no_container",
-      "tests.test_validation.integration.test_runtime_cli::test_cli_skip_build_does_not_invoke_docker"
+      "tests.test_validation.integration.test_runtime_cli::test_cli_skip_build_does_not_invoke_docker",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[ignored_seed-runtime.seed_control]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[nondeterministic-runtime.episode_determinism]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[missing_record-runtime.trajectory_record]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_runtime_contract_findings[trace_mismatch-runtime.trajectory_record]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_controlled_judge_requires_twenty_samples[judged_stable-pass]",
+      "tests.test_validation.integration.test_runtime_cli::test_cli_controlled_judge_requires_twenty_samples[judged_noisy-fail]"
     ]
   }
 }

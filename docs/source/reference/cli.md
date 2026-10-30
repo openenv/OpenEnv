@@ -45,11 +45,15 @@ openenv validate ./my_env --level runtime --local --output report.json
 Runtime validation requires Docker and a `validation.execution` declaration in
 `openenv.yaml`. The declaration points to a bounded JSON replay plan containing
 one reset and a sequence of actions. The validator builds an immutable image,
-opens one WebSocket session, measures reward values, observation schemas and
-state continuity, and removes the container even if a check fails.
+collects the original episode, repeats the plan in a fresh WebSocket session and
+with a different seed, then replays it in a fresh container when the provider
+supports that capability. Docker validation uses two containers concurrently
+during the fresh-container replay. Both use the same immutable image and are
+removed even if a check fails.
 
-The runtime level implements startup, reward, observation, state and network
-policy checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
+The runtime level implements startup, reward, observation, state, network policy,
+seed forwarding, determinism and emitted trajectory record checks. Other applicable
+Level 2 checks appear as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
@@ -63,9 +67,17 @@ pulled on first use. `runtime.network_policy` probes a validator-owned sink from
 the subject's namespace and from a control container; a probe counts only when
 the control reaches the sink, and a denial that is not proven is a `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
-The declared `episode_timeout_s` bounds collection; a reset or judged step may use
-its remaining budget. Collection failures appear once under `runtime.startup`,
-with dependent contract checks skipped and the completed trace retained.
+Explicitly unsupported session telemetry yields a `SKIP` naming `session_telemetry`;
+authorization refusals and malformed telemetry remain failures. Seed control
+reports observed forwarding to reset, separately from empirical determinism.
+The declared `episode_timeout_s` bounds each episode; a reset or judged step may use
+its remaining budget. Original and replay collection share a 300-second deadline
+and a 32 MiB evidence budget. `llm_judged` requests 20 identical-input episodes,
+including the original, plus the different-seed episode. Validation repeats the
+actions and any external service calls they make, so budget for the additional
+runtime and cost. Missing replay samples cannot pass determinism. Primary episode
+collection failures appear under `runtime.startup`, with dependent contract checks
+skipped and the completed trace retained.
 
 Credential delivery is deferred for this release. Set
 `validation.execution.requires_credentials: true` when the environment needs an

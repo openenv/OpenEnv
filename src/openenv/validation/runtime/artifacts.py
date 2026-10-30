@@ -114,6 +114,7 @@ def write_runtime_bundle(
             "complete": evidence.failure_phase is None
             and evidence.failure_reason is None,
             "telemetry_error": evidence.telemetry_error,
+            "telemetry_unavailable": evidence.telemetry_unavailable,
         }
         telemetry = None
         telemetry_parse_failed = False
@@ -135,6 +136,58 @@ def write_runtime_bundle(
         )
     files["collector-trace.json"] = trace
     files["collector-evidence.json"] = collector_metadata
+    if evidence and (evidence.replays or evidence.replay_failure_reason):
+        samples = []
+        for replay in evidence.replays:
+            sample = replay.evidence
+            row = {
+                "scope": replay.scope,
+                "cleanup_complete": replay.cleanup_complete,
+                "failure_phase": sample.failure_phase,
+                "failure_reason": sample.failure_reason,
+                "telemetry_error": sample.telemetry_error,
+                "telemetry_unavailable": sample.telemetry_unavailable,
+                "trace": [],
+                "omitted_trace_fields": [],
+                "omitted_evidence_fields": [],
+            }
+            for index, exchange in enumerate(sample.exchanges):
+                item = {"operation": exchange.operation}
+                for key in ("request_json", "response_json"):
+                    try:
+                        item[key] = json.loads(getattr(exchange, key))
+                    except (ValueError, RecursionError):
+                        item[key] = "[malformed response omitted]"
+                        row["omitted_trace_fields"].append(
+                            {"exchange_index": index, "field": key}
+                        )
+                row["trace"].append(item)
+            for key, raw in (
+                ("telemetry", sample.telemetry_json),
+                ("schema", sample.observation_schema_json),
+                ("reset_schema", sample.reset_observation_schema_json),
+                ("provider", replay.provider_json),
+            ):
+                row[f"{key}_available"] = raw is not None
+                try:
+                    row[key] = json.loads(raw) if raw is not None else None
+                except (ValueError, RecursionError):
+                    row[key] = "[malformed evidence omitted]"
+                    row["omitted_evidence_fields"].append(key)
+            row["redacted"] = (
+                bool(row["omitted_trace_fields"])
+                or bool(row["omitted_evidence_fields"])
+                or _redact(row) != row
+            )
+            samples.append(row)
+        files["replays.json"] = {
+            "schema_version": "1",
+            "failure_reason": evidence.replay_failure_reason,
+            "samples": samples,
+        }
+    for name in ("runtime-plan.json", "session-telemetry.json", "replays.json"):
+        if name not in files:
+            (directory / name).unlink(missing_ok=True)
     digests = []
     for name, value in files.items():
         payload = (
