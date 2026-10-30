@@ -599,6 +599,10 @@ A backend counts as usable only if its class imports **and** Harbor's own prefli
 Credentials alone are not enough: a provider with valid keys but no SDK installed would otherwise
 report available and fail at rollout time.
 
+Set `OPENENV_HARBOR_MAX_SANDBOX_STARTS` to cap how many sandboxes may be starting at once when a
+backend throttles creation. It does not limit how many rollouts run (`MAX_CONCURRENT_ENVS` does).
+On SIGINT or SIGTERM the process stops the sandboxes it started before exiting.
+
 ### Rewards
 
 The verifier produces a dictionary. OpenEnv wants one number. The dictionary is forwarded unchanged
