@@ -137,6 +137,8 @@
     title: Maze
   - local: environments/openapp
     title: OpenApp
+  - local: environments/pathway_analysis
+    title: Pathway Analysis
   - local: environments/qed_math
     title: QED Math
   - local: environments/reasoning_gym

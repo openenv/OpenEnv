@@ -1,0 +1,45 @@
+{
+  "case_id": "GSE227102_MCF7_vs_MCF7-FAR_author_DE",
+  "strict_mode": false,
+  "experiment_metadata": {
+    "source": "GEO",
+    "accession": "GSE227102",
+    "pubmed_id": "37258566",
+    "summary": "ER+ breast cancer cell lines; parental MCF7 vs MCF7-FAR (fulvestrant + abemaciclib resistant). GEO provides author DE tables; this case loads the author table and runs enrichment.",
+    "reference": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE227102"
+  },
+  "de_table_file": "geo_eval/gse227102_author/MCF7_author.csv.gz",
+  "de_table_gene_column": "Gene,name",
+  "de_table_log2fc_column": "log2FoldChange",
+  "de_table_pvalue_column": "pvalue",
+  "de_table_padj_column": "padj",
+  "sample_ids": [
+    "MCF7-WT-01",
+    "MCF7-WT-02",
+    "MCF7-WT-03",
+    "MCF7-FAR-01",
+    "MCF7-FAR-02",
+    "MCF7-FAR-03"
+  ],
+  "sample_metadata": {
+    "MCF7-WT-01": "control",
+    "MCF7-WT-02": "control",
+    "MCF7-WT-03": "control",
+    "MCF7-FAR-01": "FAR",
+    "MCF7-FAR-02": "FAR",
+    "MCF7-FAR-03": "FAR"
+  },
+  "conditions": ["control", "FAR"],
+  "default_contrast": {
+    "reference": "control",
+    "alternate": "FAR"
+  },
+  "analysis_options": {
+    "padj_alpha": 0.05,
+    "de_query_direction": "both",
+    "min_abs_log2fc": 0.0
+  },
+  "enrichr_libraries": ["MSigDB_Hallmark_2020", "KEGG_2021_Human", "Reactome_2022"],
+  "true_pathway": "Unknown (author-DE benchmark)"
+}
+

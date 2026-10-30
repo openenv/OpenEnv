@@ -1,0 +1,10 @@
+{
+  "studies": [
+    {
+      "case_file": "geo_eval/gse128911_mda_mb_134_vi_fulvestrant_vs_dmso/gse128911_case.json",
+      "expected_keywords": ["estrogen", "ESR1", "cell cycle", "E2F", "MYC"],
+      "top_k": 20
+    }
+  ]
+}
+

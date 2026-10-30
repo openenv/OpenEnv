@@ -1,0 +1,42 @@
+{
+  "case_id": "toy_case_002",
+  "conditions": ["wild type", "knockout"],
+  "true_pathway": "PI3K-Akt signaling",
+  "sample_ids": ["W1", "W2", "K1", "K2"],
+  "sample_metadata": {
+    "W1": "wild type",
+    "W2": "wild type",
+    "K1": "knockout",
+    "K2": "knockout"
+  },
+  "default_contrast": {
+    "reference": "wild type",
+    "alternate": "knockout"
+  },
+  "counts": {
+    "AKT1": [50, 55, 400, 420],
+    "PIK3CA": [40, 45, 350, 360],
+    "PTEN": [200, 210, 80, 85],
+    "MTOR": [60, 65, 300, 310],
+    "DUSP6": [100, 105, 102, 101],
+    "FOS": [90, 92, 91, 93],
+    "JUN": [80, 82, 81, 84],
+    "EGR1": [70, 72, 71, 73],
+    "MAPK1": [120, 125, 122, 124],
+    "GAPDH": [1000, 1050, 1020, 1010],
+    "ACTB": [900, 920, 910, 905],
+    "TUBB": [400, 410, 405, 408],
+    "HPRT": [150, 155, 152, 154],
+    "PPIA": [500, 510, 505, 508],
+    "RPLP0": [800, 820, 810, 815]
+  },
+  "pathway_genes": {
+    "PI3K-Akt signaling": ["AKT1", "PIK3CA", "PTEN", "MTOR"],
+    "mTOR signaling": ["MTOR", "AKT1", "RPLP0"],
+    "MAPK signaling": ["DUSP6", "FOS", "JUN", "MAPK1"]
+  },
+  "expert_budget": 1,
+  "expert_penalty": 0.3,
+  "expert_hint": "Knockout shifts regulation toward growth-pathway genes; compare ORA q-values.",
+  "strict_mode": false
+}

@@ -1,0 +1,6 @@
+spec_version: 1
+name: pathway_analysis_env
+type: space
+runtime: fastapi
+app: pathway_analysis_env.server.app:app
+port: 8000
