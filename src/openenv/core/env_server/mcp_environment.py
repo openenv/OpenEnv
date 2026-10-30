@@ -86,17 +86,17 @@ VALID_MODES = {"production", "simulation"}
 
 def get_server_tools(mcp_server: Any) -> Dict[str, Any]:
     """
-    Get tools from a FastMCP server, compatible with both 2.x and 3.x.
+    Get tools from a FastMCP server.
 
     Returns:
         Dictionary mapping tool names to tool objects.
     """
-    # FastMCP 2.x: get_tools() returns dict {name: Tool}
+    # FastMCP server tools are exposed as a name-to-tool mapping.
     if hasattr(mcp_server, "get_tools"):
         result = run_async_safely(mcp_server.get_tools())
         if isinstance(result, dict):
             return result
-    # FastMCP 3.x: list_tools() returns list of Tool objects
+    # Some server adapters expose the tools as a list instead.
     if hasattr(mcp_server, "list_tools"):
         tools_list = run_async_safely(mcp_server.list_tools())
         return {t.name: t for t in tools_list}
@@ -108,7 +108,7 @@ def _tool_from_server_tool(tool: Any) -> Tool:
     return Tool(
         name=tool.name,
         description=tool.description or "",
-        input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
+        input_schema=tool.input_schema,
     )
 
 
@@ -187,7 +187,9 @@ class MCPEnvironment(Environment):
         self._validate_tool_names(mcp_server)
 
         self.mcp_server = mcp_server
-        self.mcp_client = Client(mcp_server)
+        # OpenEnv sessions keep MCP state across tool calls. FastMCP 4's default
+        # modern protocol is sessionless, so use its supported legacy handshake.
+        self.mcp_client = Client(mcp_server, mode="legacy")
 
         # Track mode-specific tools: {tool_name: {mode: func}}
         # mode can be "production", "simulation", or None (available in all modes)
@@ -254,7 +256,7 @@ class MCPEnvironment(Environment):
 
     def _get_server_tools(self, mcp_server: Any) -> Dict[str, Any]:
         """
-        Get tools from a FastMCP server, compatible with both 2.x and 3.x.
+        Get tools from a FastMCP server.
 
         Returns:
             Dictionary mapping tool names to tool objects.

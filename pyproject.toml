@@ -14,8 +14,8 @@ dependencies = [
     # Core shared dependencies - minimal set required for all environments
     # Heavy dependencies (torch, numpy, smolagents, etc.) should be in
     # individual environment pyproject.toml files
-    "fastapi>=0.116.0",
-    "pydantic>=2.0.0",
+    "fastapi>=0.133.0",
+    "pydantic>=2.12.0",
     "packaging>=24.2",
     "typing_extensions>=4.0.0",
     "uvicorn>=0.24.0",
@@ -30,7 +30,7 @@ dependencies = [
     "tomli-w>=1.2.0",
     "websockets>=15.0.1",
     # MCP support
-    "fastmcp>=3.0.0,<4.0.0",
+    "fastmcp>=4.0.10,<5.0.0",
     # Web UI dependencies
     "gradio>=4.0.0",
     "httpx>=0.28.1",

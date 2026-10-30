@@ -15,7 +15,14 @@ import pytest
 from fastmcp import Client, Context, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
-from mcp.types import CreateMessageResult, TextContent
+from mcp.types import (
+    CreateMessageRequest,
+    CreateMessageRequestParams,
+    CreateMessageResult,
+    InputRequiredResult,
+    SamplingMessage,
+    TextContent,
+)
 from openenv.core.harness import (
     AgenticHarnessAdapter,
     HarnessConfig,
@@ -335,12 +342,12 @@ class TestRenamedToolsAreServed:
                     "env_read_file": "read_file",
                 }.items():
                     assert (
-                        served[name].inputSchema
-                        == source_tools[source_name].inputSchema
+                        served[name].input_schema
+                        == source_tools[source_name].input_schema
                     )
                     assert (
-                        served[name].outputSchema
-                        == source_tools[source_name].outputSchema
+                        served[name].output_schema
+                        == source_tools[source_name].output_schema
                     )
 
                 # The renamed tool must actually resolve, not just be listed.
@@ -423,18 +430,42 @@ class TestRenamedToolsAreServed:
         assert resources
         assert all(not resource["open"] for resource in resources)
 
-    async def test_renamed_bridge_forwards_sampling_and_progress(self):
+    @pytest.mark.parametrize("rename", [False, True])
+    async def test_bridge_forwards_sampling_guard_and_progress(self, rename):
         sampled = []
         progress = []
+        rounds = []
         mcp = FastMCP("domain")
 
         @mcp.tool
-        async def read_file(path: str, ctx: Context) -> str:
-            response = await ctx.sample(path)
+        async def read_file(path: str, ctx: Context) -> str | InputRequiredResult:
+            # FastMCP 4 asks the caller via a returned guard, not ctx.sample().
+            # Each continuation must survive both the proxy and tool rename.
+            rounds.append((path, ctx.input_responses is not None))
+            if ctx.input_responses is None:
+                return InputRequiredResult(
+                    input_requests={
+                        "summary": CreateMessageRequest(
+                            params=CreateMessageRequestParams(
+                                messages=[
+                                    SamplingMessage(
+                                        role="user",
+                                        content=TextContent(type="text", text=path),
+                                    )
+                                ],
+                                max_tokens=80,
+                            )
+                        )
+                    },
+                    request_state=path,
+                )
+            assert ctx.request_state == path
+            response = ctx.input_responses["summary"]
             await ctx.report_progress(1, 1, path)
-            return response.text
+            return response.content.text
 
         async def sample(messages, params, context):
+            assert params.max_tokens == 80
             text = messages[0].content.text
             sampled.append(text)
             return CreateMessageResult(
@@ -447,13 +478,17 @@ class TestRenamedToolsAreServed:
             progress.append((completed, total, message))
 
         adapter = RecordingAdapter()
+        if not rename:
+            adapter.BUILTIN_TOOL_NAMES = frozenset()
         env = HarnessEnvironment(adapter=adapter, mcp=mcp)
         try:
             await env.reset_async()
-            async with Client(adapter.bridge_url, sampling_handler=sample) as client:
+            async with Client(
+                adapter.bridge_url, mode="auto", sampling_handler=sample
+            ) as client:
                 for path in ("first", "second"):
                     result = await client.call_tool(
-                        "env_read_file",
+                        "env_read_file" if rename else "read_file",
                         {"path": path},
                         progress_handler=record_progress,
                         timeout=5.0,
@@ -461,6 +496,40 @@ class TestRenamedToolsAreServed:
                     assert result.content[0].text == f"sampled {path}"
             assert sampled == ["first", "second"]
             assert progress == [(1, 1, "first"), (1, 1, "second")]
+            assert rounds == [
+                ("first", False),
+                ("first", True),
+                ("second", False),
+                ("second", True),
+            ]
+        finally:
+            env.close()
+
+    @pytest.mark.parametrize("rename", [False, True])
+    async def test_bridge_preserves_legacy_session_state(self, rename):
+        mcp = FastMCP("domain")
+
+        @mcp.tool
+        async def read_file(ctx: Context) -> int:
+            count = await ctx.get_state("calls") or 0
+            await ctx.set_state("calls", count + 1)
+            return count + 1
+
+        adapter = RecordingAdapter()
+        if not rename:
+            adapter.BUILTIN_TOOL_NAMES = frozenset()
+        tool_name = "env_read_file" if rename else "read_file"
+        env = HarnessEnvironment(adapter=adapter, mcp=mcp)
+        try:
+            await env.reset_async()
+            async with Client(adapter.bridge_url, mode="legacy") as first:
+                assert (await first.call_tool(tool_name, {})).data == 1
+                async with Client(adapter.bridge_url, mode="legacy") as second:
+                    assert (await second.call_tool(tool_name, {})).data == 1
+                    assert (await first.call_tool(tool_name, {})).data == 2
+                    assert (await second.call_tool(tool_name, {})).data == 2
+            async with Client(adapter.bridge_url, mode="legacy") as replacement:
+                assert (await replacement.call_tool(tool_name, {})).data == 1
         finally:
             env.close()
 

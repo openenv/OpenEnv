@@ -517,6 +517,9 @@ class TestHTTPMCPEndpoint:
         assert "result" in data
         assert "tools" in data["result"]
         assert len(data["result"]["tools"]) > 0
+        add_tool = next(t for t in data["result"]["tools"] if t["name"] == "add")
+        assert set(add_tool["inputSchema"]["properties"]) == {"a", "b"}
+        assert "input_schema" not in add_tool
 
     def test_mcp_tools_call_via_http(self, app):
         """Test tools/call via HTTP /mcp endpoint."""
@@ -1082,6 +1085,7 @@ class TestMCPSessionTransportPersistence:
             env=StatefulMCPEnv,
             action_cls=None,
             observation_cls=None,
+            max_concurrent_envs=3,
         )
 
     async def test_http_session_mcp_state_persists_across_calls(self, stateful_mcp_app):
@@ -1210,6 +1214,89 @@ class TestMCPSessionTransportPersistence:
                 f"Second WS call should return 2, got: {resp2}. "
                 "WebSocket MCP session is not persisting state."
             )
+
+    async def test_http_sessions_isolate_state_and_close_resets_it(
+        self, stateful_mcp_app
+    ):
+        """State belongs to one OpenEnv session, not the shared FastMCP server."""
+        import httpx
+        from httpx import ASGITransport
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=stateful_mcp_app), base_url="http://test"
+        ) as client:
+
+            async def request(method, params):
+                response = await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": method,
+                        "params": params,
+                        "id": 1,
+                    },
+                )
+                assert response.status_code == 200
+                payload = response.json()
+                assert "error" not in payload, payload
+                return payload["result"]
+
+            async def increment(sid):
+                result = await request(
+                    "tools/call",
+                    {"name": "inc_counter", "arguments": {}, "session_id": sid},
+                )
+                return result["data"]
+
+            first = (await request("openenv/session/create", {}))["session_id"]
+            second = (await request("openenv/session/create", {}))["session_id"]
+            try:
+                assert await increment(first) == "1"
+                assert await increment(second) == "1"
+                assert await increment(first) == "2"
+                await request("openenv/session/close", {"session_id": first})
+                first = None
+                replacement = (await request("openenv/session/create", {}))[
+                    "session_id"
+                ]
+                try:
+                    assert await increment(replacement) == "1"
+                    assert await increment(second) == "2"
+                finally:
+                    await request("openenv/session/close", {"session_id": replacement})
+            finally:
+                if first is not None:
+                    await request("openenv/session/close", {"session_id": first})
+                await request("openenv/session/close", {"session_id": second})
+
+    def test_websocket_sessions_isolate_state(self, stateful_mcp_app):
+        """Concurrent WebSocket connections retain independent MCP state."""
+        from starlette.testclient import TestClient
+
+        def increment(websocket):
+            websocket.send_json(
+                {
+                    "type": "mcp",
+                    "data": {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {"name": "inc_counter", "arguments": {}},
+                        "id": 1,
+                    },
+                }
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "mcp"
+            assert "error" not in response["data"], response
+            return response["data"]["result"]["data"]
+
+        with TestClient(stateful_mcp_app) as client:
+            with client.websocket_connect("/ws") as first:
+                with client.websocket_connect("/ws") as second:
+                    assert increment(first) == "1"
+                    assert increment(second) == "1"
+                    assert increment(first) == "2"
+                    assert increment(second) == "2"
 
     async def test_concurrent_close_during_tool_call(self, stateful_mcp_app):
         """Concurrent session/close during active tool call returns clean responses.
