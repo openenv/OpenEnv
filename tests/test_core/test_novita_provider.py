@@ -902,6 +902,64 @@ class TestDockerfileRewriting:
         out = _resolve_from_references("FROM python:3.11\nARG X=alpine\nRUN echo hi\n")
         assert "FROM python:3.11" in out
 
+    @pytest.mark.parametrize("reference", ["$BASE_IMAGE", "${BASE_IMAGE}"])
+    def test_shorter_arg_does_not_consume_a_longer_name(self, reference):
+        from openenv.core.containers.runtime.novita_provider import (
+            _resolve_from_references,
+        )
+
+        # ARG BASE is declared first, so name-by-name substitution used to turn
+        # `FROM $BASE_IMAGE` into `python:3.12_IMAGE`.
+        out = _resolve_from_references(
+            "ARG BASE=python:3.12\n"
+            "ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest\n"
+            f"FROM {reference} AS builder\n"
+        )
+        assert "FROM ghcr.io/huggingface/openenv-base:latest AS builder" in out
+
+    def test_substitution_is_independent_of_declaration_order(self):
+        from openenv.core.containers.runtime.novita_provider import (
+            _resolve_from_references,
+        )
+
+        declarations = [
+            "ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest",
+            "ARG BASE=python:3.12",
+        ]
+        outputs = {
+            _resolve_from_references("\n".join([*order, "FROM $BASE_IMAGE\n"]))
+            for order in (declarations, list(reversed(declarations)))
+        }
+        assert outputs == {
+            "ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest\n"
+            "ARG BASE=python:3.12\n"
+            "FROM ghcr.io/huggingface/openenv-base:latest\n",
+            "ARG BASE=python:3.12\n"
+            "ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest\n"
+            "FROM ghcr.io/huggingface/openenv-base:latest\n",
+        }
+
+    @pytest.mark.parametrize(
+        "reference", ["$UNSET_IMAGE", "$BASE_IMAGE", "${BASE_IMAGE}"]
+    )
+    def test_undeclared_arg_reference_is_left_verbatim(self, reference):
+        from openenv.core.containers.runtime.novita_provider import (
+            _resolve_from_references,
+        )
+
+        out = _resolve_from_references(f"ARG BASE=python:3.12\nFROM {reference}\n")
+        assert f"FROM {reference}" in out
+
+    def test_substituted_value_is_not_expanded_again(self):
+        from openenv.core.containers.runtime.novita_provider import (
+            _resolve_from_references,
+        )
+
+        out = _resolve_from_references(
+            "ARG REGISTRY=example.com\nARG IMAGE=$REGISTRY/app\nFROM $IMAGE\n"
+        )
+        assert "FROM $REGISTRY/app" in out
+
     def test_flatten_drops_same_path_copy(self):
         from openenv.core.containers.runtime.novita_provider import _flatten_multistage
 
