@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import os
+from typing import Any
 
 from openenv.core.env_server.http_server import create_app
 
@@ -31,14 +33,21 @@ except ImportError:
     from .gradio_ui import build_textarena_gradio_app
 
 
-def _parse_env_kwargs(prefix: str = "TEXTARENA_KW_") -> dict[str, str]:
-    """Collect arbitrary environment kwargs from the process environment."""
+def _parse_env_kwargs(prefix: str = "TEXTARENA_KW_") -> dict[str, Any]:
+    """Collect arbitrary environment kwargs from the process environment.
 
-    env_kwargs: dict[str, str] = {}
+    Values are read as JSON, so `TEXTARENA_KW_CLUES=65` passes the integer 65. Values that are not JSON, like
+    `TEXTARENA_KW_DIFFICULTY=hard`, are passed as strings.
+    """
+
+    env_kwargs: dict[str, Any] = {}
     for key, value in os.environ.items():
         if key.startswith(prefix):
             env_key = key[len(prefix) :].lower()
-            env_kwargs[env_key] = value
+            try:
+                env_kwargs[env_key] = json.loads(value)
+            except json.JSONDecodeError:
+                env_kwargs[env_key] = value
     return env_kwargs
 
 
