@@ -159,6 +159,8 @@
     title: Post-training
   - local: environments/sophistry_bench_sprint
     title: Sophistry Bench Sprint
+  - local: environments/harvest_rush
+    title: Harvest Rush
   title: Environments
 - isExpanded: false
   sections:

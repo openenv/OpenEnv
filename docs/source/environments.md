@@ -320,6 +320,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
         <a href="environments/qed_math" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
       </div>
     </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Harvest Rush</div>
+      <p class="text-sm"><code>harvest_rush_env</code> is a single-step verifiable-reward environment: a self-driving tractor meets an animal, a harmless prop or a rock, and the policy chooses to drive on or pay a stated fuel price to go around. Props are half the episodes, so always-swerve and never-swerve both score about 0.5. No judge model.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/harvest_rush" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
   </div>
 </div>
 
