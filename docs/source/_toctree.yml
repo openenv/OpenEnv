@@ -143,6 +143,8 @@
     title: Reasoning Gym
   - local: environments/tau2
     title: τ²-bench
+  - local: environments/tau_emotion
+    title: τ-Emotion-Bench
   - local: environments/tbench2
     title: TBench2
   - local: environments/thinkingbox

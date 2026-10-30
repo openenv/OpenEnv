@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-tau-emotion-env"
+version = "0.1.0"
+description = "τ-emotion-bench for OpenEnv: customer-service conversations with an emotional LLM-simulated user, tools, and a policy"
+# τ-emotion-bench requires Python 3.12+.
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "openenv>=0.6.0",
+    "fastapi>=0.115.0",
+    "fastmcp>=3.0.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    "loguru>=0.7.0",
+    # litellm imports it for `num_retries`, but does not depend on it.
+    "tenacity>=8.0",
+    # τ-emotion-bench is not on PyPI, so it is pinned to a commit. Keep it in sync
+    # with the checkout in server/Dockerfile.
+    "tau-emotion @ git+https://github.com/sahsaeedi/tau-emotion-bench@287ebfce6181b4e141f778661b3455c2c3f03859",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+server = "tau_emotion_env.server.app:main"
+
+[tool.setuptools]
+packages = ["tau_emotion_env", "tau_emotion_env.server"]
+package-dir = { "tau_emotion_env" = ".", "tau_emotion_env.server" = "server" }
