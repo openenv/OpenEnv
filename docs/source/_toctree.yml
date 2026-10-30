@@ -141,6 +141,8 @@
     title: QED Math
   - local: environments/reasoning_gym
     title: Reasoning Gym
+  - local: environments/spatial_gym
+    title: Spatial-Gym
   - local: environments/tau2
     title: τ²-bench
   - local: environments/tbench2
