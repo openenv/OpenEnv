@@ -30,13 +30,45 @@ def parse_openenv_app_field(yaml_content: str) -> str | None:
 def parse_dockerfile_cmd(dockerfile_content: str) -> str | None:
     """Extract the server command from the last Dockerfile ``CMD``."""
     last_cmd: str | None = None
+    instruction = ""
+    escape = "\\"
+    directives = True
     for line in dockerfile_content.splitlines():
-        stripped = line.strip()
+        stripped = line.lstrip()
         if stripped.startswith("#"):
+            if directives:
+                directive = re.fullmatch(
+                    r"#\s*(syntax|check|escape)\s*=\s*(.+)",
+                    stripped,
+                    flags=re.IGNORECASE,
+                )
+                if directive is None:
+                    directives = False
+                elif directive[1].lower() == "escape" and directive[2].strip() in (
+                    "\\",
+                    "`",
+                ):
+                    escape = directive[2].strip()
             continue
-        match = re.match(r"CMD\s+(.+)", stripped, flags=re.IGNORECASE)
+        if not stripped.strip():
+            directives = False
+            continue
+        directives = False
+        if not instruction:
+            match = re.match(r"\s*CMD\s+(.+)", line, flags=re.IGNORECASE)
+            if match:
+                last_cmd = match.group(1).strip()
+        continuation = re.search(
+            rf"(?<!{re.escape(escape)}){re.escape(escape)}[ \t]*$", line
+        )
+        if continuation:
+            instruction += line[: continuation.start()]
+            continue
+        instruction += line
+        match = re.match(r"\s*CMD\s+(.+)", instruction, flags=re.IGNORECASE)
         if match:
             last_cmd = match.group(1).strip()
+        instruction = ""
 
     if last_cmd is None:
         return None
