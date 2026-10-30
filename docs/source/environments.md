@@ -347,6 +347,14 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Stripe World</div>
+      <p class="text-sm">Stateful copy of Stripe's Billing and Payments API with Stripe's MCP tools, a private account per episode, and a row-level change log in the state for grading.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/stripe_world" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/spaces/scosman/stripe_world" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">FineEnvs</div>
       <p class="text-sm">End-to-end environment projects (LaTeX OCR, watercolour painting, GeoGuessr, multilingual, simulation) with their datasets, models and training runs.</p>
       <div class="flex gap-2 mt-3">
