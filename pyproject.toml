@@ -63,6 +63,12 @@ novita = [
 inspect = [
     "inspect-ai>=0.3.0",
 ]
+security = [
+    # Optional request-security middleware (IP lists, rate limiting,
+    # penetration detection) for env servers. No effect unless
+    # OPENENV_GUARD_ENABLED=1.
+    "fastapi-guard>=8.0.3,<9.0.0",
+]
 harbor = [
     # Every sandbox backend. Bare `harbor` gives one that lists all 23 backends and can
     # instantiate none of them: each raises MissingExtraError from its constructor, which
