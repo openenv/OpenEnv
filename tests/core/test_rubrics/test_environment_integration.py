@@ -6,7 +6,7 @@ from typing import Any, List, Optional, Tuple
 
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
-from openenv.core.rubrics import Rubric, TrajectoryRubric
+from openenv.core.rubrics import Rubric, TrajectoryRubric, WeightedSum
 
 
 # Test fixtures - using Pydantic models (not dataclasses)
@@ -230,6 +230,21 @@ class TestEnvironmentRubricLifecycle:
 
         assert ep1_len == 2
         assert ep2_len == 1  # Reset cleared previous episode
+
+    def test_composed_rubric_resets_children_between_episodes(self):
+        """Env reset clears trajectory rubrics nested in containers."""
+        trajectory = MockTrajectoryRubric()
+        env = SimpleEnvironment(
+            rubric=WeightedSum([FixedRubric(1.0), trajectory], weights=[0.5, 0.5])
+        )
+
+        env.reset()
+        env.step(MockAction(content="a"))
+        env.reset()
+        assert trajectory.trajectory == []
+
+        env.step(MockAction(content="b"))
+        assert len(trajectory.trajectory) == 1
 
     def test_rubric_hooks_work(self):
         """Rubric hooks work through environment."""
