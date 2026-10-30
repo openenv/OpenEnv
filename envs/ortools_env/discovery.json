@@ -1,0 +1,13 @@
+{
+  "tags": ["openenv", "optimization", "operations-research", "scheduling", "routing", "timetabling"],
+  "representative_queries": [
+    "find an environment for training LLMs to design operations research algorithms",
+    "find a job shop, RCPSP or vehicle routing environment with a verifiable reward",
+    "find an environment where the reward is the gap to an OR-Tools reference solution"
+  ],
+  "agent_tools": {
+    "protocol": "mcp",
+    "names": ["run_python", "check_solution", "test_algorithm", "submit_solution", "submit_algorithm"],
+    "source": "envs/ortools_env/server/ortools_environment.py"
+  }
+}
