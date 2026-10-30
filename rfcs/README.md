@@ -89,6 +89,7 @@ Each RFC should include the following sections:
 
 ### Reward & Evaluation
 - [004-rubrics.md](./004-rubrics.md) - Rubric System for Reward Computation
+- [013-task-sampling-and-training-evals.md](./013-task-sampling-and-training-evals.md) - Task Sampling and In-Training Evaluation: `TaskSampler` (sequential, uniform; a curriculum sampler as an example), `EnvEvalHarness` and `openenv eval`
 
 ### Agentic Harnesses
 - [005-agentic-harnesses.md](./005-agentic-harnesses.md) - Agentic Harness Integration (OpenClaw, Claude Code, etc.)
