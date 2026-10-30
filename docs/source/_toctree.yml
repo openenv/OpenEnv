@@ -41,6 +41,8 @@
       title: Your First Environment
     - local: getting_started/environment-builder
       title: Deploying an Environment
+    - local: tutorials/seahaven-environment
+      title: "Tool-Use Environments (Seahaven)"
     title: Basics
   - sections:
     - local: guides/training
