@@ -13,8 +13,13 @@ if [[ "$COMMAND" != *"gh pr create"* ]]; then
     exit 0
 fi
 
+# Parse only the command line itself: join backslash continuations and keep the first line, since a heredoc
+# body follows it. Quoted strings (the --title and --body values) are dropped before reading flags, so text
+# inside them cannot match.
+CMD_LINE=$(printf '%s\n' "$COMMAND" | sed -e ':a' -e '/\\$/N' -e 's/\\\n//' -e 'ta' | head -n1)
+
 # Check the repo the command runs in: the target of a leading `cd`, else the session's cwd
-REPO_DIR=$(echo "$COMMAND" | sed -nE 's/^[[:space:]]*cd[[:space:]]+([^;&|[:space:]]+).*/\1/p')
+REPO_DIR=$(printf '%s\n' "$CMD_LINE" | sed -nE "s/^[[:space:]]*cd[[:space:]]+(\"([^\"]+)\"|'([^']+)'|([^;&|[:space:]]+)).*/\2\3\4/p")
 REPO_DIR="${REPO_DIR/#\~/$HOME}"
 if [[ -z "$REPO_DIR" ]]; then
     REPO_DIR=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
@@ -22,10 +27,11 @@ fi
 REPO_DIR="${REPO_DIR:-.}"
 
 # Determine base branch (default: main) and the PR's head branch (default: the checked-out one).
-# sed -E rather than grep -P, which macOS grep does not support.
-BASE=$(echo "$COMMAND" | sed -nE 's/.*--base[[:space:]=]+([^[:space:]]+).*/\1/p')
+# grep -oE rather than grep -P, which macOS grep does not support.
+FLAGS=$(printf '%s\n' "$CMD_LINE" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g")
+BASE=$(printf '%s\n' "$FLAGS" | grep -oE -- '--base[[:space:]=]+[^[:space:]]+' | head -n1 | sed -E 's/^--base[[:space:]=]+//')
 BASE="${BASE:-main}"
-HEAD_BRANCH=$(echo "$COMMAND" | sed -nE 's/.*--head[[:space:]=]+([^[:space:]]+).*/\1/p')
+HEAD_BRANCH=$(printf '%s\n' "$FLAGS" | grep -oE -- '--head[[:space:]=]+[^[:space:]]+' | head -n1 | sed -E 's/^--head[[:space:]=]+//')
 HEAD_BRANCH="${HEAD_BRANCH:-$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)}"
 
 # Fetch latest base and check freshness
