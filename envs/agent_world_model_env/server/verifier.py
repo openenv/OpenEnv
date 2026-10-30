@@ -243,12 +243,28 @@ def run_verifier(
                     "error_message": f"Database comparison failed: {exc}",
                 }
             if unchanged:
-                if final_answer and final_answer.strip():
-                    # Only exempt answers that actually change the verifier outcome.
+                if (
+                    final_answer
+                    and final_answer.strip()
+                    and result.get("uses_final_answer") is not False
+                ):
+                    # Answer-task baseline contract: rerun the same
+                    # verifier with an empty answer on the same databases.
+                    # The two runs differ only in the answer, so any
+                    # different outcome is the answer's doing:
+                    # - baseline "others": the answer earned the pass.
+                    # - baseline execution error: the verifier cannot
+                    #   evaluate the empty answer at all (for example
+                    #   float("") or json.loads("")), so the pass is the
+                    #   answer's as well.
+                    # - any other baseline error (compile, subprocess or
+                    #   infrastructure failure) fails closed below.
                     baseline = execute_code_verifier(
                         code, func_name, initial_db_path, final_db_path, None
                     )
                     if baseline.get("execution_status") == "error":
+                        if baseline.get("error_kind") == "execution":
+                            return reward_type, result
                         return "judge_error", baseline
                     if baseline.get("result") == "others":
                         return reward_type, result

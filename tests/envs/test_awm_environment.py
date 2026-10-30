@@ -578,6 +578,124 @@ class TestVerifier:
             )
             assert reward_type == "complete"
 
+    def test_run_verifier_numeric_answer_stays_complete(self):
+        """Numeric answer verifiers keep their pass on an untouched db.
+
+        The no-answer baseline cannot even evaluate float(''), so it
+        errors; that error is the answer's doing, not judge_error.
+        """
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    if float(final_answer) == 42:\n"
+                    "        return {'result': 'complete'}\n"
+                    "    return {'result': 'others'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer="42"
+            )
+            assert reward_type == "complete"
+            assert result["result"] == "complete"
+
+    def test_run_verifier_json_answer_stays_complete(self):
+        """JSON answer verifiers keep their pass on an untouched db."""
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    import json\n"
+                    "    if json.loads(final_answer)['value'] == 42:\n"
+                    "        return {'result': 'complete'}\n"
+                    "    return {'result': 'others'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer='{"value": 42}'
+            )
+            assert reward_type == "complete"
+            assert result["result"] == "complete"
+
+    def test_run_verifier_db_verifier_ignores_answer_text(self):
+        """A db-state verifier gains nothing from answer text (#1475).
+
+        The verifier only reads the seeded rows and ignores the answer,
+        so a no-op agent that returns text still does not get the pass.
+        """
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    import sqlite3\n"
+                    "    conn = sqlite3.connect(final_db_path)\n"
+                    "    count = conn.execute('SELECT COUNT(*) FROM products').fetchone()[0]\n"
+                    "    conn.close()\n"
+                    "    if count >= 1:\n"
+                    "        return {'result': 'complete'}\n"
+                    "    return {'result': 'others'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer="done"
+            )
+            assert reward_type == "others"
+            assert result["no_db_change"] is True
+
+    def test_run_verifier_baseline_infra_error_fails_closed(self, monkeypatch):
+        """Infrastructure failure in the baseline run stays judge_error.
+
+        Only the verifier's own failure to evaluate the empty answer
+        exempts a pass; a subprocess timeout must fail closed.
+        """
+        import envs.agent_world_model_env.server.verifier as verifier_module
+
+        calls = []
+
+        def fake_execute_code_verifier(
+            code, func_name, initial_db_path, final_db_path, final_answer=None
+        ):
+            calls.append(final_answer)
+            if len(calls) == 1:
+                return {
+                    "result": "complete",
+                    "execution_status": "success",
+                    "uses_final_answer": True,
+                }
+            return {
+                "result": "others",
+                "execution_status": "error",
+                "error_message": "Verifier timed out after 20.0s",
+            }
+
+        monkeypatch.setattr(
+            verifier_module, "execute_code_verifier", fake_execute_code_verifier
+        )
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    return {'result': 'complete'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer="42"
+            )
+            assert reward_type == "judge_error"
+            assert result["execution_status"] == "error"
+
     def test_run_verifier_corrupt_db_fails_closed(self):
         entry = {
             "verification": {
