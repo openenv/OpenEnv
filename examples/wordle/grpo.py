@@ -65,13 +65,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--hub-model-id", required=True)
-    parser.add_argument("--env-url", default="https://openenv-wordle.hf.space")
+    parser.add_argument("--env-url", required=True)
     parser.add_argument("--max-steps", type=int, default=150)
     parser.add_argument("--trackio-space-id", default=None)
     args = parser.parse_args()
     env_url = args.env_url
     # A private Space needs your token. A public one ignores it.
-    headers = {"Authorization": f"Bearer {get_token()}"} if get_token() else None
+    token = get_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else None
 
     class WordleEnv:
         def __init__(self):
