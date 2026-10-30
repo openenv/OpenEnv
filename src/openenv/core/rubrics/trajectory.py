@@ -118,6 +118,7 @@ class TrajectoryRubric(Rubric):
 
     def reset(self) -> None:
         """Clear accumulated trajectory. Call on env.reset()."""
+        super().reset()
         self._trajectory = []
 
     @property

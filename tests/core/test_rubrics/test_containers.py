@@ -39,6 +39,21 @@ class CountingRubric(Rubric):
         return self.score
 
 
+class EpisodeRubric(Rubric):
+    """Rubric that records the actions of the current episode."""
+
+    def __init__(self):
+        super().__init__()
+        self.actions = []
+
+    def forward(self, action: Any, observation: Any) -> float:
+        self.actions.append(action)
+        return 1.0
+
+    def reset(self) -> None:
+        self.actions = []
+
+
 class TestSequential:
     """Test Sequential container."""
 
@@ -408,3 +423,36 @@ class TestContainerComposition:
         assert "task.rubric_1" in paths  # FixedRubric
         # Gate's child
         assert "task.rubric_0.rubric" in paths
+
+
+class TestContainerReset:
+    """reset() reaches the children of every container."""
+
+    @pytest.mark.parametrize(
+        "make_container",
+        [
+            lambda child: Sequential(child),
+            lambda child: Gate(child),
+            lambda child: WeightedSum([child], weights=[1.0]),
+            lambda child: RubricList([child]),
+            lambda child: RubricDict({"child": child}),
+        ],
+        ids=["sequential", "gate", "weighted_sum", "rubric_list", "rubric_dict"],
+    )
+    def test_reset_resets_children(self, make_container):
+        child = EpisodeRubric()
+        container = make_container(child)
+        child("action", "obs")
+
+        container.reset()
+
+        assert child.actions == []
+
+    def test_reset_reaches_nested_children(self):
+        leaf = EpisodeRubric()
+        rubric = RubricDict({"task": Sequential(Gate(leaf), FixedRubric(1.0))})
+        rubric["task"]("action", "obs")
+
+        rubric.reset()
+
+        assert leaf.actions == []

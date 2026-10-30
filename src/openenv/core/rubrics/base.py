@@ -234,8 +234,13 @@ class Rubric(ABC):
         return current
 
     def reset(self) -> None:
-        """Reset any internal state. Override in subclasses if needed."""
-        pass
+        """Reset internal state, including every child rubric.
+
+        Override to clear your own state and call `super().reset()` so child
+        rubrics are reset too.
+        """
+        for child in self.children():
+            child.reset()
 
     def state_dict(self) -> Dict[str, Any]:
         """Serialize rubric configuration for checkpointing."""
