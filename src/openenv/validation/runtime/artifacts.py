@@ -113,10 +113,22 @@ def write_runtime_bundle(
             "failure_reason": evidence.failure_reason,
             "complete": evidence.failure_phase is None
             and evidence.failure_reason is None,
+            "telemetry_error": evidence.telemetry_error,
         }
+        telemetry = None
+        telemetry_parse_failed = False
+        if evidence.telemetry_json is not None:
+            try:
+                telemetry = json.loads(evidence.telemetry_json)
+                files["session-telemetry.json"] = telemetry
+            except (ValueError, RecursionError):
+                telemetry_parse_failed = True
+                collector_metadata["telemetry_error"] = "malformed telemetry omitted"
         collector_metadata["redacted"] = (
             bool(omitted_fields)
             or schema_parse_failed
+            or telemetry_parse_failed
+            or _redact(telemetry) != telemetry
             or reset_schema_parse_failed
             or _redact(trace) != trace
             or _redact(collector_metadata) != collector_metadata

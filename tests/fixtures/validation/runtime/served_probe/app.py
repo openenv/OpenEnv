@@ -9,6 +9,7 @@ import uvicorn
 from openenv.core.env_server.http_server import create_app
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
+from openenv.core.rubrics import Rubric, WeightedSum
 from pydantic import Field
 
 
@@ -20,6 +21,14 @@ class ProbeObservation(Observation):
     counter: int = Field(strict=True)
 
 
+class CounterRubric(Rubric):
+    def forward(self, action, observation):
+        return float(observation.counter >= 2)
+
+    def validation_config(self):
+        return {"threshold": 2}
+
+
 class ProbeEnvironment(Environment):
     SUPPORTS_CONCURRENT_SESSIONS = True
 
@@ -27,6 +36,7 @@ class ProbeEnvironment(Environment):
         super().__init__()
         self._state = State(episode_id="uninitialized", step_count=0)
         self.counter = 0
+        self.rubric = WeightedSum([CounterRubric(), CounterRubric()], [0.5, 0.5])
 
     def reset(self, seed=None, episode_id=None, **kwargs):
         self.counter = 0
@@ -36,11 +46,13 @@ class ProbeEnvironment(Environment):
     def step(self, action, timeout_s=None, **kwargs):
         self.counter += action.increment
         self._state.step_count += 1
-        return ProbeObservation(
+        observation = ProbeObservation(
             counter=self.counter,
             reward=float(self.counter >= 2),
             done=self._state.step_count >= 2,
         )
+        observation.reward = self.rubric(action, observation)
+        return observation
 
     @property
     def state(self):

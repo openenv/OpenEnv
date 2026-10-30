@@ -197,9 +197,10 @@ configuration (model, version, params) in the manifest; the oracle check becomes
 bit-exact. RFC 004 rubrics are **leveraged, not required**: the contract stays spec-neutral
 (graders read the manifest), but for the served OpenEnv format the rubric tree is the native
 satisfaction path — `LLMJudge` is the in-repo `llm_judged` implementation, and the
-introspectability and reward-attribution graders read `named_rubrics()` / `state_dict()` /
-per-child scores. Judge pinning stays a *manifest* declaration because the rubric object does not
-serialize model/version/params today.
+introspectability and reward-attribution graders read `named_rubrics()`, explicit
+`validation_config()` and fresh per-child scores. `state_dict()` is never serialized
+as validation configuration. Judge pinning stays a *manifest* declaration because
+the rubric object does not serialize model/version/params today.
 
 Tolerances, margins, and variance bounds are author-declared in the manifest, **bounded by the
 versioned severity policy**, and carried verbatim in reports so hubs can apply stricter ceilings.
@@ -624,7 +625,35 @@ attached to the **same** replay connection, reject unauthorized/cross-session
 reads and never expose telemetry as agent MCP tools. A second WebSocket creates
 another environment and cannot supply evidence for the measured instance.
 A validator transcript alone cannot pass subject-emitted trajectory recording.
-These authorization requirements do not add new public wire messages in this slice.
+The initial contracts slice added no public wire messages. PR4 implements the
+following opt-in protocol.
+
+#### Session telemetry protocol (PR4)
+
+The server opts in only when `OPENENV_VALIDATION_TOKEN` is provisioned explicitly
+by the validation supervisor. On its existing simulation `/ws` connection, the
+collector sends `validation_open` with `data: {schema_version: 1, token: ...}`.
+The reply returns a random capability bound to that connection. Subsequent
+`validation_read` messages carry that capability and return a `validation`
+snapshot. Disabled, unauthorized and cross-connection requests fail without
+echoing credentials. Closing the connection destroys the capability. MCP and
+production endpoints never expose these operations. Authentication exchanges
+are excluded from persisted evidence.
+
+Snapshots identify requested and actually forwarded seed arguments; successful
+reset alone is not acceptance. They include a named rubric tree rooted at `root`,
+explicit safe configuration, and per-step attribution with operation-local
+evaluation flags. Unevaluated gated children never reuse an earlier score.
+Stock container aggregation is named explicitly; custom rubrics may supply
+`validation_config()` to expose public JSON configuration. Arbitrary attributes
+and `state_dict()` are never serialized as configuration.
+
+The subject server also emits a bounded record of the reset/step/state request
+and response envelopes it executed. The validator captures the wire separately
+and later compares the two. The record is bound to the authenticated session,
+limited to 100 steps/202 operations and 8 MiB, and marks truncation explicitly.
+Missing configuration, attribution or records cannot be inferred from other
+successful operations. This transport introduces no new passing grader by itself.
 
 Applicability predicates must distinguish empty declared sets from absent
 capabilities. Missing subject features, missing provider support and checks whose

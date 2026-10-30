@@ -46,6 +46,7 @@ class Rubric(ABC):
         object.__setattr__(self, "_forward_hooks", [])
         object.__setattr__(self, "_forward_pre_hooks", [])
         object.__setattr__(self, "last_score", None)
+        object.__setattr__(self, "_evaluation_count", 0)
 
     def __setattr__(self, name: str, value: Any) -> None:
         # Auto-register child rubrics when assigned as attributes
@@ -118,6 +119,7 @@ class Rubric(ABC):
     def _finish_forward(self, action: Any, observation: Any, result: float) -> float:
         """Store the result and run post-forward hooks synchronously."""
         self.last_score = result
+        self._evaluation_count += 1
 
         # Post-forward hooks
         for hook in self._forward_hooks:
@@ -130,6 +132,7 @@ class Rubric(ABC):
     ) -> float:
         """Store the result and run post-forward hooks from an async call path."""
         self.last_score = result
+        self._evaluation_count += 1
 
         # Post-forward hooks
         for hook in self._forward_hooks:
@@ -236,6 +239,15 @@ class Rubric(ABC):
     def reset(self) -> None:
         """Reset any internal state. Override in subclasses if needed."""
         pass
+
+    def validation_config(self) -> Optional[Dict[str, Any]]:
+        """Return explicitly public configuration for authorized validation.
+
+        Override to expose JSON configuration without credentials or runtime state.
+        ``None`` means configuration introspection is unavailable. Stock aggregation
+        containers expose their weights/threshold directly through the server.
+        """
+        return None
 
     def state_dict(self) -> Dict[str, Any]:
         """Serialize rubric configuration for checkpointing."""

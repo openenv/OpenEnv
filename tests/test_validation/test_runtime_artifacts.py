@@ -230,6 +230,19 @@ def test_malformed_wire_omission_is_visible_in_metadata(tmp_path):
     ]
 
 
+@pytest.mark.parametrize(
+    "telemetry", ['{"rubric":[{"config":{"api_key":"private-value"}}]}', "{broken"]
+)
+def test_telemetry_redaction_or_omission_marks_bundle_modified(tmp_path, telemetry):
+    original = replace(measured(), telemetry_json=telemetry)
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    metadata = json.loads((tmp_path / "collector-evidence.json").read_text())
+    assert metadata["redacted"] is True
+    assert "private-value" not in "".join(
+        path.read_text() for path in tmp_path.iterdir()
+    )
+
+
 def test_redaction_preserves_token_metadata_and_filters_secret_keys():
     from openenv.validation.runtime.artifacts import _redact
 

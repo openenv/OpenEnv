@@ -14,6 +14,7 @@ import inspect
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -62,6 +63,17 @@ from .mcp_types import (
 )
 from .route_config import GetEndpointConfig, register_get_endpoints
 from .serialization import deserialize_action, serialize_observation
+from .session_telemetry import (
+    rubric_counts,
+    rubric_snapshot,
+    SeedAcceptance,
+    SessionTelemetry,
+    ValidationOpenedData,
+    ValidationOpenedResponse,
+    ValidationOpenMessage,
+    ValidationReadMessage,
+    ValidationResponse,
+)
 from .types import (
     Action,
     ConcurrencyConfig,
@@ -909,6 +921,12 @@ class HTTPEnvServer:
                 raise ValueError(
                     f"Invalid mode: '{mode}'. Must be one of: {valid_modes}"
                 )
+
+        # Only explicitly provisioned simulation servers accept validation controls.
+        validation_token = os.environ.get("OPENENV_VALIDATION_TOKEN", "")
+        validation_enabled = (
+            mode == ServerMode.SIMULATION and 32 <= len(validation_token) <= 256
+        )
 
         # Wire up session lifecycle via app events
         server_ref = self
@@ -1867,6 +1885,8 @@ all schema information needed to interact with the environment.
             session_env = None
             owns_session = False
             attached_session = False
+            telemetry = None
+            operations_started = False
 
             try:
                 requested_session_id = websocket.query_params.get("session_id")
@@ -1936,6 +1956,64 @@ all schema information needed to interact with the environment.
 
                         msg_type = message_dict.get("type", "")
 
+                        if msg_type in {"validation_open", "validation_read"}:
+                            # Do not return Pydantic input/error details: these messages
+                            # contain credentials and must never echo or log them.
+                            try:
+                                if not validation_enabled or not owns_session:
+                                    raise ValueError("Validation unavailable")
+                                if msg_type == "validation_open":
+                                    auth = ValidationOpenMessage.model_validate(
+                                        message_dict
+                                    )
+                                    if telemetry is not None or operations_started:
+                                        raise ValueError("Validation already started")
+                                    if not secrets.compare_digest(
+                                        validation_token.encode(),
+                                        auth.data.token.get_secret_value().encode(),
+                                    ):
+                                        raise ValueError("Unauthorized")
+                                    telemetry = SessionTelemetry()
+                                    response = ValidationOpenedResponse(
+                                        data=ValidationOpenedData(
+                                            capability=telemetry.capability
+                                        )
+                                    )
+                                else:
+                                    auth = ValidationReadMessage.model_validate(
+                                        message_dict
+                                    )
+                                    if telemetry is None or not telemetry.authorized(
+                                        auth.data.capability.get_secret_value()
+                                    ):
+                                        raise ValueError("Unauthorized")
+                                    response = ValidationResponse(
+                                        data=telemetry.snapshot
+                                    )
+                            except Exception:
+                                response = WSErrorResponse(
+                                    data={
+                                        "message": "Validation unavailable or unauthorized",
+                                        "code": WSErrorCode.VALIDATION_ERROR,
+                                    }
+                                )
+                            await websocket.send_text(response.model_dump_json())
+                            continue
+
+                        seed_acceptance = None
+                        before_scores = None
+                        if msg_type in {"reset", "step", "state"}:
+                            operations_started = True
+                        if telemetry is not None and msg_type == "step":
+                            try:
+                                before_scores = rubric_counts(
+                                    getattr(session_env, "rubric", None)
+                                )
+                            except Exception:
+                                telemetry.snapshot.rubric_error = (
+                                    "Rubric introspection unavailable"
+                                )
+
                         try:
                             match msg_type:
                                 case "reset":
@@ -1967,6 +2045,12 @@ all schema information needed to interact with the environment.
                                             )
                                         )
 
+                                    if telemetry is not None:
+                                        seed_acceptance = SeedAcceptance(
+                                            requested="seed" in msg.data,
+                                            value=msg.data.get("seed"),
+                                            accepted="seed" in valid_kwargs,
+                                        )
                                     self._update_session_activity(session_id)
 
                                     response = WSObservationResponse(
@@ -2044,9 +2128,39 @@ all schema information needed to interact with the environment.
                                         }
                                     )
 
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                nodes = None
+                                try:
+                                    if msg_type in {"reset", "step"}:
+                                        nodes = rubric_snapshot(
+                                            getattr(session_env, "rubric", None),
+                                            before_scores,
+                                        )
+                                except Exception:
+                                    nodes = []
+                                    telemetry.snapshot.rubric_error = (
+                                        "Rubric introspection unavailable"
+                                    )
+                                telemetry.append(
+                                    msg_type,
+                                    message_dict,
+                                    response.model_dump(mode="json"),
+                                    seed=seed_acceptance,
+                                    rubric=nodes,
+                                )
                             await websocket.send_text(response.model_dump_json())
 
                         except ValidationError as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": "Invalid message",
@@ -2056,6 +2170,12 @@ all schema information needed to interact with the environment.
                             )
                             await websocket.send_text(error_resp.model_dump_json())
                         except Exception as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": str(e),
