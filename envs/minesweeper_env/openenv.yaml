@@ -1,0 +1,6 @@
+spec_version: 1
+name: minesweeper
+type: space
+runtime: fastapi
+app: minesweeper_env.server.app:app
+port: 8000
