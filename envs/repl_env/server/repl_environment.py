@@ -43,16 +43,25 @@ except ImportError:
         from models import CodeBlockResult, REPLAction, REPLObservation, REPLState
 
 try:
-    from ..recursive_controller import create_server_recursive_controller
+    from ..recursive_controller import (
+        create_server_recursive_controller,
+        RecursiveController,
+    )
     from ..rubrics import REPLRubric
     from .python_executor import PythonExecutor
 except ImportError:
     try:
-        from repl_env.recursive_controller import create_server_recursive_controller
+        from repl_env.recursive_controller import (
+            create_server_recursive_controller,
+            RecursiveController,
+        )
         from repl_env.rubrics import REPLRubric
         from .python_executor import PythonExecutor
     except ImportError:
-        from recursive_controller import create_server_recursive_controller
+        from recursive_controller import (
+            create_server_recursive_controller,
+            RecursiveController,
+        )
         from rubrics import REPLRubric
 
         from .python_executor import PythonExecutor
@@ -105,6 +114,7 @@ class REPLEnvironment(Environment):
         ] = None,
         rlm_max_depth: int = 1,
         rlm_max_iterations: int | None = None,
+        recursive_controller: RecursiveController | None = None,
     ):
         """Initialize the REPL environment.
 
@@ -121,6 +131,10 @@ class REPLEnvironment(Environment):
             subcall_batch_fn: Optional function for recursive rlm_query_batched() support
             rlm_max_depth: Max recursion depth for server-backed rlm_query()
             rlm_max_iterations: Max iterations for recursive child runners
+            recursive_controller (`RecursiveController`, *optional*):
+                Preconfigured controller owned by this environment. Enables
+                managed helpers when its backend supports them; cannot be
+                combined with raw query functions.
         """
         self.initial_context = context or os.environ.get("REPL_CONTEXT", "")
         self.initial_task_prompt = task_prompt or os.environ.get("REPL_TASK_PROMPT", "")
@@ -145,6 +159,27 @@ class REPLEnvironment(Environment):
         self._runtime_controller = None
         self._runtime_controller_chat_fn: Optional[Callable[..., str]] = None
         self._current_llm_model: Optional[str] = None
+        self._external_controller = recursive_controller
+        if recursive_controller is not None:
+            if any(
+                fn is not None
+                for fn in (llm_query_fn, llm_batch_fn, subcall_fn, subcall_batch_fn)
+            ):
+                raise ValueError(
+                    "Use recursive_controller or raw query functions, not both"
+                )
+            self.llm_query_fn = recursive_controller.llm_query_fn
+            self.llm_batch_fn = recursive_controller.llm_batch_fn
+            self.subcall_fn = recursive_controller.rlm_query_fn
+            self.subcall_batch_fn = recursive_controller.rlm_batch_fn
+
+    @property
+    def _managed_children(self):
+        if self._external_controller is not None:
+            return self._external_controller.children
+        if isinstance(self._runtime_controller, RecursiveController):
+            return self._runtime_controller.children
+        return None
 
     @staticmethod
     def _resolve_model(llm_model: Optional[str]) -> str:
@@ -240,6 +275,16 @@ class REPLEnvironment(Environment):
         Returns:
             Initial REPLObservation with environment ready message
         """
+        if self._external_controller is not None and (
+            hf_token is not None
+            or kwargs.get("rlm_max_depth") is not None
+            or kwargs.get("rlm_max_iterations") is not None
+        ):
+            raise ValueError(
+                "Configure credentials and recursion limits on the supplied controller"
+            )
+        if self._managed_children is not None:
+            self._managed_children.reset()
         effective_context = context or self.initial_context
         effective_task_prompt = task_prompt or self.initial_task_prompt
 
@@ -272,9 +317,7 @@ class REPLEnvironment(Environment):
         # reset() are treated as equal and don't trigger a redundant rebuild.
         resolved_model = self._resolve_model(llm_model)
         has_runtime_llm = self._runtime_controller is not None
-        model_changed = (
-            has_runtime_llm and resolved_model != self._current_llm_model
-        )
+        model_changed = has_runtime_llm and resolved_model != self._current_llm_model
         token_provided = hf_token is not None
         if not self.llm_query_fn or model_changed or token_provided:
             effective_token = (
@@ -339,7 +382,15 @@ class REPLEnvironment(Environment):
             except TypeError:
                 return self.llm_batch_fn(prompts)  # type: ignore[misc]
 
-        def _call_recursive_query(prompt: str, model: str | None = None) -> str:
+        def _call_recursive_query(
+            prompt: str, model: str | None = None, *, blocking: bool = True
+        ) -> str:
+            if not blocking:
+                if self._managed_children is None:
+                    raise RuntimeError(
+                        "rlm_query(blocking=False) requires managed children"
+                    )
+                return self._managed_children.spawn(prompt, model)
             if self.subcall_fn is None:
                 return _call_single_query(prompt, model)
             return self.subcall_fn(prompt, model)
@@ -366,6 +417,14 @@ class REPLEnvironment(Environment):
             self._executor.inject_function("rlm_query", _call_recursive_query)
         if self.llm_batch_fn or self.subcall_batch_fn:
             self._executor.inject_function("rlm_query_batched", _call_recursive_batched)
+
+        if self._managed_children is not None:
+            for name, function in (
+                ("rlm_status", self._managed_children.status),
+                ("rlm_result", self._managed_children.result),
+                ("rlm_wait", self._managed_children.wait),
+            ):
+                self._executor.inject_function(name, function)
 
         # Inject FINAL helper function so both FINAL(x) and print(f'FINAL({x})') work
         # Returns the FINAL pattern as a string so it appears in stdout for detection
@@ -402,6 +461,12 @@ class REPLEnvironment(Environment):
 
         # Build initial message
         message_parts = ["REPL environment initialized."]
+        if self._managed_children is not None:
+            message_parts.append(
+                "Managed children: rlm_query(prompt, blocking=False) returns a handle; "
+                "rlm_query(prompt) waits for an answer. Use rlm_status(handle), "
+                "rlm_result(handle), rlm_wait(handle, timeout_s=30)."
+            )
         if effective_context:
             message_parts.append(
                 f"Context loaded ({len(effective_context)} chars). Use 'context' variable to access it."
@@ -453,6 +518,8 @@ class REPLEnvironment(Environment):
         Returns:
             REPLObservation with execution results
         """
+        if self._managed_children is not None:
+            self._managed_children.check_ready()
         if self._state is None or self._executor is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
 
@@ -493,6 +560,8 @@ class REPLEnvironment(Environment):
 
         if done:
             self._state.final_answer = final_answer
+            if self._managed_children is not None:
+                self._managed_children.stop()
 
         obs = REPLObservation(
             result=CodeBlockResult(
@@ -541,7 +610,9 @@ class REPLEnvironment(Environment):
         idx = stdout.find("FINAL(")
         if idx != -1:
             depth, start = 0, idx + len("FINAL")
-            for i, ch in enumerate(stdout[idx + len("FINAL"):], start=idx + len("FINAL")):
+            for i, ch in enumerate(
+                stdout[idx + len("FINAL") :], start=idx + len("FINAL")
+            ):
                 if ch == "(":
                     depth += 1
                 elif ch == ")":
@@ -576,6 +647,8 @@ class REPLEnvironment(Environment):
         Returns:
             Final REPLObservation with done=True (reward set by rubric)
         """
+        if self._managed_children is not None:
+            self._managed_children.stop()
         return REPLObservation(
             result=CodeBlockResult(
                 stdout=message,
@@ -616,6 +689,8 @@ class REPLEnvironment(Environment):
 
     def close(self) -> None:
         """Cleanup resources."""
+        if self._external_controller is not None:
+            self._external_controller.close()
         if self._runtime_controller is not None:
             self._runtime_controller.close()
             self._runtime_controller = None
