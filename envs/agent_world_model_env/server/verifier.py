@@ -10,9 +10,11 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -184,6 +186,18 @@ def execute_code_verifier(
     return result
 
 
+def _database_contents_equal(initial_db_path: str, final_db_path: str) -> bool:
+    """Compare SQLite contents, including committed WAL changes."""
+    dumps = []
+    for path in (initial_db_path, final_db_path):
+        conn = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            dumps.append("\n".join(conn.iterdump()))
+        finally:
+            conn.close()
+    return dumps[0] == dumps[1]
+
+
 def run_verifier(
     verifier_entry: dict,
     verifier_mode: str,
@@ -219,7 +233,45 @@ def run_verifier(
         )
         if result.get("execution_status") == "error":
             return "judge_error", result
-        return result.get("result", "others"), result
+        reward_type = result.get("result", "others")
+        if reward_type == "complete":
+            try:
+                unchanged = _database_contents_equal(initial_db_path, final_db_path)
+            except (OSError, sqlite3.Error) as exc:
+                return "judge_error", {
+                    "execution_status": "error",
+                    "error_message": f"Database comparison failed: {exc}",
+                }
+            if unchanged:
+                if (
+                    final_answer
+                    and final_answer.strip()
+                    and result.get("uses_final_answer") is not False
+                ):
+                    # Answer-task baseline contract: rerun the same
+                    # verifier with an empty answer on the same databases.
+                    # The two runs differ only in the answer, so a
+                    # different outcome is the answer's doing:
+                    # - baseline "others": the answer earned the pass.
+                    # - any baseline error fails closed as judge_error.
+                    #   Verifiers for answer tasks must return "others"
+                    #   for an empty answer before parsing it (for
+                    #   example before float(final_answer) or
+                    #   json.loads(final_answer)). An execution error
+                    #   during the baseline, whether from parsing, a
+                    #   locked database, or an unrelated conversion,
+                    #   cannot be attributed to the answer, so it never
+                    #   preserves a pass.
+                    baseline = execute_code_verifier(
+                        code, func_name, initial_db_path, final_db_path, None
+                    )
+                    if baseline.get("execution_status") == "error":
+                        return "judge_error", baseline
+                    if baseline.get("result") == "others":
+                        return reward_type, result
+                result = {**result, "result": "others", "no_db_change": True}
+                return "others", result
+        return reward_type, result
 
     result = execute_sql_verifier(code, func_name, initial_db_path, final_db_path)
     if isinstance(result, dict) and result.get("execution_status") == "error":

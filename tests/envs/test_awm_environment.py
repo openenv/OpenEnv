@@ -483,8 +483,10 @@ class TestVerifier:
         }
         with tempfile.TemporaryDirectory() as td:
             initial, final = self._setup_db(td)
-            reward_type, result = run_verifier(verifier_entry, "code", initial, final)
-            assert reward_type == "complete"
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer="done"
+            )
+            assert reward_type == "others"
 
     def test_run_verifier_code_mode_2arg(self):
         """Bug #8: run_verifier in code mode with 2-arg function name."""
@@ -498,8 +500,297 @@ class TestVerifier:
         }
         with tempfile.TemporaryDirectory() as td:
             initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer="done"
+            )
+            assert reward_type == "others"
+
+    def test_run_verifier_code_mode_no_db_change_is_not_complete(self):
+        """A pass that was already true at reset should not pay out (#1475).
+
+        This verifier only checks the final db, and the seeded data
+        already has the row, so it says complete on an untouched db.
+        """
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    import sqlite3\n"
+                    "    conn = sqlite3.connect(final_db_path)\n"
+                    "    count = conn.execute('SELECT COUNT(*) FROM products').fetchone()[0]\n"
+                    "    conn.close()\n"
+                    "    if count >= 1:\n"
+                    "        return {'result': 'complete'}\n"
+                    "    return {'result': 'others'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(verifier_entry, "code", initial, final)
+            assert reward_type == "others"
+            assert result["result"] == "others"
+            assert result["no_db_change"] is True
+
+    def test_run_verifier_code_mode_complete_after_db_change(self):
+        """Same style of verifier, but the agent did change the db."""
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    import sqlite3\n"
+                    "    conn = sqlite3.connect(final_db_path)\n"
+                    "    count = conn.execute('SELECT COUNT(*) FROM products').fetchone()[0]\n"
+                    "    conn.close()\n"
+                    "    if count > 2:\n"
+                    "        return {'result': 'complete'}\n"
+                    "    return {'result': 'others'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            conn = sqlite3.connect(final)
+            conn.execute(
+                "INSERT INTO products (id, name, price) VALUES (3, 'Item3', 30.0)"
+            )
+            conn.commit()
+            conn.close()
             reward_type, result = run_verifier(verifier_entry, "code", initial, final)
             assert reward_type == "complete"
+
+    def test_run_verifier_code_mode_no_change_with_answer_stays_complete(self):
+        """Answer-based tasks do not change the db, so they keep their pass."""
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    if final_answer == 'Widget':\n"
+                    "        return {'result': 'complete'}\n"
+                    "    return {'result': 'others'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer="Widget"
+            )
+            assert reward_type == "complete"
+
+    def test_run_verifier_numeric_answer_stays_complete(self):
+        """Guarded numeric answer verifiers keep their pass on an untouched db.
+
+        The verifier returns 'others' for an empty answer before calling
+        float(), so the no-answer baseline evaluates cleanly to 'others'
+        and the answer earns the pass.
+        """
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    if not final_answer:\n"
+                    "        return {'result': 'others'}\n"
+                    "    if float(final_answer) == 42:\n"
+                    "        return {'result': 'complete'}\n"
+                    "    return {'result': 'others'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer="42"
+            )
+            assert reward_type == "complete"
+            assert result["result"] == "complete"
+
+    def test_run_verifier_json_answer_stays_complete(self):
+        """Guarded JSON answer verifiers keep their pass on an untouched db.
+
+        The verifier returns 'others' for an empty answer before calling
+        json.loads(), so the baseline evaluates cleanly to 'others'.
+        """
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    import json\n"
+                    "    if not final_answer:\n"
+                    "        return {'result': 'others'}\n"
+                    "    if json.loads(final_answer)['value'] == 42:\n"
+                    "        return {'result': 'complete'}\n"
+                    "    return {'result': 'others'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer='{"value": 42}'
+            )
+            assert reward_type == "complete"
+            assert result["result"] == "complete"
+
+    def test_run_verifier_db_verifier_ignores_answer_text(self):
+        """A db-state verifier gains nothing from answer text (#1475).
+
+        The verifier only reads the seeded rows and ignores the answer,
+        so a no-op agent that returns text still does not get the pass.
+        """
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    import sqlite3\n"
+                    "    conn = sqlite3.connect(final_db_path)\n"
+                    "    count = conn.execute('SELECT COUNT(*) FROM products').fetchone()[0]\n"
+                    "    conn.close()\n"
+                    "    if count >= 1:\n"
+                    "        return {'result': 'complete'}\n"
+                    "    return {'result': 'others'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer="done"
+            )
+            assert reward_type == "others"
+            assert result["no_db_change"] is True
+
+    def test_run_verifier_baseline_infra_error_fails_closed(self, monkeypatch):
+        """Infrastructure failure in the baseline run stays judge_error.
+
+        Every baseline error fails closed, so a subprocess timeout in
+        the baseline preserves no pass either.
+        """
+        import envs.agent_world_model_env.server.verifier as verifier_module
+
+        calls = []
+
+        def fake_execute_code_verifier(
+            code, func_name, initial_db_path, final_db_path, final_answer=None
+        ):
+            calls.append(final_answer)
+            if len(calls) == 1:
+                return {
+                    "result": "complete",
+                    "execution_status": "success",
+                    "uses_final_answer": True,
+                }
+            return {
+                "result": "others",
+                "execution_status": "error",
+                "error_message": "Verifier timed out after 20.0s",
+            }
+
+        monkeypatch.setattr(
+            verifier_module, "execute_code_verifier", fake_execute_code_verifier
+        )
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    return {'result': 'complete'}\n"
+                ),
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            reward_type, result = run_verifier(
+                verifier_entry, "code", initial, final, final_answer="42"
+            )
+            assert reward_type == "judge_error"
+            assert result["execution_status"] == "error"
+
+    def test_run_verifier_baseline_execution_error_fails_closed(self, monkeypatch):
+        """A baseline error raised by verifier code still fails closed.
+
+        Regression for the two reproductions on #1477: an exclusive
+        SQLite lock during the baseline ("database is locked") and an
+        unrelated database-value conversion raising ValueError both
+        surface as execution errors. Neither can be attributed to the
+        answer, so neither preserves the pass.
+        """
+        import envs.agent_world_model_env.server.verifier as verifier_module
+
+        verifier_entry = {
+            "verification": {
+                "code": (
+                    "def verify_task_completion(initial_db_path, final_db_path, final_answer):\n"
+                    "    return {'result': 'complete'}\n"
+                ),
+            },
+        }
+        for error_message in (
+            "database is locked",
+            "could not convert string to float: 'n/a'",
+        ):
+            calls = []
+
+            def fake_execute_code_verifier(
+                code,
+                func_name,
+                initial_db_path,
+                final_db_path,
+                final_answer=None,
+                _message=error_message,
+            ):
+                calls.append(final_answer)
+                if len(calls) == 1:
+                    return {
+                        "result": "complete",
+                        "execution_status": "success",
+                        "uses_final_answer": True,
+                    }
+                return {
+                    "result": "others",
+                    "execution_status": "error",
+                    "error_kind": "execution",
+                    "error_message": _message,
+                }
+
+            monkeypatch.setattr(
+                verifier_module, "execute_code_verifier", fake_execute_code_verifier
+            )
+            with tempfile.TemporaryDirectory() as td:
+                initial, final = self._setup_db(td)
+                reward_type, result = run_verifier(
+                    verifier_entry, "code", initial, final, final_answer="42"
+                )
+                assert reward_type == "judge_error"
+                assert result["execution_status"] == "error"
+                assert result["error_kind"] == "execution"
+
+    def test_run_verifier_corrupt_db_fails_closed(self):
+        entry = {
+            "verification": {
+                "code": "def verify_task(a, b, answer):\n    return {'result': 'complete'}\n"
+            }
+        }
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            with open(final, "wb") as db:
+                db.write(b"not a database")
+            reward, result = run_verifier(entry, "code", initial, final)
+            assert reward == "judge_error"
+            assert result["execution_status"] == "error"
+
+    def test_database_comparison_reads_wal(self):
+        from envs.agent_world_model_env.server.verifier import _database_contents_equal
+
+        with tempfile.TemporaryDirectory() as td:
+            initial, final = self._setup_db(td)
+            conn = sqlite3.connect(final)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("UPDATE products SET price = 99")
+                conn.commit()
+                assert not _database_contents_equal(initial, final)
+            finally:
+                conn.close()
 
     def test_run_verifier_no_code(self):
         verifier_entry = {"verification": {"code": ""}}
