@@ -339,6 +339,55 @@ class TestProtocolWebSocketClient:
             client.reset()
             assert client.call_tool("echo_message", message="after") == "after"
 
+    def test_protocol_client_raises_when_session_lost_mid_episode(self, echo_server):
+        """A step after the socket closed mid-episode must raise, not run on a new session."""
+        from openenv.core import GenericEnvClient
+        from openenv.core.env_client import SessionLostError
+
+        def echo(message):
+            return {
+                "type": "call_tool",
+                "tool_name": "echo_message",
+                "arguments": {"message": message},
+            }
+
+        # The server keeps one environment per WebSocket for this client.
+        with GenericEnvClient(base_url=echo_server).sync() as client:
+            client.reset()
+            client.step(echo("before"))
+
+            inner = client._async
+            asyncio.run_coroutine_threadsafe(inner._ws.close(), client._loop).result(
+                timeout=10
+            )
+
+            # A new socket would be a fresh environment that was never reset.
+            with pytest.raises(SessionLostError):
+                client.step(echo("lost"))
+            # Retrying the step does not reconnect into a new session either.
+            with pytest.raises(SessionLostError):
+                client.step(echo("lost again"))
+
+            # The next episode reconnects as before.
+            client.reset()
+            client.step(echo("after"))
+            assert client.state()["step_count"] == 1
+
+    def test_protocol_client_keeps_production_session_after_close(self, echo_server):
+        """MCP clients reattach to the same HTTP MCP session, so the episode carries over."""
+        from envs.echo_env.client import EchoEnv
+
+        with EchoEnv(base_url=echo_server).sync() as client:
+            client.reset()
+            client.call_tool("echo_message", message="a")
+
+            inner = client._async
+            asyncio.run_coroutine_threadsafe(inner._ws.close(), client._loop).result(
+                timeout=10
+            )
+
+            assert client.state() is not None
+
     def test_protocol_client_multiple_episodes(self, echo_server):
         """Test client can run multiple episodes."""
         from envs.echo_env.client import EchoEnv
