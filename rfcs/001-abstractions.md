@@ -1,6 +1,6 @@
 # RFC: OpenEnv Basic Abstractions
 
-**Status**: In Review
+**Status**: Implemented
 **Created**: 10/20/2025
 **Amended**: November 12, 2025
 **Authors**: @Darktex, @pankit-eng, @jspisak, @zkwentz
