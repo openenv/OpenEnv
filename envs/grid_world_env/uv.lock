@@ -1312,7 +1312,7 @@ wheels = [
 
 [[package]]
 name = "openenv"
-version = "0.11.1.dev0"
+version = "0.12.0"
 source = { editable = "../../" }
 dependencies = [
     { name = "fastapi" },
