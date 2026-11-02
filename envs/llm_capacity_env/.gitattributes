@@ -1,0 +1,2 @@
+# Preserve exact provenance-verified CSV bytes when entering an LF-normalized monorepo.
+server/data/hourly_demand.csv binary

@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+build/
+*.egg-info/
+
+outputs/trajectories/
+
+# Ship only the reviewed example trajectories; generated sessions stay local.
+!outputs/
+outputs/*
+!outputs/.gitkeep
+!outputs/example-traces/

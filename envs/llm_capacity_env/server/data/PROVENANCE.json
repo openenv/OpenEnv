@@ -1,0 +1,32 @@
+{
+  "dataset": "BurstGPT v2.0",
+  "upstream": "https://github.com/HPMLL/BurstGPT",
+  "release": "https://github.com/HPMLL/BurstGPT/releases/tag/v2.0",
+  "license": "CC-BY-4.0",
+  "citation": "Yuxin Wang et al. BurstGPT: A Real-World Workload Dataset to Optimize LLM Serving Systems. KDD 2025. doi:10.1145/3711896.3737413",
+  "adaptation": "Conversation log entries; sum Total tokens by original relative day, hour and model; zero-fill missing hours on logged days; select ChatGPT and GPT-4. No raw prompts or completions. No target replacement, noise injection or score-based episode filtering. The original S11 stream selection preceded this OpenEnv adaptation.",
+  "log_day_segments": [
+    [
+      0,
+      120
+    ],
+    [
+      225,
+      334
+    ]
+  ],
+  "days": 231,
+  "rows": 11088,
+  "sha256": "de9db57e9dd8aa1c96f33789e45eaf5fe0b09726160e9554645d2cb8ca58c130",
+  "source_case": "famou-bench-v3.1/cases/S11_system_llm_capacity",
+  "source_aggregates": [
+    {
+      "file": "data/history/load.csv",
+      "sha256": "f685ffd1e2981fd4fa8641af14035d37c56bcb2473795ca34356fc3632a3bf5f"
+    },
+    {
+      "file": "world/stream/truth.csv",
+      "sha256": "fc9da238b830f15d75755aa2abfef3dad507b9af47487f8db6c286518827c895"
+    }
+  ]
+}
