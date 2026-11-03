@@ -1,16 +1,18 @@
 # Train a Sudoku Agent: SFT, then GRPO
 
-This tutorial trains [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) to play Sudoku against the OpenEnv TextArena environment, one cell per tool call. The model starts out unable to fill a single cell correctly. A short supervised warmup teaches it to read the grid and fill it, and in our run GRPO then doubled the puzzles it solves at the level it trained on. Every step runs on one GPU on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs), and the whole pipeline costs about $42, most of it GRPO.
+This tutorial trains [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) to play Sudoku against the OpenEnv TextArena environment, one cell per tool call. The model starts out unable to fill a single cell correctly. A short supervised warmup teaches it to read the grid and fill it, and in our run GRPO then more than doubled the puzzles it solves at the level it trained on. Every step runs on one GPU on [Hugging Face Jobs](https://huggingface.co/docs/huggingface_hub/guides/jobs), and the whole pipeline costs about $42, most of it GRPO.
 
 ![Base model, SFT and SFT + GRPO playing the same puzzles](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/sudoku-progress.gif)
+
+*Puzzles 7 to 12 of `puzzles_c55.json` (26 empty cells), where the SFT model solves 2 and SFT + GRPO 4, close to their rates over all 30.*
 
 | Model | 16 empty cells: solved | Cells filled | 26 empty cells: solved | Cells filled |
 |---|---|---|---|---|
 | [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) | 0/30 | 1.9% | 0/30 | 0.1% |
-| + SFT ([model](https://huggingface.co/openenv/Qwen3-1.7B-Sudoku-SFT)) | 22/30 | 84.8% | 6/30 | 48.5% |
-| + SFT + GRPO ([model](https://huggingface.co/openenv/Qwen3-1.7B-Sudoku-SFT-GRPO)) | 24/30 | 87.1% | 13/30 | 76.8% |
+| + SFT ([model](https://huggingface.co/openenv/Qwen3-1.7B-Sudoku-SFT)) | 19/30 | 79.1% | 10/30 | 55.8% |
+| + SFT + GRPO ([model](https://huggingface.co/openenv/Qwen3-1.7B-Sudoku-SFT-GRPO)) | 26/30 | 87.5% | 22/30 | 83.2% |
 
-These numbers come from our run, with one training run per step, evaluated greedily on the same 30 puzzles per level ([`puzzles_c65.json`](https://github.com/openenv/OpenEnv/tree/main/examples/sudoku) and `puzzles_c55.json`). GRPO trained at 26 empty cells, which is where it helps most. At 16 empty cells the SFT model already solves most puzzles. Thirty puzzles is a small sample: GRPO fills more cells than the SFT model on 19 of the 30 puzzles at 26 empty cells and fewer on 7, so expect the same ordering in a new run rather than the exact numbers.
+These numbers come from our run, with one training run per step, evaluated greedily on the same 30 puzzles per level ([`puzzles_c65.json`](https://github.com/openenv/OpenEnv/tree/main/examples/sudoku) and `puzzles_c55.json`). GRPO trained at 26 empty cells, which is where it helps most. At 16 empty cells the SFT model already solves most puzzles. Thirty puzzles is a small sample: GRPO fills more cells than the SFT model on 19 of the 30 puzzles at 26 empty cells and fewer on 4. Greedy decoding on a different GPU also changes a few games, which moved the SFT model by 3 puzzles between our runs, so expect the same ordering in a new run rather than the exact numbers.
 
 See the training curves on [Trackio](https://huggingface.co/spaces/openenv/sudoku-runs). The scripts are in [`examples/sudoku`](https://github.com/openenv/OpenEnv/tree/main/examples/sudoku).
 
@@ -65,7 +67,7 @@ The log grows with every move: each observation repeats the whole game so far, s
 
 TextArena's `Sudoku-v0` takes a `clues` argument, the number of digits given at the start. The generator removes digits while the solution stays unique, so `clues` is a floor: 55 clues leaves about 26 empty cells, 60 (the `Sudoku-v0` default, which the `openenv/sudoku` Space serves) about 21, and 65 about 16.
 
-The level decides whether GRPO has something to learn from. After SFT, our model solved most puzzles at 16 empty cells and a fifth of them at 26, filling about half the grid. Training at 26 empty cells leaves room to improve while every group still has games that go further than others. We trained at 55 clues and evaluated at 55 and 65.
+The level decides whether GRPO has something to learn from. After SFT, our model solved most puzzles at 16 empty cells and a third of them at 26, filling about half the grid. Training at 26 empty cells leaves room to improve while every group still has games that go further than others. We trained at 55 clues and evaluated at 55 and 65.
 
 The Space reads the game arguments from `TEXTARENA_KW_*` variables, as JSON. To serve the training level, [duplicate the `openenv/sudoku` Space](https://huggingface.co/spaces/openenv/sudoku?duplicate=true) and set these variables on your copy:
 
@@ -115,7 +117,7 @@ hf jobs uv run --flavor a100-large --timeout 1h --secrets HF_TOKEN sft.py \
 
 In our run the loss went from 0.40 to 0.017. As in the [Wordle tutorial](wordle-grpo), the trainable weights stay in fp32 with bf16 compute, and the script casts them to bf16 just before the upload.
 
-The SFT model solves 22 of 30 puzzles at 16 empty cells and 6 of 30 at 26. Its most common failure: it misreads a row or column, concludes that the missing digit is 0, and ends the game with the closing turn it learned from the dataset ("Solved: every cell is filled.") while cells are still empty.
+The SFT model solves 19 of 30 puzzles at 16 empty cells and 10 of 30 at 26. Its most common failure: it misreads a row or column, concludes that the missing digit is 0, and ends the game with the closing turn it learned from the dataset ("Solved: every cell is filled.") while cells are still empty.
 
 ## 6. GRPO
 
@@ -175,7 +177,7 @@ uv run evaluate.py --model <user>/Qwen3-1.7B-Sudoku-SFT-GRPO --thinking --max-ne
     --puzzles puzzles_c55.json --out grpo_c55.jsonl
 uv run summarize.py base_c55.jsonl sft_c55.jsonl grpo_c55.jsonl
 uv run make_gif.py base_c55.jsonl sft_c55.jsonl grpo_c55.jsonl --labels "Qwen3-1.7B" "+ SFT" "+ SFT + GRPO" \
-    --games 6 --out progress.gif
+    --skip 6 --games 6 --out progress.gif
 ```
 
 A trained model takes up to 9 minutes per puzzle on a laptop (Apple silicon), since solved games are long. On an `l4x1` job, 30 puzzles take under an hour:
@@ -185,7 +187,7 @@ hf jobs uv run --flavor l4x1 --timeout 4h evaluate.py --model <user>/Qwen3-1.7B-
     --thinking --max-new-tokens 384 --puzzles puzzles_c55.json --out /dev/stdout
 ```
 
-The games are printed as JSON lines in the job logs (`hf jobs logs <job_id> | grep '^{"model"' > grpo_c55.jsonl`).
+A game ends on two rejected moves in a row or after 40 moves, the same budget as `max_tool_calling_iterations` in GRPO. The games are printed as JSON lines in the job logs (`hf jobs logs <job_id> | grep '^{"model"' > grpo_c55.jsonl`).
 
 The base model runs without thinking (`--max-new-tokens 256`). With thinking on and the same 384-token budget, it never finished reasoning before the limit and made no move at all.
 

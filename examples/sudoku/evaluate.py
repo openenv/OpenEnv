@@ -117,7 +117,8 @@ def play(model, tokenizer, env, puzzle, solution, args):
     ]
     empty = sum(row.count(0) for row in puzzle)
     moves, reward, done, last_reply = [], 0.0, False, None
-    while not done and len(moves) < empty + 2:
+    # The same budget as GRPO (max_tool_calling_iterations=40). A game ends on two mistakes in a row, not on the total.
+    while not done and len(moves) < 40:
         text = tokenizer.apply_chat_template(
             messages,
             tools=TOOLS,

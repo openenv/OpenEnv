@@ -35,5 +35,5 @@ Greedy, the same 30 puzzles for every model. The base model plays without thinki
 | Model | 16 empty: solved | 16 empty: cells | 26 empty: solved | 26 empty: cells |
 |---|---|---|---|---|
 | Qwen3-1.7B | 0/30 | 1.9% | 0/30 | 0.1% |
-| + SFT | 22/30 | 84.8% | 6/30 | 48.5% |
-| + SFT + GRPO (75 steps) | 24/30 | 87.1% | 13/30 | 76.8% |
+| + SFT | 19/30 | 79.1% | 10/30 | 55.8% |
+| + SFT + GRPO (75 steps) | 26/30 | 87.5% | 22/30 | 83.2% |

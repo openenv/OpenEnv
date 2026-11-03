@@ -130,13 +130,17 @@ def main():
     parser.add_argument(
         "--games", type=int, dest="n", help="only show the first n games"
     )
+    parser.add_argument(
+        "--skip", type=int, default=0, help="skip the first games of each file"
+    )
     parser.add_argument("--out", default="progress.gif")
     args = parser.parse_args()
 
     columns = []
     for path in args.games:
         with open(path) as games_file:
-            columns.append([json.loads(line) for line in games_file][: args.n])
+            games = [json.loads(line) for line in games_file][args.skip :]
+            columns.append(games[: args.n])
     labels = args.labels or [c[0]["model"].split("/")[-1] for c in columns]
     imgs = frames(columns, labels)
     imgs[0].save(args.out, save_all=True, append_images=imgs[1:], duration=300, loop=0)
