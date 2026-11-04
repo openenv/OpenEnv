@@ -69,7 +69,7 @@ with OpenAppEnv.from_docker_image("openapp-env:latest").sync() as client:
 
 Element IDs (`bid`) come from the observation's `axtree_txt`. To use the async client, `await OpenAppEnv.from_docker_image(...)` instead of calling `.sync()`.
 
-A complete script is in [`examples/openapp_example.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/openapp_example.py):
+A complete script is in [`examples/openapp_example.py`](https://github.com/openenv/OpenEnv/blob/main/examples/openapp_example.py):
 
 ```bash
 python examples/openapp_example.py --mode docker --num-steps 20

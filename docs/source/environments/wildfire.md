@@ -161,6 +161,6 @@ The web interface shows the grid as colored cells. Click a cell to fill in the c
   title  = {Wildfire Environment for OpenEnv: Containment-Focused RL Simulation},
   author = {OpenEnv Contributors},
   year   = {2025},
-  url    = {https://github.com/huggingface/OpenEnv}
+  url    = {https://github.com/openenv/OpenEnv}
 }
 ```

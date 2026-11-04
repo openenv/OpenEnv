@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,7 @@ class FakeSandbox:
     def __init__(self) -> None:
         self.killed = False
         self.shell_commands: list[str] = []
+        self.process_commands: list[str] = []
 
     def run_code(self, code: str) -> CellResult:
         return CellResult(
@@ -34,6 +36,13 @@ class FakeSandbox:
 
     def run_shell(self, command: str) -> CellResult:
         self.shell_commands.append(command)
+        return self._respond(command)
+
+    def run_command(self, command: str, timeout_s: float = 120) -> CellResult:
+        self.process_commands.append(command)
+        return self._respond(command)
+
+    def _respond(self, command: str) -> CellResult:
         if "exit 1" in command:
             return CellResult(
                 stdout="",
@@ -202,6 +211,8 @@ def test_final_answer_runs_verify_commands():
         "test -f answer.py",
         "exit 1",
     ]
+    assert "exit 1" in fake_sandbox.process_commands
+    assert "exit 1" not in fake_sandbox.shell_commands
 
 
 REWARD_FILE = "/home/user/logs/verifier/reward.txt"
@@ -221,27 +232,42 @@ def _cell(stdout: str = "", success: bool = True) -> CellResult:
 
 
 class RewardFileSandbox(FakeSandbox):
-    """FakeSandbox whose reward file any shell command can write, as in E2B."""
+    """FakeSandbox whose reward file any command can write, as in E2B.
+
+    The agent writes to it through `run_shell`; verification clears, writes and
+    reads it as sandbox processes through `run_command`.
+    """
 
     def __init__(self, *, removable: bool = True) -> None:
         super().__init__()
         self.reward_file: str | None = None
         self.removable = removable
 
-    def run_shell(self, command: str) -> CellResult:
+    def _reward_file_command(self, command: str) -> CellResult | None:
         if command.startswith("echo ") and command.endswith(f" > {REWARD_FILE}"):
-            self.shell_commands.append(command)
             self.reward_file = command[len("echo ") : -len(f" > {REWARD_FILE}")]
             return _cell()
         if command.startswith(f"rm -f {REWARD_FILE}"):
-            self.shell_commands.append(command)
             if self.removable:
                 self.reward_file = None
             return _cell(success=self.reward_file is None)
         if command.startswith(f"cat {REWARD_FILE}"):
-            self.shell_commands.append(command)
             return _cell(stdout=self.reward_file or "")
-        return super().run_shell(command)
+        return None
+
+    def run_shell(self, command: str) -> CellResult:
+        result = self._reward_file_command(command)
+        if result is None:
+            return super().run_shell(command)
+        self.shell_commands.append(command)
+        return result
+
+    def run_command(self, command: str, timeout_s: float = 120) -> CellResult:
+        result = self._reward_file_command(command)
+        if result is None:
+            return super().run_command(command)
+        self.process_commands.append(command)
+        return result
 
 
 def _submit(sandbox, verify_commands, agent_commands=()) -> JupyterState:
@@ -340,3 +366,309 @@ def test_run_shell_reports_the_exit_code(command, success):
     sandbox._sbx = _LocalKernel()
 
     assert sandbox.run_shell(command).success is success
+
+
+class _Kernel:
+    """A kernel whose namespace persists between cells, as E2B's run_code does."""
+
+    def __init__(self) -> None:
+        self.namespace: dict = {}
+        self.cells: list[str] = []
+
+    def run_code(self, code: str, **kwargs):
+        self.cells.append(code)
+        stdout, stderr, error = io.StringIO(), io.StringIO(), None
+        try:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                exec(code, self.namespace)
+        except BaseException as exc:  # a kernel reports SystemExit, it doesn't exit
+            error = SimpleNamespace(
+                name=type(exc).__name__, value=str(exc), traceback=""
+            )
+        return SimpleNamespace(
+            error=error,
+            logs=SimpleNamespace(
+                stdout=[stdout.getvalue()] if stdout.getvalue() else [],
+                stderr=[stderr.getvalue()] if stderr.getvalue() else [],
+            ),
+            results=[],
+            execution_count=len(self.cells),
+        )
+
+
+class _CommandExit(Exception):
+    """Stands in for `e2b.CommandExitException`, raised on a non-zero exit."""
+
+    def __init__(self, exit_code: int, stdout: str, stderr: str) -> None:
+        super().__init__(f"Command exited with code {exit_code}")
+        self.exit_code, self.stdout, self.stderr = exit_code, stdout, stderr
+
+
+class _Processes:
+    """E2B's process API: each command is a fresh process with a real exit status.
+
+    envd starts commands as `/bin/bash -l -c`, so the login files in `HOME` are
+    sourced here too. `/home/user` is mapped to a temporary directory, which is
+    also that `HOME`, so the commands can run here.
+    """
+
+    def __init__(self, home) -> None:
+        self.home = str(home)
+        self.calls: list[dict] = []
+        # Captured now, before any notebook cell gets a chance to rebind it.
+        self._run = subprocess.run
+
+    def run(self, cmd, background=None, user=None, cwd=None, timeout=None, **kwargs):
+        self.calls.append(
+            {
+                "cmd": cmd,
+                "background": background,
+                "user": user,
+                "cwd": cwd,
+                "timeout": timeout,
+            }
+        )
+        done = self._run(
+            ["/bin/bash", "-l", "-c", cmd.replace("/home/user", self.home)],
+            cwd=(cwd or "").replace("/home/user", self.home) or None,
+            env={"PATH": "/usr/bin:/bin", "HOME": self.home},
+            capture_output=True,
+            text=True,
+        )
+        return _Handle(done=done)
+
+
+class _Handle:
+    """What `commands.run(background=True)` returns: wait for it, or kill it."""
+
+    def __init__(
+        self, done=None, wait_error=None, kill_result=True, kill_error=None
+    ) -> None:
+        self._done, self._wait_error = done, wait_error
+        self._kill_result, self._kill_error = kill_result, kill_error
+        self.killed = False
+
+    def wait(self):
+        if self._wait_error is not None:
+            raise self._wait_error
+        if self._done.returncode:
+            raise _CommandExit(
+                self._done.returncode, self._done.stdout, self._done.stderr
+            )
+        return SimpleNamespace(
+            stdout=self._done.stdout, stderr=self._done.stderr, exit_code=0
+        )
+
+    def kill(self) -> bool:
+        self.killed = True
+        if self._kill_error is not None:
+            raise self._kill_error
+        return self._kill_result
+
+
+def _environment_on_real_sandbox(home, verify_commands):
+    kernel, processes = _Kernel(), _Processes(home)
+    sandbox = E2BSandbox.__new__(E2BSandbox)
+    sandbox._sbx = SimpleNamespace(run_code=kernel.run_code, commands=processes)
+    sandbox.sandbox_id = "fake-sandbox"
+    env = JupyterEnvironment()
+    env._sandbox = sandbox
+    env._state = JupyterState(
+        episode_id="episode-1",
+        sandbox_id="fake-sandbox",
+        verify_commands=verify_commands,
+    )
+    return env, kernel, processes
+
+
+def _run_cell(env, code):
+    env.step(
+        CallToolAction(tool_name="add_and_execute_code_cell", arguments={"code": code})
+    )
+
+
+def _submit_answer(env):
+    env.step(CallToolAction(tool_name="final_answer", arguments={"answer": "done"}))
+
+
+# Reproduction from #1210: a cell that rebinds subprocess.run used to decide the
+# outcome of every verify command, and of the reward-file read.
+_REBIND_SUBPROCESS = """\
+import subprocess
+
+class _Fake:
+    returncode = 0
+    stdout = "1.0"
+    stderr = ""
+
+subprocess.run = lambda *a, **k: _Fake()
+"""
+
+
+def test_verification_ignores_a_rebound_subprocess(monkeypatch, tmp_path):
+    # Restores the real function after the cell below replaces it.
+    monkeypatch.setattr(subprocess, "run", subprocess.run)
+    env, kernel, processes = _environment_on_real_sandbox(
+        tmp_path, ["exit 1", "exit 1"]
+    )
+
+    _run_cell(env, _REBIND_SUBPROCESS)
+    _submit_answer(env)
+
+    assert [result.success for result in env.state.verify_results] == [False, False]
+    assert env.state.last_reward == 0.0
+    assert not any("exit 1" in cell for cell in kernel.cells)
+
+
+def test_reward_file_is_read_outside_the_kernel(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", subprocess.run)
+    env, _, _ = _environment_on_real_sandbox(
+        tmp_path,
+        ["echo 0.8 > /home/user/logs/verifier/reward.txt", "exit 1"],
+    )
+
+    _run_cell(env, _REBIND_SUBPROCESS)
+    _submit_answer(env)
+
+    # The rebound function would have reported "1.0" for the read.
+    assert env.state.last_reward == 0.8
+
+
+def test_verification_does_not_inherit_the_notebook_directory(monkeypatch, tmp_path):
+    home, elsewhere = tmp_path / "home", tmp_path / "elsewhere"
+    home.mkdir()
+    elsewhere.mkdir()
+    # Restores the working directory after the cell changes it.
+    monkeypatch.chdir(tmp_path)
+    env, _, processes = _environment_on_real_sandbox(home, ["pwd"])
+
+    _run_cell(env, f"import os\nos.chdir({str(elsewhere)!r})\n")
+    _submit_answer(env)
+
+    assert [result.output for result in env.state.verify_results] == [str(home)]
+    assert {
+        (call["background"], call["user"], call["cwd"], call["timeout"])
+        for call in processes.calls
+    } == {(True, "root", "/home/user", 120)}
+
+
+def _sandbox_with_handle(handle=None, start_error=None):
+    sandbox = E2BSandbox.__new__(E2BSandbox)
+
+    def run(cmd, **kwargs):
+        if start_error is not None:
+            raise start_error
+        return handle
+
+    sandbox._sbx = SimpleNamespace(commands=SimpleNamespace(run=run))
+    return sandbox
+
+
+def test_run_command_reports_a_non_zero_exit():
+    handle = _Handle(wait_error=_CommandExit(3, "partial output", "boom"))
+
+    result = _sandbox_with_handle(handle).run_command("false")
+
+    assert not result.success
+    assert result.error == "exit code 3"
+    assert (result.stdout, result.stderr) == ("partial output", "boom")
+    # The command exited, so there is nothing to stop.
+    assert not handle.killed
+
+
+def test_run_command_kills_a_command_it_stops_waiting_for_and_raises():
+    # The kill reports that it stopped nothing, as E2B's does when the command
+    # has already left a child behind: either way the command is not a result.
+    handle = _Handle(
+        wait_error=TimeoutError("context deadline exceeded"), kill_result=False
+    )
+    sandbox = _sandbox_with_handle(handle)
+
+    with pytest.raises(TimeoutError):
+        sandbox.run_command("sleep 999")
+
+    assert handle.killed
+
+
+def test_run_command_raises_the_wait_failure_even_when_the_kill_fails():
+    handle = _Handle(
+        wait_error=TimeoutError("context deadline exceeded"),
+        kill_error=RuntimeError("process not found"),
+    )
+
+    with pytest.raises(TimeoutError):
+        _sandbox_with_handle(handle).run_command("sleep 999")
+
+
+def test_run_command_propagates_a_command_that_could_not_start():
+    sandbox = _sandbox_with_handle(start_error=ConnectionError("sandbox unreachable"))
+
+    with pytest.raises(ConnectionError):
+        sandbox.run_command("true")
+
+
+def test_run_command_matches_the_sdk_exception():
+    e2b = pytest.importorskip("e2b")
+    exc = e2b.CommandExitException(stderr="boom", stdout="", exit_code=2, error=None)
+    handle = _Handle(wait_error=exc)
+
+    result = _sandbox_with_handle(handle).run_command("false")
+
+    assert not result.success
+    assert result.error == "exit code 2"
+    assert result.stderr == "boom"
+    assert not handle.killed
+
+
+def test_a_sandbox_failure_during_verification_is_not_a_reward(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.chdir(tmp_path)
+    env, _, processes = _environment_on_real_sandbox(home, ["true", "true"])
+
+    def unreachable(*args, **kwargs):
+        raise ConnectionError("sandbox unreachable")
+
+    # The sandbox goes away after the agent's work, while verification runs.
+    processes.run = unreachable
+    obs = env.step(
+        CallToolAction(tool_name="final_answer", arguments={"answer": "done"})
+    )
+
+    # Reported as an error rather than scored: no verify results, no reward,
+    # and the episode is not finished.
+    assert "sandbox unreachable" in obs.error.message
+    assert env.state.verify_results == []
+    assert env.state.last_reward is None
+    assert not obs.done
+
+
+# What a root agent can write into the profile a login shell sources: an EXIT
+# trap replaces the status of whatever the shell was asked to run.
+_POISONED_PROFILE = "trap 'exit 0' EXIT\n"
+
+
+def test_a_poisoned_login_profile_still_defeats_a_failing_verify_command(
+    monkeypatch, tmp_path
+):
+    """The limit this change does not close, pinned so it cannot move unnoticed.
+
+    E2B runs each command as `bash -l -c` and the notebook kernel runs as root,
+    so a cell can write the profile that login shell sources. Verification runs
+    outside the kernel, not outside the agent's reach: the boundary that would
+    stop this is tracked in #1232.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.chdir(tmp_path)
+    env, _, _ = _environment_on_real_sandbox(home, ["exit 1"])
+
+    _run_cell(
+        env,
+        f"open({str(home / '.bash_profile')!r}, 'w').write({_POISONED_PROFILE!r})",
+    )
+    _submit_answer(env)
+
+    # The verify command fails, the profile reports success for it anyway.
+    assert [result.success for result in env.state.verify_results] == [True]
+    assert env.state.last_reward == 1.0

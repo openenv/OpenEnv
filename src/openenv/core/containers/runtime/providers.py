@@ -21,7 +21,9 @@ class ContainerProvider(ABC):
 
     Providers implement this interface to support different container platforms:
     - LocalDockerProvider: Runs containers on local Docker daemon
-    - KubernetesProvider: Runs containers in Kubernetes cluster
+    - DockerSwarmProvider: Runs containers as a Docker Swarm service
+    - KubernetesProvider: optional ``openenv[kubernetes]`` extra
+      (``kubernetes_provider.py``)
     - FargateProvider: Runs containers on AWS Fargate
     - CloudRunProvider: Runs containers on Google Cloud Run
 
@@ -660,19 +662,6 @@ class DockerSwarmProvider(ContainerProvider):
         clean_image = image.split("/")[-1].split(":")[0]
         timestamp = int(time.time() * 1000)
         return f"{clean_image}-swarm-{timestamp}"
-
-
-class KubernetesProvider(ContainerProvider):
-    """
-    Planned container provider for Kubernetes clusters.
-
-    Not yet implemented: this is a placeholder for the planned Kubernetes
-    backend and does not implement the abstract `ContainerProvider` methods, so
-    it cannot be instantiated. Use `LocalDockerProvider`, `DockerSwarmProvider`,
-    `DaytonaProvider`, or `ACASandboxProvider` instead.
-    """
-
-    pass
 
 
 class RuntimeProvider(ABC):

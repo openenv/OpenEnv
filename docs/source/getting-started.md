@@ -155,7 +155,7 @@ with EchoEnv(base_url="http://localhost:8000").sync() as client:
     result = client.reset()
 ```
 
-The same client also runs environments on cloud sandboxes (Daytona, Modal, Novita, Azure Container Apps, Hugging Face) through runtime providers. `HFSandboxProvider` ships with core OpenEnv and needs a Hugging Face token for an account that can run Jobs (the sandboxes are billed as Jobs): it runs an environment's Space image in a Hugging Face sandbox ([example](guides/runtime-providers#hfsandboxprovider)). See the [Runtime Providers guide](guides/runtime-providers) to pick one.
+The same client also runs environments on cloud sandboxes (Daytona, Modal, Novita, Azure Container Apps, Hugging Face) and on a Kubernetes cluster through runtime providers. `HFSandboxProvider` ships with core OpenEnv and needs a Hugging Face token for an account that can run Jobs (the sandboxes are billed as Jobs): it runs an environment's Space image in a Hugging Face sandbox ([example](guides/runtime-providers#hfsandboxprovider)). `KubernetesProvider` is an optional extra (`pip install openenv[kubernetes]`). See the [Runtime Providers guide](guides/runtime-providers) to pick one.
 
 ## Next Steps
 

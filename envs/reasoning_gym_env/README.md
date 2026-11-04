@@ -310,5 +310,5 @@ The Reasoning Gym environment is ideal for:
 ## Learn More
 
 - [Reasoning Gym Library](https://github.com/open-thought/reasoning-gym)
-- [OpenEnv Documentation](https://github.com/huggingface/OpenEnv)
-- [OpenEnv Environment Design](https://github.com/huggingface/OpenEnv/blob/main/README.md)
+- [OpenEnv Documentation](https://github.com/openenv/OpenEnv)
+- [OpenEnv Environment Design](https://github.com/openenv/OpenEnv/blob/main/README.md)
