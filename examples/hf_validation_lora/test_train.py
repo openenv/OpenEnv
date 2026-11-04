@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SPEC = importlib.util.spec_from_file_location(
     "scottwu_train", Path(__file__).with_name("train.py")
@@ -27,6 +27,27 @@ def public_observation():
 
 
 class TrainingContractTests(unittest.TestCase):
+    def test_precreated_private_tracker_gets_an_app(self):
+        api = Mock()
+        with patch("huggingface_hub.metadata_update") as update:
+            train.install_trackio_dashboard(api, "owner/fresh-private")
+        update.assert_called_once_with(
+            "owner/fresh-private",
+            {"hf_oauth": True, "hf_oauth_scopes": ["write-repos"]},
+            repo_type="space",
+            token=api.token,
+            overwrite=True,
+        )
+        files = {
+            call.kwargs["path_in_repo"]: call.kwargs["path_or_fileobj"]
+            for call in api.upload_file.call_args_list
+        }
+        self.assertEqual(files["requirements.txt"], b"trackio==0.45.0\n")
+        self.assertIn(b"trackio.show()", files["app.py"])
+        for call in api.upload_file.call_args_list:
+            self.assertEqual(call.kwargs["repo_id"], "owner/fresh-private")
+            self.assertEqual(call.kwargs["repo_type"], "space")
+
     def test_training_precision_requires_native_bf16(self):
         class Cuda:
             def is_bf16_supported(self, including_emulation=True):

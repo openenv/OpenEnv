@@ -5,6 +5,9 @@ validator's refusals, qualifies a pinned source launch in a dedicated HF Sandbox
 and trains a small LoRA policy with rewards from that environment. Framework
 specific training code stays in this example.
 
+The [recorded experiment and measured results](RESULTS.md) include validation
+outcomes, the completed LoRA run, failed attempts and remaining limitations.
+
 ## Reproduce
 
 Use a Hub account with Jobs credits and read/write access to the three private
@@ -125,7 +128,8 @@ without exception text or local values.
 ## Local checks
 
 ```bash
-python -B -m unittest discover -s examples/hf_validation_lora
+uv run --no-project --with huggingface_hub==2.4.0 \
+  python -B -m unittest discover -s examples/hf_validation_lora
 PYTHONPATH=src:envs uv run pytest tests/test_validation/test_hf_sandbox_provider.py \
   tests/test_core/test_env_client_headers.py -q
 ```

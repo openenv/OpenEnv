@@ -93,6 +93,29 @@ def require_fresh_private_trackio(api, space_id):
     return {"private": True, "fresh": True, "mounted_storage": []}
 
 
+def install_trackio_dashboard(api, space_id):
+    # Trackio skips deployment when the required pre-created Space already exists.
+    from huggingface_hub import metadata_update
+
+    metadata_update(
+        space_id,
+        {"hf_oauth": True, "hf_oauth_scopes": ["write-repos"]},
+        repo_type="space",
+        token=api.token,
+        overwrite=True,
+    )
+    for name, content in (
+        ("requirements.txt", "trackio==0.45.0\n"),
+        ("app.py", "import trackio\n\ntrackio.show()\n"),
+    ):
+        api.upload_file(
+            path_or_fileobj=content.encode(),
+            path_in_repo=name,
+            repo_id=space_id,
+            repo_type="space",
+        )
+
+
 def digest(value):
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
@@ -605,6 +628,7 @@ def main():
         dtype = training_precision(torch)
         bf16 = dtype == torch.bfloat16
         report["training_preflight"] = training_preflight(torch, dtype)
+        install_trackio_dashboard(api, repos["TRACKIO_SPACE_ID"])
         tracker = trackio.init(
             project="openenv-scottwu-online-lora",
             name=run_id,
