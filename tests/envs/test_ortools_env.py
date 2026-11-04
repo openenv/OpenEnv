@@ -6,7 +6,10 @@
 
 """Tests for the OR-Tools environment: generators, verifiers, references and the MCP episode flow."""
 
+import builtins
+import json
 import random
+import sys
 import time
 
 import pytest
@@ -16,7 +19,7 @@ pytest.importorskip("fastmcp")
 
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
 from ortools_env import sandbox
-from ortools_env.problems import jobshop, PROBLEMS, score
+from ortools_env.problems import jobshop, PROBLEMS, score, tardiness
 from ortools_env.server.ortools_environment import ORToolsEnvironment
 
 TINY_SIZES = {
@@ -290,6 +293,90 @@ def test_level_2_episode():
     assert obs.done
     assert "naive=" in _text(obs)
     assert -1.0 <= obs.reward <= 1.0
+
+
+@pytest.mark.parametrize(
+    "level, tool, arguments",
+    [
+        (1, "submit_solution", {"solution": {"sequence": list(range(10))}}),
+        (
+            2,
+            "submit_algorithm",
+            {
+                "code": "def solve(instance):\n    return {'sequence': list(range(10))}\n"
+            },
+        ),
+    ],
+)
+def test_failed_reference_does_not_end_the_episode(monkeypatch, level, tool, arguments):
+    def no_solution(*args, **kwargs):
+        raise RuntimeError("CP-SAT found no solution.")
+
+    env = ORToolsEnvironment()
+    env.reset(
+        problem="tardiness",
+        size="n10",
+        level=level,
+        seed=0,
+        num_eval_instances=1,
+        solve_time_limit_s=10,
+        reference_time_limit_s=5,
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(tardiness, "reference", no_solution)
+        obs = _call(env, tool, **arguments)
+    assert not obs.done
+    assert not env.state.submitted
+
+    obs = _call(env, tool, **arguments)
+    assert obs.done
+    assert obs.reward is not None
+
+
+def test_harbor_level_1_ignores_a_tampered_instance(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "problem", tardiness)
+    from ortools_env import export_harbor, harbor_verify
+
+    instance = tardiness.generate(0, "n10")
+    solution, reference, _ = tardiness.reference(instance, 5, 1)
+    baseline = tardiness.baseline(instance)
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text(
+        json.dumps(
+            {
+                "problem": "tardiness",
+                "size": "n10",
+                "level": 1,
+                "instance_seed": 0,
+                "reference": reference,
+                "baseline": baseline,
+            }
+        )
+    )
+    out = tmp_path / "tasks"
+    monkeypatch.setattr(
+        sys, "argv", ["export", "--dataset", str(dataset), "--out", str(out)]
+    )
+    export_harbor.main()
+    task = json.loads(next(out.glob("*/tests/task.json")).read_text())
+
+    # The agent controls /app: every job is on time on its version of the instance.
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "solution.json").write_text(json.dumps(solution))
+    (app / "instance.json").write_text(
+        json.dumps({**instance, "due_dates": [10**9] * 10})
+    )
+    monkeypatch.setattr(
+        harbor_verify,
+        "open",
+        lambda path, *args: builtins.open(str(path).replace("/app", str(app)), *args),
+        raising=False,
+    )
+
+    assert harbor_verify.level_1(task) == score(
+        tardiness.evaluate(instance, solution), reference, baseline
+    )
 
 
 def test_level_2_crashing_algorithm_scores_minus_one():

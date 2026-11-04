@@ -382,15 +382,16 @@ class ORToolsEnvironment(MCPEnvironment):
             return "Error: the episode is over."
         if self._state.level != 1:
             return "Error: this is a level-2 task; use submit_algorithm."
-        self._state.submitted = True
         try:
             objective = self._module.evaluate(self._instance, solution)
         except (ValueError, TypeError, KeyError, IndexError) as e:
+            self._state.submitted = True
             self._state.reward = score(None, 0, 0)
             return f"Infeasible solution: {e}\nscore={self._state.reward}"
         self._state.reference = self._reference(self._instance, self._state.reference)
         if self._state.baseline is None:
             self._state.baseline = self._module.baseline(self._instance)
+        self._state.submitted = True
         self._state.objective = objective
         self._state.reward = score(
             objective, self._state.reference, self._state.baseline
@@ -405,7 +406,6 @@ class ORToolsEnvironment(MCPEnvironment):
             return "Error: the episode is over."
         if self._state.level != 2:
             return "Error: this is a level-1 task; use submit_solution."
-        self._state.submitted = True
         lines, scores = [], []
         for k, instance in enumerate(self._eval_instances):
             objective, _, message = self._run_solve(code, instance)
@@ -422,6 +422,7 @@ class ORToolsEnvironment(MCPEnvironment):
             lines.append(
                 f"instance {k}: objective={objective} naive={naive} reference={reference} score={scores[-1]:.4f}"
             )
+        self._state.submitted = True
         self._state.reward = sum(scores) / len(scores)
         return "\n".join(lines) + f"\nscore={self._state.reward:.4f}"
 

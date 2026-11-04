@@ -6,7 +6,7 @@
 
 """
 Verifier of an exported Harbor task, copied to `/tests/verify.py` next to `problem.py` (the problem module) and
-`task.json` (level, references and, at level 2, the hidden evaluation instances). Writes the score to
+`task.json` (level, references and the instance, or the hidden evaluation instances at level 2). Writes the score to
 `/logs/verifier/reward.txt`.
 
 At level 2, the submitted `solve` runs as the unprivileged `sandbox` user of the task image, so it cannot read the
@@ -46,11 +46,9 @@ def score(objective, reference, baseline):
 
 
 def level_1(task):
-    with open("/app/instance.json") as f:
-        instance = json.load(f)
     with open("/app/solution.json") as f:
         solution = json.load(f)
-    objective = problem.evaluate(instance, solution)
+    objective = problem.evaluate(task["instance"], solution)
     print(
         f"objective={objective} naive={task['baseline']} reference={task['reference']}"
     )

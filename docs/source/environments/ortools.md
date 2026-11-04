@@ -152,5 +152,5 @@ PYTHONPATH=src:envs python -m ortools_env.export_harbor --dataset rcpsp_l1.jsonl
 ```
 
 Each task gets the instance in `/app/instance.json` and asks for `/app/solution.json` (level 1) or `/app/solve.py`
-(level 2). The verifier, the problem module and the hidden evaluation instances are in `tests/`, which Harbor only
+(level 2). The verifier, the problem module and the instances it scores are in `tests/`, which Harbor only
 uploads after the agent has finished.

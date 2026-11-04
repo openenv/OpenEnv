@@ -9,8 +9,8 @@ Export a dataset built by `build_dataset.py` as Harbor tasks, to run frontier ag
 same episodes through `harbor run` or the OpenEnv `harbor_env`.
 
 Each task gets the instance in `/app/instance.json` and asks for `/app/solution.json` (level 1) or `/app/solve.py`
-defining `solve(instance)` (level 2). The verifier, the problem module and, at level 2, the hidden evaluation
-instances live in `tests/`, which Harbor only uploads after the agent has finished.
+defining `solve(instance)` (level 2). The verifier, the problem module and the instances it scores live in
+`tests/`, which Harbor only uploads after the agent has finished.
 
     python -m ortools_env.export_harbor --dataset rcpsp_l1.jsonl --out tasks/
 """
@@ -139,6 +139,7 @@ def main():
 
         task = {"level": level, "solve_time_limit_s": args.solve_time_limit}
         if level == 1:
+            task["instance"] = instance
             task["reference"] = row["reference"]
             task["baseline"] = row["baseline"]
         else:
