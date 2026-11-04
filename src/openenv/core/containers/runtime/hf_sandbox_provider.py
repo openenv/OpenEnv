@@ -94,6 +94,13 @@ def _get_pool(image: str, flavor: str) -> Any:
         return pool
 
 
+class _NoRedirectWebSocketConnect(ws_connect):
+    """Keep sandbox credentials on the original WebSocket endpoint."""
+
+    def process_redirect(self, exc: Exception) -> Exception:
+        return exc
+
+
 class _LocalAuthProxy:
     def __init__(self, *, target_url: str, headers: dict[str, str]):
         self.target_url = target_url.rstrip("/")
@@ -131,7 +138,7 @@ class _LocalAuthProxy:
                     data=body,
                     headers=headers,
                     timeout=60.0,
-                    allow_redirects=True,
+                    allow_redirects=False,
                 )
             except requests.RequestException:
                 return Response(
@@ -202,7 +209,7 @@ class _LocalAuthProxy:
         last_error: Exception | None = None
         for _ in range(5):
             try:
-                return await ws_connect(
+                return await _NoRedirectWebSocketConnect(
                     target,
                     additional_headers=headers,
                     max_size=_MAX_WS_MESSAGE_SIZE,
