@@ -64,8 +64,9 @@ agent-sandbox = [
     # Hand-written client for kubernetes-sigs/agent-sandbox. The SDK requires
     # Python >= 3.11; the marker keeps `uv sync` resolvable on the core floor
     # of 3.10, where the extra installs nothing and the lazy import in the
-    # provider raises the install hint instead.
-    "k8s-agent-sandbox>=1.0,<2; python_version >= '3.11'",
+    # provider raises the install hint instead. 1.0.6 is the first release
+    # whose SandboxClient accepts api_client.
+    "k8s-agent-sandbox>=1.0.6,<2; python_version >= '3.11'",
 ]
 inspect = [
     "inspect-ai>=0.3.0",
