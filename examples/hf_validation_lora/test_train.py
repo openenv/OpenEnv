@@ -75,6 +75,7 @@ class TrainingContractTests(unittest.TestCase):
     def test_pilot_requires_within_group_contrast_and_server_validity(self):
         groups = [[{"reward": 0.0, "valid": True} for _ in range(4)] for _ in range(8)]
         self.assertFalse(train.signal_gate(groups)["passed"])
+
         # Different task means, each group constant, still provide no GRPO signal.
         groups[0] = [{"reward": 1.0, "valid": True} for _ in range(4)]
         self.assertFalse(train.signal_gate(groups)["passed"])
@@ -95,6 +96,24 @@ class TrainingContractTests(unittest.TestCase):
         self.assertTrue(gate["passed"])
         groups[1][-1]["valid"] = False
         self.assertFalse(train.signal_gate(groups)["passed"])
+
+    def test_expanded_pilot_keeps_thresholds_and_uses_full_denominator(self):
+        groups = [
+            [{"reward": 0.0, "valid": False} for _ in range(4)] for _ in range(32)
+        ]
+        for group in groups[:8]:
+            for row in group:
+                row["valid"] = True
+        groups[0][0]["reward"] = 1.0
+        groups[1][0]["reward"] = 0.1
+        gate = train.signal_gate(groups, expected_groups=32)
+        self.assertTrue(gate["passed"])
+        self.assertEqual(gate["planned_groups"], 32)
+        self.assertEqual(gate["minimum_contrasting_groups"], 2)
+        self.assertEqual(gate["valid_fraction"], 0.25)
+        groups[-1].pop()
+        with self.assertRaises(ValueError):
+            train.signal_gate(groups, expected_groups=32)
 
     def test_exec_bridge_uses_no_proxy_and_preserves_terminal_zeros(self):
         calls = []

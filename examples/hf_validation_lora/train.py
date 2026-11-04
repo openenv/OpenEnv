@@ -18,7 +18,7 @@ SBX_NAMESPACE (default OUTPUT_REPO owner) and SBX_PORT (default 8012) are option
 Objective: unchanged terminal shaped reward from indexed reset/one expression
 step; group-normalized vanilla GRPO, beta=0, no auxiliary rewards. Missing tags
 submit an empty expression, whose terminal reward is still issued by the server.
-Before any LoRA is attached: evaluate the base model, then sample 8 TRAIN groups
+Before any LoRA is attached: evaluate the base model, then sample 32 TRAIN groups
 of 4. Require >=2 groups with raw reward range >=1e-6 and >=25% server-valid
 expressions. Otherwise persist no_grpo_learning_signal and STOP; no automatic
 curriculum or reference-solution fallback exists. All 64 train tasks remain
@@ -61,6 +61,7 @@ PINS = {
     "fastmcp": "3.4.11",
 }
 GROUP_SIZE = 4
+PILOT_GROUPS = 32
 MIN_CONTRAST = 1e-6
 MIN_VALID_FRACTION = (
     0.25  # Pre-registered before trials; invalid expressions keep env zero.
@@ -141,10 +142,10 @@ def hand_identity(messages):
     return tuple(sorted(ranks))
 
 
-def signal_gate(groups):
+def signal_gate(groups, expected_groups=8):
     """Frozen train-only smoke threshold; never tune it using test returns."""
-    if len(groups) != 8 or any(len(g) != GROUP_SIZE for g in groups):
-        raise ValueError("Pilot requires eight groups of four")
+    if len(groups) != expected_groups or any(len(g) != GROUP_SIZE for g in groups):
+        raise ValueError("Pilot group count or size differs from the frozen plan")
     stats = []
     for group in groups:
         rewards = [r["reward"] for r in group]
@@ -157,12 +158,13 @@ def signal_gate(groups):
             }
         )
     contrasting = sum(s["range"] + 1e-12 >= MIN_CONTRAST for s in stats)
-    valid_fraction = sum(s["valid"] for s in stats) / 32
+    valid_fraction = sum(s["valid"] for s in stats) / (expected_groups * GROUP_SIZE)
     return {
         "passed": contrasting >= 2 and valid_fraction >= MIN_VALID_FRACTION,
         "contrasting_groups": contrasting,
         "valid_fraction": valid_fraction,
         "minimum_raw_range": MIN_CONTRAST,
+        "planned_groups": expected_groups,
         "minimum_contrasting_groups": 2,
         "minimum_valid_fraction": MIN_VALID_FRACTION,
         "groups": stats,
@@ -324,7 +326,7 @@ def main():
         "model": MODEL,
         "model_revision": MODEL_REVISION,
         "max_steps": 20,
-        "pilot_planned_completions": 32,
+        "pilot_planned_completions": PILOT_GROUPS * GROUP_SIZE,
         "hyperparameters": {
             "loss_type": "grpo",
             "scale_rewards": "group",
@@ -344,6 +346,7 @@ def main():
     }
     traces = []
     api = sandbox = trainer = model = tokenizer = trackio = None
+    tracker = None
     initial = {}
     repos = {}
     safe_to_upload = False
@@ -468,6 +471,14 @@ def main():
             api, repos["TRACKIO_SPACE_ID"]
         )
         safe_to_upload = True
+        tracker = trackio.init(
+            project="openenv-scottwu-online-lora",
+            name=run_id,
+            space_id=repos["TRACKIO_SPACE_ID"],
+            private=True,
+            config=report["hyperparameters"],
+            capture_console=False,
+        )
         if globals().get("__file__") and Path(__file__).is_file():
             source = Path(__file__).read_bytes()
             (out / "train.py").write_bytes(source)
@@ -496,7 +507,7 @@ def main():
             "unique_train_hands": len(train_hands),
             "unique_test_hands": len(test_hands),
             "eval_seeds": EVAL_SEEDS,
-            "pilot_train_indices": list(range(8)),
+            "pilot_train_indices": list(range(PILOT_GROUPS)),
             "minimum_raw_group_range": MIN_CONTRAST,
             "minimum_contrasting_groups": 2,
             "minimum_valid_fraction": MIN_VALID_FRACTION,
@@ -591,13 +602,28 @@ def main():
             persist()
 
         evaluate("baseline")  # The model has no adapter at this point.
+        trackio.log(
+            {
+                "heldout/base_mean_raw_reward": report["evaluation"]["baseline"][
+                    "mean_raw_reward"
+                ]
+            },
+            step=0,
+        )
         report["status"] = "pilot"
         pilot = []
-        for row in train_rows[:8]:
+        for row in train_rows[:PILOT_GROUPS]:
             seeds = [10000 + GROUP_SIZE * row["index"] + j for j in range(GROUP_SIZE)]
             texts = [generate(row, seed) for seed in seeds]
             pilot.append(score_texts("pilot", [row] * GROUP_SIZE, texts, seeds))
-        report["signal_gate"] = signal_gate(pilot)
+        report["signal_gate"] = signal_gate(pilot, expected_groups=PILOT_GROUPS)
+        trackio.log(
+            {
+                "pilot/contrasting_groups": report["signal_gate"]["contrasting_groups"],
+                "pilot/valid_fraction": report["signal_gate"]["valid_fraction"],
+            },
+            step=0,
+        )
         if not report["signal_gate"]["passed"]:
             report["status"] = "no_grpo_learning_signal"
             persist()
@@ -624,6 +650,15 @@ def main():
         ).hexdigest()
 
         class Evidence(TrainerCallback):
+            def on_log(self, args, state, control, logs=None, **kwargs):
+                metrics = {
+                    key: value
+                    for key, value in (logs or {}).items()
+                    if type(value) in (int, float) and math.isfinite(value)
+                }
+                if metrics:
+                    trackio.log(metrics, step=state.global_step)
+
             def on_pre_optimizer_step(self, args, state, control, **kwargs):
                 self.before_steps = [
                     int(s["step"].item())
@@ -744,7 +779,7 @@ def main():
             logging_steps=1,
             save_strategy="no",
             remove_unused_columns=False,
-            report_to="trackio",
+            report_to=[],
             project="openenv-scottwu-online-lora",
             run_name=run_id,
             trackio_space_id=repos["TRACKIO_SPACE_ID"],
@@ -816,9 +851,7 @@ def main():
         report["adapter_evaluation_revision"] = report["adapter_readback_commit"]
         evaluate("adapter")
         report["status"] = "complete"
-        # Trainer's Trackio callback finishes its run at train end. Logging through
-        # Trainer reopens the same private run with resume="allow" for held-out metrics.
-        trainer.log(
+        trackio.log(
             {
                 "heldout/base_mean_raw_reward": report["evaluation"]["baseline"][
                     "mean_raw_reward"
@@ -847,7 +880,10 @@ def main():
                 "adapter_save",
                 lambda: save_adapter() if report["status"] != "complete" else None,
             ),
-            ("trackio_finish", lambda: trackio.finish() if trackio else None),
+            (
+                "trackio_finish",
+                lambda: tracker.finish() if tracker is not None else None,
+            ),
             ("sandbox_close", lambda: sandbox.close() if sandbox else None),
         ):
             try:

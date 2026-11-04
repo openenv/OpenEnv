@@ -86,7 +86,7 @@ environment performs its exact arithmetic/card checks and returns its shaped
 terminal reward. No local reward replacement, reference-solution SFT or auxiliary
 format reward is used.
 
-The worker evaluates the unadapted model, then samples eight training groups of
+The worker evaluates the unadapted model, then samples 32 training groups of
 four. The frozen signal gate requires two groups with different rewards and at
 least 25% server-valid expressions. Failure saves `no_grpo_learning_signal` and
 stops without claiming training. Passing enables rank-8 LoRA on `q_proj/v_proj`,
@@ -104,6 +104,12 @@ The private artifact repository contains input scripts/locks, manifests, scoped
 validation bundles, rollouts, metrics and cleanup records. The private model
 repository contains the adapter/tokenizer. Trackio uses a fresh private Space and
 disables automatic public static snapshots.
+
+The initial eight-group pilot found one contrasting group and stopped before
+training. The second trial expands the training-only pilot to 32 groups while
+keeping its two-contrast / 25% validity thresholds, model, rewards and held-out
+tasks unchanged. It also fixes tracker cleanup before initialization: the worker
+now owns one explicit private Trackio run across evaluation and training.
 
 ## Local checks
 
