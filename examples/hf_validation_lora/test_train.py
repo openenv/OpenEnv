@@ -3,9 +3,11 @@
 
 import importlib.util
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "scottwu_train", Path(__file__).with_name("train.py")
@@ -25,6 +27,94 @@ def public_observation():
 
 
 class TrainingContractTests(unittest.TestCase):
+    def test_training_precision_requires_native_bf16(self):
+        class Cuda:
+            def is_bf16_supported(self, including_emulation=True):
+                return including_emulation
+
+        torch = SimpleNamespace(cuda=Cuda(), bfloat16="bf16", float16="fp16")
+        self.assertEqual(train.training_precision(torch), "fp16")
+        with patch.object(torch.cuda, "is_bf16_supported", return_value=True):
+            self.assertEqual(train.training_precision(torch), "bf16")
+
+    def test_training_interpreter_needs_its_own_python_headers(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(
+                train.sysconfig, "get_paths", return_value={"include": directory}
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Python.h"):
+                train.require_python_headers()
+            header = Path(directory) / "Python.h"
+            header.write_text("/* matching interpreter header */")
+            self.assertEqual(train.require_python_headers(), str(header))
+
+    def test_training_requires_a_working_compiler_before_model_loading(self):
+        with (
+            patch.dict(train.os.environ, {}, clear=True),
+            patch.object(train.shutil, "which", return_value=None),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "C compiler"):
+                train.require_c_compiler()
+        with (
+            patch.dict(train.os.environ, {"CC": "chosen-compiler"}, clear=True),
+            patch.object(
+                train.shutil, "which", return_value="/tools/chosen-compiler"
+            ) as lookup,
+        ):
+            self.assertEqual(train.require_c_compiler(), "/tools/chosen-compiler")
+            lookup.assert_called_once_with("chosen-compiler")
+
+    def test_every_parameter_counter_is_checked(self):
+        before, after = {1: 7, 2: 3}, {1: 7, 2: 4}
+        self.assertTrue(train.counters_advanced(before, after))
+        self.assertFalse(train.counters_advanced(before, dict(before)))
+        self.assertTrue(train.counters_advanced({}, {1: 1}))
+        with self.assertRaises(RuntimeError):
+            train.optimizer_observation(
+                float("inf"), True, train.counters_advanced(before, after), 0
+            )
+
+    def test_effective_updates_require_current_reward_contrast(self):
+        event = {**train.optimizer_observation(0.5, False, True, 4), "group_std": 0.0}
+        self.assertFalse(train.effective_update(event))
+        event["group_std"] = 0.1
+        self.assertTrue(train.effective_update(event))
+
+    def test_amp_overflow_requires_a_verified_skipped_step(self):
+        event = train.optimizer_observation(float("inf"), True, False, 0)
+        self.assertIsNone(event["grad_norm"])
+        self.assertFalse(event["gradients_finite"])
+        self.assertTrue(event["step_skipped"])
+        self.assertNotIn("Infinity", json.dumps(event, allow_nan=False))
+        for norm, skipped, advanced, changed in [
+            (float("nan"), False, False, 0),
+            (float("inf"), False, True, 1),
+            (float("inf"), True, True, 0),
+            (1.0, True, False, 1),
+        ]:
+            with (
+                self.subTest(args=(norm, skipped, advanced, changed)),
+                self.assertRaises(RuntimeError),
+            ):
+                train.optimizer_observation(norm, skipped, advanced, changed)
+        event = train.optimizer_observation(0.5, False, True, 4)
+        self.assertTrue(event["gradients_finite"])
+        self.assertTrue(event["counter_advanced"])
+        self.assertEqual(event["changed_tensors"], 4)
+
+    def test_error_frames_omit_messages_and_local_values(self):
+        synthetic_secret = "Bearer synthetic-credential-for-error-test"
+        try:
+            raise RuntimeError(synthetic_secret)
+        except RuntimeError as error:
+            frames = train.exception_frames(error)
+        self.assertTrue(frames)
+        self.assertNotIn(synthetic_secret, json.dumps(frames))
+        self.assertEqual(frames[-1]["file"], "test_train.py")
+        self.assertEqual(set(frames[-1]), {"file", "line", "function"})
+
     def test_fresh_private_trackio_cannot_reuse_existing_storage(self):
         info = SimpleNamespace(
             private=True,

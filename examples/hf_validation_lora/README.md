@@ -48,9 +48,10 @@ worker receives the credential needed for its private outputs and Sandbox exec.
 | Environment | `FineEnvs/ScottWuMath@4de8125d314fca0a3f137fa1bab04b966a3efc15` |
 | Comparison environment | `FineEnvs/wordle-openenv@a6ca4a7b3ab22052df265d358f41de34ffd351cc` |
 | Base model | `Qwen/Qwen3-0.6B@c1899de289a04d12100db370d81485cdf75e47ca` |
-| Base image | `python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28` |
+| Sandbox image | `python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28` |
+| Training image | `python:3.11.18-bookworm@sha256:77c90594edb5d6a43ed73de1c73b5f9d795bc94fa76d438fba4cc00036100014` |
 | Environment dependencies | `math-python312.txt`, Python 3.12.13 |
-| Training dependencies | `training-python311.txt`, Python 3.11 |
+| Training dependencies | `training-python311.txt`, image interpreter Python 3.11.18 |
 | Bootstrap tool | `uv==0.9.9` |
 
 Source mounting pins the public Space files. ScottWuMath is installed with the
@@ -110,6 +111,16 @@ training. The second trial expands the training-only pilot to 32 groups while
 keeping its two-contrast / 25% validity thresholds, model, rewards and held-out
 tasks unchanged. It also fixes tracker cleanup before initialization: the worker
 now owns one explicit private Trackio run across evaluation and training.
+
+The full training image includes matching Python headers and the C compiler
+required by TRL's Triton loss kernels. Before model download or evaluation, the
+worker runs both selective softmax and the fused head's CUDA backward pass,
+checking values and gradients against a PyTorch reference. BF16 requires native
+hardware support; a T4 uses FP16 because BF16 emulation cannot run the fused
+backward GEMM. Missing toolchains are reported immediately. AMP overflow skips are recorded
+separately from effective updates; only finite, contrasting, gradient-driven
+weight changes count as training. Failure reports retain bounded stack locations
+without exception text or local values.
 
 ## Local checks
 

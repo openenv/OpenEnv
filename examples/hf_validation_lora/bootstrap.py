@@ -8,6 +8,7 @@ from pathlib import Path
 from huggingface_hub import get_token, HfApi, Sandbox, Volume
 
 IMAGE = "python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28"
+TRAIN_IMAGE = "python:3.11.18-bookworm@sha256:77c90594edb5d6a43ed73de1c73b5f9d795bc94fa76d438fba4cc00036100014"
 SOURCE = "FineEnvs/ScottWuMath"
 REVISION = "4de8125d314fca0a3f137fa1bab04b966a3efc15"
 HERE = Path(__file__).resolve().parent
@@ -91,7 +92,7 @@ for src,dst in [('scripts/train.py','/tmp/train.py'),('locks/training-python311.
         "-lc",
         "python -m pip install --disable-pip-version-check uv==0.9.9 && "
         "python - <<'PY'\n" + download + "PY\n"
-        "uv run --python 3.11 --with-requirements /tmp/training.txt /tmp/train.py",
+        "uv run --python /usr/local/bin/python --with-requirements /tmp/training.txt /tmp/train.py",
     ]
 
 
@@ -210,7 +211,7 @@ def main():
                 ],
             )
             training = api.run_job(
-                image=IMAGE,
+                image=TRAIN_IMAGE,
                 command=training_command(args.artifact_repo, commit.oid),
                 flavor=args.flavor,
                 timeout="1h",

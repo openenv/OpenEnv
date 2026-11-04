@@ -37,10 +37,13 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import statistics
 import sys
+import sysconfig
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -94,6 +97,125 @@ def digest(value):
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()
+
+
+def exception_frames(error):
+    """Locate failures without retaining exception messages, paths or local values."""
+    return [
+        {
+            "file": Path(frame.filename).name,
+            "line": frame.lineno,
+            "function": frame.name,
+        }
+        for frame in traceback.extract_tb(error.__traceback__)[-8:]
+    ]
+
+
+def optimizer_observation(grad_norm, skipped, counter_advanced, changed_tensors):
+    """Preserve AMP overflow recovery without counting it as a weight update."""
+    finite = math.isfinite(grad_norm)
+    if not finite and not skipped:
+        raise RuntimeError("Non-finite gradients reached an unskipped optimizer step")
+    if skipped and (counter_advanced or changed_tensors):
+        raise RuntimeError(
+            "A skipped optimizer step changed optimizer or adapter state"
+        )
+    return {
+        "grad_norm": grad_norm if finite else None,
+        "gradients_finite": finite,
+        "counter_advanced": counter_advanced,
+        "step_skipped": skipped,
+        "changed_tensors": changed_tensors,
+    }
+
+
+def counters_advanced(previous, current):
+    """Inspect each parameter's counter, including one below the maximum."""
+    return any(step > previous.get(parameter, 0) for parameter, step in current.items())
+
+
+def effective_update(event):
+    return (
+        event["gradients_finite"]
+        and event["grad_norm"] > 0
+        and not event["step_skipped"]
+        and event["counter_advanced"]
+        and event["changed_tensors"] > 0
+        and event["group_std"] > 0
+    )
+
+
+def require_c_compiler():
+    compiler = (
+        shutil.which(os.environ["CC"])
+        if "CC" in os.environ
+        else (shutil.which("gcc") or shutil.which("clang"))
+    )
+    if compiler is None:
+        raise RuntimeError("training image lacks the C compiler required by Triton")
+    return compiler
+
+
+def require_python_headers():
+    header = Path(sysconfig.get_paths()["include"]) / "Python.h"
+    if not header.is_file():
+        raise RuntimeError(
+            "training interpreter lacks Python.h; use the pinned training image interpreter"
+        )
+    return str(header)
+
+
+def training_precision(torch):
+    # TRL's BF16->FP32 backward GEMM needs native BF16, not T4 emulation.
+    return (
+        torch.bfloat16
+        if torch.cuda.is_bf16_supported(including_emulation=False)
+        else torch.float16
+    )
+
+
+def training_preflight(torch, dtype):
+    compiler = require_c_compiler()
+    header = require_python_headers()
+    from trl.kernels.chunked_logprob import ChunkedLogProbFunction
+    from trl.trainer.utils import selective_log_softmax
+
+    logits = torch.randn((1, 4, 151936), device="cuda", dtype=dtype, requires_grad=True)
+    index = torch.randint(0, logits.shape[-1], (1, 4), device="cuda")
+    logprobs = selective_log_softmax(logits, index)
+    expected = (
+        logits.float().log_softmax(-1).gather(-1, index.unsqueeze(-1)).squeeze(-1)
+    )
+    torch.testing.assert_close(logprobs.float(), expected, atol=0.03, rtol=0.003)
+    logprobs.sum().backward()
+    if not torch.isfinite(logits.grad).all():
+        raise RuntimeError("training loss preflight produced non-finite gradients")
+    # GRPO uses this fused head backward, not just selective_log_softmax.
+    hidden = torch.randn((4, 32), device="cuda", dtype=dtype, requires_grad=True)
+    weight = torch.randn((151936, 32), device="cuda", dtype=dtype) * 0.01
+    targets = index.flatten()
+    logprobs = ChunkedLogProbFunction.apply(
+        hidden, weight, None, targets, 1.0, 4096, None, 1.0, ("entropy",)
+    )[0]
+    reference_hidden = hidden.detach().float().requires_grad_()
+    reference = (reference_hidden @ weight.float().t()).log_softmax(-1)
+    reference = reference.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+    torch.testing.assert_close(logprobs.float(), reference, atol=0.03, rtol=0.003)
+    logprobs.sum().backward()
+    reference.sum().backward()
+    torch.testing.assert_close(
+        hidden.grad.float(), reference_hidden.grad, atol=0.003, rtol=0.03
+    )
+    return {
+        "compiler": compiler,
+        "python_header": header,
+        "python_version": sys.version.split()[0],
+        "cuda_runtime": torch.version.cuda,
+        "precision": str(dtype),
+        "logits_shape": list(logits.shape),
+        "backward": "passed",
+        "fused_head_backward": "passed",
+    }
 
 
 def extract_expression(completion):
@@ -471,6 +593,18 @@ def main():
             api, repos["TRACKIO_SPACE_ID"]
         )
         safe_to_upload = True
+        if globals().get("__file__") and Path(__file__).is_file():
+            source = Path(__file__).read_bytes()
+            (out / "train.py").write_bytes(source)
+            report["script_sha256"] = hashlib.sha256(source).hexdigest()
+        persist()
+        report["status"] = "training_preflight"
+        if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
+            raise RuntimeError("This example requires exactly one CUDA GPU")
+        report["gpu"] = torch.cuda.get_device_name(0)
+        dtype = training_precision(torch)
+        bf16 = dtype == torch.bfloat16
+        report["training_preflight"] = training_preflight(torch, dtype)
         tracker = trackio.init(
             project="openenv-scottwu-online-lora",
             name=run_id,
@@ -479,10 +613,6 @@ def main():
             config=report["hyperparameters"],
             capture_console=False,
         )
-        if globals().get("__file__") and Path(__file__).is_file():
-            source = Path(__file__).read_bytes()
-            (out / "train.py").write_bytes(source)
-            report["script_sha256"] = hashlib.sha256(source).hexdigest()
         persist()
         sandbox = Sandbox.connect(
             os.environ["SBX_JOB_ID"],
@@ -521,10 +651,6 @@ def main():
         report["manifest_sha256"] = digest(manifest)
         (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         persist()
-        if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
-            raise RuntimeError("This example requires exactly one CUDA GPU")
-        report["gpu"] = torch.cuda.get_device_name(0)
-        bf16 = torch.cuda.is_bf16_supported()
         set_seed(42)
         tokenizer = AutoTokenizer.from_pretrained(
             MODEL, revision=MODEL_REVISION, padding_side="left"
@@ -533,7 +659,7 @@ def main():
         model = AutoModelForCausalLM.from_pretrained(
             MODEL,
             revision=MODEL_REVISION,
-            dtype=torch.bfloat16 if bf16 else torch.float16,
+            dtype=dtype,
             attn_implementation="sdpa",
         ).to("cuda")
 
@@ -660,13 +786,13 @@ def main():
                     trackio.log(metrics, step=state.global_step)
 
             def on_pre_optimizer_step(self, args, state, control, **kwargs):
-                self.before_steps = [
-                    int(s["step"].item())
+                self.before_steps = {
+                    id(parameter): int(s["step"].item())
                     if hasattr(s["step"], "item")
                     else int(s["step"])
-                    for s in kwargs["optimizer"].state.values()
+                    for parameter, s in kwargs["optimizer"].state.items()
                     if "step" in s
-                ]
+                }
                 self.before = {
                     n: p.detach().float().cpu().clone()
                     for n, p in model.named_parameters()
@@ -682,18 +808,16 @@ def main():
                     if gradients
                     else 0.0
                 )
-                if not math.isfinite(self.grad_norm):
-                    raise RuntimeError("Non-finite adapter gradients")
 
             def on_optimizer_step(self, args, state, control, **kwargs):
                 optimizer = kwargs["optimizer"]
-                steps = [
-                    int(s["step"].item())
+                steps = {
+                    id(parameter): int(s["step"].item())
                     if hasattr(s["step"], "item")
                     else int(s["step"])
-                    for s in optimizer.state.values()
+                    for parameter, s in optimizer.state.items()
                     if "step" in s
-                ]
+                }
                 changed = 0
                 for name, parameter in model.named_parameters():
                     if name in self.before:
@@ -704,14 +828,13 @@ def main():
                 report["optimizer_evidence"].append(
                     {
                         "attempt": state.global_step + 1,
-                        "grad_norm": self.grad_norm,
-                        "optimizer_step": max(steps, default=0),
-                        "counter_advanced": max(steps, default=0)
-                        > max(self.before_steps, default=0),
-                        "step_skipped": bool(
-                            getattr(optimizer, "step_was_skipped", False)
+                        "optimizer_step": max(steps.values(), default=0),
+                        **optimizer_observation(
+                            self.grad_norm,
+                            bool(getattr(optimizer, "step_was_skipped", False)),
+                            counters_advanced(self.before_steps, steps),
+                            changed,
                         ),
-                        "changed_tensors": changed,
                         "group_std": report["training_groups"][-1]["std"],
                     }
                 )
@@ -802,14 +925,7 @@ def main():
         trainer.train()
         report["global_step"] = trainer.state.global_step
         evidence = report["optimizer_evidence"]
-        effective = [
-            e
-            for e in evidence
-            if e["grad_norm"] > 0
-            and not e["step_skipped"]
-            and e["counter_advanced"]
-            and e["changed_tensors"] > 0
-        ]
+        effective = [e for e in evidence if effective_update(e)]
         report["effective_updates"] = len(effective)
         save_adapter()
         if not effective or not report["changed_adapter_tensors"]:
@@ -873,6 +989,7 @@ def main():
         report["status"] = "failed"
         # Third-party exception messages may include authenticated URLs or headers.
         report["error_type"] = type(error).__name__
+        report["error_frames"] = exception_frames(error)
     finally:
         # Independent finalizers preserve the original failure if one finalizer fails.
         for name, finalize in (
