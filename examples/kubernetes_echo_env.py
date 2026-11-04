@@ -17,7 +17,7 @@ Usage:
 Requires:
     pip install openenv[kubernetes]
     An existing namespace (this example does not create one).
-    Permission to create and delete Pods and Services in that namespace.
+    Permission to create, get and delete Pods and Services in that namespace.
     An image the cluster can already run. A locally loaded Kind image should
     use a tag other than ``latest``, or Kubernetes will try to pull it again.
 
