@@ -498,7 +498,7 @@ class AgentSandboxProvider(ContainerProvider):
         """
         deadline = time.time() + timeout_s
         while time.time() < deadline:
-            if self._sandbox is not None and not self._sandbox.is_active():
+            if self._sandbox is not None and not self._sandbox.is_active:
                 raise RuntimeError(
                     "The agent sandbox handle is no longer active; the "
                     "environment server did not become ready."

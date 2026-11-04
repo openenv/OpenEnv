@@ -176,7 +176,8 @@ def _make_sandbox(ingress: str = "http://203.0.113.7"):
     sandbox.sandbox_id = "sbx-1"
     sandbox.namespace = "openenv"
     sandbox.claim_name = "sandbox-claim-abc12345"
-    sandbox.is_active.return_value = True
+    # A property on the real Sandbox handle, not a method.
+    sandbox.is_active = True
     sandbox.connector.connect.return_value = ingress
     return sandbox
 
@@ -589,7 +590,7 @@ def test_wait_for_ready_detects_inactive_sandbox(fake_sdk):
     )
     url = provider.start_container()
     try:
-        fake_sdk.sandboxes[-1].is_active.return_value = False
+        fake_sdk.sandboxes[-1].is_active = False
         with patch("requests.get", side_effect=requests.ConnectionError):
             with pytest.raises(RuntimeError, match="no longer active"):
                 provider.wait_for_ready(url, timeout_s=5)
