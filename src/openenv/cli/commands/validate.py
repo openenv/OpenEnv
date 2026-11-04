@@ -8,6 +8,8 @@ import signal
 import tempfile
 import threading
 from contextlib import contextmanager, ExitStack
+from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -30,6 +32,39 @@ EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_UNSUPPORTED = 2
 EXIT_INTERNAL = 3
+
+
+@dataclass
+class _LazyHFSandboxProvider:
+    """Defer Jobs hardware preflight until the runner needs runtime capabilities."""
+
+    name = "hf-sandbox"
+
+    space_id: str
+    revision: str
+    flavor: str
+
+    @cached_property
+    def _provider(self):
+        from openenv.validation.providers.hf_sandbox import HFSandboxValidationProvider
+
+        return HFSandboxValidationProvider(
+            self.space_id, self.revision, flavor=self.flavor
+        )
+
+    @property
+    def supported_network_modes(self):
+        return self._provider.supported_network_modes
+
+    @property
+    def capabilities(self):
+        return self._provider.capabilities
+
+    def build(self, root, execution):
+        return self._provider.build(root, execution)
+
+    def start(self, spec):
+        return self._provider.start(spec)
 
 
 @contextmanager
@@ -295,9 +330,6 @@ def validate(
             provider = None
             if space is not None:
                 from huggingface_hub import HfApi, snapshot_download
-                from openenv.validation.providers.hf_sandbox import (
-                    HFSandboxValidationProvider,
-                )
 
                 # Download and report one commit, even if a branch moves.
                 revision = HfApi().space_info(space, revision=revision).sha
@@ -310,7 +342,7 @@ def validate(
                     snapshot_download(space, repo_type="space", revision=revision),
                     package_root,
                 )
-                provider = HFSandboxValidationProvider(space, revision, flavor=flavor)
+                provider = _LazyHFSandboxProvider(space, revision, flavor)
             stack.enter_context(_sigterm_as_interrupt())
             validation_report = run_validation(
                 package_root,

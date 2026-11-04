@@ -201,6 +201,197 @@ def test_revision_must_be_a_commit_hash(provider):
         HFSandboxValidationProvider("openenv-testing/probe", "main")
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--level", "static"],
+        ["--level", "runtime", "--skip-build"],
+        ["--skip-build"],
+    ],
+    ids=["static", "runtime-skip-build", "semantic-skip-build"],
+)
+def test_space_without_runtime_does_not_construct_jobs_provider(
+    downloads, monkeypatch, args
+):
+    def unexpected_provider(*args, **kwargs):
+        raise AssertionError("HF Jobs provider preflight must not run")
+
+    monkeypatch.setattr(hf_sandbox, "HFSandboxValidationProvider", unexpected_provider)
+    result = CliRunner().invoke(
+        app,
+        ["validate", "--space", "openenv-testing/probe", "--json", *args],
+    )
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["target"] == "spaces/openenv-testing/probe@" + "a" * 40
+    assert report["levels_run"] == [1]
+    if "--skip-build" in args:
+        startup = next(
+            r for r in report["results"] if r["check_id"] == "runtime.startup"
+        )
+        assert startup["status"] == "skip"
+        assert "--skip-build" in " ".join(startup["evidence"])
+    assert not FakeSandbox.created
+
+
+@pytest.mark.parametrize(
+    "manifest, exit_code, evidence",
+    [
+        (None, 2, "unrecognized package"),
+        ("name: incomplete\n", 1, "has no `validation:` block"),
+        ("validation: [\n", 1, "not valid YAML"),
+    ],
+    ids=["missing-manifest", "missing-validation-block", "invalid-yaml"],
+)
+def test_invalid_space_source_precedes_jobs_hardware_preflight(
+    downloads, monkeypatch, manifest, exit_code, evidence
+):
+    download = huggingface_hub.snapshot_download
+    preflights = []
+
+    def invalid_snapshot(*args, **kwargs):
+        root = Path(download(*args, **kwargs))
+        path = root / "openenv.yaml"
+        if manifest is None:
+            path.unlink()
+        else:
+            path.write_text(manifest)
+        return str(root)
+
+    def unavailable_hardware(self):
+        preflights.append(True)
+        raise RuntimeError("HF Jobs hardware is unavailable")
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", invalid_snapshot)
+    monkeypatch.setattr(FakeApi, "list_jobs_hardware", unavailable_hardware)
+    result = CliRunner().invoke(
+        app,
+        [
+            "validate",
+            "--space",
+            "openenv-testing/probe",
+            "--level",
+            "runtime",
+            "--json",
+        ],
+    )
+    assert result.exit_code == exit_code, result.output
+    assert evidence in result.output
+    assert preflights == []
+    if manifest is not None:
+        report = json.loads(result.output)
+        assert report["target"] == "spaces/openenv-testing/probe@" + "a" * 40
+        assert report["verdict"] == "fail"
+        assert (
+            next(r for r in report["results"] if r["check_id"] == "static.manifest")[
+                "status"
+            ]
+            == "fail"
+        )
+    assert not FakeSandbox.created
+
+
+@pytest.mark.parametrize(
+    "level, manifest, exit_code",
+    [
+        ("static", None, 0),
+        ("runtime", "name: incomplete\n", 1),
+    ],
+    ids=["static", "invalid-manifest"],
+)
+def test_space_report_and_artifacts_metadata_do_not_preflight_jobs_hardware(
+    downloads, monkeypatch, tmp_path, level, manifest, exit_code
+):
+    command = importlib.import_module("openenv.cli.commands.validate")
+    run = command.run_validation
+    download = huggingface_hub.snapshot_download
+    names = []
+
+    def snapshot(*args, **kwargs):
+        root = Path(download(*args, **kwargs))
+        if manifest is not None:
+            (root / "openenv.yaml").write_text(manifest)
+        return str(root)
+
+    def unavailable_hardware(self):
+        raise AssertionError("forbidden HF Jobs hardware preflight")
+
+    def record_report(package_root, **kwargs):
+        names.append(kwargs["provider"].name)
+        return run(package_root, **kwargs)
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot)
+    monkeypatch.setattr(FakeApi, "list_jobs_hardware", unavailable_hardware)
+    monkeypatch.setattr(command, "run_validation", record_report)
+    output = tmp_path / "report.json"
+    result = CliRunner().invoke(
+        app,
+        [
+            "validate",
+            "--space",
+            "openenv-testing/probe",
+            "--level",
+            level,
+            "--json",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == exit_code, result.output
+    report = json.loads(result.output)
+    bundled_path = tmp_path / "report.artifacts/report.json"
+    assert (
+        report == json.loads(output.read_text()) == json.loads(bundled_path.read_text())
+    )
+    assert report["target"] == "spaces/openenv-testing/probe@" + "a" * 40
+    assert names == ["hf-sandbox"]
+    assert not FakeSandbox.created
+
+
+@pytest.mark.parametrize(
+    "flavor, exit_code, status, evidence",
+    [
+        ("cpu-basic", 0, "skip", "immutable_image"),
+        ("t4-small", 0, "skip", "immutable_image"),
+        ("not-a-flavor", 1, "error", "ValueError"),
+    ],
+)
+def test_space_runtime_still_checks_jobs_flavor_once(
+    downloads, monkeypatch, flavor, exit_code, status, evidence
+):
+    hardware = FakeApi.list_jobs_hardware
+    preflights = []
+
+    def record_hardware(self):
+        preflights.append(True)
+        return hardware(self)
+
+    monkeypatch.setattr(FakeApi, "list_jobs_hardware", record_hardware)
+    result = CliRunner().invoke(
+        app,
+        [
+            "validate",
+            "--space",
+            "openenv-testing/probe",
+            "--level",
+            "runtime",
+            "--flavor",
+            flavor,
+            "--json",
+        ],
+    )
+    assert result.exit_code == exit_code, result.output
+    startup = next(
+        r
+        for r in json.loads(result.output)["results"]
+        if r["check_id"] == "runtime.startup"
+    )
+    assert startup["status"] == status
+    assert evidence in " ".join(startup["evidence"])
+    assert preflights == [True]
+    assert not FakeSandbox.created
+
+
 @pytest.mark.parametrize("revision", ["main", "release/v1", "a" * 40])
 def test_named_revision_is_validated_as_its_commit(downloads, monkeypatch, revision):
     revisions = []
@@ -211,7 +402,7 @@ def test_named_revision_is_validated_as_its_commit(downloads, monkeypatch, revis
         return real(space_id, revision, **kwargs)
 
     monkeypatch.setattr(hf_sandbox, "HFSandboxValidationProvider", recording)
-    report = validate_space("--revision", revision)
+    report = validate_space("--revision", revision, "--level", "runtime")
     assert downloads == revisions == ["a" * 40]
     assert report["target"] == "spaces/openenv-testing/probe@" + "a" * 40
 
