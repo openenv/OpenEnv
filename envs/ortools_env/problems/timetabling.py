@@ -70,33 +70,13 @@ def generate(seed: int, size: str = DEFAULT_SIZE) -> dict:
         rng.choice([30, 50, 80, 100, 150, 200, 250]) for _ in range(num_rooms)
     )
 
-    # Plant a feasible timetable: each course gets free periods of a free teacher, spread over days, and free rooms.
-    rooms_used = [0] * num_periods
-    teacher_busy = [set() for _ in range(num_teachers)]
-    teachers, planted = [], []
-    for c in range(num_courses):
-        for t in rng.sample(range(num_teachers), num_teachers):
-            free = [
-                p
-                for p in range(num_periods)
-                if p not in teacher_busy[t] and rooms_used[p] < num_rooms
-            ]
-            if len(free) >= lectures[c]:
-                break
-        else:
-            raise RuntimeError("Could not plant a timetable; retry with another seed.")
-        rng.shuffle(free)
-        days = {}
-        for p in free:  # one lecture per day first, then fill
-            days.setdefault(p // periods_per_day, p)
-        periods = (list(days.values()) + [p for p in free if p not in days.values()])[
-            : lectures[c]
-        ]
-        for p in periods:
-            rooms_used[p] += 1
-            teacher_busy[t].add(p)
-        teachers.append(t)
-        planted.append(set(periods))
+    # Plant a feasible timetable. The greedy plant can dead-end; retrying from `rng` keeps `generate` reproducible.
+    plant = None
+    while plant is None:
+        plant = _plant(
+            rng, lectures, num_teachers, num_rooms, num_periods, periods_per_day
+        )
+    teachers, planted = plant
 
     # Curricula only group courses whose planted periods do not overlap.
     curricula = []
@@ -128,6 +108,44 @@ def generate(seed: int, size: str = DEFAULT_SIZE) -> dict:
         "curricula": curricula,
         "unavailable": sorted(unavailable),
     }
+
+
+def _plant(
+    rng: random.Random,
+    lectures: list[int],
+    num_teachers: int,
+    num_rooms: int,
+    num_periods: int,
+    periods_per_day: int,
+) -> tuple[list[int], list[set[int]]] | None:
+    """Give each course free periods of a free teacher, spread over days, and free rooms; `None` on a dead end."""
+    rooms_used = [0] * num_periods
+    teacher_busy = [set() for _ in range(num_teachers)]
+    teachers, planted = [], []
+    for num_lectures in lectures:
+        for t in rng.sample(range(num_teachers), num_teachers):
+            free = [
+                p
+                for p in range(num_periods)
+                if p not in teacher_busy[t] and rooms_used[p] < num_rooms
+            ]
+            if len(free) >= num_lectures:
+                break
+        else:
+            return None
+        rng.shuffle(free)
+        days = {}
+        for p in free:  # one lecture per day first, then fill
+            days.setdefault(p // periods_per_day, p)
+        periods = (list(days.values()) + [p for p in free if p not in days.values()])[
+            :num_lectures
+        ]
+        for p in periods:
+            rooms_used[p] += 1
+            teacher_busy[t].add(p)
+        teachers.append(t)
+        planted.append(set(periods))
+    return teachers, planted
 
 
 def load(path: str) -> dict:

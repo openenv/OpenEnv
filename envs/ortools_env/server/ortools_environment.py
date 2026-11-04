@@ -62,6 +62,9 @@ SUBMIT_HELP = {
     ),
 }
 
+# Longest naive solve: `baseline` of rostering and timetabling is a CP-SAT solve with this limit.
+BASELINE_TIME_LIMIT_S = 60.0
+
 
 class ORToolsEnvironment(MCPEnvironment):
     """
@@ -266,7 +269,8 @@ class ORToolsEnvironment(MCPEnvironment):
         self._tool_timeout_s = (
             max(
                 python_timeout_s,
-                num_evals * (solve_time_limit_s + reference_time_limit_s),
+                num_evals
+                * (solve_time_limit_s + reference_time_limit_s + BASELINE_TIME_LIMIT_S),
             )
             + 60
         )
@@ -342,7 +346,10 @@ class ORToolsEnvironment(MCPEnvironment):
             return "Error: this is a level-1 task; use check_solution."
         if error := self._budget_error():
             return error
-        objective, elapsed_s, message = self._run_solve(code, self._instance)
+        remaining = self._state.compute_budget_s - self._state.compute_used_s
+        objective, elapsed_s, message = self._run_solve(
+            code, self._instance, min(self._state.solve_time_limit_s, remaining)
+        )
         self._state.python_calls += 1
         self._state.compute_used_s += elapsed_s
         if objective is not None:
@@ -352,16 +359,16 @@ class ORToolsEnvironment(MCPEnvironment):
         return f"{message}\n[{self._budget_left()}]"
 
     def _run_solve(
-        self, code: str, instance: dict
+        self, code: str, instance: dict, timeout_s: float
     ) -> tuple[Optional[float], float, str]:
-        """Run `solve` on `instance`; return `(objective or None, elapsed seconds, failure message)`."""
+        """Run `solve` on `instance` for up to `timeout_s`; return `(objective or None, elapsed seconds, failure message)`."""
         workdir = tempfile.mkdtemp(prefix="ortools_eval_")
         try:
             result = sandbox.run(
                 code,
                 instance,
                 workdir,
-                timeout_s=self._state.solve_time_limit_s,
+                timeout_s=timeout_s,
                 allow_ortools=self._state.allow_ortools,
                 solve=True,
             )
@@ -408,7 +415,9 @@ class ORToolsEnvironment(MCPEnvironment):
             return "Error: this is a level-1 task; use submit_solution."
         lines, scores = [], []
         for k, instance in enumerate(self._eval_instances):
-            objective, _, message = self._run_solve(code, instance)
+            objective, _, message = self._run_solve(
+                code, instance, self._state.solve_time_limit_s
+            )
             if objective is None:
                 scores.append(score(None, 0, 0))
                 lines.append(f"instance {k}: {message}")

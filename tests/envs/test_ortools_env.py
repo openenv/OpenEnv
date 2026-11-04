@@ -19,7 +19,7 @@ pytest.importorskip("fastmcp")
 
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
 from ortools_env import sandbox
-from ortools_env.problems import jobshop, PROBLEMS, score, tardiness
+from ortools_env.problems import jobshop, PROBLEMS, score, tardiness, timetabling
 from ortools_env.server.ortools_environment import ORToolsEnvironment
 
 TINY_SIZES = {
@@ -377,6 +377,77 @@ def test_harbor_level_1_ignores_a_tampered_instance(tmp_path, monkeypatch):
     assert harbor_verify.level_1(task) == score(
         tardiness.evaluate(instance, solution), reference, baseline
     )
+
+
+def test_timetabling_retries_a_dead_end_plant_reproducibly(monkeypatch):
+    plant = timetabling._plant
+    # Two courses of one lecture can fill period 0, leaving no two free periods for the last course.
+    tight = ([1, 1, 2], 3, 2, 2, 1)
+    outcomes = {plant(random.Random(s), *tight) is None for s in range(50)}
+    assert outcomes == {True, False}
+
+    attempts = []
+
+    def dead_end_once(rng, *args):
+        attempts.append(rng.random())
+        return None if len(attempts) % 2 else plant(rng, *args)
+
+    monkeypatch.setattr(timetabling, "_plant", dead_end_once)
+    instance = timetabling.generate(0, "c10")
+    assert timetabling.generate(0, "c10") == instance
+    assert len(attempts) == 4
+    timetabling.reference(instance, 5, 1)
+
+
+@pytest.mark.parametrize("problem", ["rostering", "timetabling"])
+def test_tool_timeout_covers_a_level_2_submission_at_every_limit(monkeypatch, problem):
+    module = PROBLEMS[problem]
+    limits = []
+
+    def solve(instance, time_limit, **kwargs):
+        limits.append(time_limit)
+        return {}, 0, 0
+
+    monkeypatch.setattr(module, "_solve", solve)
+    module.baseline({})
+
+    env = ORToolsEnvironment()
+    env.reset(
+        problem=problem,
+        size=TINY_SIZES[problem],
+        level=2,
+        seed=0,
+        eval_seeds=[1, 2, 3],
+        solve_time_limit_s=10,
+        reference_time_limit_s=5,
+    )
+    assert env._tool_timeout_s >= 3 * (10 + 5 + limits[0])
+
+
+def test_compute_budget_stops_test_algorithm_but_not_submission():
+    env = ORToolsEnvironment()
+    env.reset(
+        problem="tardiness",
+        size="n10",
+        level=2,
+        seed=0,
+        eval_seeds=[1],
+        eval_references=[1],
+        compute_budget_s=1,
+        solve_time_limit_s=20,
+    )
+    code = (
+        "import time\n"
+        "def solve(instance):\n"
+        "    time.sleep(2)\n"
+        "    return {'sequence': list(range(10))}\n"
+    )
+    assert "timed out" in _text(_call(env, "test_algorithm", code=code))
+    assert "budget exhausted" in _text(_call(env, "test_algorithm", code=code))
+
+    obs = _call(env, "submit_algorithm", code=code)
+    assert obs.done
+    assert "objective=" in _text(obs)
 
 
 def test_level_2_crashing_algorithm_scores_minus_one():
