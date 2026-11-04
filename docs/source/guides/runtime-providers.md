@@ -229,8 +229,9 @@ from openenv.core.containers.runtime.agent_sandbox_provider import (
 
 provider = AgentSandboxProvider(
     warmpool="openenv-echo-pool",
-    gateway_name="external-http-gateway",
-    # alternatively: router_url="https://sandbox-router.example.com"
+    router_url="https://sandbox-router.example.com",
+    # or gateway_name="external-http-gateway" with allow_insecure=True
+    # for a local plaintext Gateway
 )
 base_url = provider.start_container()
 provider.wait_for_ready(base_url)
@@ -239,9 +240,12 @@ provider.stop_container()
 
 Notes:
 
-- The ingress must serve https; Gateway discovery reports `http://` and the
-  provider rewrites the scheme. Pass `allow_insecure=True` only for local
-  clusters (Kind/Minikube) with a plaintext Gateway.
+- The ingress must serve https. Gateway discovery reports the raw plaintext
+  `http://` gateway address and the provider rejects it (an `https://<ip>`
+  rewrite would fail certificate hostname verification): use
+  `router_url="https://<hostname>"` for TLS ingress, or
+  `allow_insecure=True` for local clusters (Kind/Minikube) with a plaintext
+  Gateway.
 - `shutdown_after_seconds` (default `3600`) bounds the sandbox lifetime: the
   controller deletes the claim on expiry even if the client process dies.
 - `env_vars` are injected via `SandboxClaim.spec.env`, which forces a cold

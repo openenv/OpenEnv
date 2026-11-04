@@ -199,7 +199,7 @@ def fake_sdk():
     models.SandboxGatewayConnectionConfig = _GatewayConfig
     models.SandboxDirectConnectionConfig = _DirectConfig
     sdk.models = models
-    sdk.INGRESS = "http://203.0.113.7"
+    sdk.INGRESS = "https://gw.example.com"
     sdk.sandboxes = []
 
     def _create(**kwargs):
@@ -244,8 +244,8 @@ def test_gateway_mode_happy_path(fake_sdk):
             "shutdown_after_seconds": 3600,
             "env": None,
         }
-        # Gateway discovery reports http://; the provider upgrades to https.
-        assert provider._proxy.target_url == "https://203.0.113.7"
+        # An https ingress passes through untouched.
+        assert provider._proxy.target_url == "https://gw.example.com"
         assert provider._proxy.headers["X-Sandbox-ID"] == "sbx-1"
         assert provider._proxy.headers["X-Sandbox-Namespace"] == "openenv"
         assert provider._proxy.headers["X-Sandbox-Port"] == "8000"
@@ -391,6 +391,8 @@ def test_second_start_is_rejected(fake_sdk):
 
 
 def test_allow_insecure_keeps_http_gateway(fake_sdk):
+    # Gateway discovery reports the raw http:// gateway address.
+    fake_sdk.INGRESS = "http://203.0.113.7"
     provider = AgentSandboxProvider(
         warmpool="openenv-echo-pool",
         gateway_name="external-http-gateway",
@@ -401,6 +403,24 @@ def test_allow_insecure_keeps_http_gateway(fake_sdk):
         assert provider._proxy.target_url == "http://203.0.113.7"
     finally:
         provider.stop_container()
+
+
+def test_http_gateway_without_allow_insecure_is_rejected(fake_sdk):
+    # The raw gateway IP cannot be rewritten to https: the certificate is
+    # issued for a hostname, so an https://<IP> dial fails verification.
+    fake_sdk.INGRESS = "http://203.0.113.7"
+    provider = AgentSandboxProvider(
+        warmpool="openenv-echo-pool", gateway_name="external-http-gateway"
+    )
+    with pytest.raises(RuntimeError, match="not HTTPS") as exc:
+        provider.start_container()
+    # Guidance instead of a broken rewrite; the URL must not leak.
+    assert "router_url" in str(exc.value)
+    assert "allow_insecure" in str(exc.value)
+    assert "203.0.113.7" not in str(exc.value)
+    fake_sdk.sandboxes[-1].terminate.assert_called_once()
+    assert provider._sandbox is None
+    assert provider._proxy is None
 
 
 def test_router_url_requires_https(fake_sdk):

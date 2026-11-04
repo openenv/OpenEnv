@@ -226,16 +226,18 @@ class AgentSandboxProvider(ContainerProvider):
     `X-Sandbox-*` headers. `start_container()` returns a loopback proxy URL
     that injects those headers, so any `EnvClient` connects unchanged.
 
-    The ingress must be https. The SDK's Gateway discovery reports `http://`
-    even for TLS gateways, so gateway URLs are rewritten to `https://` unless
-    `allow_insecure=True`.
+    The ingress must be https. Gateway discovery reports the raw plaintext
+    `http://` gateway address, and an `https://<ip>` rewrite would fail
+    certificate hostname verification, so `gateway_name` mode requires
+    `allow_insecure=True` unless the gateway reports `https://`. For TLS
+    ingress, use `router_url="https://<hostname>"` instead.
 
     Examples:
 
     ```python
     provider = AgentSandboxProvider(
         warmpool="openenv-echo-pool",
-        gateway_name="external-http-gateway",
+        router_url="https://sandbox-router.example.com",
     )
     base_url = provider.start_container()
     provider.wait_for_ready(base_url)
@@ -289,8 +291,11 @@ class AgentSandboxProvider(ContainerProvider):
                 Seconds to wait for the claim to bind and become Ready.
             allow_insecure (`bool`, *optional*, defaults to `False`):
                 Accept a plaintext `http://` ingress. Off by default so
-                EnvClient traffic is encrypted (RFC 002 S1); enable only for
-                local clusters such as Kind.
+                EnvClient traffic is encrypted (RFC 002 S1). Gateway
+                discovery reports plaintext `http://` addresses, so
+                `gateway_name` mode needs this unless the gateway reports
+                `https://`; for TLS ingress use `router_url` with an
+                `https://` hostname.
             router_headers (`dict`, *optional*):
                 Extra headers the proxy sends on every request, for routers
                 behind an authenticating gateway (e.g. an `Authorization`
@@ -448,13 +453,11 @@ class AgentSandboxProvider(ContainerProvider):
         """
         if self._allow_insecure or url.lower().startswith("https://"):
             return url
-        if self._gateway_name is not None and url.lower().startswith("http://"):
-            # Gateway discovery in the SDK hardcodes http:// even when the
-            # Gateway serves TLS, so rewrite the scheme.
-            return "https://" + url[len("http://") :]
         raise RuntimeError(
-            "The agent-sandbox router URL is not HTTPS. OpenEnv requires an "
-            "https/wss ingress so EnvClient traffic is encrypted. Pass "
+            "The agent-sandbox ingress is not HTTPS. Gateway discovery "
+            "reports the raw http:// gateway address, and rewriting it to "
+            "https:// would fail certificate hostname verification. Use "
+            "router_url= with an https:// hostname for TLS ingress, or pass "
             "allow_insecure=True to accept a plaintext http:// ingress."
         )
 
