@@ -19,6 +19,8 @@ for path in sys.argv[1:]:
     no_call = n - solved - two_mistakes
     first_given = sum(
         bool(g["moves"])
+        and 1 <= g["moves"][0]["row"] <= 9
+        and 1 <= g["moves"][0]["col"] <= 9
         and g["puzzle"][g["moves"][0]["row"] - 1][g["moves"][0]["col"] - 1] != 0
         for g in games
     )
