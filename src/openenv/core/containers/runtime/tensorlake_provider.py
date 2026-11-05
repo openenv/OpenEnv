@@ -413,17 +413,22 @@ class TensorlakeProvider(ContainerProvider):
                 # A fresh handle, so that the probe is bounded by the
                 # remaining budget instead of the SDK's 300 second default.
                 # Exiting the context closes the handle; the sandbox stays.
-                with Sandbox(
-                    **self._probe_config,
-                    request_timeout=min(_PROBE_TIMEOUT_S, remaining),
-                ) as probe:
-                    try:
-                        status = probe.get_process(self._pid).status
-                    except SandboxError:
-                        # Temporary SDK or proxy errors are common during a cold start.
-                        status = "running"
-                    if status != "running":
-                        raise RuntimeError(self._server_exited_message(probe))
+                # Building, using and closing the handle can all raise SDK
+                # errors that quote the sandbox URL or the API key. Temporary
+                # errors are common during a cold start, so retry until the
+                # deadline instead of surfacing them (RFC 002 S2/S4).
+                exited_message = None
+                try:
+                    with Sandbox(
+                        **self._probe_config,
+                        request_timeout=min(_PROBE_TIMEOUT_S, remaining),
+                    ) as probe:
+                        if probe.get_process(self._pid).status != "running":
+                            exited_message = self._server_exited_message(probe)
+                except SandboxError:
+                    pass
+                if exited_message is not None:
+                    raise RuntimeError(exited_message)
             # The probe may have spent part of the budget.
             remaining = deadline - time.monotonic()
             if remaining <= 0:
