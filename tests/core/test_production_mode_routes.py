@@ -1514,6 +1514,417 @@ class TestMCPSessionResourceLeaks:
             server._session_executors.pop(session_id, None)
         executor.shutdown(wait=False)
 
+    async def test_create_session_releases_slot_when_cancelled(self):
+        """Cancelling a task mid-session-creation must release the slot and the env.
+
+        `_create_session` reserves `_sessions[sid] = None` plus an executor
+        before building the environment outside the lock. `CancelledError` is
+        not an `Exception`, so the failure handlers cannot see it: without
+        explicit handling the reservation outlives the cancelled task. It keeps
+        counting against `max_concurrent_envs` and never reaches
+        `_session_info`, which is the only mapping the idle reaper scans, so
+        nothing reclaims it for the life of the process.
+
+        Releasing the slot is not sufficient on its own. Cancelling the await
+        does not stop the thread running the factory, so the environment that
+        thread goes on to build must be closed too, or a container-backed env
+        keeps its container alive while the slot reads as free.
+        """
+        import asyncio
+        import threading
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        factory_entered = threading.Event()
+        release_factory = threading.Event()
+        constructed = threading.Event()
+        closed = threading.Event()
+        close_threads: list[str] = []
+
+        class SlowEnv(Environment):
+            """An env whose construction blocks, as a container-backed one does."""
+
+            def __init__(self):
+                super().__init__()
+                factory_entered.set()
+                release_factory.wait(5)
+                constructed.set()
+
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def close(self):
+                close_threads.append(threading.current_thread().name)
+                closed.set()
+
+        server = HTTPEnvServer(
+            env=SlowEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        loop_thread = threading.current_thread().name
+        task = asyncio.create_task(server._create_session())
+        # Wait in a worker thread so the event loop stays free to run the task.
+        entered = await asyncio.get_running_loop().run_in_executor(
+            None, factory_entered.wait, 5
+        )
+        assert entered, "environment factory never started"
+
+        # Cancel and let the cancellation be handled while the factory is still
+        # blocked. Capacity stays reserved until the uncontrollable factory
+        # finishes and its environment has been closed.
+        task.cancel()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        reserved_during_cleanup = server.get_capacity_status().active_sessions
+        release_factory.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert reserved_during_cleanup == 1
+        assert server._sessions == {}, (
+            f"Reserved session slot leaked after cancellation: "
+            f"{list(server._sessions.keys())}"
+        )
+        assert server._session_executors == {}, (
+            f"Executor leaked after cancellation: "
+            f"{list(server._session_executors.keys())}"
+        )
+        assert server._session_stacks == {}, (
+            f"Stack leaked after cancellation: {list(server._session_stacks.keys())}"
+        )
+        assert server.get_capacity_status().active_sessions == 0
+
+        # Cancelling the await does not stop the factory thread, so the
+        # environment it goes on to build must still be closed. Otherwise a
+        # container-backed env keeps its container alive while the server
+        # reports the slot as free.
+        assert constructed.is_set(), "environment factory never finished"
+        assert closed.is_set(), "environment built after cancellation was never closed"
+        assert loop_thread not in close_threads, (
+            f"close() ran on the event loop thread {loop_thread!r}; it must run "
+            f"on the executor the env was created on"
+        )
+
+        # The freed slot must be usable: at the default capacity of 1 a leak
+        # refuses every later client with SessionCapacityError until restart.
+        session_id, _env = await server._create_session()
+        assert session_id in server._session_info
+        await server._destroy_session(session_id)
+
+    async def test_cancelled_creation_closes_env_on_the_executor_thread(self):
+        """A completed factory future must still be closed off the event loop."""
+        import asyncio
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        closed = threading.Event()
+        close_threads: list[str] = []
+
+        class ThreadRecordingEnv(Environment):
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def close(self):
+                close_threads.append(threading.current_thread().name)
+                closed.set()
+
+        server = HTTPEnvServer(
+            env=ThreadRecordingEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        # A finished future exercises cleanup after construction won the race.
+        executor = ThreadPoolExecutor(max_workers=1)
+        factory_future = executor.submit(ThreadRecordingEnv)
+        factory_future.result(timeout=5)
+        assert factory_future.done()
+
+        loop_thread = threading.current_thread().name
+        await server._discard_reserved_session(
+            "reserved-but-never-opened", executor, factory_future=factory_future
+        )
+
+        assert await asyncio.get_running_loop().run_in_executor(None, closed.wait, 5), (
+            "environment from an already-finished factory was never closed"
+        )
+        assert loop_thread not in close_threads, (
+            f"close() ran on the event loop thread {loop_thread!r}; "
+            f"it must run on the executor the env was created on"
+        )
+
+    async def test_repeated_cancellation_waits_for_cleanup_blocked_on_session_lock(
+        self,
+    ):
+        """Cancellation must not escape while reserved-session cleanup is blocked."""
+        import asyncio
+        import threading
+        from contextlib import asynccontextmanager
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        enter_started = asyncio.Event()
+        finish_enter = asyncio.Event()
+        closed = threading.Event()
+
+        class LockBlockedCleanupEnv(Environment):
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                enter_started.set()
+                await finish_enter.wait()
+                yield object()
+
+            def close(self):
+                closed.set()
+
+        server = HTTPEnvServer(
+            env=LockBlockedCleanupEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        creation = asyncio.create_task(server._create_session())
+        await asyncio.wait_for(enter_started.wait(), timeout=5)
+
+        await server._session_lock.acquire()
+        try:
+            finish_enter.set()
+            # Let enter_async_context() finish so creation blocks registering
+            # the completed session on the lock held above.
+            for _ in range(3):
+                await asyncio.sleep(0)
+
+            creation.cancel()
+            # Let the first cancellation reach the cleanup path, which must
+            # also wait for the lock held above.
+            for _ in range(3):
+                await asyncio.sleep(0)
+            creation.cancel()
+            for _ in range(3):
+                await asyncio.sleep(0)
+            finished_while_cleanup_blocked = creation.done()
+        finally:
+            server._session_lock.release()
+
+        with pytest.raises(asyncio.CancelledError):
+            await creation
+
+        assert not finished_while_cleanup_blocked, (
+            "_create_session propagated repeated cancellation before its "
+            "lock-blocked cleanup completed"
+        )
+        assert closed.is_set(), "environment was not closed before cancellation escaped"
+        assert server._sessions == {}
+        assert server._session_executors == {}
+        assert server._session_stacks == {}
+        assert server._session_info == {}
+
+    async def test_single_thread_cancelled_factory_closes_before_replacement_starts(
+        self,
+    ):
+        """A replacement constructor must not overtake cancelled-factory cleanup."""
+        import asyncio
+        import threading
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        first_started = threading.Event()
+        release_first = threading.Event()
+        first_closed = threading.Event()
+        second_started = threading.Event()
+        second_saw_first_closed: list[bool] = []
+        instances: list[Environment] = []
+        instance_lock = threading.Lock()
+
+        class SingleThreadEnv(Environment):
+            REQUIRES_SINGLE_THREAD_EXECUTOR = True
+            SUPPORTS_CONCURRENT_SESSIONS = True
+
+            def __init__(self):
+                super().__init__()
+                with instance_lock:
+                    self.number = len(instances) + 1
+                    instances.append(self)
+                if self.number == 1:
+                    first_started.set()
+                    release_first.wait(5)
+                else:
+                    second_saw_first_closed.append(first_closed.is_set())
+                    second_started.set()
+
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def close(self):
+                if self.number == 1:
+                    first_closed.set()
+
+        server = HTTPEnvServer(
+            env=SingleThreadEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=2,
+                session_timeout=None,
+            ),
+        )
+
+        first_creation = asyncio.create_task(server._create_session())
+        assert await asyncio.get_running_loop().run_in_executor(
+            None, first_started.wait, 5
+        )
+        first_creation.cancel()
+
+        # The buggy path completes cancellation and frees capacity immediately,
+        # even though the factory still owns the shared executor thread.
+        for _ in range(10):
+            await asyncio.sleep(0)
+            if first_creation.done():
+                break
+
+        replacement = asyncio.create_task(server._create_session())
+        for _ in range(3):
+            await asyncio.sleep(0)
+        release_first.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await first_creation
+
+        replacement_session_id, _ = await replacement
+        await server._destroy_session(replacement_session_id)
+
+        assert first_closed.is_set(), "cancelled factory's environment was not closed"
+        assert second_started.is_set()
+        assert second_saw_first_closed == [True], (
+            "replacement constructor ran before the cancelled environment closed"
+        )
+        assert server._shared_session_executor is not None
+        server._shared_session_executor.shutdown(wait=True)
+
+    async def test_repeated_cancellation_during_mcp_enter_waits_for_env_cleanup(self):
+        """Cancellation in mcp_session.__aenter__ must finish all cleanup first."""
+        import asyncio
+        import threading
+        from contextlib import asynccontextmanager
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        enter_started = asyncio.Event()
+        enter_unwound = asyncio.Event()
+        never_finish_enter = asyncio.Event()
+        close_started = threading.Event()
+        release_close = threading.Event()
+        closed = threading.Event()
+
+        class CancelledMCPEnterEnv(Environment):
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                enter_started.set()
+                try:
+                    await never_finish_enter.wait()
+                    yield object()
+                finally:
+                    enter_unwound.set()
+
+            def close(self):
+                close_started.set()
+                release_close.wait(5)
+                closed.set()
+
+        server = HTTPEnvServer(
+            env=CancelledMCPEnterEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        creation = asyncio.create_task(server._create_session())
+        await asyncio.wait_for(enter_started.wait(), timeout=5)
+        creation.cancel()
+        assert await asyncio.get_running_loop().run_in_executor(
+            None, close_started.wait, 5
+        ), "environment cleanup never started"
+
+        creation.cancel()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        finished_before_close = creation.done()
+        release_close.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await creation
+
+        assert not finished_before_close, (
+            "_create_session propagated repeated cancellation while the env "
+            "from an interrupted MCP __aenter__ was still closing"
+        )
+        assert enter_unwound.is_set(), "mcp_session.__aenter__ was not unwound"
+        assert closed.is_set(), "environment was not closed before cancellation escaped"
+        assert server._sessions == {}
+        assert server._session_executors == {}
+        assert server._session_stacks == {}
+        assert server._session_info == {}
+
 
 class TestHTTPMCPSessionShutdown:
     @pytest.fixture(params=[False, True], ids=["per-session", "shared-executor"])
