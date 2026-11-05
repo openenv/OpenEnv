@@ -10,6 +10,7 @@ These tests verify:
 These tests currently FAIL due to implementation bugs.
 """
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -43,6 +44,59 @@ class AsyncTrackingRubric(Rubric):
     async def forward(self, action: Any, observation: Any) -> float:
         self.execution_log.append(f"{self.name}.forward")
         return self.score
+
+
+class ObservationScore(Rubric):
+    def forward(self, action, observation):
+        observation["events"].append("score")
+        return observation["score"]
+
+
+class AsyncObservationScore(ObservationScore):
+    async def forward(self, action, observation):
+        return super().forward(action, observation)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rubric, child_count",
+    [
+        (Sequential(ObservationScore(), AsyncObservationScore()), 2),
+        (Sequential(ObservationScore(), ObservationScore()), 2),
+        (Sequential(AsyncObservationScore(), ObservationScore()), 2),
+        (Gate(ObservationScore(), threshold=0.5), 1),
+        (Gate(AsyncObservationScore(), threshold=0.5), 1),
+        (
+            WeightedSum([ObservationScore(), AsyncObservationScore()], [0.4, 0.6]),
+            2,
+        ),
+        (WeightedSum([ObservationScore(), ObservationScore()], [0.4, 0.6]), 2),
+    ],
+)
+async def test_async_pre_hook_prepares_observation_before_children(rubric, child_count):
+    observation = {"score": 0.0, "events": []}
+
+    def before(r, action, obs):
+        obs["events"].append("before")
+
+    async def prepare(r, action, obs):
+        await asyncio.sleep(0)
+        obs["score"] = 0.8
+        obs["events"].append("prepare")
+
+    def after(r, action, obs):
+        obs["events"].append("after")
+
+    rubric.register_forward_pre_hook(before)
+    rubric.register_forward_pre_hook(prepare)
+    rubric.register_forward_pre_hook(after)
+
+    assert await rubric(None, observation) == pytest.approx(0.8)
+    assert rubric.last_score == pytest.approx(0.8)
+    assert (
+        observation["events"]
+        == ["before", "prepare", "after"] + ["score"] * child_count
+    )
 
 
 class TestPreHookExecutionOrder:
