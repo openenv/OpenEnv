@@ -176,6 +176,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Cloud SRE &amp; FinOps</div>
+      <p class="text-sm">Simulated cloud infrastructure for diagnosing outages, scaling services, and optimizing costs while protecting production workloads.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/cloud_sre" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">Connect4</div>
       <p class="text-sm">Classic Connect Four board game environment for training agents on turn-based strategy with a 6×7 grid.</p>
       <div class="flex gap-2 mt-3">

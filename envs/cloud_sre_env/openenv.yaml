@@ -1,0 +1,63 @@
+name: "cloud-sre-env"
+version: "2.0.0"
+description: >
+  An OpenEnv environment simulating Cloud SRE & FinOps operations.
+  An AI agent manages a simulated cloud infrastructure: diagnosing outages,
+  terminating idle resources, scaling services, and optimizing costs
+  without causing collateral damage to production workloads.
+
+  Features:
+  - 3 difficulty-tiered tasks (easy → hard) with deterministic grading
+  - Seeded procedural generation for reproducible RL training
+  - Chaos event injection for robustness testing
+  - Fine-grained scoring breakdowns for agent debugging
+
+author: "naveenkumar982"
+license: "BSD-3-Clause"
+
+entrypoint: "cloud_sre_env.server.cloud_sre_environment:CloudSREEnvironment"
+
+tasks:
+  - id: "phantom_volume_cleanup"
+    name: "Phantom Volume Cleanup"
+    difficulty: "easy"
+    description: "Identify and terminate unattached, idle EBS volumes wasting money without touching active resources."
+
+  - id: "latency_spike_remediation"
+    name: "Latency Spike Remediation"
+    difficulty: "medium"
+    description: "Scale up an under-provisioned RDS database to fix high API latency, within a budget constraint."
+
+  - id: "noisy_neighbor_incident"
+    name: "Noisy Neighbor Incident"
+    difficulty: "hard"
+    description: "Identify a rogue test EC2 instance, terminate it, and reboot the crashed production backend."
+
+action_space:
+  type: "discrete"
+  commands:
+    - "terminate"
+    - "scale"
+    - "reboot"
+    - "inspect"
+    - "wait"
+
+observation_space:
+  type: "structured"
+  fields:
+    - "resources: List[ResourceInfo]"
+    - "alerts: List[AlertInfo]"
+    - "total_hourly_cost: float"
+    - "system_uptime: float (0-100)"
+    - "budget_limit: Optional[float]"
+    - "task_description: str"
+
+reward_range: [-1.0, 1.0]
+max_steps: 15
+
+dependencies:
+  - "openenv-core>=0.2.0"
+
+deployment:
+  platform: "huggingface-spaces"
+  dockerfile: "server/Dockerfile"
