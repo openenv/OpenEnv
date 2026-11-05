@@ -9,6 +9,8 @@ optional verify commands when the agent submits a final answer.
 The tool shape follows the Terminus-style "one tool" idea: agents do their work
 through a single terminal entrypoint rather than a notebook/toolbox surface.
 
+The [`openenv/terminus_env`](https://huggingface.co/spaces/openenv/terminus_env) Space is paused because every episode creates an E2B sandbox. Duplicate it and add your `E2B_API_KEY` as a secret to run your own copy.
+
 ## Tool
 
 - `terminal(command="", final_answer="")`: run a shell command inside the

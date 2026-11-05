@@ -14,6 +14,8 @@ Embodied evaluation environment for testing LLM decision-making in a full 3D dri
 - Free-roam and maze navigation with configurable traffic
 - Rubric-based reward system for RL training
 
+The [`openenv/carla_env`](https://huggingface.co/spaces/openenv/carla_env) Space is paused because CARLA needs a GPU. Duplicate it and pick an A10G in the Space settings to run your own copy.
+
 ## What Makes This Different
 
 Traditional text benchmarks ask models "what would you do?" This environment shows **what models actually do** when:
@@ -48,7 +50,7 @@ with CarlaEnv(base_url="http://localhost:8000").sync() as env:
 ```bash
 uv run python examples/carla_env/trolley_problems.py \
   --model qwen3-235b --scenario classic-3v1 \
-  --base-url https://sergiopaniego-carla-env.hf.space
+  --base-url https://<your-space>.hf.space
 ```
 
 ## Scenarios
@@ -156,11 +158,11 @@ result = await env.reset(scenario_config={
 
 ## Examples
 
-The [`examples/carla_env/`](https://github.com/huggingface/OpenEnv/tree/main/examples/carla_env) directory contains inference scripts. All connect to `http://localhost:8000` by default — pass `--base-url https://sergiopaniego-carla-env.hf.space` for the live Space.
+The [`examples/carla_env/`](https://github.com/openenv/OpenEnv/tree/main/examples/carla_env) directory contains inference scripts. All connect to `http://localhost:8000` by default — pass `--base-url https://<your-space>.hf.space` for your running copy of the Space.
 
 ### Trolley Problems
 
-**[trolley_problems.py](https://github.com/huggingface/OpenEnv/blob/main/examples/carla_env/trolley_problems.py)** — LLM evaluation across all trolley scenarios.
+**[trolley_problems.py](https://github.com/openenv/OpenEnv/blob/main/examples/carla_env/trolley_problems.py)** — LLM evaluation across all trolley scenarios.
 
 ```bash
 uv run python trolley_problems.py --model qwen3-235b --scenario classic-3v1
@@ -172,7 +174,7 @@ Available keys: `equal-1v1`, `saves-3v0`, `deadzone-3v1`, `classic-3v1`, `classi
 
 ### Maze Navigation
 
-**[maze_navigation.py](https://github.com/huggingface/OpenEnv/blob/main/examples/carla_env/maze_navigation.py)** — LLM navigation with rolling action history.
+**[maze_navigation.py](https://github.com/openenv/OpenEnv/blob/main/examples/carla_env/maze_navigation.py)** — LLM navigation with rolling action history.
 
 ```bash
 uv run python maze_navigation.py --model qwen3-235b
@@ -181,7 +183,7 @@ uv run python maze_navigation.py --model gpt-5.2 --save-images
 
 ### Free-Roam Navigation
 
-**[free_roam_navigation.py](https://github.com/huggingface/OpenEnv/blob/main/examples/carla_env/free_roam_navigation.py)** — LLM navigation in open traffic.
+**[free_roam_navigation.py](https://github.com/openenv/OpenEnv/blob/main/examples/carla_env/free_roam_navigation.py)** — LLM navigation in open traffic.
 
 ```bash
 uv run python free_roam_navigation.py --model qwen3-235b
@@ -190,7 +192,7 @@ uv run python free_roam_navigation.py --model qwen3-235b --scenario free-roam-tr
 
 ### Autopilot Baseline (No LLM)
 
-**[autopilot_navigation.py](https://github.com/huggingface/OpenEnv/blob/main/examples/carla_env/autopilot_navigation.py)** — CARLA's built-in navigation agent.
+**[autopilot_navigation.py](https://github.com/openenv/OpenEnv/blob/main/examples/carla_env/autopilot_navigation.py)** — CARLA's built-in navigation agent.
 
 ```bash
 uv run python autopilot_navigation.py --scenario maze-1
@@ -199,7 +201,7 @@ uv run python autopilot_navigation.py --scenario free-roam-default --behavior ca
 
 ### Rubric Reward Demo (No LLM)
 
-**[rubric_autopilot_example.py](https://github.com/huggingface/OpenEnv/blob/main/examples/carla_env/rubric_autopilot_example.py)** — Raw vs rubric rewards side-by-side.
+**[rubric_autopilot_example.py](https://github.com/openenv/OpenEnv/blob/main/examples/carla_env/rubric_autopilot_example.py)** — Raw vs rubric rewards side-by-side.
 
 ```bash
 uv run python rubric_autopilot_example.py --scenario free-roam-default
@@ -226,7 +228,7 @@ Hugging Face models use [Inference Providers](https://huggingface.co/docs/infere
 
 ## Rubrics for RL Training
 
-The environment includes rubrics following the [OpenEnv rubric system](https://github.com/huggingface/OpenEnv/blob/main/rfcs/004-rubrics.md). Rubrics are automatically selected based on the scenario type and populate `obs.rubric_reward` alongside the raw `obs.reward` on each step.
+The environment includes rubrics following the [OpenEnv rubric system](https://github.com/openenv/OpenEnv/blob/main/rfcs/004-rubrics.md). Rubrics are automatically selected based on the scenario type and populate `obs.rubric_reward` alongside the raw `obs.reward` on each step.
 
 **CarlaTrolleyRubric** — For trolley/action-bias scenarios. Returns 0.0 on intermediate steps, then the terminal reward at episode end. Supports temporal discounting (`gamma`) for credit assignment.
 
@@ -277,7 +279,7 @@ docker build -t carla-env:latest -f server/Dockerfile .
 docker run --gpus all -p 8000:8000 carla-env:latest
 ```
 
-**Live Space**: [sergiopaniego/carla-env](https://huggingface.co/spaces/sergiopaniego/carla-env)
+**Space**: [openenv/carla_env](https://huggingface.co/spaces/openenv/carla_env) (paused, duplicate it with an A10G)
 
 ### Specifications
 
@@ -336,7 +338,7 @@ Default is **RenderOffScreen** (supports `capture_image`). For text-only evaluat
 
 ## Resources
 
-- **OpenEnv Framework**: [github.com/huggingface/OpenEnv](https://github.com/huggingface/OpenEnv)
+- **OpenEnv Framework**: [github.com/openenv/OpenEnv](https://github.com/openenv/OpenEnv)
 - **Original carla-env**: [sinatras/carla-env](https://github.com/SinatrasC/carla-env)
 - **Blog Post**: [Carla-Env: Giving Models Access to World Simulation](https://blog.sinatras.dev/Carla-Env)
 - **CARLA Simulator**: [carla.org](https://carla.org/)
@@ -360,10 +362,10 @@ Scenarios and navigation agents adapted from [sinatras/carla-env](https://github
   title = {CARLA Environment for OpenEnv},
   author = {OpenEnv Contributors},
   year = {2026},
-  url = {https://github.com/huggingface/OpenEnv}
+  url = {https://github.com/openenv/OpenEnv}
 }
 ```
 
 ## License
 
-BSD-3-Clause License (see [LICENSE](https://github.com/huggingface/OpenEnv/blob/main/LICENSE))
+BSD-3-Clause License (see [LICENSE](https://github.com/openenv/OpenEnv/blob/main/LICENSE))

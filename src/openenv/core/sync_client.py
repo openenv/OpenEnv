@@ -243,8 +243,15 @@ class SyncEnvClient(Generic[ActT, ObsT, StateT]):
         WebSocket can fail and is surfaced as a connection error.
         """
         async_client = self._async._create_session_client()
-        client = SyncEnvClient(async_client)
-        client.connect()
+        client = async_client.sync()
+        try:
+            client.connect()
+        except Exception:
+            # No caller receives this child on failure. Release its loop here
+            # while preserving the connection error if cleanup also fails.
+            with suppress(Exception):
+                client.close()
+            raise
         self._child_clients.append(client)
         return client
 

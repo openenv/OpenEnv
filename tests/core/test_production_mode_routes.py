@@ -1515,6 +1515,187 @@ class TestMCPSessionResourceLeaks:
         executor.shutdown(wait=False)
 
 
+class TestHTTPMCPSessionShutdown:
+    @pytest.fixture(params=[False, True], ids=["per-session", "shared-executor"])
+    async def shutdown_server(self, request, mock_fastmcp_server):
+        import asyncio
+        import threading
+        from contextlib import asynccontextmanager
+
+        from openenv.core.env_server.mcp_environment import MCPEnvironment
+
+        class TrackedEnv(MCPEnvironment):
+            SUPPORTS_CONCURRENT_SESSIONS = True
+            REQUIRES_SINGLE_THREAD_EXECUTOR = request.param
+
+            def __init__(self):
+                super().__init__(mock_fastmcp_server)
+                self.created_thread = threading.get_ident()
+                self.close_threads = []
+                self.events = []
+                self.exit_started = asyncio.Event()
+                self.exit_release = asyncio.Event()
+                self.exit_release.set()
+                self.fail_close = False
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                async with super().mcp_session() as client:
+                    yield client
+                    self.exit_started.set()
+                    await self.exit_release.wait()
+                self.events.append("mcp_exit")
+
+            def reset(self, **kwargs):
+                return Observation()
+
+            def _step_impl(self, action, **kwargs):
+                return Observation()
+
+            @property
+            def state(self):
+                return State()
+
+            def close(self):
+                self.close_threads.append(threading.get_ident())
+                self.events.append("close")
+                super().close()
+                if self.fail_close:
+                    raise RuntimeError("close failed")
+
+        server = HTTPEnvServer(TrackedEnv, None, None, max_concurrent_envs=3)
+        app = FastAPI()
+        server.register_routes(app, mode="production")
+        resources = []
+
+        async def create_session(client):
+            response = await client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "openenv/session/create",
+                    "params": {},
+                },
+            )
+            session_id = response.json()["result"]["session_id"]
+            env = server._sessions[session_id]
+            resources.append(
+                (
+                    env,
+                    server._session_executors[session_id],
+                    server._session_stacks[session_id],
+                )
+            )
+            return session_id, env
+
+        try:
+            yield server, app, create_session
+        finally:
+            for env, _, _ in resources:
+                env.exit_release.set()
+            if server._reaper_task is not None:
+                server._reaper_task.cancel()
+                await asyncio.gather(server._reaper_task, return_exceptions=True)
+            # Also release resources when a regression assertion fails.
+            for env, executor, stack in resources:
+                if not env.close_threads:
+                    await server._cleanup_session_resources(env, executor, stack)
+            if server._shared_session_executor is not None:
+                server._shared_session_executor.shutdown(wait=True)
+
+    async def test_shutdown_closes_http_sessions(self, shutdown_server):
+        import httpx
+
+        server, app, create_session = shutdown_server
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            async with app.router.lifespan_context(app):
+                sessions = [await create_session(client) for _ in range(3)]
+                envs = [env for _, env in sessions]
+                mcp_clients = [env.mcp_client for env in envs]
+                executors = list(server._session_executors.values())
+                assert all(client.is_connected() for client in mcp_clients)
+
+                response = await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "openenv/session/close",
+                        "params": {"session_id": sessions[0][0]},
+                    },
+                )
+                assert response.json()["result"]["closed"] is True
+                assert envs[0].events == ["mcp_exit", "close"]
+
+            assert server.active_sessions == 0
+            assert not server._session_executors
+            assert not server._session_stacks
+            assert not server._session_info
+            assert not server._session_websocket_attachments
+            assert not server._session_pending_closes
+            assert all(not client.is_connected() for client in mcp_clients)
+            for env in envs:
+                assert env.events == ["mcp_exit", "close"]
+                assert env.close_threads == [env.created_thread]
+            for executor in executors:
+                with pytest.raises(RuntimeError, match="shutdown"):
+                    executor.submit(lambda: None)
+
+    async def test_shutdown_continues_after_close_failure(self, shutdown_server):
+        import httpx
+
+        server, app, create_session = shutdown_server
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            async with app.router.lifespan_context(app):
+                _, failing = await create_session(client)
+                failing.fail_close = True
+                _, remaining = await create_session(client)
+
+            assert server.active_sessions == 0
+            assert failing.events[0] == "mcp_exit"
+            assert failing.close_threads
+            assert remaining.events == ["mcp_exit", "close"]
+            assert remaining.close_threads == [remaining.created_thread]
+
+    async def test_shutdown_finishes_cleanup_started_by_reaper(self, shutdown_server):
+        import asyncio
+
+        import httpx
+
+        server, app, create_session = shutdown_server
+        server._session_idle_timeout_s = 1
+        lifespan = app.router.lifespan_context(app)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await lifespan.__aenter__()
+            session_id, reaped = await create_session(client)
+            reaped.exit_release.clear()
+            server._session_info[session_id].last_activity_at -= 60
+            await asyncio.wait_for(reaped.exit_started.wait(), timeout=10)
+            assert session_id not in server._sessions
+            _, remaining = await create_session(client)
+
+            shutdown = asyncio.create_task(lifespan.__aexit__(None, None, None))
+            try:
+                await asyncio.sleep(0)
+                assert not shutdown.done()
+                assert reaped.close_threads == []
+            finally:
+                reaped.exit_release.set()
+                await asyncio.wait_for(shutdown, timeout=2)
+
+            assert server.active_sessions == 0
+            for env in (reaped, remaining):
+                assert env.events == ["mcp_exit", "close"]
+                assert env.close_threads == [env.created_thread]
+
+
 class TestHTTPMCPSessionReaper:
     """Tests for the idle-session reaper (originally in TestHTTPMCPSessionLifecycle)."""
 
@@ -1584,8 +1765,10 @@ class TestHTTPMCPSessionReaper:
         # Session should be gone
         assert session_id not in server._sessions
 
-    async def test_reaper_stop_cancels_task(self, mock_fastmcp_server):
-        """Test that _stop_reaper cancels the running reaper task."""
+    async def test_reaper_stop_finishes_task_promptly(self, mock_fastmcp_server):
+        """Stopping a sleeping reaper should not wait for its polling interval."""
+        import asyncio
+
         from openenv.core.env_server.http_server import HTTPEnvServer
         from openenv.core.env_server.mcp_environment import MCPEnvironment
         from openenv.core.env_server.types import ConcurrencyConfig
@@ -1621,9 +1804,13 @@ class TestHTTPMCPSessionReaper:
         server._start_reaper()
         assert server._reaper_task is not None
         assert not server._reaper_task.done()
+        reaper = server._reaper_task
+        await asyncio.sleep(0)
 
-        server._stop_reaper()
+        await asyncio.wait_for(server._stop_reaper(), timeout=1)
         assert server._reaper_task is None
+        assert reaper.done()
+        assert not reaper.cancelled()
 
     async def test_reaper_noop_when_no_timeout(self, mock_fastmcp_server):
         """Test that _start_reaper is a no-op when session_timeout is None."""

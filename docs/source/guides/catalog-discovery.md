@@ -9,7 +9,7 @@ From a clone of the OpenEnv repository:
 ```bash
 openenv catalog build \
   --repository . \
-  --repository-uri https://github.com/huggingface/OpenEnv.git \
+  --repository-uri https://github.com/openenv/OpenEnv.git \
   --revision HEAD \
   --publisher example.org \
   --output catalog.json
@@ -62,7 +62,7 @@ Coding, BrowserGym, Calendar, Chess and Reasoning Gym also ship a `discovery.jso
 ## The `0.1-draft` profile
 
 This is the contract `openenv catalog` and `openenv discover` enforce, the first repository profile of
-[RFC 011](https://github.com/huggingface/OpenEnv/blob/main/rfcs/011-ard-catalog-discovery.md).
+[RFC 011](https://github.com/openenv/OpenEnv/blob/main/rfcs/011-ard-catalog-discovery.md).
 
 ### Inventory and producer
 

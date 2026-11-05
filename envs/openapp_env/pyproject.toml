@@ -18,7 +18,7 @@ dependencies = [
     # It is installed separately in the Dockerfile with --no-deps to avoid
     # openai>=2.7.2 conflicting with OpenApps' openai<2 requirement.
     # For local development, install manually:
-    #   pip install --no-deps "openenv @ git+https://github.com/huggingface/OpenEnv.git"
+    #   pip install --no-deps "openenv @ git+https://github.com/openenv/OpenEnv.git"
     #   pip install fastapi pydantic uvicorn requests websockets
     #
     # NOTE: open_apps is also NOT listed here for the same reason.

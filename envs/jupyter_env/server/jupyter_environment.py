@@ -350,7 +350,10 @@ class JupyterEnvironment(MCPEnvironment):
     ) -> Observation:
         self._state.step_count += 1
         obs = super().step(action, timeout_s=timeout_s, **kwargs)
-        if self._state.submitted_answer is not None and self._state.last_reward is not None:
+        if (
+            self._state.submitted_answer is not None
+            and self._state.last_reward is not None
+        ):
             obs.done = True
             obs.reward = self._state.last_reward
         return obs
@@ -363,7 +366,10 @@ class JupyterEnvironment(MCPEnvironment):
     ) -> Observation:
         self._state.step_count += 1
         obs = await super().step_async(action, timeout_s=timeout_s, **kwargs)
-        if self._state.submitted_answer is not None and self._state.last_reward is not None:
+        if (
+            self._state.submitted_answer is not None
+            and self._state.last_reward is not None
+        ):
             obs.done = True
             obs.reward = self._state.last_reward
         return obs
@@ -388,11 +394,19 @@ class JupyterEnvironment(MCPEnvironment):
         if not self._sandbox:
             return {"passed": 0, "total": 0, "reward": None}
 
-        self._sandbox.run_shell("mkdir -p /home/user/logs/verifier")
+        # Verification runs as separate sandbox processes, not in the notebook
+        # kernel, so nothing a cell does to the kernel changes how verify
+        # commands run or what they report.
+        self._sandbox.run_command("mkdir -p /home/user/logs/verifier")
         # The override is documented as verify-written, so drop anything the
         # policy wrote there during the episode before verification starts.
-        cleared = self._sandbox.run_shell(_CLEAR_REWARD_FILE).success
-        verify_results = self._run_shell_commands(self._state.verify_commands)
+        cleared = self._sandbox.run_command(_CLEAR_REWARD_FILE).success
+        verify_results = [
+            _command_result_from_cell_result(
+                command, self._sandbox.run_command(command)
+            )
+            for command in self._state.verify_commands
+        ]
         self._state.verify_results = verify_results
 
         passed = sum(1 for result in verify_results if result.success)
@@ -453,7 +467,7 @@ def _read_reward_override(
 ) -> tuple[Optional[float], Optional[str]]:
     if not cleared:
         return None, "reward file could not be removed before verification"
-    result = sandbox.run_shell(f"cat {REWARD_FILE} 2>/dev/null || true")
+    result = sandbox.run_command(f"cat {REWARD_FILE} 2>/dev/null || true")
     return _parse_reward_override(result.stdout or "")
 
 
