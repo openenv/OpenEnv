@@ -25,7 +25,7 @@ class TestDockerfileCmd(unittest.TestCase):
             ("# CMD ignored\ncmd real\n", "real"),
             ("FROM python:3.12\nCMD \n", None),
             ("CMD [not valid json\n", "[not valid json"),
-            ("CMD unfinished \\", "unfinished \\"),
+            ("CMD unfinished \\", "unfinished"),
             ("CMD uvicorn \\\n    app:app\n", "uvicorn     app:app"),
             ('CMD ["uvicorn", \\\n    "app:app"]\n', "uvicorn app:app"),
             ("CMD uvicorn \\\n# comment\n    app:app\n", "uvicorn     app:app"),
@@ -49,6 +49,20 @@ class TestDockerfileCmd(unittest.TestCase):
         for dockerfile, expected in cases:
             with self.subTest(dockerfile=dockerfile):
                 self.assertEqual(_MODULE.parse_dockerfile_cmd(dockerfile), expected)
+
+    def test_continued_cmd_with_trailing_escape_at_eof(self):
+        dockerfile = "FROM x\nCMD uvicorn app:app \\\n    --host 0.0.0.0 \\\n"
+        self.assertEqual(
+            _MODULE.parse_dockerfile_cmd(dockerfile),
+            "uvicorn app:app     --host 0.0.0.0",
+        )
+
+    def test_continued_cmd_followed_only_by_comments(self):
+        dockerfile = "FROM x\nCMD uvicorn app:app \\\n    --host 0.0.0.0 \\\n# trailing comment\n"
+        self.assertEqual(
+            _MODULE.parse_dockerfile_cmd(dockerfile),
+            "uvicorn app:app     --host 0.0.0.0",
+        )
 
 
 if __name__ == "__main__":

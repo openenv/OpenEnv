@@ -70,6 +70,11 @@ def parse_dockerfile_cmd(dockerfile_content: str) -> str | None:
             last_cmd = match.group(1).strip()
         instruction = ""
 
+    if instruction:
+        match = re.match(r"\s*CMD\s+(.+)", instruction, flags=re.IGNORECASE)
+        if match:
+            last_cmd = match.group(1).strip()
+
     if last_cmd is None:
         return None
 
