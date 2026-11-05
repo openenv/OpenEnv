@@ -61,8 +61,8 @@ novita = [
     "novita-sandbox>=2.1.1",
 ]
 tensorlake = [
-    # Older releases pin websockets<14, which conflicts with core.
-    "tensorlake>=0.5.135",
+    # Oldest release the TensorlakeProvider is tested against.
+    "tensorlake>=0.5.161",
     "pyyaml>=6.0",
 ]
 inspect = [
