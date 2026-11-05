@@ -253,6 +253,8 @@ provider.wait_for_ready(base_url)
 provider.stop_container()
 ```
 
+Full example: [`examples/kubernetes_echo_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/kubernetes_echo_env.py).
+
 ### LocalDockerProvider
 
 Runs the server on the local Docker daemon. This is the default for
