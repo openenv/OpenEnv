@@ -99,6 +99,8 @@ Tools are auto-discovered via MCP. Use `await env.list_tools()` to see all avail
 | `sql_query` | Execute SQL query on a table (requires filters) | `company_name: str, table_name: str, query: str` |
 | `submit_answer` | Submit final answer (ends episode) | `answer: str` |
 
+Once the episode has ended (an answer was submitted or `FINQA_MAX_STEPS` was reached), further `step()` calls (the WebSocket session) do not run tools or score answers. They return the final observation again (`done=True`, same reward) until the next `reset()`.
+
 ### Tool Constraints
 
 - **sql_query**: Must include filters (`WHERE`, `HAVING`, etc.). `SELECT *` is not allowed.

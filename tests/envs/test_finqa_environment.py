@@ -653,6 +653,144 @@ class TestResetSeed:
         )
 
 
+class TestEpisodeEnd:
+    """Nothing is scored after the episode ends (answer submitted or max steps).
+
+    Self-contained (synthetic data, no downloaded dataset needed) so it runs in CI.
+    """
+
+    @pytest.fixture
+    def data_path(self, tmp_path):
+        pytest.importorskip("pandas")
+        questions = tmp_path / "benchmark_questions"
+        questions.mkdir()
+        rows = ["id,user_query,company,question,answer"]
+        rows += [f"{i},query {i},acme,question {i},\\boxed{{{i}}}" for i in range(5)]
+        (questions / "finqa.csv").write_text("\n".join(rows) + "\n")
+        (tmp_path / "input_companies").mkdir()
+        return str(tmp_path)
+
+    @staticmethod
+    def _make_env(data_path, max_steps=10):
+        from envs.finqa_env.server.finqa_environment import FinQAEnvironment
+
+        env = FinQAEnvironment(data_path=data_path, max_steps=max_steps)
+        env.reset(seed=1)
+        return env
+
+    @staticmethod
+    def _submit(answer):
+        from openenv.core.env_server.mcp_types import CallToolAction
+
+        return CallToolAction(tool_name="submit_answer", arguments={"answer": answer})
+
+    @staticmethod
+    def _tool():
+        from openenv.core.env_server.mcp_types import CallToolAction
+
+        return CallToolAction(
+            tool_name="get_descriptions", arguments={"company_name": "acme"}
+        )
+
+    def test_submit_after_submit_is_not_scored(self, data_path):
+        env = self._make_env(data_path)
+        gold = env.state.ground_truth
+
+        first = env.step(self._submit("-1"))
+        assert first.done is True
+        assert first.reward == 0.0
+
+        second = env.step(self._submit(gold))
+        assert second.done is True
+        assert second.reward == 0.0
+        assert second.metadata == first.metadata
+
+    def test_submit_after_max_steps_is_not_scored(self, data_path):
+        env = self._make_env(data_path, max_steps=2)
+        gold = env.state.ground_truth
+
+        assert env.step(self._tool()).done is False
+        last = env.step(self._tool())
+        assert last.done is True
+        assert last.reward == 0.0
+
+        late = env.step(self._submit(gold))
+        assert late.done is True
+        assert late.reward == 0.0
+        assert env.state.step_count == 2
+
+    def test_submit_on_last_step_is_scored(self, data_path):
+        env = self._make_env(data_path, max_steps=2)
+        gold = env.state.ground_truth
+
+        assert env.step(self._tool()).done is False
+        obs = env.step(self._submit(gold))
+        assert obs.done is True
+        assert obs.reward == 1.0
+
+    def test_any_step_after_done_keeps_the_final_reward(self, data_path):
+        from openenv.core.env_server.mcp_types import ListToolsAction
+
+        env = self._make_env(data_path, max_steps=2)
+        assert env.step(self._tool()).done is False
+        assert env.step(self._submit(env.state.ground_truth)).reward == 1.0
+
+        obs = env.step(ListToolsAction())
+        assert obs.done is True
+        assert obs.reward == 1.0
+        assert env.state.step_count == 2
+
+    def test_reset_starts_a_new_episode(self, data_path):
+        env = self._make_env(data_path)
+        env.step(self._submit("-1"))
+
+        env.reset()
+        obs = env.step(self._submit(env.state.ground_truth))
+        assert obs.done is True
+        assert obs.reward == 1.0
+
+    @pytest.mark.asyncio
+    async def test_step_async_submit_after_submit_is_not_scored(self, data_path):
+        env = self._make_env(data_path)
+        gold = env.state.ground_truth
+
+        first = await env.step_async(self._submit("-1"))
+        assert first.done is True
+        assert first.reward == 0.0
+
+        second = await env.step_async(self._submit(gold))
+        assert second.done is True
+        assert second.reward == 0.0
+
+    @pytest.mark.asyncio
+    async def test_step_async_submit_after_max_steps_is_not_scored(self, data_path):
+        env = self._make_env(data_path, max_steps=1)
+        gold = env.state.ground_truth
+
+        last = await env.step_async(self._tool())
+        assert last.done is True
+
+        late = await env.step_async(self._submit(gold))
+        assert late.done is True
+        assert late.reward == 0.0
+
+    @pytest.mark.asyncio
+    async def test_step_async_any_step_after_done_keeps_the_final_reward(
+        self, data_path
+    ):
+        from openenv.core.env_server.mcp_types import ListToolsAction
+
+        env = self._make_env(data_path, max_steps=1)
+        assert (
+            await env.step_async(self._submit(env.state.ground_truth))
+        ).reward == 1.0
+
+        obs = await env.step_async(ListToolsAction())
+        assert obs.done is True
+        assert obs.reward == 1.0
+        assert env.state.step_count == 1
+
+
 @pytest.mark.skipif(_integration_skip, reason=_integration_reason)
 class TestEnvironment:
     """Test environment logic using MCP actions."""

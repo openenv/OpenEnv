@@ -162,10 +162,10 @@ required). You can also point `--live` at the hosted Space
   ECHO adds a λ-scaled cross-entropy on the observation tokens. A trainer can fold this
   into one `forward_backward` with per-token advantages (RFC 010 implementation note),
   or run it as a second accumulated `forward_backward` before one `optim_step`.
-- **AWM** (the Agent World Model env, added in huggingface/OpenEnv#428): the
+- **AWM** (the Agent World Model env, added in openenv/OpenEnv#428): the
   substrate; 1k envs of exactly the long, observation-heavy
   trajectories where ECHO pays off.
-- **ACA cloud sandbox** (huggingface/OpenEnv#793): the runtime the rollouts can execute in.
+- **ACA cloud sandbox** (openenv/OpenEnv#793): the runtime the rollouts can execute in.
 
 ## Status
 

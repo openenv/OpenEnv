@@ -33,8 +33,8 @@ ENVS_DIR = os.path.join(ROOT, "envs")
 DOCS_ENVS_DIR = os.path.join(ROOT, "docs", "source", "environments")
 TOCTREE_PATH = os.path.join(ROOT, "docs", "source", "_toctree.yml")
 CATALOG_PATH = os.path.join(ROOT, "docs", "source", "environments.md")
-GITHUB_RAW_BASE = "https://raw.githubusercontent.com/huggingface/OpenEnv/main"
-GITHUB_BASE = "https://github.com/huggingface/OpenEnv"
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/openenv/OpenEnv/main"
+GITHUB_BASE = "https://github.com/openenv/OpenEnv"
 
 SKIP_DIRS = {"README.md"}
 

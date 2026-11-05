@@ -268,6 +268,22 @@ These three APIs establish the minimum viable interface for environment interact
 
 **Scope**: This RFC focuses exclusively on these baseline APIs. Additional APIs (e.g., `render()`, `seed()`) will be explored in follow-up RFCs. The `actions()` method for action discovery is defined in RFC 005.
 
+#### Amendment: Descriptive reset parameters (#1215)
+
+**Status**: Proposed; pending maintainer sign-off in #1270.
+
+The server factories and `HTTPEnvServer` accept an optional, keyword-only
+`reset_cls`, defaulting to `ResetRequest`. `GET /schema` publishes its JSON
+schema as `reset`, distinct from the `reset_observation` response schema.
+This is declarative metadata for orchestration clients; it does not expose
+reset as an agent tool.
+
+The model is descriptive only: HTTP and WebSocket reset requests retain their
+existing validation and signature filtering. Environments may still accept
+undeclared kwargs. Enforcing the declared model would require a separate,
+explicit compatibility decision. Existing clients can ignore the added key;
+`SchemaResponse` continues to accept payloads without it.
+
 #### Decision 2: Environment-Computed Rewards
 
 **Chosen Approach**: Rewards are computed inside the environment and returned as part of the observation.
