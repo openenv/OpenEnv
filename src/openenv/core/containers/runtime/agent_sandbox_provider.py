@@ -15,6 +15,7 @@ import logging
 import socket
 import threading
 import time
+import uuid
 from contextlib import suppress
 from typing import Any, Dict, Optional
 
@@ -73,6 +74,11 @@ class _LocalAuthProxy:
     HTTP requests and WebSocket handshakes alike.
 
     Copied from hf_sandbox_provider._LocalAuthProxy; keep the copies aligned.
+
+    Limitations: bodies are buffered (a streamed upstream response such as
+    SSE is withheld until it ends), only JSON text frames are relayed
+    upstream (binary client frames and close codes are not forwarded), and
+    upstream redirects are rejected. EnvClient uses none of these.
     """
 
     def __init__(self, *, target_url: str, headers: dict[str, str]):
@@ -111,11 +117,18 @@ class _LocalAuthProxy:
                     data=body,
                     headers=headers,
                     timeout=60.0,
-                    allow_redirects=True,
+                    allow_redirects=False,
                 )
             except requests.RequestException:
                 return Response(
                     content=b"upstream agent sandbox router unreachable",
+                    status_code=502,
+                )
+            if 300 <= upstream.status_code < 400:
+                # Following a redirect would replay the body and the injected
+                # headers to another origin and could downgrade https to http.
+                return Response(
+                    content=b"upstream agent sandbox router redirected; rejected",
                     status_code=502,
                 )
             response_headers = {
@@ -136,7 +149,16 @@ class _LocalAuthProxy:
             if query:
                 target = f"{target}?{query}"
             headers = {**self.headers, "accept": "*/*"}
-            upstream = await self._connect_upstream_websocket(target, headers)
+            try:
+                upstream = await self._connect_upstream_websocket(target, headers)
+            except Exception:
+                # Never propagate the upstream exception: its message can embed
+                # the target URL, which may carry credentials (RFC 002 S4,
+                # INVARIANTS credential rule). Deny generically instead.
+                logger.warning("agent sandbox WebSocket upstream handshake failed")
+                with suppress(Exception):
+                    await websocket.close(code=1011)
+                return
             await websocket.accept()
             try:
                 to_upstream = asyncio.create_task(
@@ -181,13 +203,18 @@ class _LocalAuthProxy:
     ) -> Any:
         last_error: Exception | None = None
         for _ in range(5):
+            connector = ws_connect(
+                target,
+                additional_headers=headers,
+                max_size=_MAX_WS_MESSAGE_SIZE,
+                compression=None,
+            )
+            # Never follow handshake redirects: websockets replays
+            # additional_headers to the redirect target, which would leak the
+            # routing headers and any router_headers to another origin.
+            connector.process_redirect = lambda exc: exc
             try:
-                return await ws_connect(
-                    target,
-                    additional_headers=headers,
-                    max_size=_MAX_WS_MESSAGE_SIZE,
-                    compression=None,
-                )
+                return await connector
             except Exception as exc:
                 last_error = exc
                 await asyncio.sleep(0.5)
@@ -207,10 +234,18 @@ class _LocalAuthProxy:
                 await websocket.send_text(message)
 
     def stop(self) -> None:
+        """Shut the proxy down. Raises `RuntimeError` if the thread will not
+        exit; the handles are then retained so a later call can retry, instead
+        of silently leaking a thread that keeps the loopback port bound."""
         if self._server is None or self._thread is None:
             return
         self._server.should_exit = True
+        # Bound the graceful drain: do not wait out long-lived upstream
+        # responses that would outlive the 5s join below.
+        self._server.force_exit = True
         self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            raise RuntimeError("Agent sandbox routing proxy did not stop")
         self._server = None
         self._thread = None
 
@@ -329,6 +364,9 @@ class AgentSandboxProvider(ContainerProvider):
         self._client: Any = None
         self._sandbox: Any = None
         self._proxy: Optional[_LocalAuthProxy] = None
+        # (claim_name, namespace) recorded before provisioning so an orphaned
+        # claim stays deletable when create_sandbox fails mid-flight.
+        self._claim: Optional[tuple[str, str]] = None
 
     def start_container(
         self,
@@ -359,9 +397,10 @@ class AgentSandboxProvider(ContainerProvider):
         Raises:
             RuntimeError: If a sandbox from an earlier call is still active.
         """
-        if self._sandbox is not None:
+        if self._sandbox is not None or self._claim is not None:
             raise RuntimeError(
-                "An agent sandbox is already active. Call stop_container() first."
+                "An agent sandbox is already active or a previous claim still "
+                "awaits cleanup. Call stop_container() first."
             )
         if image is not None:
             raise ValueError(
@@ -413,11 +452,17 @@ class AgentSandboxProvider(ContainerProvider):
             cleanup=True,
             api_client=self._api_client,
         )
+        # Record the claim identity before provisioning: if create_sandbox
+        # fails and the SDK's rollback DELETE also fails, the claim still
+        # exists and stop_container() can delete it by name. DNS-1123 label.
+        claim_name = f"openenv-{uuid.uuid4().hex[:20]}"
+        self._claim = (claim_name, self._namespace)
         self._sandbox = self._client.create_sandbox(
             warmpool=self._warmpool,
             namespace=self._namespace,
             sandbox_ready_timeout=self._sandbox_ready_timeout,
             shutdown_after_seconds=self._shutdown_after_seconds,
+            claim_name=claim_name,
             env=effective_env_vars or None,
         )
         sandbox_id = self._sandbox.sandbox_id
@@ -467,20 +512,36 @@ class AgentSandboxProvider(ContainerProvider):
 
         `Sandbox.terminate()` is idempotent and treats an already-deleted
         claim as success. If termination fails, the handle is kept so the
-        next call retries the same claim.
+        next call retries the same claim. A claim orphaned by a failed
+        provisioning (no handle exists) is deleted by its recorded name;
+        the name is kept until the delete succeeds. If the proxy thread will
+        not stop, its handles are kept for a retry and the failure is
+        reported after the claim cleanup ran.
         """
+        proxy_error: Optional[RuntimeError] = None
         if self._proxy is not None:
-            self._proxy.stop()
-            self._proxy = None
-        if self._sandbox is None:
-            return
-        sandbox, self._sandbox = self._sandbox, None
-        try:
-            sandbox.terminate()
-        except Exception:
-            # Keep the handle so a retry can terminate the same claim.
-            self._sandbox = sandbox
-            raise
+            try:
+                self._proxy.stop()
+                self._proxy = None
+            except RuntimeError as exc:
+                proxy_error = exc
+        if self._sandbox is not None:
+            sandbox, self._sandbox = self._sandbox, None
+            try:
+                sandbox.terminate()
+            except Exception:
+                # Keep the handle so a retry can terminate the same claim.
+                self._sandbox = sandbox
+                raise
+            self._claim = None
+        elif self._claim is not None:
+            claim_name, namespace = self._claim
+            # delete_sandbox_claim treats an already-deleted claim as success
+            # and raises on API errors, so a failure stays retryable.
+            self._client.k8s_helper.delete_sandbox_claim(claim_name, namespace)
+            self._claim = None
+        if proxy_error is not None:
+            raise proxy_error
 
     def wait_for_ready(self, base_url: str, timeout_s: float = 120.0) -> None:
         """

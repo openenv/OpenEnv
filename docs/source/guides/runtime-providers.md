@@ -199,12 +199,22 @@ metadata:
 spec:
   podTemplate:
     spec:
+      # The sandbox runs untrusted workloads: no API credentials needed.
+      automountServiceAccountToken: false
       containers:
       - name: env
-        image: ghcr.io/huggingface/openenv-echo-env:latest
+        # The echo env's Space image; its CMD serves OpenEnv on port 8000.
+        image: registry.hf.space/openenv-echo-env:latest
         ports:
         - containerPort: 8000
           protocol: TCP
+        resources:
+          requests:
+            cpu: "1"
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 2Gi
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
@@ -248,8 +258,10 @@ Notes:
   Gateway.
 - `shutdown_after_seconds` (default `3600`) bounds the sandbox lifetime: the
   controller deletes the claim on expiry even if the client process dies.
-- `env_vars` are injected via `SandboxClaim.spec.env`, which forces a cold
-  start instead of adopting a pre-warmed pod.
+- `env_vars` are injected via `SandboxClaim.spec.env`, on top of any `env`
+  entries baked into the template's pod spec. Claim-specific env forces a
+  cold start from the template instead of adopting a pre-warmed pod, since a
+  warm pod cannot gain new environment variables.
 - `router_headers` adds extra headers (e.g. `Authorization`) for routers
   behind an authenticating gateway.
 - Egress policy is the cluster operator's job: put a `networkPolicy` block in
