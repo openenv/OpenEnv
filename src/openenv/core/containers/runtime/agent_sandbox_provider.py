@@ -402,10 +402,14 @@ class AgentSandboxProvider(ContainerProvider):
         Raises:
             RuntimeError: If a sandbox from an earlier call is still active.
         """
-        if self._sandbox is not None or self._claim is not None:
+        if (
+            self._sandbox is not None
+            or self._claim is not None
+            or self._proxy is not None
+        ):
             raise RuntimeError(
-                "An agent sandbox is already active or a previous claim still "
-                "awaits cleanup. Call stop_container() first."
+                "An agent sandbox is already active, or a previous claim or "
+                "proxy still awaits cleanup. Call stop_container() first."
             )
         if image is not None:
             raise ValueError(
@@ -463,14 +467,29 @@ class AgentSandboxProvider(ContainerProvider):
         # exists and stop_container() can delete it by name. DNS-1123 label.
         claim_name = f"openenv-{uuid.uuid4().hex[:20]}"
         self._claim = (claim_name, self._namespace)
-        self._sandbox = self._client.create_sandbox(
-            warmpool=self._warmpool,
-            namespace=self._namespace,
-            sandbox_ready_timeout=self._sandbox_ready_timeout,
-            shutdown_after_seconds=self._shutdown_after_seconds,
-            claim_name=claim_name,
-            env=effective_env_vars or None,
-        )
+        try:
+            self._sandbox = self._client.create_sandbox(
+                warmpool=self._warmpool,
+                namespace=self._namespace,
+                sandbox_ready_timeout=self._sandbox_ready_timeout,
+                shutdown_after_seconds=self._shutdown_after_seconds,
+                claim_name=claim_name,
+                env=effective_env_vars or None,
+            )
+        except Exception:
+            # An explicit claim_name disables the SDK's own rollback, so
+            # delete the claim here. If that fails, keep the identity:
+            # stop_container()/close() retry and a new start is refused.
+            try:
+                self._delete_pending_claim()
+            except Exception:
+                logger.warning(
+                    "Could not roll back agent sandbox claim %s; "
+                    "stop_container() will retry.",
+                    claim_name,
+                    exc_info=True,
+                )
+            raise
         sandbox_id = self._sandbox.sandbox_id
         try:
             ingress = self._secure_ingress_url(self._sandbox.connector.connect())
@@ -541,13 +560,20 @@ class AgentSandboxProvider(ContainerProvider):
                 raise
             self._claim = None
         elif self._claim is not None:
-            claim_name, namespace = self._claim
-            # delete_sandbox_claim treats an already-deleted claim as success
-            # and raises on API errors, so a failure stays retryable.
-            self._client.k8s_helper.delete_sandbox_claim(claim_name, namespace)
-            self._claim = None
+            self._delete_pending_claim()
         if proxy_error is not None:
             raise proxy_error
+
+    def _delete_pending_claim(self) -> None:
+        """Delete a recorded claim that never got a sandbox handle.
+
+        `delete_sandbox_claim` treats an already-deleted claim as success and
+        raises on API errors, so a failure stays retryable and the identity
+        is only cleared after the delete succeeded.
+        """
+        claim_name, namespace = self._claim
+        self._client.k8s_helper.delete_sandbox_claim(claim_name, namespace)
+        self._claim = None
 
     def wait_for_ready(self, base_url: str, timeout_s: float = 120.0) -> None:
         """

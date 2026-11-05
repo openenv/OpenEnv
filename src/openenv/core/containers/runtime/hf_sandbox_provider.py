@@ -315,8 +315,11 @@ class HFSandboxProvider(ContainerProvider):
         env_vars: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> str:
-        if self._sandbox is not None:
-            raise RuntimeError("HFSandboxProvider already has an active service")
+        if self._sandbox is not None or self._proxy is not None:
+            raise RuntimeError(
+                "HFSandboxProvider already has an active service, or a proxy "
+                "still awaits cleanup. Call stop_container() first."
+            )
         if kwargs:
             unsupported = ", ".join(sorted(kwargs))
             raise ValueError(

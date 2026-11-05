@@ -252,8 +252,27 @@ def fake_sdk():
         sdk.sandboxes.append(sandbox)
         return sandbox
 
-    sdk.SandboxClient = MagicMock()
-    sdk.SandboxClient.return_value.create_sandbox.side_effect = _create
+    # Strict constructor signature (k8s-agent-sandbox 1.0.6); returns one
+    # shared client mock so tests can pre-arrange create_sandbox behavior.
+    sdk.client = MagicMock()
+    sdk.client.create_sandbox.side_effect = _create
+
+    def _client_factory(
+        connection_config=None,
+        tracer_config=None,
+        cleanup=False,
+        api_client=None,
+        *,
+        file_config=None,
+    ):
+        # cleanup=True is dead weight: the SDK's atexit hook never deletes
+        # explicitly named claims.
+        assert cleanup is False, "cleanup=True has no effect for named claims"
+        sdk.client.connection_config = connection_config
+        sdk.client.api_client = api_client
+        return sdk.client
+
+    sdk.SandboxClient = MagicMock(side_effect=_client_factory)
     with patch.dict(
         sys.modules,
         {"k8s_agent_sandbox": sdk, "k8s_agent_sandbox.models": models},
@@ -281,9 +300,7 @@ def test_gateway_mode_happy_path(fake_sdk):
         assert config.gateway_name == "external-http-gateway"
         assert config.gateway_namespace == "gateway-ns"
         assert config.server_port == 8000
-        create_kwargs = (
-            fake_sdk.SandboxClient.return_value.create_sandbox.call_args.kwargs
-        )
+        create_kwargs = fake_sdk.client.create_sandbox.call_args.kwargs
         assert create_kwargs["warmpool"] == "openenv-echo-pool"
         assert create_kwargs["namespace"] == "openenv"
         assert create_kwargs["sandbox_ready_timeout"] == 180
@@ -324,9 +341,7 @@ def test_env_vars_merge_and_forward(fake_sdk):
     )
     provider.start_container(env_vars={"A": "2"})
     try:
-        create_kwargs = (
-            fake_sdk.SandboxClient.return_value.create_sandbox.call_args.kwargs
-        )
+        create_kwargs = fake_sdk.client.create_sandbox.call_args.kwargs
         assert create_kwargs["env"] == {"TOKEN": "t", "A": "2"}
     finally:
         provider.stop_container()
@@ -339,9 +354,7 @@ def test_empty_env_vars_forwarded_as_none(fake_sdk):
     )
     provider.start_container(env_vars={})
     try:
-        create_kwargs = (
-            fake_sdk.SandboxClient.return_value.create_sandbox.call_args.kwargs
-        )
+        create_kwargs = fake_sdk.client.create_sandbox.call_args.kwargs
         assert create_kwargs["env"] is None
     finally:
         provider.stop_container()
@@ -357,9 +370,7 @@ def test_custom_ttl_and_ready_timeout_forwarded(fake_sdk):
     )
     provider.start_container()
     try:
-        create_kwargs = (
-            fake_sdk.SandboxClient.return_value.create_sandbox.call_args.kwargs
-        )
+        create_kwargs = fake_sdk.client.create_sandbox.call_args.kwargs
         assert create_kwargs["shutdown_after_seconds"] == 60
         assert create_kwargs["sandbox_ready_timeout"] == 30
     finally:
@@ -396,7 +407,7 @@ def test_rejects_image_argument(fake_sdk):
     )
     with pytest.raises(ValueError, match="warmpool"):
         provider.start_container("echo-env:latest")
-    fake_sdk.SandboxClient.return_value.create_sandbox.assert_not_called()
+    fake_sdk.client.create_sandbox.assert_not_called()
 
 
 def test_rejects_bad_port(fake_sdk):
@@ -501,14 +512,14 @@ def test_cleanup_failure_does_not_hide_start_error(fake_sdk):
     provider = AgentSandboxProvider(
         warmpool="openenv-echo-pool", gateway_name="external-http-gateway"
     )
-    original = fake_sdk.SandboxClient.return_value.create_sandbox.side_effect
+    original = fake_sdk.client.create_sandbox.side_effect
 
     def _create(**kwargs):
         sandbox = original(**kwargs)
         sandbox.terminate.side_effect = ConnectionError("apiserver down")
         return sandbox
 
-    fake_sdk.SandboxClient.return_value.create_sandbox.side_effect = _create
+    fake_sdk.client.create_sandbox.side_effect = _create
     with patch.object(
         AgentSandboxProvider, "_secure_ingress_url", side_effect=OSError("boom")
     ):
@@ -800,7 +811,7 @@ def test_claim_identity_is_recorded_and_cleared(fake_sdk):
         warmpool="openenv-echo-pool", namespace="openenv", gateway_name="g"
     )
     provider.start_container()
-    create_kwargs = fake_sdk.SandboxClient.return_value.create_sandbox.call_args.kwargs
+    create_kwargs = fake_sdk.client.create_sandbox.call_args.kwargs
     assert re.fullmatch(r"openenv-[0-9a-f]{20}", create_kwargs["claim_name"])
     assert provider._claim == (create_kwargs["claim_name"], "openenv")
 
@@ -808,8 +819,10 @@ def test_claim_identity_is_recorded_and_cleared(fake_sdk):
     assert provider._claim is None
 
 
-def test_failed_provision_keeps_claim_identity_for_retry(fake_sdk):
-    create = fake_sdk.SandboxClient.return_value.create_sandbox
+def test_failed_provision_rolls_back_immediately(fake_sdk):
+    # An explicit claim_name disables the SDK's own rollback, so the provider
+    # must delete the claim itself when create_sandbox fails.
+    create = fake_sdk.client.create_sandbox
     original = create.side_effect
     create.side_effect = TimeoutError("claim not ready")
     provider = AgentSandboxProvider(
@@ -818,46 +831,68 @@ def test_failed_provision_keeps_claim_identity_for_retry(fake_sdk):
     with pytest.raises(TimeoutError):
         provider.start_container()
 
-    # Another start is refused while the orphaned claim needs cleanup.
-    with pytest.raises(RuntimeError, match="stop_container"):
-        provider.start_container()
-
-    helper = fake_sdk.SandboxClient.return_value.k8s_helper
-    provider.stop_container()
+    helper = fake_sdk.client.k8s_helper
     claim_name, namespace = helper.delete_sandbox_claim.call_args.args
     assert re.fullmatch(r"openenv-[0-9a-f]{20}", claim_name)
     assert namespace == "default"
+    assert provider._claim is None
 
-    # Cleanup done: provisioning may proceed again.
+    # Rollback succeeded: provisioning may proceed right away.
     create.side_effect = original
     url = provider.start_container()
     assert url.startswith("http://127.0.0.1:")
     provider.stop_container()
 
 
-def test_pending_claim_delete_failure_is_retried(fake_sdk):
-    create = fake_sdk.SandboxClient.return_value.create_sandbox
+def test_failed_rollback_keeps_claim_identity_for_retry(fake_sdk):
+    create = fake_sdk.client.create_sandbox
     original = create.side_effect
     create.side_effect = TimeoutError("claim not ready")
     provider = AgentSandboxProvider(
         warmpool="openenv-echo-pool", gateway_name="external-http-gateway"
     )
+    helper = fake_sdk.client.k8s_helper
+    helper.delete_sandbox_claim.side_effect = [
+        ConnectionError("apiserver down"),  # rollback during start fails
+        None,  # retry through stop_container succeeds
+    ]
     with pytest.raises(TimeoutError):
         provider.start_container()
 
-    helper = fake_sdk.SandboxClient.return_value.k8s_helper
-    helper.delete_sandbox_claim.side_effect = [
-        ConnectionError("apiserver down"),
-        None,
-    ]
-    with pytest.raises(ConnectionError):
-        provider.stop_container()
-    # Identity retained: the delete is retried, not dropped.
+    # Identity retained: another start is refused while cleanup is pending.
     assert provider._claim is not None
+    with pytest.raises(RuntimeError, match="stop_container"):
+        provider.start_container()
+
     provider.stop_container()
     assert helper.delete_sandbox_claim.call_count == 2
     assert provider._claim is None
     create.side_effect = original
+
+
+def test_restart_refused_while_proxy_cleanup_pending(fake_sdk):
+    provider = AgentSandboxProvider(
+        warmpool="openenv-echo-pool", gateway_name="external-http-gateway"
+    )
+    provider.start_container()
+    sandbox = fake_sdk.sandboxes[-1]
+
+    with patch.object(
+        _LocalAuthProxy, "stop", side_effect=[RuntimeError("proxy did not stop"), None]
+    ):
+        with pytest.raises(RuntimeError, match="did not stop"):
+            provider.stop_container()
+        sandbox.terminate.assert_called_once()
+        # The claim is gone but the proxy thread may still hold the loopback
+        # port: a restart must not overwrite the retained handle.
+        with pytest.raises(RuntimeError, match="stop_container"):
+            provider.start_container()
+        provider.stop_container()
+
+    assert provider._proxy is None
+    url = provider.start_container()
+    assert url.startswith("http://127.0.0.1:")
+    provider.stop_container()
 
 
 def test_atexit_hook_stops_sandbox_and_swallows_errors(fake_sdk):
