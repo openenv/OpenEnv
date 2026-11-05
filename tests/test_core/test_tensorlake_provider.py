@@ -426,6 +426,64 @@ def test_wait_for_ready_survives_temporary_sdk_error(sdk):
     assert sdk.probe.get_process.call_count == 2
 
 
+@pytest.mark.parametrize("surface", [False, True])
+def test_wait_for_ready_withholds_probe_handle_errors(sdk, surface):
+    # The SDK quotes the URL and the API key when the handle cannot be built.
+    import requests
+
+    provider = TensorlakeProvider(
+        public=True, image="echo-env", surface_server_logs=surface, api_key=SECRET
+    )
+    url = provider.start_container()
+    sdk.Sandbox.side_effect = sdk.SandboxError(f"proxy setup failed: {url} {SECRET}")
+
+    with (
+        patch("requests.get", side_effect=requests.ConnectionError),
+        patch("time.sleep"),
+    ):
+        with pytest.raises(TimeoutError) as exc:
+            provider.wait_for_ready(url, timeout_s=0.01)
+
+    rendered = _rendered(exc)
+    assert SECRET not in rendered
+    assert url not in rendered
+    assert sdk.Sandbox.call_count >= 1
+
+
+def test_wait_for_ready_withholds_probe_handle_close_errors(sdk):
+    import requests
+
+    provider = TensorlakeProvider(public=True, image="echo-env", api_key=SECRET)
+    url = provider.start_container()
+    sdk.Sandbox.return_value.__exit__.side_effect = sdk.SandboxError(
+        f"close failed: {url} {SECRET}"
+    )
+
+    with (
+        patch("requests.get", side_effect=requests.ConnectionError),
+        patch("time.sleep"),
+    ):
+        with pytest.raises(TimeoutError) as exc:
+            provider.wait_for_ready(url, timeout_s=0.01)
+
+    rendered = _rendered(exc)
+    assert SECRET not in rendered
+    assert url not in rendered
+
+
+def test_wait_for_ready_reports_dead_server_when_handle_close_fails(sdk):
+    import requests
+
+    provider = TensorlakeProvider(public=True, image="echo-env")
+    url = provider.start_container()
+    sdk.probe.get_process.return_value.status = "exited"
+    sdk.Sandbox.return_value.__exit__.side_effect = sdk.SandboxError("close failed")
+
+    with patch("requests.get", side_effect=requests.ConnectionError):
+        with pytest.raises(RuntimeError, match="exited"):
+            provider.wait_for_ready(url, timeout_s=5)
+
+
 def test_wait_for_ready_bounds_probes_by_remaining_budget(sdk):
     provider = TensorlakeProvider(public=True, image="echo-env")
     url = provider.start_container()
