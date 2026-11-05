@@ -13,7 +13,11 @@ from openenv.validation.graders.runtime import (
 from openenv.validation.manifest import NormalizedManifest
 from openenv.validation.report import ValidationReportV2
 from openenv.validation.runtime.artifacts import write_runtime_bundle
-from openenv.validation.runtime.contracts import RuntimeEvidence, WireExchange
+from openenv.validation.runtime.contracts import (
+    ReplayEvidence,
+    RuntimeEvidence,
+    WireExchange,
+)
 from openenv.validation.types import Lane, Level, SignatureKind, Verdict
 from support.runtime import evidence, exchange
 
@@ -241,6 +245,145 @@ def test_telemetry_redaction_or_omission_marks_bundle_modified(tmp_path, telemet
     assert "private-value" not in "".join(
         path.read_text() for path in tmp_path.iterdir()
     )
+
+
+def test_replay_artifact_retains_transcript_telemetry_identity_and_cleanup(tmp_path):
+    sample = replace(
+        measured(),
+        telemetry_json='{"schema_version":1,"seed":{"value":42}}',
+        reset_observation_schema_json='{"type":"object"}',
+    )
+    original = replace(
+        measured(),
+        replays=(
+            ReplayEvidence("session", sample),
+            ReplayEvidence(
+                "container",
+                sample,
+                '{"container_id":"second","image_id":"sha256:abc"}',
+                True,
+            ),
+        ),
+        replay_failure_reason="judged replay sampling exceeded total budget",
+    )
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    artifact = json.loads((tmp_path / "replays.json").read_text())
+    assert artifact["failure_reason"] == original.replay_failure_reason
+    assert [row["scope"] for row in artifact["samples"]] == ["session", "container"]
+    for row in artifact["samples"]:
+        assert row["trace"] == [
+            {
+                "operation": exchange.operation,
+                "request_json": json.loads(exchange.request_json),
+                "response_json": json.loads(exchange.response_json),
+            }
+            for exchange in sample.exchanges
+        ]
+        assert row["schema"] == json.loads(sample.observation_schema_json)
+        assert row["reset_schema"] == json.loads(sample.reset_observation_schema_json)
+        assert row["telemetry"] == json.loads(sample.telemetry_json)
+        assert row["redacted"] is False
+    container = artifact["samples"][1]
+    assert container["cleanup_complete"] is True
+    assert container["provider"] == {"container_id": "second", "image_id": "sha256:abc"}
+    sums = (tmp_path / "SHA256SUMS").read_text()
+    digest = hashlib.sha256((tmp_path / "replays.json").read_bytes()).hexdigest()
+    assert f"{digest}  replays.json" in sums
+
+
+def test_replay_artifact_redacts_each_independent_evidence_source(tmp_path):
+    sample = RuntimeEvidence(
+        exchanges=(
+            exchange(
+                "step", {"token": "private-request"}, {"value": "hf_notarealtoken12345"}
+            ),
+        ),
+        observation_schema_json='{"description":"Bearer private-schema"}',
+        reset_observation_schema_json='{"description":"Bearer private-reset-schema"}',
+        telemetry_json='{"rubric":{"api_key":"private-telemetry"}}',
+        failure_reason="Authorization: Bearer private-failure",
+    )
+    original = replace(
+        measured(),
+        replays=(
+            ReplayEvidence("container", sample, '{"secret":"private-provider"}', False),
+        ),
+        replay_failure_reason="Bearer private-schedule",
+    )
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    text = (tmp_path / "replays.json").read_text()
+    assert "private-" not in text
+    assert "hf_notarealtoken" not in text
+    row = json.loads(text)["samples"][0]
+    assert row["redacted"] is True
+    assert row["cleanup_complete"] is False
+    assert row["provider"]["secret"] == "[REDACTED]"
+
+
+def test_malformed_replay_omissions_are_explicit_and_do_not_leak_raw_data(tmp_path):
+    malformed = "not-json-private-value"
+    sample = RuntimeEvidence(
+        exchanges=(WireExchange("step", malformed, malformed),),
+        observation_schema_json=malformed,
+        reset_observation_schema_json=malformed,
+        telemetry_json=malformed,
+    )
+    original = replace(
+        measured(), replays=(ReplayEvidence("container", sample, malformed, True),)
+    )
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    text = (tmp_path / "replays.json").read_text()
+    assert malformed not in text
+    row = json.loads(text)["samples"][0]
+    assert row["redacted"] is True
+    assert row["omitted_trace_fields"] == [
+        {"exchange_index": 0, "field": "request_json"},
+        {"exchange_index": 0, "field": "response_json"},
+    ]
+    assert row["omitted_evidence_fields"] == [
+        "telemetry",
+        "schema",
+        "reset_schema",
+        "provider",
+    ]
+
+
+def test_replay_artifact_distinguishes_absent_fields_from_json_null(tmp_path):
+    samples = tuple(
+        ReplayEvidence(
+            "session",
+            RuntimeEvidence(
+                observation_schema_json=value,
+                reset_observation_schema_json=value,
+                telemetry_json=value,
+            ),
+            value,
+        )
+        for value in (None, "null")
+    )
+    write_runtime_bundle(
+        tmp_path, report(), evidence=replace(measured(), replays=samples)
+    )
+    rows = json.loads((tmp_path / "replays.json").read_text())["samples"]
+    for key in ("schema", "reset_schema", "telemetry", "provider"):
+        assert rows[0][key] is rows[1][key] is None
+        assert rows[0][f"{key}_available"] is False
+        assert rows[1][f"{key}_available"] is True
+
+
+def test_rewriting_bundle_removes_stale_optional_evidence(tmp_path):
+    original = replace(
+        measured(),
+        telemetry_json="{}",
+        replays=(ReplayEvidence("session", measured()),),
+    )
+    write_runtime_bundle(tmp_path, report(), evidence=original)
+    assert (tmp_path / "replays.json").exists()
+    assert (tmp_path / "session-telemetry.json").exists()
+    write_runtime_bundle(tmp_path, report(), evidence=measured())
+    assert not (tmp_path / "replays.json").exists()
+    assert not (tmp_path / "session-telemetry.json").exists()
+    assert "replays.json" not in (tmp_path / "SHA256SUMS").read_text()
 
 
 def test_redaction_preserves_token_metadata_and_filters_secret_keys():

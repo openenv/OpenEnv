@@ -606,7 +606,7 @@ limitations. Alternate DNS, unmatched addresses and unsupported address families
 must fail closed. This requires a separate reviewed enforcement implementation;
 parsing these declarations does not claim they are enforced.
 
-### Later runtime evidence contracts
+### Runtime replay evidence (PR5)
 
 Seed acceptance and empirical determinism are separate findings. A reset that
 silently drops its seed does not establish seed control, while a deterministic
@@ -616,11 +616,24 @@ policy-owned volatile metadata can be excluded. Authors cannot exclude fields.
 For `llm_judged`, the bounded variance path uses 20 completed identical-input fresh
 replays and population reward variance in reward-squared units, compared to the
 declared bound. The total run budget bounds all samples; fewer than 20 is incomplete.
+An unscored non-terminal step contributes no reward variance. Its null position must
+agree across replays; a null/numeric mismatch is a divergence. Variance is measured
+separately at each numeric step position, and an entirely unscored episode is
+incomplete rather than passing. Terminal null rewards remain invalid.
 This procedure is a runtime check, not a statistical confidence claim.
 
+The initial implementation compares the baseline against a new session and an
+independently inspected new container, and separately requests a different seed.
+The judged sample count includes the completed baseline. Container identity must
+change while image identity remains fixed. There are no volatile-field exclusions
+in this version. Collection shares a 300-second deadline and retains at most
+32 MiB across baseline and replay evidence. Missing samples, missing provider
+capabilities and failed cleanup cannot produce a passing determinism finding.
+`replays.json` preserves completed traces, telemetry, identity and cleanup outcomes.
+
 Session telemetry for seed handling, named rubric/configuration, child attribution
-and subject-emitted record references is orchestrator-only. A future protocol
-slice must authorize access with an opt-in, random per-run/per-session capability
+and subject-emitted record references is orchestrator-only. The protocol
+authorizes access with an opt-in, random per-run/per-session capability
 attached to the **same** replay connection, reject unauthorized/cross-session
 reads and never expose telemetry as agent MCP tools. A second WebSocket creates
 another environment and cannot supply evidence for the measured instance.

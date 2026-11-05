@@ -38,13 +38,20 @@ The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
 switches and wire corruption remain inside test assets. They share one fixture
 and one public runtime plan, so a defect changes one property at a time.
 
-The Docker suite contains 19 required cases: three provider lifecycle tests,
-five network-policy tests, ten CLI fault/control cases, and one real `echo_env`
+Repeatability checks replay the original plan in a fresh session, with a different
+seed, and in an independently inspected fresh container. Controlled
+judge fixtures use exactly 20 identical-input samples and per-step population
+variance; they make no inference calls. `replays.json` retains each trace, subject
+telemetry, container identity and cleanup outcome. A process-only provider explicitly
+skips fresh-container determinism. Subject-emitted records are compared with the
+independently collected wire trace.
+
+The Docker suite contains 26 required cases: three provider lifecycle tests,
+six network-policy tests, 16 CLI fault/control cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
-validator-owned sink, detect a subject launched on the bridge while declared
-`no-network`, and confirm the no-network helper serves `/health` and `/ws` without
-giving the subject a route out. The slow-step case completes a tool call taking more than five seconds within
-the declared episode budget. The hung-step case
+validator-owned sink and verify the isolated namespace and helper. The slow-step
+case completes a tool call taking more than five seconds within the declared
+episode budget. The hung-step case
 checks the episode deadline; the interruption case sends SIGINT only after a
 container log confirms the second step has begun. Both must retain the completed
 reset/state/step/state prefix and remove their own containers. Each CLI case uses

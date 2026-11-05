@@ -86,3 +86,4 @@ class ProviderCapability(str, Enum):
     IMAGE_BUILD = "image_build"
     GPU = "gpu"
     REMOTE = "remote"
+    FRESH_CONTAINER = "fresh_container"
