@@ -159,7 +159,7 @@ Each game is a WebSocket session with the Space. In our run, the Space closed al
 ```python
 def reset(self, **kwargs):
     self.client.close()
-    self.client = TextArenaEnv(base_url=env_url, headers=headers)
+    self.client = TextArenaEnv(base_url=env_url, headers=headers).sync()
     result = self.client.reset()
     ...
 ```
