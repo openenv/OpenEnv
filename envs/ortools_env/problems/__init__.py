@@ -14,7 +14,7 @@ Every module exposes the same functions:
 - `evaluate(instance, solution)`: the objective value of a solution, raising `ValueError` if it is infeasible.
   Pure Python, so it can run in a verifier image without OR-Tools.
 - `reference(instance, time_limit)`: `(solution, objective, lower_bound)` from OR-Tools (`lower_bound` may be None).
-- `baseline(instance)`: the objective of a naive solution that ignores the instance data, described in `BASELINE`.
+- `baseline(instance)`: the objective of a naive solution that makes no attempt to optimize, described in `BASELINE`.
 
 All objectives are minimized and non-negative.
 """

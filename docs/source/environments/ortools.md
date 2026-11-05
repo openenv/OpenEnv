@@ -48,7 +48,7 @@ below 0 down to -1.0, which is also the score of an infeasible solution, a crash
 the mean over the evaluation instances. The episode ends at the first submission, whose observation carries
 `done=True` and the reward.
 
-The naive solution ignores the instance data, so a policy cannot collect reward by submitting any feasible answer
+The naive solution makes no attempt to optimize, so a policy cannot collect reward by submitting any feasible answer
 (a plain `reference / objective` ratio gives a random job order on 10 jobs about 0.5). Each problem describes its
 naive solution in `BASELINE` and computes it with `baseline(instance)`:
 
@@ -61,6 +61,9 @@ naive solution in `BASELINE` and computes it with `baseline(instance)`:
 | `tardiness` | jobs in index order |
 | `rostering` | first feasible roster CP-SAT finds when all penalties are ignored |
 | `timetabling` | first feasible timetable CP-SAT finds when all penalties are ignored |
+
+The `rostering` and `timetabling` baselines come from a solver, so they can vary with solver time and threads. Precompute
+them with `build_dataset` for stable rewards.
 
 References are best computed offline with a long time limit:
 
@@ -99,6 +102,10 @@ with ORToolsEnv(base_url="http://localhost:8000").sync() as env:
     print(result.reward, result.done)
     print(env.state())  # ORToolsState: objective, reference, compute used, ...
 ```
+
+[`examples/ortools_env_episode.py`](https://github.com/openenv/OpenEnv/blob/main/examples/ortools_env_episode.py) plays a full level-1 episode through the
+tools. To train on this environment with GRPO, see
+[`examples/grpo_ortools`](https://github.com/kashif/trl/tree/grpo-ortools/examples/grpo_ortools) on a TRL branch.
 
 ## Tools
 
@@ -142,6 +149,24 @@ in `server/Dockerfile`. Outside the container (`SANDBOX_USER` unset), the code r
 an in-process import blocker that it can remove, which is fine for development but does not keep rewards honest
 against a policy that looks for it.
 
+## Deployment
+
+This environment is excluded from automatic Spaces releases by `SKIP_HF_DEPLOYMENT`, because the sandbox is not ready
+for hostile submissions (see [Sandbox status and deployment holds](https://github.com/openenv/OpenEnv/blob/main/envs/ortools_env/SECURITY.md)). Do not publish it as a public Space. Run
+it locally or on private infrastructure, with one container per session, no outbound network and container limits.
+
+The isolation described under [Sandbox](#sandbox) only exists in the image:
+
+```bash
+docker build -t ortools-env -f envs/ortools_env/server/Dockerfile envs/ortools_env
+docker network create --internal ortools-net
+docker run --rm --name ortools-env --network ortools-net --pids-limit 256 --memory 8g ortools-env
+```
+
+An `--internal` network has no outbound access and published ports do not reach it, so run the client in a container on
+`ortools-net` and connect to `http://ortools-env:8000`. These limits apply to the whole container, not to each submission.
+Submitted code can still reach the server's own port from inside the container.
+
 ## Harbor export
 
 The same episodes can be exported as [Harbor](https://harborframework.com) tasks to measure frontier agents
@@ -154,3 +179,6 @@ PYTHONPATH=src:envs python -m ortools_env.export_harbor --dataset rcpsp_l1.jsonl
 Each task gets the instance in `/app/instance.json` and asks for `/app/solution.json` (level 1) or `/app/solve.py`
 (level 2). The verifier, the problem module and the instances it scores are in `tests/`, which Harbor only
 uploads after the agent has finished.
+
+Nothing stops an agent from installing `ortools` in a Harbor task, so do not compare these scores directly with
+`allow_ortools=False` runs.

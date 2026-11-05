@@ -17,7 +17,7 @@ deliverable.
 
 The reward is `(naive - objective) / (naive - reference)` (see `problems.score`), averaged over the evaluation
 instances at level 2: 1.0 matches the OR-Tools reference (CP-SAT, or the routing solver for CVRP), 0 is no better than
-a naive solution that ignores the instance data, and -1 is an infeasible solution. References should be precomputed
+a naive solution that makes no attempt to optimize, and -1 is an infeasible solution. References should be precomputed
 into the dataset with `build_dataset.py`; missing references and baselines are computed at submission time.
 """
 
