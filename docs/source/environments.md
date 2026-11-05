@@ -255,6 +255,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">τ-Emotion-Bench</div>
+      <p class="text-sm">Customer-service conversations with an emotional LLM-simulated user across ten domains: the agent solves the request with tools while following the policy, and loses the user if it handles their emotions badly. Scored from the final database state.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/tau_emotion" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">TB2</div>
       <p class="text-sm">OpenEnv wrapper for Terminal-Bench 2 tasks with local and Docker execution modes for terminal-based agent evaluation.</p>
       <div class="flex gap-2 mt-3">
