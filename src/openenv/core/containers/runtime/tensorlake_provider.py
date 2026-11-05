@@ -22,8 +22,14 @@ logger = logging.getLogger(__name__)
 
 _PORT = 8000
 _OPENENV_YAML = "/app/env/openenv.yaml"
-# Bound the sandbox lifetime (RFC 002 S6). Same default as NovitaProvider.
+# Idle timeout. Ongoing proxy traffic keeps the sandbox running, so this is
+# not a wall-clock lifetime. Same default as NovitaProvider.
 _DEFAULT_TIMEOUT_SECS = 3600
+# How long to wait for a new sandbox to leave the "pending" state.
+_STARTUP_TIMEOUT_S = 300.0
+# Request timeout for readiness probes. The SDK default is 300 seconds, which
+# would let one probe outlive the whole `wait_for_ready` budget.
+_PROBE_TIMEOUT_S = 5.0
 _MAX_LOG_CHARS = 2000
 # Link-local range, including the cloud metadata endpoint 169.254.169.254
 # (RFC 002 S3). The sandbox DNS resolver is not in this range.
@@ -48,25 +54,6 @@ def _require_secure_url(url: str) -> str:
     return url
 
 
-def _require_public_opt_in(public: Optional[bool]) -> None:
-    """Require explicit public ingress opt-in (RFC 002 invariant S2).
-
-    `EnvClient` cannot send Tensorlake credentials, so the exposed port must
-    accept unauthenticated traffic. The caller must accept this explicitly.
-    """
-    if public is None:
-        raise ValueError(
-            "TensorlakeProvider requires explicit public=True. The sandbox URL "
-            "is public: anyone with the URL can reach the server while the "
-            "sandbox runs."
-        )
-    if not public:
-        raise ValueError(
-            "Private Tensorlake sandbox ports are not supported yet because "
-            "EnvClient cannot send Tensorlake credentials. Use public=True."
-        )
-
-
 class TensorlakeProvider(ContainerProvider):
     """
     Container provider that runs environments in Tensorlake sandboxes.
@@ -75,8 +62,8 @@ class TensorlakeProvider(ContainerProvider):
     from a registry image with `tl sbx image import <ref>`, or from a
     Dockerfile with `tl sbx image create <path>`. The provider replaces the
     image `CMD` with a keep-alive command, starts the server on port 8000, and
-    exposes that port on a public HTTPS URL. Anyone
-    with the URL can reach the server, so you must pass `public=True`.
+    exposes that port on a public HTTPS URL. Anyone with the URL can reach the
+    server, so you must pass `public=True`.
 
     Egress to the link-local range `169.254.0.0/16`, which includes the cloud
     metadata endpoint, is always blocked.
@@ -126,7 +113,8 @@ class TensorlakeProvider(ContainerProvider):
             memory_mb (`int`, *optional*):
                 Memory for the sandbox in MB. If `None`, Tensorlake chooses.
             timeout_secs (`int`, *optional*, defaults to `3600`):
-                Sandbox lifetime in seconds.
+                Idle timeout in seconds. Ongoing proxy traffic keeps the
+                sandbox running; this is not a wall-clock lifetime.
             cmd (`str`, *optional*):
                 Shell command that starts the server on port 8000. If `None`,
                 the command is built from the `app` field of
@@ -140,11 +128,24 @@ class TensorlakeProvider(ContainerProvider):
                 always blocked.
             surface_server_logs (`bool`, *optional*, defaults to `False`):
                 If `True`, include the last 50 lines of server output in the
-                error when the server exits. Values of `env_vars` are replaced
-                with `***` (best-effort). If `False`, output is withheld so
-                that secrets do not leak into logs.
+                error when the server exits. Values of `env_vars`, the API
+                key and the sandbox URL are replaced with `***`
+                (best-effort). If `False`, output is withheld so that secrets
+                do not leak into logs.
         """
-        _require_public_opt_in(public)
+        # EnvClient cannot send Tensorlake credentials, so the exposed port
+        # accepts unauthenticated traffic. The caller must opt in (RFC 002 S2).
+        if public is None:
+            raise ValueError(
+                "TensorlakeProvider requires explicit public=True. The sandbox URL "
+                "is public: anyone with the URL can reach the server while the "
+                "sandbox runs."
+            )
+        if not public:
+            raise ValueError(
+                "Private Tensorlake sandbox ports are not supported yet because "
+                "EnvClient cannot send Tensorlake credentials. Use public=True."
+            )
         self._image = image
         self._env_vars = env_vars
         self._api_key = api_key or os.environ.get("TENSORLAKE_API_KEY")
@@ -156,9 +157,11 @@ class TensorlakeProvider(ContainerProvider):
         self._deny_out = [_METADATA_CIDR, *(deny_out or [])]
         self._surface_server_logs = surface_server_logs
         self._secret_values: list[str] = []
+        self._client: Any = None
         self._sandbox: Any = None
         self._sandbox_id: Optional[str] = None
         self._pid: Optional[int] = None
+        self._probe_config: Dict[str, Any] = {}
 
     def start_container(
         self,
@@ -186,9 +189,12 @@ class TensorlakeProvider(ContainerProvider):
             `str`: Public HTTPS URL of port 8000 in the sandbox.
 
         Raises:
-            RuntimeError: If a sandbox from an earlier call is still active.
+            RuntimeError: If a sandbox from an earlier call is still active,
+                or if the sandbox or the server fails to start. SDK error
+                details are withheld.
+            TimeoutError: If the sandbox stays pending for too long.
         """
-        if self._sandbox is not None or self._sandbox_id is not None:
+        if self._sandbox_id is not None:
             raise RuntimeError(
                 "A Tensorlake sandbox is already active. Call stop_container() first."
             )
@@ -196,7 +202,7 @@ class TensorlakeProvider(ContainerProvider):
             raise ValueError(
                 f"TensorlakeProvider only supports port {_PORT} (got {port})."
             )
-        effective_image = image if image is not None else self._image
+        effective_image = image or self._image
         if effective_image is None:
             raise ValueError(
                 "TensorlakeProvider requires an image. Pass it to the constructor "
@@ -213,28 +219,50 @@ class TensorlakeProvider(ContainerProvider):
             )
 
         try:
-            from tensorlake.sandbox import Sandbox, sandbox_url_from_ingress_endpoint
+            from tensorlake.sandbox import (
+                sandbox_url_from_ingress_endpoint,
+                SandboxClient,
+            )
         except ImportError as exc:
             raise ImportError(
                 "TensorlakeProvider requires the tensorlake SDK. "
                 "Install it with: pip install openenv[tensorlake]"
             ) from exc
 
-        self._sandbox = Sandbox.create(
-            image=effective_image,
-            cpus=self._cpus,
-            memory_mb=self._memory_mb,
-            timeout_secs=self._timeout_secs,
-            entrypoint=_KEEPALIVE_ENTRYPOINT,
-            # Tensorlake treats an empty allow_out as "no allowlist".
-            allow_internet_access=self._allow_out != [],
-            allow_out=self._allow_out,
-            deny_out=self._deny_out,
-            api_key=self._api_key,
-        )
-        self._secret_values = [v for v in effective_env_vars.values() if v]
+        self._secret_values = [
+            v for v in (self._api_key, *effective_env_vars.values()) if v
+        ]
         try:
-            self._sandbox_id = self._sandbox.sandbox_id
+            # SandboxClient is deprecated, but it is the only public API that
+            # allocates a sandbox and returns its ID before connecting, and
+            # that deletes a sandbox by ID. Sandbox.create() can raise after
+            # allocation and then nothing holds the ID (RFC 002 invariant 5).
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                self._client = SandboxClient(api_key=self._api_key)
+            info = self._client.create(
+                image=effective_image,
+                cpus=self._cpus,
+                memory_mb=self._memory_mb,
+                timeout_secs=self._timeout_secs,
+                entrypoint=_KEEPALIVE_ENTRYPOINT,
+                # Tensorlake treats an empty allow_out as "no allowlist".
+                allow_internet_access=self._allow_out != [],
+                allow_out=self._allow_out,
+                deny_out=self._deny_out,
+            )
+            # Record the ID first so that any failure below still deletes it.
+            self._sandbox_id = info.sandbox_id
+            deadline = time.monotonic() + _STARTUP_TIMEOUT_S
+            while info.status == "pending":
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Tensorlake sandbox startup timed out.")
+                time.sleep(0.5)
+                info = self._client.get(self._sandbox_id)
+            if info.status != "running":
+                raise RuntimeError("Tensorlake sandbox failed to start.")
+            self._sandbox = self._client.connect(self._sandbox_id)
+
             if cmd is None:
                 cmd = self._discover_server_cmd()
             process = self._sandbox.start_process(
@@ -245,34 +273,53 @@ class TensorlakeProvider(ContainerProvider):
             info = self._sandbox.update(
                 allow_unauthenticated_access=True, exposed_ports=[_PORT]
             )
-            if not info.ingress_endpoint:
-                raise RuntimeError("Tensorlake did not return an ingress endpoint.")
-            return _require_secure_url(
+            if not info.ingress_endpoint or not info.sandbox_url:
+                raise RuntimeError("Tensorlake did not return the sandbox endpoints.")
+            # Enough to build a second SDK handle with a short request timeout
+            # for readiness probes. See wait_for_ready().
+            self._probe_config = {
+                "identifier": self._sandbox_id,
+                "proxy_url": info.sandbox_url,
+                "routing_hint": info.routing_hint,
+                "api_key": self._api_key,
+            }
+            base_url = _require_secure_url(
                 sandbox_url_from_ingress_endpoint(
                     info.ingress_endpoint, info.sandbox_id, _PORT
                 )
             )
-        except Exception:
+        except Exception as exc:
             # Do not let a cleanup failure hide the original error.
             try:
                 self.stop_container()
             except Exception:
                 logger.warning(
-                    "Could not terminate Tensorlake sandbox %s after a failed start.",
-                    self._sandbox_id,
-                    exc_info=True,
+                    "Could not terminate the Tensorlake sandbox after a failed "
+                    "start. Call close() again to retry."
                 )
-            raise
+            # Errors raised above carry no SDK details, so they may propagate.
+            # SDK errors can quote the sandbox URL, the API key or server
+            # output, so they are replaced by a constant message (RFC 002 S2/S4).
+            if isinstance(exc, (ValueError, RuntimeError, TimeoutError)):
+                raise
+            raise RuntimeError(
+                "Tensorlake sandbox startup failed. SDK details are withheld."
+            ) from None
+        # The anonymous URL is a bearer capability: redact it from surfaced
+        # server output too.
+        self._secret_values += [base_url, base_url.replace("https://", "wss://", 1)]
+        return base_url
 
     def _discover_server_cmd(self) -> str:
         """Build the server command from `openenv.yaml` inside the sandbox."""
         try:
             content = self._sandbox.read_file(_OPENENV_YAML).value.decode()
-        except Exception as exc:
+        except Exception:
+            # Not chained: the SDK error may quote the sandbox URL.
             raise ValueError(
                 f"Could not read {_OPENENV_YAML} in the sandbox. "
                 "Pass cmd= to TensorlakeProvider or start_container()."
-            ) from exc
+            ) from None
         app = parse_openenv_app_field(content)
         if app is None:
             raise ValueError(
@@ -284,7 +331,7 @@ class TensorlakeProvider(ContainerProvider):
             f"--host 0.0.0.0 --port {_PORT}"
         )
 
-    def _server_exited_message(self) -> str:
+    def _server_exited_message(self, sandbox: Any) -> str:
         """Build the error for a dead server. Output is withheld by default."""
         if not self._surface_server_logs:
             return (
@@ -294,10 +341,12 @@ class TensorlakeProvider(ContainerProvider):
         from tensorlake.sandbox import SandboxError
 
         try:
-            log = "\n".join(self._sandbox.get_output(self._pid).lines[-50:])
+            log = "\n".join(sandbox.get_output(self._pid).lines[-50:])
         except SandboxError:
             return "Server process exited. Could not read its output."
-        for value in self._secret_values:
+        # Longest first, so a short value cannot split a longer one (for
+        # example the sandbox ID inside the URL) before it is scrubbed.
+        for value in sorted(self._secret_values, key=len, reverse=True):
             log = log.replace(value, "***")
         if len(log) > _MAX_LOG_CHARS:
             log = "...(truncated)...\n" + log[-_MAX_LOG_CHARS:]
@@ -305,38 +354,37 @@ class TensorlakeProvider(ContainerProvider):
 
     def stop_container(self) -> None:
         """
-        Terminate the Tensorlake sandbox.
+        Delete the Tensorlake sandbox.
 
-        If termination fails, the sandbox ID is kept. The next call deletes
-        the sandbox by ID. A sandbox that is already gone counts as stopped.
+        If deletion fails, the sandbox ID is kept and the next call retries.
+        A sandbox that is already gone counts as stopped.
+
+        Raises:
+            RuntimeError: If deletion fails. SDK error details are withheld.
         """
-        if self._sandbox is None and self._sandbox_id is None:
+        if self._sandbox_id is None:
             return
-        from tensorlake.sandbox import SandboxClient, SandboxNotFoundError
+        from tensorlake.sandbox import SandboxNotFoundError
 
         try:
-            if self._sandbox is not None:
-                sandbox, self._sandbox, self._pid = self._sandbox, None, None
-                # Sandbox.terminate() is one-shot: it drops its lifecycle client
-                # before the delete call, so a retry on the same handle does
-                # nothing.
-                sandbox.terminate()
-            else:
-                # Do not use Sandbox.connect(): it raises SandboxNotRoutableError
-                # for a sandbox that is not running, for example one that is
-                # still terminating. SandboxClient is deprecated, but it is the
-                # only public API that deletes a sandbox by ID.
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", DeprecationWarning)
-                    client = SandboxClient(api_key=self._api_key)
-                client.delete(self._sandbox_id)
+            self._client.delete(self._sandbox_id)
         except SandboxNotFoundError:
             pass
+        except Exception:
+            raise RuntimeError(
+                "Tensorlake sandbox termination failed. Retry close(). "
+                "SDK details are withheld."
+            ) from None
+        sandbox, self._sandbox = self._sandbox, None
         self._sandbox_id = None
+        self._pid = None
+        self._probe_config = {}
         self._secret_values = []
+        if sandbox is not None:
+            sandbox.close()
 
     def close(self) -> None:
-        """Terminate the active sandbox. Also called on context-manager exit."""
+        """Delete the active sandbox. Also called on context-manager exit."""
         self.stop_container()
 
     def wait_for_ready(self, base_url: str, timeout_s: float = 120.0) -> None:
@@ -355,28 +403,42 @@ class TensorlakeProvider(ContainerProvider):
         """
         import requests
 
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout_s
+        while (remaining := deadline - time.monotonic()) > 0:
             # Check the process first: a 200 from another process on port 8000
             # must not hide a dead server.
-            if self._sandbox is not None and self._pid is not None:
-                from tensorlake.sandbox import SandboxError
+            if self._probe_config:
+                from tensorlake.sandbox import Sandbox, SandboxError
 
-                try:
-                    status = self._sandbox.get_process(self._pid).status
-                except SandboxError:
-                    # Temporary SDK or proxy errors are common during a cold start.
-                    status = "running"
-                if status != "running":
-                    raise RuntimeError(self._server_exited_message())
-
+                # A fresh handle, so that the probe is bounded by the
+                # remaining budget instead of the SDK's 300 second default.
+                # Exiting the context closes the handle; the sandbox stays.
+                with Sandbox(
+                    **self._probe_config,
+                    request_timeout=min(_PROBE_TIMEOUT_S, remaining),
+                ) as probe:
+                    try:
+                        status = probe.get_process(self._pid).status
+                    except SandboxError:
+                        # Temporary SDK or proxy errors are common during a cold start.
+                        status = "running"
+                    if status != "running":
+                        raise RuntimeError(self._server_exited_message(probe))
+            # The probe may have spent part of the budget.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
-                if requests.get(f"{base_url}/health", timeout=5.0).status_code == 200:
-                    return
+                response = requests.get(
+                    f"{base_url}/health", timeout=min(_PROBE_TIMEOUT_S, remaining)
+                )
+                healthy = response.status_code == 200
             except requests.RequestException:
-                pass
-
-            time.sleep(1.0)
+                healthy = False
+            # A late 200 does not count: the caller's budget is spent.
+            if healthy and time.monotonic() < deadline:
+                return
+            time.sleep(min(1.0, max(deadline - time.monotonic(), 0.0)))
 
         raise TimeoutError(
             f"Tensorlake sandbox did not become ready within {timeout_s}s"

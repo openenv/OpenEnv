@@ -346,12 +346,18 @@ of `/app/env/openenv.yaml` (pass `cmd=` to override) and exposes port 8000 on a
 **public** HTTPS URL. Anyone with the URL can reach the server while the
 sandbox runs, so you must pass `public=True` to accept this.
 
+The URL stays usable while this ephemeral sandbox runs. `timeout_secs`
+defaults to 3600 seconds of proxy inactivity. Ongoing proxy traffic keeps
+the sandbox running, so this is not a wall-clock lifetime. A successful
+stop ends access. Starting again creates a new sandbox and URL; reconnect
+the client to that URL.
+
 The provider always blocks egress to `169.254.0.0/16`, which includes the
 cloud metadata endpoint. To block all other egress, pass an allowlist, for
 example `allow_out=["huggingface.co"]`. To block all egress, DNS included,
 pass `allow_out=[]`. To block more destinations, pass `deny_out=[...]`.
 
-Full example: [`examples/tensorlake_echo_env.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/tensorlake_echo_env.py).
+Full example: [`examples/tensorlake_echo_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/tensorlake_echo_env.py).
 
 ### UVProvider
 
