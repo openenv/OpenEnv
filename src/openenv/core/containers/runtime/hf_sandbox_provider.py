@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 import socket
 import threading
 import time
@@ -24,8 +23,6 @@ from websockets.exceptions import ConnectionClosed
 
 from .providers import ContainerProvider
 
-
-logger = logging.getLogger(__name__)
 
 _DEFAULT_PORT = 8000
 _SERVER_COMMAND = (
@@ -98,17 +95,6 @@ def _get_pool(image: str, flavor: str) -> Any:
 
 
 class _LocalAuthProxy:
-    """Loopback proxy that adds the HF auth headers to every request.
-
-    Copied into agent_sandbox_provider._LocalAuthProxy; keep the copies
-    aligned.
-
-    Limitations: bodies are buffered (a streamed upstream response such as
-    SSE is withheld until it ends), only JSON text frames are relayed
-    upstream (binary client frames and close codes are not forwarded), and
-    upstream redirects are rejected. EnvClient uses none of these.
-    """
-
     def __init__(self, *, target_url: str, headers: dict[str, str]):
         self.target_url = target_url.rstrip("/")
         self.headers = headers
@@ -145,18 +131,11 @@ class _LocalAuthProxy:
                     data=body,
                     headers=headers,
                     timeout=60.0,
-                    allow_redirects=False,
+                    allow_redirects=True,
                 )
             except requests.RequestException:
                 return Response(
                     content=b"upstream HF job unreachable",
-                    status_code=502,
-                )
-            if 300 <= upstream.status_code < 400:
-                # Following a redirect would replay the body and the injected
-                # headers to another origin and could downgrade https to http.
-                return Response(
-                    content=b"upstream HF job redirected; rejected",
                     status_code=502,
                 )
             response_headers = {
@@ -177,16 +156,7 @@ class _LocalAuthProxy:
             if query:
                 target = f"{target}?{query}"
             headers = {**self.headers, "accept": "*/*"}
-            try:
-                upstream = await self._connect_upstream_websocket(target, headers)
-            except Exception:
-                # Never propagate the upstream exception: its message can embed
-                # the target URL, which may carry credentials. Deny generically
-                # instead.
-                logger.warning("HF sandbox WebSocket upstream handshake failed")
-                with suppress(Exception):
-                    await websocket.close(code=1011)
-                return
+            upstream = await self._connect_upstream_websocket(target, headers)
             await websocket.accept()
             try:
                 to_upstream = asyncio.create_task(
@@ -231,18 +201,13 @@ class _LocalAuthProxy:
     ) -> Any:
         last_error: Exception | None = None
         for _ in range(5):
-            connector = ws_connect(
-                target,
-                additional_headers=headers,
-                max_size=_MAX_WS_MESSAGE_SIZE,
-                compression=None,
-            )
-            # Never follow handshake redirects: websockets replays
-            # additional_headers to the redirect target, which would leak the
-            # auth headers to another origin.
-            connector.process_redirect = lambda exc: exc
             try:
-                return await connector
+                return await ws_connect(
+                    target,
+                    additional_headers=headers,
+                    max_size=_MAX_WS_MESSAGE_SIZE,
+                    compression=None,
+                )
             except Exception as exc:
                 last_error = exc
                 await asyncio.sleep(0.5)
@@ -262,18 +227,10 @@ class _LocalAuthProxy:
                 await websocket.send_text(message)
 
     def stop(self) -> None:
-        """Shut the proxy down. Raises `RuntimeError` if the thread will not
-        exit; the handles are then retained so a later call can retry, instead
-        of silently leaking a thread that keeps the loopback port bound."""
         if self._server is None or self._thread is None:
             return
         self._server.should_exit = True
-        # Bound the graceful drain: do not wait out long-lived upstream
-        # responses that would outlive the 5s join below.
-        self._server.force_exit = True
         self._thread.join(timeout=5.0)
-        if self._thread.is_alive():
-            raise RuntimeError("HF sandbox auth proxy did not stop")
         self._server = None
         self._thread = None
 
@@ -315,11 +272,8 @@ class HFSandboxProvider(ContainerProvider):
         env_vars: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> str:
-        if self._sandbox is not None or self._proxy is not None:
-            raise RuntimeError(
-                "HFSandboxProvider already has an active service, or a proxy "
-                "still awaits cleanup. Call stop_container() first."
-            )
+        if self._sandbox is not None:
+            raise RuntimeError("HFSandboxProvider already has an active service")
         if kwargs:
             unsupported = ", ".join(sorted(kwargs))
             raise ValueError(
@@ -357,20 +311,14 @@ class HFSandboxProvider(ContainerProvider):
             raise
 
     def stop_container(self) -> None:
-        proxy_error: RuntimeError | None = None
         if self._proxy is not None:
-            try:
-                self._proxy.stop()
-                self._proxy = None
-            except RuntimeError as exc:
-                proxy_error = exc
+            self._proxy.stop()
+            self._proxy = None
         if self._sandbox is not None:
             sandbox = self._sandbox
             self._sandbox = None
             with suppress(Exception):
                 sandbox.kill()
-        if proxy_error is not None:
-            raise proxy_error
 
     def wait_for_ready(self, base_url: str, timeout_s: float = 120.0) -> None:
         deadline = time.time() + timeout_s
