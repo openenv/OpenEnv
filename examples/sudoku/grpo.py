@@ -64,6 +64,7 @@ def main():
             self.client = TextArenaEnv(base_url=env_url, headers=headers).sync()
 
         def reset(self, **kwargs) -> str | None:
+            # One connection per game, so the Space's periodic WebSocket drops don't land mid-game.
             self.client.close()
             self.client = TextArenaEnv(base_url=env_url, headers=headers).sync()
             result = self.client.reset()
@@ -122,6 +123,7 @@ def main():
             output_dir=args.hub_model_id.split("/")[-1],
             max_steps=args.max_steps,
             learning_rate=1e-6,
+            # Constant, since with a linear decay to 0 the Wordle reward was still rising when the learning rate ran out.
             lr_scheduler_type="constant",
             num_generations=num_generations,
             per_device_train_batch_size=per_device_batch_size,
