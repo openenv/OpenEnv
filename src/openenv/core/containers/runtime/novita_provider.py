@@ -62,6 +62,7 @@ _RUN_RE = re.compile(r"^\s*RUN\s+(?P<rest>.*)$", re.IGNORECASE)
 _ARG_DEFAULT_RE = re.compile(
     r"^\s*ARG\s+(?P<name>\w+)=(?P<value>\S+)\s*$", re.IGNORECASE
 )
+_ARG_REFERENCE_RE = re.compile(r"\$(?:\{(?P<braced>\w+)\}|(?P<bare>\w+))")
 
 
 def _strip_mount_flags(content: str) -> str:
@@ -116,6 +117,23 @@ def _strip_mount_flags(content: str) -> str:
     return "\n".join(out)
 
 
+def _substitute_args(reference: str, arg_defaults: Dict[str, str]) -> str:
+    """Expand ``$NAME`` and ``${NAME}`` in one pass against *arg_defaults*.
+
+    Substituting name by name would let a shorter ARG consume the prefix of a
+    longer one: with ``ARG BASE`` declared before ``ARG BASE_IMAGE``, an
+    unbraced ``FROM $BASE_IMAGE`` became ``<base value>_IMAGE``. Matching the
+    whole name in a single pass makes the result independent of declaration
+    order. Names with no default are left verbatim, as before.
+    """
+
+    def replace(match: "re.Match[str]") -> str:
+        name = match.group("braced") or match.group("bare")
+        return arg_defaults.get(name, match.group(0))
+
+    return _ARG_REFERENCE_RE.sub(replace, reference)
+
+
 def _resolve_from_references(content: str) -> str:
     """Substitute ``ARG`` defaults into ``FROM`` lines and drop ``--platform``.
 
@@ -130,9 +148,8 @@ def _resolve_from_references(content: str) -> str:
       as part of the name. Novita builds for its own platform, so the flag is
       dropped rather than propagated.
 
-    Substitutions are applied longest-name-first so a short unbraced prefix
-    cannot corrupt a longer sibling (e.g. ``$BASE`` must not rewrite
-    ``$BASE_IMAGE`` / ``${BASE_IMAGE}`` into ``python:3.12_IMAGE``).
+    Substitutions match whole names in one pass, leaving undeclared names
+    intact even when a declared ARG is a prefix of the reference.
     """
     arg_defaults: Dict[str, str] = {}
     for line in content.split("\n"):
@@ -141,11 +158,6 @@ def _resolve_from_references(content: str) -> str:
         match = _ARG_DEFAULT_RE.match(line)
         if match:
             arg_defaults[match.group("name")] = match.group("value")
-
-    # Longest names first: `$BASE` must not rewrite `$BASE_IMAGE` mid-token.
-    arg_items = sorted(
-        arg_defaults.items(), key=lambda item: len(item[0]), reverse=True
-    )
 
     out: List[str] = []
     for line in content.split("\n"):
@@ -156,9 +168,7 @@ def _resolve_from_references(content: str) -> str:
 
         reference = match.group("rest").strip()
         reference = re.sub(r"^(--platform=\S+\s*)+", "", reference).strip()
-        for name, value in arg_items:
-            reference = reference.replace(f"${{{name}}}", value)
-            reference = reference.replace(f"${name}", value)
+        reference = _substitute_args(reference, arg_defaults)
         out.append(f"FROM {reference}")
     return "\n".join(out)
 
