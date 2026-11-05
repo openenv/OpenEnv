@@ -108,6 +108,13 @@ reward is zero; the validator never converts missing or null step rewards to zer
 Cleanup removes run-owned containers. Built images remain in Docker's local cache
 for reuse; the report records their immutable image IDs. Remove an unwanted image
 with `docker image rm <image-id>` after its validation runs have finished.
+Use `--cleanup-images` to remove the current run's image automatically after all
+original and replay containers finish, including failure or interruption. Opt-in
+builds receive a unique ownership tag and label; cleanup never forces removal or
+prunes parent images or build caches. If another tag refers to the image, that
+image is preserved. The artifact bundle's `cleanup.json` records image cleanup
+separately, including whether the image itself was removed. This option applies
+only to local Docker validation and has no effect when no build is attempted.
 
 Runtime reports use schema version 2 and severity policy v2. Static reports for
 v1 manifests retain schema version 1 and policy v1. An explicit v1 policy with a

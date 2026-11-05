@@ -7,7 +7,11 @@ import uuid
 from pathlib import Path
 
 import pytest
-from openenv.validation.manifest import NetworkPolicy, ResourceDeclaration
+from openenv.validation.manifest import (
+    ExecutionDeclaration,
+    NetworkPolicy,
+    ResourceDeclaration,
+)
 from openenv.validation.providers import ProviderError, StartupError
 from openenv.validation.providers.docker import DockerValidationProvider
 from openenv.validation.runtime.contracts import LaunchSpec
@@ -175,3 +179,61 @@ def test_docker_exec_timeout_removes_process_tree(spec):
     finally:
         running.stop()
     record_cleanup("exec_timeout", spec.run_id)
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_docker_owned_image_cleanup_preserves_shared_images(spec, tmp_path, shared):
+    """Only a unique build is disposable, after both image consumers release it."""
+    owner = "validation-" + uuid.uuid4().hex
+    sentinel = "openenv-validation-test:" + uuid.uuid4().hex
+    (tmp_path / "Dockerfile").write_text('FROM scratch\nCMD ["/unused"]\n')
+    provider = DockerValidationProvider()
+    image = provider.build(tmp_path, ExecutionDeclaration(), image_owner=owner)
+    assert image != spec.image_ref
+    containers = []
+    try:
+        for _ in range(2):
+            created = subprocess.run(
+                [
+                    "docker",
+                    "create",
+                    "--label",
+                    f"org.openenv.validation.run={owner}",
+                    image,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            containers.append(created.stdout.strip())
+        assert containers[0] != containers[1]
+        with pytest.raises(ProviderError, match="remove validation image"):
+            provider.cleanup_image(owner, image)
+        if shared:
+            subprocess.run(["docker", "tag", image, sentinel], check=True, timeout=10)
+    finally:
+        for container in containers:
+            subprocess.run(
+                ["docker", "rm", container], check=True, capture_output=True, timeout=10
+            )
+        cleaned = provider.cleanup_image(owner, image)
+    try:
+        assert cleaned["completed"] is True
+        assert cleaned["image_removed"] is not shared
+        assert provider.cleanup_image(owner, image)["completed"] is True
+        for preserved in [spec.image_ref, *([sentinel] if shared else [])]:
+            subprocess.run(
+                ["docker", "image", "inspect", "--format", "{{.Id}}", preserved],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+    finally:
+        if shared:
+            subprocess.run(
+                ["docker", "image", "rm", "--no-prune", sentinel],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )

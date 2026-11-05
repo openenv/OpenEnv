@@ -10,6 +10,7 @@ import pytest
 import yaml
 from openenv.validation.policy import load_policy, PolicyError
 from openenv.validation.providers import ProviderError, StartupError
+from openenv.validation.providers.docker import DockerValidationProvider
 from openenv.validation.report import CheckResult
 from openenv.validation.runner import run_validation, source_digest
 from openenv.validation.runtime.artifacts import write_runtime_bundle
@@ -226,6 +227,153 @@ def test_skip_build_has_no_provider_side_effects(package):
         for r in report.results
         if r.check_id.startswith("runtime.")
     )
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "success",
+        "build",
+        "build_interrupt",
+        "start",
+        "collection",
+        "interrupt",
+        "teardown",
+    ],
+)
+def test_image_cleanup_runs_after_containers_even_when_execution_fails(
+    package, monkeypatch, tmp_path, phase, baseline_only
+):
+    provider = DockerValidationProvider()
+    subject = FakeRuntimeProvider().subject
+    owner = None
+    events = []
+
+    def build(root, execution, *, image_owner):
+        nonlocal owner
+        owner = image_owner
+        events.append("build")
+        if phase == "build":
+            raise StartupError("build failed after image export")
+        if phase == "build_interrupt":
+            raise KeyboardInterrupt
+        return "sha256:" + "a" * 64
+
+    def start(spec):
+        events.append("start")
+        if phase == "start":
+            raise StartupError("startup failed")
+        return subject
+
+    def collect(*args, **kwargs):
+        if phase == "interrupt":
+            raise KeyboardInterrupt
+        result = measured_episode()
+        if phase == "collection":
+            result = replace(result, failure_reason="step failed (TimeoutError)")
+        return result
+
+    def cleanup(image_owner, expected_id):
+        events.append("image cleanup")
+        assert image_owner == owner
+        assert (expected_id is None) == (phase in {"build", "build_interrupt"})
+        assert subject.stopped or phase in {
+            "build",
+            "build_interrupt",
+            "start",
+            "teardown",
+        }
+        return {"required": True, "completed": True, "image_removed": True}
+
+    if phase == "teardown":
+
+        def failed_stop():
+            events.append("stop")
+            raise ProviderError("container teardown failed")
+
+        monkeypatch.setattr(subject, "stop", failed_stop)
+
+    monkeypatch.setattr(provider, "build", build)
+    monkeypatch.setattr(provider, "start", start)
+    monkeypatch.setattr(provider, "cleanup_image", cleanup)
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        cleanup_images=True,
+        artifacts_dir=bundle,
+    )
+    startup = next(r for r in report.results if r.check_id == "runtime.startup")
+    expected = (
+        CheckStatus.PASS
+        if phase == "success"
+        else CheckStatus.ERROR
+        if phase in {"interrupt", "build_interrupt", "teardown"}
+        else CheckStatus.FAIL
+    )
+    assert startup.status is expected
+    assert events[-1] == "image cleanup"
+    recorded = json.loads((bundle / "cleanup.json").read_text())
+    assert recorded["image"]["completed"]
+    if phase == "teardown":
+        assert events[-2:] == ["stop", "image cleanup"]
+        assert recorded["completed"] is False
+    if phase in {"interrupt", "build_interrupt"}:
+        assert startup.evidence == ["validation interrupted"]
+
+
+@pytest.mark.parametrize("phase", ["build", "start"])
+def test_image_cleanup_error_preserves_primary_failure(
+    package, monkeypatch, tmp_path, phase
+):
+    provider = DockerValidationProvider()
+
+    def build(*args, **kwargs):
+        if phase == "build":
+            raise StartupError("original build failure")
+        return "sha256:" + "a" * 64
+
+    def start(*args):
+        raise StartupError("original start failure")
+
+    def cleanup(*args):
+        raise ProviderError("private cleanup detail")
+
+    monkeypatch.setattr(provider, "build", build)
+    monkeypatch.setattr(provider, "start", start)
+    monkeypatch.setattr(provider, "cleanup_image", cleanup)
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        cleanup_images=True,
+        artifacts_dir=bundle,
+    )
+    startup = next(r for r in report.results if r.check_id == "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert startup.evidence == [
+        f"original {phase} failure",
+        "image cleanup failed (ProviderError)",
+    ]
+    cleanup = json.loads((bundle / "cleanup.json").read_text())
+    assert cleanup["completed"] is cleanup["image"]["completed"] is False
+    assert (
+        "private cleanup detail" not in json.dumps(cleanup) + report.model_dump_json()
+    )
+
+
+def test_image_cleanup_rejects_non_docker_provider_before_build(package):
+    provider = FakeRuntimeProvider()
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, cleanup_images=True
+    )
+    assert not provider.builds
+    startup = next(r for r in report.results if r.check_id == "runtime.startup")
+    assert startup.status is CheckStatus.SKIP
+    assert "Docker provider" in startup.evidence[0]
 
 
 @pytest.mark.parametrize("change", ["network", "gpu", "build"])

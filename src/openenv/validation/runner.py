@@ -140,12 +140,13 @@ def _applicable(check_id, manifest):
     return True
 
 
-def _runtime(subject, graders, *, skip_build, provider):
+def _runtime(subject, graders, *, skip_build, provider, cleanup_images=False):
     """Own build/start/collection/stop and retain failure evidence through teardown."""
     manifest = subject.manifest
     plan = None
     evidence = None
     running = None
+    image_owner = image_ref = None
     inspection = {}
     cleanup = {"required": False, "completed": True}
     started = time.monotonic()
@@ -166,10 +167,15 @@ def _runtime(subject, graders, *, skip_build, provider):
             raise UnsupportedCapability(
                 "credential_delivery is deferred for this release"
             )
-        if provider is None:
+        if provider is None or cleanup_images:
             from .providers.docker import DockerValidationProvider
 
-            provider = DockerValidationProvider()
+            if provider is None:
+                provider = DockerValidationProvider()
+            if cleanup_images and not isinstance(provider, DockerValidationProvider):
+                raise UnsupportedCapability(
+                    "--cleanup-images requires the Docker provider"
+                )
         if manifest.network.mode not in provider.supported_network_modes:
             raise UnsupportedCapability(
                 f"provider cannot enforce network mode {manifest.network.mode}"
@@ -190,7 +196,16 @@ def _runtime(subject, graders, *, skip_build, provider):
             env_vars={"OPENENV_VALIDATION_TOKEN": secrets.token_urlsafe(32)},
         )
         attempted = True
-        image_ref = provider.build(subject.root, manifest.execution)
+        if cleanup_images:
+            # Register ownership before build: cancellation can occur after Docker
+            # publishes a tag but before the client returns its immutable ID.
+            image_owner = spec.run_id
+            cleanup["required"] = True
+            image_ref = provider.build(
+                subject.root, manifest.execution, image_owner=image_owner
+            )
+        else:
+            image_ref = provider.build(subject.root, manifest.execution)
         spec = LaunchSpec.model_validate({**spec.model_dump(), "image_ref": image_ref})
         running = provider.start(spec)
         cleanup = {"required": True, "completed": False}
@@ -320,6 +335,26 @@ def _runtime(subject, graders, *, skip_build, provider):
                     result.status = CheckStatus.ERROR
                     result.evidence.append("subject teardown failed")
                     result.duration_s = time.monotonic() - started
+        if image_owner is not None:
+            try:
+                cleanup["image"] = provider.cleanup_image(image_owner, image_ref)
+            except (Exception, KeyboardInterrupt) as exc:
+                reason = f"image cleanup failed ({type(exc).__name__})"
+                cleanup["image"] = {
+                    "required": True,
+                    "completed": False,
+                    "owner": image_owner,
+                    "reason": reason,
+                }
+                cleanup["completed"] = False
+                if result is None:
+                    result = _outcome(
+                        "runtime.startup", CheckStatus.ERROR, reason, started=started
+                    )
+                else:
+                    result.status = CheckStatus.ERROR
+                    result.evidence.append(reason)
+                    result.duration_s = time.monotonic() - started
     return [result, *checks], attempted, plan, evidence, inspection, cleanup
 
 
@@ -328,6 +363,7 @@ def run_validation(
     *,
     max_level: Level = Level.SEMANTIC,
     skip_build: bool = False,
+    cleanup_images: bool = False,
     policy: SeverityPolicy | None = None,
     provider=None,
     artifacts_dir: Path | None = None,
@@ -349,6 +385,9 @@ def run_validation(
             Level ceiling; graders above it are not selected.
         skip_build (`bool`, *optional*, defaults to `False`):
             Skip the image build; build-dependent checks SKIP with a reason.
+        cleanup_images (`bool`, *optional*, defaults to `False`):
+            Remove this run's Docker image after its original and replay containers.
+            Other image tags, parent images and build caches are preserved.
         policy ([`~openenv.validation.policy.SeverityPolicy`], *optional*):
             `None` chooses v1 for static and v2 for runtime/semantic ceilings.
         provider ([`~openenv.validation.providers.ValidationProvider`], *optional*):
@@ -438,6 +477,7 @@ def run_validation(
                 ],
                 skip_build=skip_build,
                 provider=provider,
+                cleanup_images=cleanup_images,
             )
             results.extend(runtime_results)
             if attempted:
