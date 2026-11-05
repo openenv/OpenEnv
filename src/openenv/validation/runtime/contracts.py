@@ -320,7 +320,7 @@ class NamespaceEvidence(BaseModel):
 
     Attributes:
         interfaces (`list[str]`):
-            Interface names in the namespace.
+            Names of the interfaces that are up in the namespace.
         default_route (`bool`):
             Whether an IPv4 default route exists.
         ipv6_non_loopback (`int`):
