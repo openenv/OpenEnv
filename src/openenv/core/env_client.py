@@ -275,6 +275,15 @@ async def _best_effort_graceful_close(ws: ClientConnection) -> None:
     await _best_effort_close(ws)
 
 
+class SessionLostError(ConnectionError):
+    """The connection to the server was lost in the middle of an episode.
+
+    The server keeps one environment per WebSocket connection, so reconnecting
+    opens a new session with an environment this client never reset. Call
+    `reset()` to start a new episode.
+    """
+
+
 class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
     """
     Async environment client for persistent sessions.
@@ -386,6 +395,8 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
         # Strong references for fire-and-forget socket closes (see _receive),
         # so the task isn't garbage-collected mid-close. Discarded on done.
         self._pending_close_tasks: set[asyncio.Task] = set()
+        # The socket that carries the episode started by `reset()`, if one is open.
+        self._episode_ws: Optional[ClientConnection] = None
         if base_url is not None:
             self._set_base_url(base_url)
 
@@ -653,6 +664,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             # leave a stale socket cached for a later operation.
             self._ws = None
             self._ws_loop = None
+            self._episode_ws = None
             same_loop = ws_loop is asyncio.get_running_loop()
             if same_loop:
                 # Keep ownership of the handshake if this caller is cancelled.
@@ -996,8 +1008,12 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             "type": "reset",
             "data": kwargs,
         }
+        # A reset may reconnect: it starts a new episode on whatever session it lands on.
+        self._episode_ws = None
         response = await self._send_and_receive(message)
-        return self._parse_result(response.get("data", {}))
+        result = self._parse_result(response.get("data", {}))
+        self._episode_ws = None if result.done else self._ws
+        return result
 
     def step(self, action: ActT, **kwargs: Any) -> Any:
         return self._dispatch(lambda: self._step_async(action, **kwargs))
@@ -1019,8 +1035,12 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             "type": "step",
             "data": self._step_payload(action),
         }
+        self._raise_if_session_lost()
         response = await self._send_and_receive(message)
-        return self._parse_result(response.get("data", {}))
+        result = self._parse_result(response.get("data", {}))
+        if result.done:
+            self._episode_ws = None
+        return result
 
     def state(self) -> Any:
         return self._dispatch(self._state_async)
@@ -1033,8 +1053,30 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             State object with environment state information
         """
         message = {"type": "state"}
+        self._raise_if_session_lost()
         response = await self._send_and_receive(message)
         return self._parse_state(response.get("data", {}))
+
+    def _raise_if_session_lost(self) -> None:
+        """Raise `SessionLostError` if the socket that carried the episode is gone.
+
+        `_connect_async()` would replace it with a new socket, which the server
+        treats as a new session, and the call would run on an environment this
+        client never reset. It keeps raising until `reset()`, so a retried call
+        does not land on the new session either.
+        """
+        ws = self._episode_ws
+        if ws is None:
+            return
+        if (
+            self._ws is not ws
+            or ws.state in (State.CLOSING, State.CLOSED)
+            or self._ws_loop is not asyncio.get_running_loop()
+        ):
+            raise SessionLostError(
+                f"Lost the connection to {self._ws_url} in the middle of an episode. "
+                "Call reset() to start a new one."
+            )
 
     def close(self) -> Any:
         return self._dispatch(self._close_async)
