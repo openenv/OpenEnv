@@ -49,6 +49,8 @@
       title: Train a Reasoning Model
     - local: tutorials/wordle-grpo
       title: Train a Wordle Agent
+    - local: tutorials/sudoku-grpo
+      title: Train a Sudoku Agent
     - local: tutorials/rl-training-2048
       title: Play 2048 with GRPO
     - local: tutorials/sft-warmup
