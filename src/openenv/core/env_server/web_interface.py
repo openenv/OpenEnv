@@ -643,8 +643,8 @@ def create_web_interface_app(
         css=OPENENV_GRADIO_CSS,
     )
 
-    # Security middleware is attached inside create_fastapi_app; the gradio
-    # mount at /web happens before that call, so it is covered too.
+    # Security middleware is attached inside create_fastapi_app, before the
+    # gradio mount at /web; it is app-level middleware, so it covers the mount.
     return app
 
 
