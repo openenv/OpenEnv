@@ -135,7 +135,7 @@ normalized_version_suffix() {
 
 resolve_openenv_git_ref() {
     local requested_ref="$1"
-    local repo_url="https://github.com/huggingface/OpenEnv.git"
+    local repo_url="https://github.com/openenv/OpenEnv.git"
     local candidate=""
     local resolved=""
 
@@ -376,13 +376,13 @@ pin_openenv_refs_in_pyproject() {
     # so release-candidate deployments test the requested OpenEnv ref instead
     # of silently resolving an older PyPI package.
     sed_inplace \
-        "/^[[:space:]]*\"/ s|git+https://github.com/huggingface/OpenEnv.git@main|git+https://github.com/huggingface/OpenEnv.git@$OPENENV_GIT_REF|g" \
+        "/^[[:space:]]*\"/ s|git+https://github.com/openenv/OpenEnv.git@main|git+https://github.com/openenv/OpenEnv.git@$OPENENV_GIT_REF|g" \
         "$file_path"
     sed_inplace \
-        "/^[[:space:]]*\"/ s|git+https://github.com/huggingface/OpenEnv.git\"|git+https://github.com/huggingface/OpenEnv.git@$OPENENV_GIT_REF\"|g" \
+        "/^[[:space:]]*\"/ s|git+https://github.com/openenv/OpenEnv.git\"|git+https://github.com/openenv/OpenEnv.git@$OPENENV_GIT_REF\"|g" \
         "$file_path"
     sed_inplace \
-        "/^[[:space:]]*\"/ s|\"openenv[<>=~! @][^\"]*\"|\"openenv @ git+https://github.com/huggingface/OpenEnv.git@$OPENENV_GIT_REF\"|g" \
+        "/^[[:space:]]*\"/ s|\"openenv[<>=~! @][^\"]*\"|\"openenv @ git+https://github.com/openenv/OpenEnv.git@$OPENENV_GIT_REF\"|g" \
         "$file_path"
 }
 
@@ -425,16 +425,16 @@ create_environment_dockerfile() {
     fi
 
     sed_inplace \
-        "s|git+https://github.com/huggingface/OpenEnv.git@main|git+https://github.com/huggingface/OpenEnv.git@$OPENENV_GIT_REF|g" \
+        "s|git+https://github.com/openenv/OpenEnv.git@main|git+https://github.com/openenv/OpenEnv.git@$OPENENV_GIT_REF|g" \
         "$stage_dir/Dockerfile"
     sed_inplace \
-        "s|git+https://github.com/huggingface/OpenEnv.git\"|git+https://github.com/huggingface/OpenEnv.git@$OPENENV_GIT_REF\"|g" \
+        "s|git+https://github.com/openenv/OpenEnv.git\"|git+https://github.com/openenv/OpenEnv.git@$OPENENV_GIT_REF\"|g" \
         "$stage_dir/Dockerfile"
     sed_inplace \
-        "s|git+https://github.com/huggingface/OpenEnv.git$|git+https://github.com/huggingface/OpenEnv.git@$OPENENV_GIT_REF|g" \
+        "s|git+https://github.com/openenv/OpenEnv.git$|git+https://github.com/openenv/OpenEnv.git@$OPENENV_GIT_REF|g" \
         "$stage_dir/Dockerfile"
     sed_inplace \
-        "s|\"openenv[<>=~! @][^\"]*\"|\"openenv @ git+https://github.com/huggingface/OpenEnv.git@$OPENENV_GIT_REF\"|g" \
+        "s|\"openenv[<>=~! @][^\"]*\"|\"openenv @ git+https://github.com/openenv/OpenEnv.git@$OPENENV_GIT_REF\"|g" \
         "$stage_dir/Dockerfile"
 
     # Some base images include older uv versions that fail on a subset of env
@@ -788,15 +788,29 @@ deploy_env() {
         "$stage_dir" \
         . || return 1
 
-    # Ensure visibility is applied even when repo already existed.
-    local privacy_flag="--private"
-    if [ "$PRIVATE" = false ]; then
-        privacy_flag="--no-private"
-    fi
+    # Ensure visibility is applied even when repo already existed. `hf repos settings`
+    # rejects an update that changes nothing (and ignores `--no-private`), so only call
+    # it when visibility differs, with `--public` to make a Space public.
+    local space_info
     if [ ${#TOKEN_ARGS[@]} -gt 0 ]; then
-        hf repo settings --repo-type space "$privacy_flag" "${TOKEN_ARGS[@]}" "$space_repo" || return 1
+        space_info=$(hf spaces info "$space_repo" --expand=private --format json "${TOKEN_ARGS[@]}") || return 1
     else
-        hf repo settings --repo-type space "$privacy_flag" "$space_repo" || return 1
+        space_info=$(hf spaces info "$space_repo" --expand=private --format json) || return 1
+    fi
+    local current_private=false
+    if printf "%s" "$space_info" | grep -q '"private": *true'; then
+        current_private=true
+    fi
+    if [ "$current_private" != "$PRIVATE" ]; then
+        local privacy_flag="--private"
+        if [ "$PRIVATE" = false ]; then
+            privacy_flag="--public"
+        fi
+        if [ ${#TOKEN_ARGS[@]} -gt 0 ]; then
+            hf repos settings --repo-type space "$privacy_flag" "${TOKEN_ARGS[@]}" "$space_repo" || return 1
+        else
+            hf repos settings --repo-type space "$privacy_flag" "$space_repo" || return 1
+        fi
     fi
 
     DEPLOYED_SPACES+=("$space_repo")

@@ -78,7 +78,7 @@ with LocalREPLEnv() as env:
 
 ## Server Configuration
 
-Environment variables read by [`server/app.py`](https://github.com/huggingface/OpenEnv/blob/main/envs/repl_env/server/app.py):
+Environment variables read by [`server/app.py`](https://github.com/openenv/OpenEnv/blob/main/envs/repl_env/server/app.py):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -284,12 +284,12 @@ result = env.execute("answer['ready'] = True")
 
 ## Prompts and Examples
 
-[`prompts.py`](https://github.com/huggingface/OpenEnv/blob/main/envs/repl_env/prompts.py) has the system prompts and helpers used by the runner: `RLM_SYSTEM_PROMPT`, `RLM_SYSTEM_PROMPT_QWEN`, `QueryMetadata`, `build_rlm_system_prompt(...)`, `build_user_prompt(...)`, `extract_code_blocks(...)` and `format_observations(...)`.
+[`prompts.py`](https://github.com/openenv/OpenEnv/blob/main/envs/repl_env/prompts.py) has the system prompts and helpers used by the runner: `RLM_SYSTEM_PROMPT`, `RLM_SYSTEM_PROMPT_QWEN`, `QueryMetadata`, `build_rlm_system_prompt(...)`, `build_user_prompt(...)`, `extract_code_blocks(...)` and `format_observations(...)`.
 
 Examples, which default to `Qwen/Qwen3.5-9B` through Hugging Face inference (needs `HF_TOKEN`):
 
-- [`examples/repl_with_llm.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/repl_with_llm.py)
-- [`examples/repl_oolong_simple.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/repl_oolong_simple.py)
+- [`examples/repl_with_llm.py`](https://github.com/openenv/OpenEnv/blob/main/examples/repl_with_llm.py)
+- [`examples/repl_oolong_simple.py`](https://github.com/openenv/OpenEnv/blob/main/examples/repl_oolong_simple.py)
 
 ## References
 

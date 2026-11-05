@@ -940,7 +940,7 @@ wheels = [
 [[package]]
 name = "openenv"
 version = "0.3.2.dev0"
-source = { git = "https://github.com/huggingface/OpenEnv.git#52fa2bbc6ccd9a3fe37a73eb372dcd3ba5307cbd" }
+source = { git = "https://github.com/openenv/OpenEnv.git#52fa2bbc6ccd9a3fe37a73eb372dcd3ba5307cbd" }
 dependencies = [
     { name = "fastapi" },
     { name = "fastmcp" },
@@ -986,7 +986,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "mlagents-envs", git = "https://github.com/Unity-Technologies/ml-agents.git?subdirectory=ml-agents-envs" },
     { name = "numpy", specifier = ">=1.20.0" },
-    { name = "openenv", git = "https://github.com/huggingface/OpenEnv.git" },
+    { name = "openenv", git = "https://github.com/openenv/OpenEnv.git" },
     { name = "pillow", specifier = ">=9.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },

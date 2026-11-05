@@ -76,6 +76,8 @@ Each episode is **single-step**:
 2. `step(answer)` returns score and marks episode as done
 3. `reset()` without params gets next question from same dataset
 
+Only the first answer of an episode is scored. Further `step()` calls before the next `reset()` return the same final observation (`done=True`, same reward) and are not scored.
+
 ### Action
 
 **ReasoningGymAction**: Contains the agent's answer
@@ -296,5 +298,5 @@ The Reasoning Gym environment is ideal for:
 ## Learn More
 
 - [Reasoning Gym Library](https://github.com/open-thought/reasoning-gym)
-- [OpenEnv Documentation](https://github.com/huggingface/OpenEnv)
-- [OpenEnv Environment Design](https://github.com/huggingface/OpenEnv/blob/main/README.md)
+- [OpenEnv Documentation](https://github.com/openenv/OpenEnv)
+- [OpenEnv Environment Design](https://github.com/openenv/OpenEnv/blob/main/README.md)

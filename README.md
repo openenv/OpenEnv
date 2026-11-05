@@ -6,11 +6,11 @@ An end-to-end framework for creating, deploying and using isolated execution env
 
 <p align="center">
     <a href="https://pypi.org/project/openenv/"><img alt="PyPI" src="https://img.shields.io/pypi/v/openenv?color=blue"/></a>
-    <a href="https://github.com/huggingface/OpenEnv/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/License-BSD%203--Clause-blue.svg"/></a>
+    <a href="https://github.com/openenv/OpenEnv/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/License-BSD%203--Clause-blue.svg"/></a>
     <a href="https://huggingface.co/docs/openenv"><img alt="Docs" src="https://img.shields.io/badge/Docs-Explore-blue?logo=readthedocs&logoColor=white"/></a>
     <a href="https://huggingface.co/openenv"><img alt="Hugging Face" src="https://img.shields.io/badge/🤗%20Hugging%20Face-OpenEnv-yellow"/></a>
     <a href="https://discord.gg/YsTYBh6PD9"><img alt="Discord" src="https://img.shields.io/badge/Discord-OpenEnv-7289da?style=flat&logo=discord&logoColor=white"/></a>
-    <a href="https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"/></a>
+    <a href="https://colab.research.google.com/github/openenv/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"/></a>
 </p>
 
 ## What you get
@@ -127,7 +127,7 @@ OpenEnv works with a growing ecosystem of RL frameworks and platforms. If your p
 | Miles | [Terminal-Bench-2 GRPO](https://github.com/radixark/miles/tree/main/examples/experimental/openenv) |
 | Oumi | [GRPO notebook](https://github.com/oumi-ai/oumi/blob/main/notebooks/Oumi%20-%20OpenEnv%20GRPO%20with%20trl.ipynb) |
 | SkyRL | [SkyRL example](https://skyrl.readthedocs.io/en/latest/examples/openenv.html) |
-| torchforge | [GRPO BlackJack](https://github.com/huggingface/OpenEnv/tree/main/examples/grpo_blackjack) |
+| torchforge | [GRPO BlackJack](https://github.com/openenv/OpenEnv/tree/main/examples/grpo_blackjack) |
 | TorchTitan-RL (TitanRL) | [OpenEnv bridge and Muse Glimmer 30B chess recipe](examples/titanrl_openenv/) for GRPO/DAPO, with a CPU demo and tests |
 | TRL | [OpenEnv guide](https://huggingface.co/docs/trl/openenv) (GRPO with `environment_factory`, and harness training) |
 | Unsloth | [2048 with gpt-oss](https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/OpenEnv_gpt_oss_(20B)_Reinforcement_Learning_2048_Game.ipynb) |
@@ -136,10 +136,10 @@ OpenEnv works with a growing ecosystem of RL frameworks and platforms. If your p
 
 - [Documentation](https://huggingface.co/docs/openenv): concepts, guides and tutorials
 - [Core Concepts](https://huggingface.co/docs/openenv/guides/concepts) and the [CLI reference](https://huggingface.co/docs/openenv/reference/cli)
-- [Tutorials](https://huggingface.co/docs/openenv/tutorials/index), and the [Zero to Hero tutorial](https://github.com/huggingface/OpenEnv/tree/main/tutorial) from our GPU Mode lecture
+- [Tutorials](https://huggingface.co/docs/openenv/tutorials/index), and the [Zero to Hero tutorial](https://github.com/openenv/OpenEnv/tree/main/tutorial) from our GPU Mode lecture
 - [FineEnvs](https://github.com/adithya-s-k/FineEnvs): end-to-end projects that build, deploy and train against OpenEnv environments
-- [RFCs](https://github.com/huggingface/OpenEnv/tree/main/rfcs), the proposals behind major changes
-- [Contributing](https://github.com/huggingface/OpenEnv/blob/main/CONTRIBUTING.md): development setup, tests and the PR process
+- [RFCs](https://github.com/openenv/OpenEnv/tree/main/rfcs), the proposals behind major changes
+- [Contributing](https://github.com/openenv/OpenEnv/blob/main/CONTRIBUTING.md): development setup, tests and the PR process
 
 > [!NOTE]
 > OpenEnv is in early development, so APIs may still change. Bug fixes are welcome. For larger changes, open or claim an issue first so the change can be discussed.

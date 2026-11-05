@@ -72,7 +72,7 @@ need a contamination check after the run.
 
 HF Jobs has no egress control, and its containers can't create network
 namespaces or firewall rules. So the broker sends
-[`server/job_launcher.py`](https://github.com/huggingface/OpenEnv/blob/main/envs/posttrain_env/server/job_launcher.py) as the job's script, with the
+[`server/job_launcher.py`](https://github.com/openenv/OpenEnv/blob/main/envs/posttrain_env/server/job_launcher.py) as the job's script, with the
 agent's script and packages embedded. Once it has installed the packages, the
 launcher installs a seccomp filter that refuses every socket except `AF_UNIX`,
 and io_uring and cross-process memory access; systemd's
@@ -126,9 +126,13 @@ and do not return the final step observation with reward and `service_spend`.
 
 If the score job itself fails, times out or is cancelled, the episode ends
 unscored: `reward` is `None` and `episode_end.reason` is `score_failed`, since
-the fault is the grader's. Trainers should drop such a rollout, not count it as
-zero, subject to acceptance of RFC 013 (#1256) and its final unscored-rollout
-semantics. Ending the episode cancels every live job. `reset` cancels the previous
+the fault is the grader's. Exclude such a rollout from reward-based training
+and reward estimates, rather than treating it as zero, while retaining its
+episode and spend for accounting. Under the current RFC 013 (#1256) proposal,
+pass its `None` reward and spend to the sampler's `update` before excluding it
+from reward-based training. RFC 013 remains a proposal until accepted; this
+integration is subject to its acceptance and final unscored-rollout semantics.
+Ending the episode cancels every live job. `reset` cancels the previous
 episode's jobs first and raises if HF Jobs does not confirm a cancellation,
 since that job may still be running and billing.
 
@@ -235,7 +239,7 @@ with PostTrainEnv(
     print(final.observation.metadata["service_spend"])
 ```
 
-[`examples/posttrain_env_agent.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/posttrain_env_agent.py)
+[`examples/posttrain_env_agent.py`](https://github.com/openenv/OpenEnv/blob/main/examples/posttrain_env_agent.py)
 plays a whole episode with an LLM through any OpenAI-compatible endpoint,
 Hugging Face Inference Providers by default. The agent's API key is its own;
 it never needs the broker's token.

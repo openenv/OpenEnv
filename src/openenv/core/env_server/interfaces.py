@@ -223,7 +223,7 @@ class Transform(ABC, Generic[ObsT]):
 class Environment(ABC, Generic[ActT, ObsT, StateT]):
     """Base class for all environment servers following Gym/Gymnasium API.
 
-    See [rfcs/004-rubrics.md](https://github.com/huggingface/OpenEnv/blob/main/rfcs/004-rubrics.md) for rubric design details.
+    See [rfcs/004-rubrics.md](https://github.com/openenv/OpenEnv/blob/main/rfcs/004-rubrics.md) for rubric design details.
 
     Args:
         transform (`Transform`, *optional*):

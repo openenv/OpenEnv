@@ -6,8 +6,8 @@ built for the OpenEnv specification.
 
 ## Overview
 
-Existing OpenEnv finance environments cover stock trading ([`finrl_env`](https://github.com/huggingface/OpenEnv/tree/main/envs/finrl_env))
-and financial document QA ([`finqa_env`](https://github.com/huggingface/OpenEnv/tree/main/envs/finqa_env)), but nothing covers
+Existing OpenEnv finance environments cover stock trading ([`finrl_env`](https://github.com/openenv/OpenEnv/tree/main/envs/finrl_env))
+and financial document QA ([`finqa_env`](https://github.com/openenv/OpenEnv/tree/main/envs/finqa_env)), but nothing covers
 **transaction-level risk decisioning** -- the core loop of a payments fraud
 or risk team. This environment fills that gap.
 
