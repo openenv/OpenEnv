@@ -1,0 +1,35 @@
+{
+  "case_id": "GSE235417_cetuximab_resistance",
+  "strict_mode": false,
+  "experiment_metadata": {
+    "source": "GEO",
+    "accession": "GSE235417",
+    "organism": "Homo sapiens",
+    "summary": "Head and neck squamous cell carcinoma PDX model (UCLHN04): baseline vs acquired cetuximab-resistant tumors; 3 biological replicates each.",
+    "reference": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE235417"
+  },
+  "counts_file": "geo/GSE235417_counts.csv.gz",
+  "sample_ids": ["ON68CTRL4", "ON68CTRL5", "ON68CTRL6", "ON76Cx1", "ON76CX3", "ON76Cx4"],
+  "sample_metadata": {
+    "ON68CTRL4": "baseline",
+    "ON68CTRL5": "baseline",
+    "ON68CTRL6": "baseline",
+    "ON76Cx1": "resistant",
+    "ON76CX3": "resistant",
+    "ON76Cx4": "resistant"
+  },
+  "conditions": ["baseline", "resistant"],
+  "default_contrast": {
+    "reference": "baseline",
+    "alternate": "resistant"
+  },
+  "analysis_options": {
+    "min_total_count": 10,
+    "padj_alpha": 0.05,
+    "de_query_direction": "both",
+    "min_abs_log2fc": 0.0
+  },
+  "enrichr_libraries": ["MSigDB_Hallmark_2020", "KEGG_2021_Human", "Reactome_2022"],
+  "true_pathway": "Unknown (real dataset)"
+}
+

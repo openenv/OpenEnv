@@ -1,0 +1,9 @@
+{
+  "case_id": "toy_case_legacy",
+  "conditions": ["control", "treated"],
+  "true_pathway": "MAPK signaling",
+  "top_genes": ["DUSP6", "FOS", "JUN", "EGR1"],
+  "top_pathways": ["MAPK signaling", "ERK cascade", "growth factor response"],
+  "expert_budget": 0,
+  "strict_mode": false
+}
