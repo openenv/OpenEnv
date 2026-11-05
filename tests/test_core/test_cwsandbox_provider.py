@@ -209,12 +209,17 @@ def test_default_ingress_does_not_provision(fake_sdk):
     assert fake_sdk._sandbox_cls.run_count == 0
 
 
-def test_provider_owned_startup(fake_sdk):
+@pytest.mark.parametrize(
+    "address",
+    ["https://sandbox.example.test:8000", "HTTPS://sandbox.example.test:8000"],
+)
+def test_provider_owned_startup(fake_sdk, address):
     from openenv.core.containers.runtime.wandb_sandbox_provider import (
         WandbSandboxProvider,
     )
     from openenv.core.generic_client import GenericEnvClient
 
+    fake_sdk._sandbox_cls.instance.service_address = address
     for provider_class in (CWSandboxProvider, WandbSandboxProvider):
         provider = provider_class(
             sdk=fake_sdk, image="echo:stored", ingress_mode="public"
@@ -223,6 +228,7 @@ def test_provider_owned_startup(fake_sdk):
         with patch.object(provider, "wait_for_ready") as ready:
             client._start_provider_if_needed()
         assert fake_sdk._sandbox_cls.last_run_kwargs["container_image"] == "echo:stored"
+        assert client._ws_url == "wss://sandbox.example.test:8000/ws"
         assert client.base_url == "https://sandbox.example.test:8000"
         ready.assert_called_once_with(client.base_url)
         provider.close()

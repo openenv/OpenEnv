@@ -374,7 +374,7 @@ class CWSandboxProvider(ContainerProvider):
                 "TLS support; url_scheme cannot enable TLS. Configure a runner "
                 "with verified HTTPS ingress before using this provider."
             )
-        return address.rstrip("/")
+        return parsed.geturl().rstrip("/")
 
     def _server_process_dead(self) -> bool:
         sandbox = self._sandbox
