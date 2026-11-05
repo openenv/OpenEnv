@@ -155,8 +155,10 @@ jobs:
 
       # τ²-bench requires Python 3.12+.
       - name: Install τ²-bench environment dependencies
-        working-directory: envs/tau2_env
-        run: uv sync --python 3.12 --frozen --all-extras
+        working-directory: tests/tau2_runtime
+        run: |
+          uv lock --check
+          uv sync --python 3.12 --frozen --all-extras
 
       # The tasks and databases live in τ²-bench's repository, at the commit pinned in
       # envs/tau2_env/pyproject.toml.
@@ -169,7 +171,7 @@ jobs:
 
       - name: Run τ²-bench environment and Claude Code recipe tests
         run: |
-          uv run --python 3.12 --frozen --project envs/tau2_env --all-extras \
+          uv run --python 3.12 --frozen --project tests/tau2_runtime --all-extras \
             pytest tests/envs/test_tau2_env.py \
             tests/scripts/test_claude_code_harness_eval_example.py -v --tb=short
         env:

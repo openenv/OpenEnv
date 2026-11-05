@@ -1,0 +1,16 @@
+[project]
+name = "openenv-tau2-runtime-tests"
+version = "0.1.0"
+requires-python = "==3.12.*"
+dependencies = [
+    "openenv",
+    "openenv-tau2-env[dev]",
+]
+
+[tool.uv]
+package = false
+
+# Resolve against the same core that the tests import, not a published release.
+[tool.uv.sources]
+openenv = { path = "../..", editable = false }
+openenv-tau2-env = { path = "../../envs/tau2_env", editable = false }

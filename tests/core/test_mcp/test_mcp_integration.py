@@ -232,6 +232,9 @@ class TestMCPEnvironmentWithFastMCP:
         tool_names = [t.name for t in obs.tools]
         assert "add" in tool_names
         assert "greet" in tool_names
+        add_tool = next(tool for tool in obs.tools if tool.name == "add")
+        assert set(add_tool.input_schema["properties"]) == {"a", "b"}
+        assert set(add_tool.input_schema["required"]) == {"a", "b"}
 
     def test_fastmcp_in_mcp_environment_call_add(self, minimal_mcp_env):
         """Test MCPEnvironment can call an 'add' tool from FastMCP server."""
