@@ -58,6 +58,7 @@ is a one-line change.
 | `UVProvider` | Local process via `uv` (no container) | core | ✅ |
 | `DaytonaProvider` | Daytona cloud sandboxes | `pip install openenv[daytona]` | ✅ |
 | `ACASandboxProvider` | Azure Container Apps Sandboxes | `pip install openenv[aca]` | ✅ |
+| `AgentSandboxProvider` | Kubernetes [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) via Gateway/router | `pip install openenv[agent-sandbox]` | ✅ |
 | `ModalProvider` | Modal sandboxes | `pip install openenv[modal]` | ✅ |
 | `NovitaSandboxProvider` | Novita AI sandboxes | `pip install openenv[novita]` | ✅ |
 | `HFSandboxProvider` | Hugging Face sandboxes (billed as HF Jobs) | core | ✅ |
@@ -91,8 +92,8 @@ async with MyEnv(provider=provider) as env:
     ...
 ```
 
-`ModalProvider`, `DaytonaProvider`, `ACASandboxProvider`, and `HFSandboxProvider`
-support this provider-owned flow. Providers that require an explicit image at
+`AgentSandboxProvider`, `ModalProvider`, `DaytonaProvider`, `ACASandboxProvider`,
+and `HFSandboxProvider` support this provider-owned flow. Providers that require an explicit image at
 `start_container()` time, such as `LocalDockerProvider` and
 `DockerSwarmProvider`, should still be started manually and passed in with the
 returned `base_url`:
@@ -177,6 +178,97 @@ provider = ACASandboxProvider(
     sdk_kwargs={},
 )
 ```
+
+### AgentSandboxProvider
+
+Runs the server in a
+[kubernetes-sigs agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)
+sandbox, claimed from a pre-created `SandboxWarmPool`. Install with
+`pip install openenv[agent-sandbox]` (the SDK requires Python 3.11+).
+
+Cluster prerequisites: the agent-sandbox controller and the `sandbox-router`
+deployed, plus a warm pool whose template runs an OpenEnv environment image
+(its CMD already serves OpenEnv on port 8000):
+
+```yaml
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: openenv-echo
+  namespace: default
+spec:
+  podTemplate:
+    spec:
+      # The sandbox runs untrusted workloads: no API credentials needed.
+      automountServiceAccountToken: false
+      containers:
+      - name: env
+        # The echo env's Space image; its CMD serves OpenEnv on port 8000.
+        image: registry.hf.space/openenv-echo-env:latest
+        ports:
+        - containerPort: 8000
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "1"
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: openenv-echo-pool
+  namespace: default
+spec:
+  replicas: 2
+  sandboxTemplateRef:
+    name: openenv-echo
+```
+
+`start_container()` claims a sandbox, waits for it to become Ready, and
+returns a loopback proxy URL. The proxy injects the `X-Sandbox-*` headers the
+router uses to route every HTTP request and WebSocket handshake to your
+sandbox, so any `EnvClient` connects unchanged:
+
+```python
+from openenv.core.containers.runtime.agent_sandbox_provider import (
+    AgentSandboxProvider,
+)
+
+provider = AgentSandboxProvider(
+    warmpool="openenv-echo-pool",
+    router_url="https://sandbox-router.example.com",
+    # or gateway_name="external-http-gateway" with allow_insecure=True
+    # for a local plaintext Gateway
+)
+base_url = provider.start_container()
+provider.wait_for_ready(base_url)
+provider.stop_container()
+```
+
+Notes:
+
+- The ingress must serve https. Gateway discovery reports the raw plaintext
+  `http://` gateway address and the provider rejects it (an `https://<ip>`
+  rewrite would fail certificate hostname verification): use
+  `router_url="https://<hostname>"` for TLS ingress, or
+  `allow_insecure=True` for local clusters (Kind/Minikube) with a plaintext
+  Gateway.
+- `shutdown_after_seconds` (default `3600`) bounds the sandbox lifetime: the
+  controller deletes the claim on expiry even if the client process dies.
+- `env_vars` are injected via `SandboxClaim.spec.env`, on top of any `env`
+  entries baked into the template's pod spec. Claim-specific env forces a
+  cold start from the template instead of adopting a pre-warmed pod, since a
+  warm pod cannot gain new environment variables.
+- `router_headers` adds extra headers (e.g. `Authorization`) for routers
+  behind an authenticating gateway.
+- Egress policy is the cluster operator's job: put a `networkPolicy` block in
+  the `SandboxTemplate` (default-deny egress is recommended for untrusted
+  workloads).
+
+Full example: [`examples/agent_sandbox_echo_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/agent_sandbox_echo_env.py).
 
 ### DaytonaProvider
 
