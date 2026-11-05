@@ -184,7 +184,7 @@ A background cleanup daemon automatically kills sessions idle longer than `MAX_I
 
 ## Full Agent Interaction Example
 
-See [`examples/agent_world_model/example_usage.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/agent_world_model/example_usage.py) for a complete example of an LLM-powered agent that:
+See [`examples/agent_world_model/example_usage.py`](https://github.com/openenv/OpenEnv/blob/main/examples/agent_world_model/example_usage.py) for a complete example of an LLM-powered agent that:
 
 1. Discovers available tools via `list_tools`
 2. Iteratively calls tools to accomplish the task

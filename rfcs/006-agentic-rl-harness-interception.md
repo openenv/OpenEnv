@@ -2,7 +2,7 @@
 
 **Status**: In Review
 **Created**: 2026-07-11
-**Revised**: 2026-08-12 — rescoped against [#1036](https://github.com/huggingface/OpenEnv/pull/1036); 2026-09-28 — reconciled with merged #1036 and [RFC 012](./012-harbor-capture-providers.md)
+**Revised**: 2026-08-12 — rescoped against [#1036](https://github.com/openenv/OpenEnv/pull/1036); 2026-09-28 — reconciled with merged #1036 and [RFC 012](./012-harbor-capture-providers.md)
 **Authors**: @rycerzes, @sergiopaniego
 **RFC ID**: 006
 
@@ -12,7 +12,7 @@ This RFC defines how OpenEnv trains the policy driving a **black-box agent harne
 
 ### What changed in this revision
 
-The original revision of this RFC argued for a capture layer OpenEnv did not have, and specified it in the abstract. **[#1036](https://github.com/huggingface/OpenEnv/pull/1036) builds it** — `src/openenv/core/harness/capture/`, a dialect-agnostic capture proxy with a rollout graph, ingest validation and LLM certification, consumed by `src/openenv/harbor/` to serve Harbor's task datasets as trainable environments.
+The original revision of this RFC argued for a capture layer OpenEnv did not have, and specified it in the abstract. **[#1036](https://github.com/openenv/OpenEnv/pull/1036) builds it** — `src/openenv/core/harness/capture/`, a dialect-agnostic capture proxy with a rollout graph, ingest validation and LLM certification, consumed by `src/openenv/harbor/` to serve Harbor's task datasets as trainable environments.
 
 So this document is no longer a proposal for a component. It is **the design rationale and the contract spec for a component that now exists**, plus the list of what remains open. Four decisions were settled by the implementation, and settled *against* what this RFC previously argued:
 
@@ -47,7 +47,7 @@ The design is checked against independent implementations of the same pattern �
 
 ### Problem 1: token capture was per-env and in-sandbox — now it is both
 
-RFC 005 (Agentic Harness Integration) defined the wrapping pattern. The gap this RFC opened against was that the only working token capture lived inside one environment: [`envs/opencode_env/sandbox/interception.py`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/envs/opencode_env/sandbox/interception.py) forwards `/v1/chat/completions` upstream with `logprobs=true` injected and writes JSON-lines `TurnRecord`s inside the sandbox, which the trainer reads back afterwards.
+RFC 005 (Agentic Harness Integration) defined the wrapping pattern. The gap this RFC opened against was that the only working token capture lived inside one environment: [`envs/opencode_env/sandbox/interception.py`](https://github.com/openenv/OpenEnv/blob/v0.8.0/envs/opencode_env/sandbox/interception.py) forwards `/v1/chat/completions` upstream with `logprobs=true` injected and writes JSON-lines `TurnRecord`s inside the sandbox, which the trainer reads back afterwards.
 
 **#1036 does not close this gap; it forks it.** The new `core/harness/capture/` is a strictly better implementation — four wire dialects instead of one, canonical `prompt_token_ids` instead of `"token_id:{id}"` string recovery, graph stitching, ingest validation — but it touches **no file** under `envs/opencode_env/` or `envs/pi_env/`. The repository would therefore ship two independent interception proxies, and the older one is load-bearing:
 
@@ -69,7 +69,7 @@ TRL's [Harbor integration](https://huggingface.co/docs/trl/harbor) supports the 
 
 ### Problem 3: the naive approaches silently corrupt training
 
-Two failure modes are established in the literature and were present in the prior attempt ([#694](https://github.com/huggingface/OpenEnv/pull/694)/[#695](https://github.com/huggingface/OpenEnv/pull/695), both closed):
+Two failure modes are established in the literature and were present in the prior attempt ([#694](https://github.com/openenv/OpenEnv/pull/694)/[#695](https://github.com/openenv/OpenEnv/pull/695), both closed):
 
 - **Retokenization drift.** Re-rendering full message history through `apply_chat_template` each turn while splicing raw sampled tokens into the training stream makes the trained sequence differ from what the policy conditioned on. [vLLM added `return_token_ids`](https://blog.vllm.ai/2025/10/22/agent-lightning.html) specifically to end this debate.
 - **Silent, KL-invisible collapse.** Infrastructure-level logprob mismatch alone collapses training *even fully on-policy*, and recomputed-logprob KL stays flat for ~700 steps while reward degrades ([TIM, arXiv:2605.14220](https://arxiv.org/abs/2605.14220)). Rollout-side logprobs recorded at generation time are therefore a required primitive, not hygiene.
@@ -210,7 +210,7 @@ Rows are **labelled, never filtered**. A caller that silently drops rows cannot 
 
 ### Key design decisions
 
-**D1 — Token-level contract, not a message-level seam.** Return `(input_ids, loss_mask, logprobs, reward)` per sample. *Rationale:* token fidelity becomes an enforced guarantee. *Trade-off:* richer than a message log, but the message record is kept alongside (D15). Supersedes draft [#864](https://github.com/huggingface/OpenEnv/pull/864)'s message-level `RolloutMessages` design.
+**D1 — Token-level contract, not a message-level seam.** Return `(input_ids, loss_mask, logprobs, reward)` per sample. *Rationale:* token fidelity becomes an enforced guarantee. *Trade-off:* richer than a message log, but the message record is kept alongside (D15). Supersedes draft [#864](https://github.com/openenv/OpenEnv/pull/864)'s message-level `RolloutMessages` design.
 
 **D2 — For training, the trainer owns generation; a hosted provider is an eval backend.** The capture proxy fronts a trainer-controlled vLLM with `return_token_ids` and logprobs at generation time. *Rationale:* a relay to an external provider has no token identity and uses the provider's logprobs, so it can never produce a training row. *Trade-off:* training requires a trainer-controlled engine; that is the point.
 
@@ -228,7 +228,7 @@ Rows are **labelled, never filtered**. A caller that silently drops rows cannot 
 
 **D3 — OpenEnv records canonical ids, assembles without a tokenizer, and renders no chat template.** The proxy injects `return_token_ids` into every forwarded call and records what the engine reports: canonical `prompt_token_ids` (input ids *after* the engine's chat-template processing), the sampled `token_ids`, and their real logprobs. It **imports no tokenizer and renders no chat template**. It *does* assemble those records into training rows.
 
-> **This reverses the previous revision**, which held that OpenEnv is "a recorder, not an assembler" and that assembly belongs to TRL. @sergiopaniego's position in [#941](https://github.com/huggingface/OpenEnv/pull/941#issuecomment-5069908703) — keep the buffer framework-side to preserve OpenEnv's framework-agnosticism — was accepted on the record. #1036 chose otherwise, and the reasoning below is why that is the better call rather than a drift.
+> **This reverses the previous revision**, which held that OpenEnv is "a recorder, not an assembler" and that assembly belongs to TRL. @sergiopaniego's position in [#941](https://github.com/openenv/OpenEnv/pull/941#issuecomment-5069908703) — keep the buffer framework-side to preserve OpenEnv's framework-agnosticism — was accepted on the record. #1036 chose otherwise, and the reasoning below is why that is the better call rather than a drift.
 
 *Rationale.* The previous revision gave three arguments for framework-side assembly. The first two do not survive contact with the implementation:
 
@@ -400,7 +400,7 @@ RFC 005 owns the wrapping pattern, MCP injection, session isolation and episode 
 
 ## Implementation status
 
-Landed in [#1036](https://github.com/huggingface/OpenEnv/pull/1036) (merged 2026-09-16), with the RFC 012 amendments:
+Landed in [#1036](https://github.com/openenv/OpenEnv/pull/1036) (merged 2026-09-16), with the RFC 012 amendments:
 
 | Item | Where |
 |---|---|
@@ -425,7 +425,7 @@ Landed in [#1036](https://github.com/huggingface/OpenEnv/pull/1036) (merged 2026
 
 | Item | Decision | Note |
 |---|---|---|
-| Sandbox protocol + E2B/HF/Docker backends into `core/harness/sandbox/` | — | deferred follow-up to [#998](https://github.com/huggingface/OpenEnv/pull/998); orthogonal to Harbor, which brings its own |
+| Sandbox protocol + E2B/HF/Docker backends into `core/harness/sandbox/` | — | deferred follow-up to [#998](https://github.com/openenv/OpenEnv/pull/998); orthogonal to Harbor, which brings its own |
 | Served-template hash in provenance + mismatch check | D3, D11 | the one remaining fidelity assertion; not an assembly job |
 | Config-file hashing per call | D11 | agents can rewrite their own prompts mid-episode |
 | Policy version / step on each recorded call | D12 | makes a trace spanning a weight sync detectable |
@@ -437,7 +437,7 @@ Landed in [#1036](https://github.com/huggingface/OpenEnv/pull/1036) (merged 2026
 
 ### The TRL-side ask
 
-Two `TODO(@openenv)` markers in `trl/experimental/async_grpo/openenv_harness.py` are already stale — `:187` (factory `create()` retry with backoff) is satisfied by [#1009](https://github.com/huggingface/OpenEnv/pull/1009) and `:210` (generic `ResourceSessionFactory`) by [#1007](https://github.com/huggingface/OpenEnv/pull/1007).
+Two `TODO(@openenv)` markers in `trl/experimental/async_grpo/openenv_harness.py` are already stale — `:187` (factory `create()` retry with backoff) is satisfied by [#1009](https://github.com/openenv/OpenEnv/pull/1009) and `:210` (generic `ResourceSessionFactory`) by [#1007](https://github.com/openenv/OpenEnv/pull/1007).
 
 The substantive one is `_turns_from_trace` (`:314`), which reconstructs each turn's prompt with `apply_chat_template` rather than reading recorded ids. Three divergence paths make this a correctness issue rather than a cleanup: `chat_template_kwargs` are dropped; the training-template substitution is skipped on this path (`_sample_turn` at `:253` passes `chat_template=self.chat_template, **self.chat_template_kwargs`, `_turns_from_trace` at `:331` passes **neither** — a TRL-internal inconsistency independent of anything OpenEnv does); and serving-side differences the messages do not capture. When prompts diverge, `_chain_to_sequences` classifies every turn `FORK`, prefix merging is lost, and `input_ids` end up paired with logprobs from a different rendering.
 
@@ -491,16 +491,16 @@ Property tests runnable without GPUs, none of which need a tokenizer in core: ca
 ## References
 
 ### OpenEnv seams and prior art
-- **PR [#1036](https://github.com/huggingface/OpenEnv/pull/1036) — the implementation this revision is written against** (merged 2026-09-16): `src/openenv/core/harness/capture/` (proxy, graph, export, contract, validation, dialects, forwarding, providers), `src/openenv/harbor/` (seams, tasks, rollout, contract, ATIF, startup, serving, UI), `envs/harbor_env/`, `openenv harbor` CLI
+- **PR [#1036](https://github.com/openenv/OpenEnv/pull/1036) — the implementation this revision is written against** (merged 2026-09-16): `src/openenv/core/harness/capture/` (proxy, graph, export, contract, validation, dialects, forwarding, providers), `src/openenv/harbor/` (seams, tasks, rollout, contract, ATIF, startup, serving, UI), `envs/harbor_env/`, `openenv harbor` CLI
 - **RFC 012** — Harbor capture purpose, provider fidelity and live-session ownership: [`rfcs/012-harbor-capture-providers.md`](./012-harbor-capture-providers.md); extends this RFC and amends D2
-- RFC 005 — Agentic Harness Integration: [`rfcs/005-agentic-harnesses.md`](./005-agentic-harnesses.md); runtime in [`src/openenv/core/harness/rollout.py`](../src/openenv/core/harness/rollout.py) (split into a package by [#1097](https://github.com/huggingface/OpenEnv/pull/1097)), landed via [#652](https://github.com/huggingface/OpenEnv/pull/652)/[#903](https://github.com/huggingface/OpenEnv/pull/903)
-- Tracking issue [#940](https://github.com/huggingface/OpenEnv/issues/940)
-- Existing in-sandbox proxy: [`envs/opencode_env/sandbox/interception.py`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/envs/opencode_env/sandbox/interception.py); second consumer [`envs/pi_env/harness.py`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/envs/pi_env/harness.py) ([#999](https://github.com/huggingface/OpenEnv/pull/999))
-- Tutorials documenting the in-sandbox path: [`docs/source/tutorials/opencode-agent-grpo.md`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/docs/source/tutorials/opencode-agent-grpo.md) ([#1028](https://github.com/huggingface/OpenEnv/pull/1028)), [`pi-agent-grpo.md`](https://github.com/huggingface/OpenEnv/blob/v0.8.0/docs/source/tutorials/pi-agent-grpo.md) ([#1023](https://github.com/huggingface/OpenEnv/pull/1023))
-- PR [#998](https://github.com/huggingface/OpenEnv/pull/998) — `HFSandboxBackend` + `sandbox_home` fix (merged); sandbox consolidation is its deferred follow-up
+- RFC 005 — Agentic Harness Integration: [`rfcs/005-agentic-harnesses.md`](./005-agentic-harnesses.md); runtime in [`src/openenv/core/harness/rollout.py`](../src/openenv/core/harness/rollout.py) (split into a package by [#1097](https://github.com/openenv/OpenEnv/pull/1097)), landed via [#652](https://github.com/openenv/OpenEnv/pull/652)/[#903](https://github.com/openenv/OpenEnv/pull/903)
+- Tracking issue [#940](https://github.com/openenv/OpenEnv/issues/940)
+- Existing in-sandbox proxy: [`envs/opencode_env/sandbox/interception.py`](https://github.com/openenv/OpenEnv/blob/v0.8.0/envs/opencode_env/sandbox/interception.py); second consumer [`envs/pi_env/harness.py`](https://github.com/openenv/OpenEnv/blob/v0.8.0/envs/pi_env/harness.py) ([#999](https://github.com/openenv/OpenEnv/pull/999))
+- Tutorials documenting the in-sandbox path: [`docs/source/tutorials/opencode-agent-grpo.md`](https://github.com/openenv/OpenEnv/blob/v0.8.0/docs/source/tutorials/opencode-agent-grpo.md) ([#1028](https://github.com/openenv/OpenEnv/pull/1028)), [`pi-agent-grpo.md`](https://github.com/openenv/OpenEnv/blob/v0.8.0/docs/source/tutorials/pi-agent-grpo.md) ([#1023](https://github.com/openenv/OpenEnv/pull/1023))
+- PR [#998](https://github.com/openenv/OpenEnv/pull/998) — `HFSandboxBackend` + `sandbox_home` fix (merged); sandbox consolidation is its deferred follow-up
 - **`huggingface_hub.Sandbox`** (first-class since 1.22.0, plus an `hf sandbox` CLI): [`src/huggingface_hub/_sandbox.py`](https://github.com/huggingface/huggingface_hub/blob/main/src/huggingface_hub/_sandbox.py) (`proxy_url_for`, `proxy_headers`, `$SBX_PROXY_DIR/<port>.sock`), [guide](https://huggingface.co/docs/huggingface_hub/main/en/guides/sandbox) — the trainer-dials-in route D18 considered and did not take
-- PRs [#1007](https://github.com/huggingface/OpenEnv/pull/1007), [#1009](https://github.com/huggingface/OpenEnv/pull/1009) — merged, satisfying two TRL `TODO(@openenv)`s
-- PRs [#694](https://github.com/huggingface/OpenEnv/pull/694) / [#695](https://github.com/huggingface/OpenEnv/pull/695) — prior attempt (closed); [#864](https://github.com/huggingface/OpenEnv/pull/864) — message-level contract (superseded by D1)
+- PRs [#1007](https://github.com/openenv/OpenEnv/pull/1007), [#1009](https://github.com/openenv/OpenEnv/pull/1009) — merged, satisfying two TRL `TODO(@openenv)`s
+- PRs [#694](https://github.com/openenv/OpenEnv/pull/694) / [#695](https://github.com/openenv/OpenEnv/pull/695) — prior attempt (closed); [#864](https://github.com/openenv/OpenEnv/pull/864) — message-level contract (superseded by D1)
 
 ### Reference implementations of the interception pattern
 - **Polar / ProRL-Agent-Server** (NVIDIA NeMo, Apache-2.0): [github.com/NVIDIA-NeMo/ProRL-Agent-Server](https://github.com/NVIDIA-NeMo/ProRL-Agent-Server) · Polar paper [arXiv:2605.24220](https://arxiv.org/abs/2605.24220) · ProRL Agent [arXiv:2603.18815](https://arxiv.org/abs/2603.18815). Verified for the evidence table: `src/polar/gateway/engine.py`, `gateway/server.py` + `storage.py`, `trajectory/builder/prefix_merging.py` (the `[fish, ing]` → `[fishing]` hazard is in its module docstring), `trajectory/models.py` (`Trace` + length validators). Its transformers are vendored into `capture/dialects/` (D19)

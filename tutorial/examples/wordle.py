@@ -18,7 +18,7 @@
 #     "peft",
 #     "trackio>=0.13.0",
 #     "kernels",
-#     "openenv @ git+https://github.com/huggingface/OpenEnv.git",
+#     "openenv @ git+https://github.com/openenv/OpenEnv.git",
 #     "openenv_core",
 # ]
 # ///

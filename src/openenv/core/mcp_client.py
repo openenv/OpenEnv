@@ -255,6 +255,12 @@ class MCPClientBase(EnvClient[Any, Observation, State]):
 
         return await super()._connect_async()
 
+    def _raise_if_session_lost(self) -> None:
+        # In production mode a reconnect attaches to the same HTTP MCP session,
+        # which outlives the WebSocket, so the episode carries over.
+        if not getattr(self, "use_production_mode", False):
+            super()._raise_if_session_lost()
+
     async def _ensure_production_session(self) -> str:
         """Create and cache a persistent HTTP MCP session id if needed."""
         async with self._production_session_lock:
