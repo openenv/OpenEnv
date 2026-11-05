@@ -34,7 +34,7 @@ async def main():
     # Connect to the Atari environment server
     print("Connecting to Atari environment...")
     env = await AtariEnv.from_docker_image(
-        "ghcr.io/huggingface/openenv-atari-env:latest"
+        "ghcr.io/openenv/openenv-atari-env:latest"
     )
 
     try:
