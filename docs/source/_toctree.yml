@@ -99,6 +99,8 @@
     title: SUMO-RL
   - local: environments/finrl
     title: FinRL
+  - local: environments/llm_capacity
+    title: LLM Capacity Reservation
   - local: environments/textarena
     title: TextArena
   - local: environments/git

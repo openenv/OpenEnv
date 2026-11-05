@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "session_files": 3,
+  "complete_episodes": [
+    "40d24c841c304ef3b8bbc4dc25c0632c.jsonl"
+  ],
+  "records": "reset, action, observation, reward, terminal and step_count"
+}

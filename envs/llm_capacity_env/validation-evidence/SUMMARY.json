@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "openenv": "0.11.0",
+  "python": "3.13.15 (main, Sep  1 2026, 00:09:11) [GCC 12.2.0]",
+  "cluster": "center",
+  "image_id": "sha256:a0432d085337286bfd65a1e17944906e1f2016e2f3923ed00d24cc462c0f6071",
+  "unit_tests": ".....................                                                    [100%]\n21 passed in 9.14s\n",
+  "static_report": "/mnt/cfs_bj_fm/workspace/lihuaiming/external-benchmark-contributions/openenv/cases/llm-capacity-reservation/validation/attempt-20261102T025613Z/STATIC.json",
+  "runtime_report": "/mnt/cfs_bj_fm/workspace/lihuaiming/external-benchmark-contributions/openenv/cases/llm-capacity-reservation/validation/attempt-20261102T025613Z/RUNTIME.json",
+  "protocol_report": "/mnt/cfs_bj_fm/workspace/lihuaiming/external-benchmark-contributions/openenv/cases/llm-capacity-reservation/validation/attempt-20261102T025613Z/PROTOCOL.json",
+  "scope": "Raw-data hash reconstruction, wheel data inclusion; official CLI static (skip build) and URL/API checks; separate actual Docker build and MCP/WebSocket episodes. No upstream acceptance or full semantic/hub certification."
+}

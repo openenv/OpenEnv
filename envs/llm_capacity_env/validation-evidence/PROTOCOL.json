@@ -1,0 +1,32 @@
+{
+  "passed": true,
+  "decisions": 14,
+  "two_simultaneous_sessions": true,
+  "causal_policy_episode_cost": 2203.2003324999996,
+  "episode_reward": -2.2032003325,
+  "reward_sequence": [
+    -0.078564705,
+    -0.2067153485,
+    -0.2077218745,
+    -0.18759591,
+    -0.22144026499999997,
+    -0.13276788299999998,
+    -0.12228742,
+    -0.11169109899999999,
+    -0.18154478599999999,
+    -0.166916298,
+    -0.19073091650000001,
+    -0.158290421,
+    -0.124141896,
+    -0.11279151
+  ],
+  "invalid_action_no_advance": true,
+  "seed_reset_reproducible": true,
+  "read_tool_zero_reward": true,
+  "terminal_extra_action_no_reward": true,
+  "declared_tools": [
+    "observe_demand_history",
+    "reserve_capacity"
+  ],
+  "web_ui_status": 200
+}

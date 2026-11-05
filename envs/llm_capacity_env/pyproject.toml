@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-llm-capacity-env"
+version = "0.1.0"
+readme = "README.md"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "server/data/LICENSE-BurstGPT.txt"]
+description = "Causal LLM serving-capacity reservation with BurstGPT trace replay"
+requires-python = ">=3.11"
+license = "BSD-3-Clause"
+authors = [{name = "Huaiming Li", email = "lihuaiming01@baidu.com"}]
+dependencies = ["openenv==0.11.0"]
+
+[project.optional-dependencies]
+dev = ["pytest==8.4.2", "ruff==0.14.13"]
+
+[project.scripts]
+server = "llm_capacity_env.server.app:main"
+
+[tool.setuptools]
+packages = ["llm_capacity_env", "llm_capacity_env.server"]
+package-dir = { "llm_capacity_env" = ".", "llm_capacity_env.server" = "server" }
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+
+[tool.setuptools.package-data]
+"llm_capacity_env.server" = ["data/*"]

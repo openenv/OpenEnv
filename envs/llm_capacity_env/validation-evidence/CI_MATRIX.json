@@ -1,0 +1,142 @@
+{
+  "date_utc": "2026-11-02",
+  "upstream_base": "1e5317e9ebbe016fb9f94e545cf4a996d464e22b",
+  "matrix": {
+    "3.11": {
+      "core_suite": {
+        "passed": 4281,
+        "skipped": 136,
+        "deselected": 86
+      },
+      "environment_tests": 21,
+      "checks": {
+        "bootstrap-uv": true,
+        "python-install": true,
+        "sync-all-extras": true,
+        "ci-test-dependencies": true,
+        "nltk-resource-check": true,
+        "format-environment-imports": true,
+        "format-environment": true,
+        "environment-lock": true,
+        "environment-lock-frozen": true,
+        "stage-contribution": true,
+        "focused-tests": true,
+        "core-suite": true,
+        "lint-dependencies": true,
+        "ci-usort-format": true,
+        "ci-ruff-format": true,
+        "ci-format-diff": true,
+        "focused-format-check": true,
+        "ruff-check": true,
+        "focused-ruff": true,
+        "docs-sync": true,
+        "diff-check": true,
+        "dependency-freeze": true
+      }
+    },
+    "3.12": {
+      "core_suite": {
+        "passed": 4328,
+        "skipped": 111,
+        "deselected": 86
+      },
+      "environment_tests": 21,
+      "checks": {
+        "bootstrap-uv": true,
+        "python-install": true,
+        "sync-all-extras": true,
+        "ci-test-dependencies": true,
+        "nltk-resource-check": true,
+        "format-environment-imports": true,
+        "format-environment": true,
+        "environment-lock": true,
+        "environment-lock-frozen": true,
+        "stage-contribution": true,
+        "focused-tests": true,
+        "core-suite": true,
+        "lint-dependencies": true,
+        "ci-usort-format": true,
+        "ci-ruff-format": true,
+        "ci-format-diff": true,
+        "focused-format-check": true,
+        "ruff-check": true,
+        "focused-ruff": true,
+        "docs-sync": true,
+        "diff-check": true,
+        "dependency-freeze": true
+      }
+    }
+  },
+  "test_selection": "Official .github/workflows/test.yml: three ignored environment files; not integration and not network and not docker.",
+  "dependency_setup": "uv 0.9.3; official core dependency recipe. TextArena uses checksum-verified official NLTK index/corpora cached locally via Downloader.url. No tests or security checks are patched.",
+  "retry_record": {
+    "python": "3.11",
+    "initial_core_suite": {
+      "failed": 1,
+      "passed": 4280,
+      "skipped": 136,
+      "deselected": 86
+    },
+    "test": "tests/core/test_agentic_harness_bridge.py::TestBridgeEnvironmentIntegration::test_cancelled_reset_waits_for_bridge_start_before_stopping[anyio]",
+    "full_suite_rerun": {
+      "passed": 4281,
+      "skipped": 136,
+      "deselected": 86
+    }
+  },
+  "upstream_lint_baseline": {
+    "broad_format_hook_preexisting_files": 47,
+    "usort_preexisting_test_files": [
+      "tests/envs/test_grid_world.py",
+      "tests/envs/test_julia_env.py"
+    ],
+    "official_ci_formatter_python_diff": []
+  },
+  "source_hashes": {
+    "docs/source/_toctree.yml": "2c5f254a90f04f81eb6c66e56ae1295973680265b2019a2fa8a274c62767576f",
+    "docs/source/environments.md": "1c43cee95d6be07897c8bf2c50236c3929933cc92d5d1961c13bd8edc6ffded7",
+    "docs/source/environments/llm_capacity.md": "d7f6c4581b0352368762888b95803b98d8042d4588a977a07cf49ee197e8a21f",
+    "envs/llm_capacity_env/.dockerignore": "a1820da7b4728b93d073c9d9a52980df400a22fd4d819c090fe7b692befd361f",
+    "envs/llm_capacity_env/.gitattributes": "af26311dd1f6613ecd16d6939a5aff911ab3ed7e828d50fcd278f582bd71e8af",
+    "envs/llm_capacity_env/.gitignore": "093cc865c3258ed50589d2d90b205c1c828f42c8f61a69ae32fa57d11df45dce",
+    "envs/llm_capacity_env/Dockerfile": "dd8868e20aea56fe434c30d1e244710ba81a89c16ba1b90d7b51d8c05b363302",
+    "envs/llm_capacity_env/LICENSE": "f77e6e677162e80dab82917a13da3850cb9a7750da86ad5581bb55656187333d",
+    "envs/llm_capacity_env/README.md": "056051f25407062db4edfd736d7fc19a1f8a74224102252d68337b2184909f62",
+    "envs/llm_capacity_env/THIRD_PARTY_NOTICES.md": "ebf7dea429c3386caacaf9ea635a98973924cc895662d9dfed10b26db9040a31",
+    "envs/llm_capacity_env/__init__.py": "74ca36c10411b0c284cab6e7f6d9f1aa72ce9ec09f1fa3d139c092bafce4e382",
+    "envs/llm_capacity_env/client.py": "91fd46c23c4a87378e6cf909833fa4f354ea5fdac0b4a785cc65523a1a45b7d9",
+    "envs/llm_capacity_env/examples/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "envs/llm_capacity_env/examples/client_demo.py": "18e789572f84fb197c11b33f3ac4fb22711db893c7c70def3352e34f6fc6a723",
+    "envs/llm_capacity_env/examples/evaluate.py": "161a63ac151e46ebca46d6618b766a2cf58780802f31c6380d5a89b36bafd479",
+    "envs/llm_capacity_env/examples/policies.py": "761d53813dedf898cd248ee4a82a780b32ea4ca97f0c27129cf399f4dfbff9b2",
+    "envs/llm_capacity_env/examples/record_trace.py": "f3a25a88f3f309e3a93c2f7ce877ae38e599a91d7eb00b8c176d21f6fa16ea3a",
+    "envs/llm_capacity_env/openenv.yaml": "aea6b4eff80651a5fdcb99af222c4c7fde635c72cc67ffd1526fea38df0bde55",
+    "envs/llm_capacity_env/outputs/.gitkeep": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "envs/llm_capacity_env/outputs/example-traces/README.md": "0fc4b30610110acd2c29a8e0c9dbea23fd9ba911f9a0ea6c7fe74792d25741a0",
+    "envs/llm_capacity_env/outputs/example-traces/TRACE_RESULT.json": "83cc88521191ba1d0572599ff79c331ca54812c7d2631351a24e02034ff4531b",
+    "envs/llm_capacity_env/outputs/example-traces/rolling_quantile-seed23.jsonl": "68acb4d39060fead6a68acbe4f78ad6f1cf358b6133e0374ee89949fbe090771",
+    "envs/llm_capacity_env/outputs/example-traces/zero-seed23.jsonl": "93912519e51c1cce71c0545cf15f388a3f00d2bb46870a385bec1d8ccc1b7357",
+    "envs/llm_capacity_env/pyproject.toml": "c35ae32af6091178016216dc85f22c1ec72269218aa509fbc91ca36ec8f077fd",
+    "envs/llm_capacity_env/requirements.lock": "21befdde8dbfa62ededb384d87da851724ffb114c179302edc028cd95c1d5737",
+    "envs/llm_capacity_env/scripts/rebuild_aggregates.py": "40ad394cccc0f14946ce2a5fb39c4da80c04a902bf349ac45cd0ac62d829b7c2",
+    "envs/llm_capacity_env/server/Dockerfile": "94cc3103c2ca2061e5e373ab3c125f9e9b546319d3f97897a1e1287f3498f9bd",
+    "envs/llm_capacity_env/server/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "envs/llm_capacity_env/server/app.py": "ce28531138687fafcf39e1acc4732b2f71886a8e5fadde107b5eb7b8331fd493",
+    "envs/llm_capacity_env/server/capacity_environment.py": "edf34b876f3ffc53c0b1dcbdaa381ac633c6c53d49c0edcaff59371e454a746b",
+    "envs/llm_capacity_env/server/data/LICENSE-BurstGPT.txt": "9e5f1b3c610b9c2da5c313bf81d577a7d1acec686bdb0384edefa6df0f90cd94",
+    "envs/llm_capacity_env/server/data/PROVENANCE.json": "31a55a35da408bf56c91efc845bfa7c49eec574cd09d5def7e8b7a61d9a91edf",
+    "envs/llm_capacity_env/server/data/hourly_demand.csv": "de9db57e9dd8aa1c96f33789e45eaf5fe0b09726160e9554645d2cb8ca58c130",
+    "envs/llm_capacity_env/server/engine.py": "5efc8b2004c1e450bf6f41914c1bf5813ffd9797303dec7520bce8ea5a942c86",
+    "envs/llm_capacity_env/server/trajectory.py": "0cb82b9407e9cfced38459884681185b9d352fc1a7eabcdccb0662852693f2d9",
+    "envs/llm_capacity_env/uv.lock": "59e9600e50aeefccdce6f529c188a6e107da8dce758c2777b723dfd679b8672c",
+    "tests/envs/test_llm_capacity_mcp.py": "4dec454b43790216ac64575c7308ecaeddb37bf7365e85241159162d7b748072",
+    "tests/envs/test_llm_capacity_replay.py": "35d212c43d1b0fe712dc98c45111fb967076c1cce693ec6d95004443e529a006",
+    "tests/envs/test_llm_capacity_trajectory.py": "dc539ed4c352f3e4fe8ccaf8423e0f5c4763f16cf7bd0875f8866410c05ab901"
+  },
+  "quality_replay": {
+    "passed": true,
+    "episodes": 502,
+    "decisions": 7028,
+    "frozen_weights_reconstructed": true
+  }
+}

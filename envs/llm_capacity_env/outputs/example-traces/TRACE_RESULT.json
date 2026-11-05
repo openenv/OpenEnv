@@ -1,0 +1,25 @@
+{
+  "passed": true,
+  "scope": "Local MCP baseline traces and exact replay; no LLM run or automatic subject-telemetry certification",
+  "recorder_sha256": "e723b6b6381daf41f74cdf68cc3a1491c536610cf37c606d179eaa030412b83e",
+  "traces": [
+    {
+      "file": "zero-seed23.jsonl",
+      "sha256": "93912519e51c1cce71c0545cf15f388a3f00d2bb46870a385bec1d8ccc1b7357",
+      "policy": "zero",
+      "steps": 14,
+      "replay_exact": true,
+      "episode_modeled_cost": 4831.748251999999,
+      "episode_reward": -4.831748251999999
+    },
+    {
+      "file": "rolling_quantile-seed23.jsonl",
+      "sha256": "68acb4d39060fead6a68acbe4f78ad6f1cf358b6133e0374ee89949fbe090771",
+      "policy": "rolling_quantile",
+      "steps": 14,
+      "replay_exact": true,
+      "episode_modeled_cost": 2203.2003324999996,
+      "episode_reward": -2.2032003325
+    }
+  ]
+}
