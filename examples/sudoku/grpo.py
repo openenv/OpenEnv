@@ -102,7 +102,8 @@ def main():
             self.solved = result.done and result.reward >= 1.0
             return feedback.split("Board state: \n")[-1]
 
-    # 4 prompts x 16 games per step. Each game is one environment session, so the Space must allow 64 at once.
+    # 4 prompts x 16 games per step, one environment session each. MAX_CONCURRENT_ENVS=96 leaves room for the sessions
+    # still being closed between games.
     # One game per forward pass: with games up to 16k tokens, 8 at once ran out of memory on an A100 80GB.
     prompts_per_step, num_generations, per_device_batch_size = 4, 16, 1
     dataset = Dataset.from_dict(

@@ -117,7 +117,8 @@ def main():
             self.done = result.done
             return feedback
 
-    # 4 prompts x 16 games per step. Each game is one environment session, so the Space must allow 64 at once.
+    # 4 prompts x 16 games per step, one environment session each. MAX_CONCURRENT_ENVS=96 leaves room for the sessions
+    # still being closed between games.
     prompts_per_step, num_generations, per_device_batch_size = 4, 16, 8
     dataset = Dataset.from_dict(
         {
