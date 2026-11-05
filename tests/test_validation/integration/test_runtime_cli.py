@@ -26,19 +26,17 @@ IMPLEMENTED = {
     "runtime.seed_control",
     "runtime.episode_determinism",
     "runtime.trajectory_record",
+    "runtime.tool_declaration_accuracy",
+    "runtime.task_declaration_accuracy",
+    "runtime.rubric_introspectable",
+    "runtime.reward_attribution",
     "runtime.network_policy",
 }
 PENDING = {
-    "runtime.tool_declaration_accuracy",
     "runtime.host_containment",
     "runtime.resource_bounds",
     "runtime.episode_isolation",
     "runtime.oracle_containment",
-}
-NOT_APPLICABLE = {
-    "runtime.rubric_introspectable",
-    "runtime.reward_attribution",
-    "runtime.task_declaration_accuracy",
 }
 
 
@@ -282,18 +280,49 @@ def _invoke_cli(
     assert not marker.exists(), "--skip-build invoked Docker"
     checks = {row["check_id"]: row for row in report["results"]}
     assert len(checks) == len(report["results"]), "Report contains duplicate check IDs"
-    assert {
-        key for key in checks if key.startswith("runtime.")
-    } == IMPLEMENTED | PENDING
-    assert not NOT_APPLICABLE & checks.keys()
+    applicable = IMPLEMENTED | PENDING
+    capabilities = report["manifest"]["capabilities"]
+    declarations = yaml.safe_load((context / "openenv.yaml").read_text())["validation"][
+        "capabilities"
+    ]
+    if "declared_tools" not in declarations:
+        applicable -= {"runtime.tool_declaration_accuracy"}
+    if not capabilities["rubric_tree"]:
+        applicable -= {"runtime.rubric_introspectable", "runtime.reward_attribution"}
+    if not capabilities["task_api"] and "declared_task_count" not in declarations:
+        applicable -= {"runtime.task_declaration_accuracy"}
+    assert {key for key in checks if key.startswith("runtime.")} == applicable
     assert all(checks[key]["status"] == "skip" for key in PENDING)
     assert all(checks[key]["evidence"] for key in PENDING)
-    assert (
-        set(artifacts["coverage.json"]["requested_runtime_checks"])
-        == IMPLEMENTED | PENDING
-    )
+    assert set(artifacts["coverage.json"]["requested_runtime_checks"]) == applicable
     assert artifacts["cleanup.json"]["completed"] is True
     return result, report, checks, artifacts
+
+
+def _assert_discovery(discovery, mode):
+    assert discovery["omitted_fields"] == []
+    if mode == "tool_discovery_error":
+        assert discovery["tools_available"] is False
+        assert discovery["tools_error"]
+        assert discovery["tools"] is None
+    else:
+        assert discovery["tools_available"] is True
+        assert discovery["tools_error"] is None
+        expected = {"increment", "read_counter"}
+        if mode == "empty_tools":
+            expected = set()
+        elif mode == "missing_tool":
+            expected.remove("read_counter")
+        elif mode == "extra_tool":
+            expected.add("unexpected")
+        assert {tool["name"] for tool in discovery["tools"]["tools"]} == expected
+    assert discovery["tasks_available"] is True
+    assert discovery["tasks_error"] is None
+    assert discovery["tasks"]["counts"] == {
+        "train": 5 if mode == "bad_task_count" else 4,
+        "test": 2,
+    }
+    assert all(len(preview) == 2 for preview in discovery["tasks"]["previews"].values())
 
 
 def _assert_fresh_replays(artifacts, identical_samples=3):
@@ -326,11 +355,25 @@ def _assert_fresh_replays(artifacts, identical_samples=3):
         ("nondeterministic", "runtime.episode_determinism"),
         ("missing_record", "runtime.trajectory_record"),
         ("trace_mismatch", "runtime.trajectory_record"),
+        ("missing_tool", "runtime.tool_declaration_accuracy"),
+        ("extra_tool", "runtime.tool_declaration_accuracy"),
+        ("tool_discovery_error", "runtime.tool_declaration_accuracy"),
+        ("bad_task_count", "runtime.task_declaration_accuracy"),
+        ("missing_rubric_config", "runtime.rubric_introspectable"),
+        ("bad_attribution", "runtime.reward_attribution"),
+        ("changed_rubric_config", "runtime.reward_attribution"),
+        ("empty_tools", None),
     ],
 )
 def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check):
     with (cli_context / "Dockerfile").open("a") as stream:
         stream.write(f"\nENV VALIDATION_FAULT={mode}\n")
+    if mode == "empty_tools":
+        manifest = cli_context / "openenv.yaml"
+        data = yaml.safe_load(manifest.read_text())
+        data["validation"]["capabilities"]["declared_tools"] = []
+        manifest.unlink()
+        manifest.write_text(yaml.safe_dump(data, sort_keys=False))
     result, report, checks, artifacts = _invoke_cli(cli_context, tmp_path, mode)
     assert report["levels_run"] == [1, 2]
     assert checks["static.manifest"]["status"] == "pass"
@@ -340,6 +383,7 @@ def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check
     assert artifacts["run-manifest.json"]["provider"]["container_id"]
     assert artifacts["run-manifest.json"]["source_digest"] == report["source_digest"]
     _assert_fresh_replays(artifacts)
+    _assert_discovery(artifacts["discovery.json"], mode)
     trace = artifacts["collector-trace.json"]
     assert [row["operation"] for row in trace] == [
         "reset",
@@ -350,7 +394,11 @@ def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check
         "state",
     ]
     if failed_check:
-        warning_only = failed_check == "runtime.trajectory_record"
+        warning_only = failed_check in {
+            "runtime.trajectory_record",
+            "runtime.rubric_introspectable",
+            "runtime.reward_attribution",
+        }
         assert result.returncode == (0 if warning_only else 1)
         assert report["verdict"] == ("warn" if warning_only else "fail")
         assert checks[failed_check]["status"] == "fail"
@@ -499,6 +547,7 @@ def test_cli_controlled_judge_requires_twenty_samples(
     assert determinism["status"] == expected
     assert determinism["measured"]["completed_replays"] == 20
     _assert_fresh_replays(artifacts, identical_samples=20)
+    _assert_discovery(artifacts["discovery.json"], mode)
     assert determinism["measured"]["variance_units"] == "reward_squared"
     variances = determinism["measured"]["reward_population_variance"]
     assert len(variances) == 2

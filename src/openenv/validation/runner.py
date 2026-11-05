@@ -17,6 +17,12 @@ from .graders.runtime import (
     RewardWellFormedGrader,
     StateContractGrader,
 )
+from .graders.runtime.discovery import (
+    RewardAttributionGrader,
+    RubricIntrospectableGrader,
+    TaskDeclarationAccuracyGrader,
+    ToolDeclarationAccuracyGrader,
+)
 from .graders.runtime.repeatability import (
     EpisodeDeterminismGrader,
     SeedControlGrader,
@@ -103,6 +109,10 @@ def default_grader_registry(policy: SeverityPolicy) -> GraderRegistry:
     registry.register(SeedControlGrader())
     registry.register(EpisodeDeterminismGrader())
     registry.register(TrajectoryRecordGrader())
+    registry.register(ToolDeclarationAccuracyGrader())
+    registry.register(TaskDeclarationAccuracyGrader())
+    registry.register(RubricIntrospectableGrader())
+    registry.register(RewardAttributionGrader())
 
     registry.register(NetworkPolicyGrader())
     return registry
@@ -124,9 +134,9 @@ def _applicable(check_id, manifest):
     if check_id in {"runtime.rubric_introspectable", "runtime.reward_attribution"}:
         return manifest.capabilities.rubric_tree
     if check_id == "runtime.task_declaration_accuracy":
-        return manifest.capabilities.task_api or bool(
-            manifest.capabilities.declared_task_count
-        )
+        return TaskDeclarationAccuracyGrader().applies_to(manifest)
+    if check_id == "runtime.tool_declaration_accuracy":
+        return ToolDeclarationAccuracyGrader().applies_to(manifest)
     return True
 
 
@@ -200,6 +210,8 @@ def _runtime(subject, graders, *, skip_build, provider):
                 manifest.resources.episode_timeout_s, REPLAY_BUDGET_SECONDS
             ),
             validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
+            collect_tools=_applicable("runtime.tool_declaration_accuracy", manifest),
+            collect_tasks=_applicable("runtime.task_declaration_accuracy", manifest),
         )
         # Protocol collection must finish before its dependent contract checks run.
         if evidence.failure_reason:

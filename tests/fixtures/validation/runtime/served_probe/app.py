@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 import uvicorn
+from fastmcp import FastMCP
 from openenv.core.env_server.http_server import create_app
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
@@ -22,11 +23,15 @@ class ProbeObservation(Observation):
 
 
 class CounterRubric(Rubric):
+    def __init__(self, public_config=True):
+        super().__init__()
+        self.public_config = public_config
+
     def forward(self, action, observation):
         return float(observation.counter >= 2)
 
     def validation_config(self):
-        return {"threshold": 2}
+        return {"threshold": 2} if self.public_config else None
 
 
 class ControlledJudge(Rubric):
@@ -53,7 +58,41 @@ class ProbeEnvironment(Environment):
         self.ordinal = 0
         self._state = State(episode_id="uninitialized", step_count=0)
         self.counter = 0
-        self.rubric = WeightedSum([CounterRubric(), CounterRubric()], [0.5, 0.5])
+        public_config = mode != "missing_rubric_config"
+        self.rubric = WeightedSum(
+            [CounterRubric(public_config), CounterRubric(public_config)], [0.5, 0.5]
+        )
+        self.mcp_server = FastMCP("validation_probe")
+        if mode != "empty_tools":
+            self.mcp_server.tool(self.increment)
+            if mode != "missing_tool":
+                self.mcp_server.tool(self.read_counter)
+        if mode == "extra_tool":
+            self.mcp_server.tool(name="unexpected")(self.read_counter)
+
+    def increment(self, amount: int = 1) -> dict:
+        """Advance the probe using its ordinary step implementation."""
+        return self.step(ProbeAction(increment=amount)).model_dump(mode="json")
+
+    def read_counter(self) -> int:
+        """Read the session's current counter without changing it."""
+        return self.counter
+
+    def list_splits(self):
+        return ["train", "test"]
+
+    def num_tasks(self, split):
+        counts = {"train": 4, "test": 2}
+        return counts[split] + int(self.mode == "bad_task_count" and split == "train")
+
+    def get_task(self, split, index):
+        if not 0 <= index < {"train": 4, "test": 2}[split]:
+            raise IndexError(index)
+        return {"id": f"{split}-{index}", "index": index, "split": split}
+
+    def list_tasks(self, split):
+        # Deliberately bounded: listing length is never the authoritative count.
+        return [self.get_task(split, 0)]
 
     def reset(self, seed=None, episode_id=None, **kwargs):
         self.counter = 0
@@ -128,7 +167,16 @@ class WireFault:
         async def fault_send(message: dict[str, Any]):
             if message["type"] == "websocket.send" and message.get("text"):
                 data = json.loads(message["text"])
-                if data.get("type") == "observation":
+                if data.get("type") == "mcp" and self.mode == "tool_discovery_error":
+                    data["data"] = {
+                        "jsonrpc": "2.0",
+                        "id": data["data"]["id"],
+                        "error": {
+                            "code": -32603,
+                            "message": "injected discovery failure",
+                        },
+                    }
+                elif data.get("type") == "observation":
                     payload = data["data"]
                     if self.mode == "bad_reward":
                         payload["reward"] = True
@@ -145,6 +193,15 @@ class WireFault:
                         data["data"]["trajectory"]["records"][0]["response"]["data"][
                             "observation"
                         ]["counter"] = 999
+                    elif self.mode == "bad_attribution":
+                        data["data"]["attribution"][0]["rubric"][1]["score"] = 0.25
+                    elif self.mode == "changed_rubric_config":
+                        snapshot = data["data"]
+                        for tree in [snapshot["rubric"]] + [
+                            record["rubric"] for record in snapshot["attribution"]
+                        ]:
+                            tree[1]["config"]["option"] = True
+                        snapshot["attribution"][0]["rubric"][1]["config"]["option"] = 1
                 message = {**message, "text": json.dumps(data)}
             await send(message)
 
@@ -169,6 +226,14 @@ def make_app(mode="good"):
         "trace_mismatch",
         "judged_stable",
         "judged_noisy",
+        "missing_tool",
+        "extra_tool",
+        "empty_tools",
+        "tool_discovery_error",
+        "bad_task_count",
+        "missing_rubric_config",
+        "bad_attribution",
+        "changed_rubric_config",
         "slow_step",
     }:
         raise ValueError(f"Unknown fixture mode: {mode}")

@@ -51,9 +51,11 @@ supports that capability. Docker validation uses two containers concurrently
 during the fresh-container replay. Both use the same immutable image and are
 removed even if a check fails.
 
-The runtime level implements startup, reward, observation, state, network policy,
-seed forwarding, determinism and emitted trajectory record checks. Other applicable
-Level 2 checks appear as `SKIP`; they make
+The 12 implemented runtime checks cover startup, rewards, observation schemas,
+state continuity, network policy, seed forwarding, determinism, emitted trajectory
+records, tool and task discovery, rubric introspection and reward attribution.
+Four checks remain unimplemented: host containment, resource bounds, episode
+isolation and oracle containment. Applicable unimplemented checks appear as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
@@ -68,7 +70,9 @@ the subject's namespace and from a control container; a probe counts only when
 the control reaches the sink, and a denial that is not proven is a `SKIP`.
 `--local` explicitly selects this default package mode and rejects a remote URL.
 Explicitly unsupported session telemetry yields a `SKIP` naming `session_telemetry`;
-authorization refusals and malformed telemetry remain failures. Seed control
+authorization refusals and malformed telemetry remain failures. Explicitly unsupported
+`tools/list` similarly skips with `tool_discovery` named. Internal discovery errors
+and malformed responses remain failures, even for an empty declared tool set. Seed control
 reports observed forwarding to reset, separately from empirical determinism.
 The declared `episode_timeout_s` bounds each episode; a reset or judged step may use
 its remaining budget. Original and replay collection share a 300-second deadline
