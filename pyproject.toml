@@ -50,6 +50,13 @@ aca = [
     "azure-containerapps-sandbox>=0.1.0b2,<0.2.0",
     "azure-identity>=1.23.0",
 ]
+cwsandbox = [
+    "cwsandbox>=0.23.3; python_version >= '3.11'",
+]
+wandb = [
+    "wandb>=0.27; python_version >= '3.11'",
+    "cwsandbox>=0.23.3; python_version >= '3.11'",
+]
 modal = [
     "modal>=1.4.0",
     "pyyaml>=6.0",
