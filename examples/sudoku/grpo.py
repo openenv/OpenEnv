@@ -56,7 +56,6 @@ def main():
     parser.add_argument("--trackio-space-id", default=None)
     args = parser.parse_args()
     env_url = args.env_url
-    # A private Space needs your token. A public one ignores it.
     token = get_token()
     headers = {"Authorization": f"Bearer {token}"} if token else None
 
@@ -65,8 +64,6 @@ def main():
             self.client = TextArenaEnv(base_url=env_url, headers=headers).sync()
 
         def reset(self, **kwargs) -> str | None:
-            # A new connection per game. The Space closes WebSockets after about 2 hours, and a game cut in the middle
-            # is lost.
             self.client.close()
             self.client = TextArenaEnv(base_url=env_url, headers=headers).sync()
             result = self.client.reset()
@@ -124,7 +121,6 @@ def main():
             output_dir=args.hub_model_id.split("/")[-1],
             max_steps=args.max_steps,
             learning_rate=1e-6,
-            # Constant: in the Wordle run, the reward was still rising when a linear decay ran out.
             lr_scheduler_type="constant",
             num_generations=num_generations,
             per_device_train_batch_size=per_device_batch_size,
@@ -134,7 +130,6 @@ def main():
             gradient_checkpointing=True,
             bf16=True,
             chat_template_kwargs={"enable_thinking": True},
-            # Every move returns the whole grid: a 26-cell game is about 13k tokens.
             max_completion_length=16384,
             mask_truncated_completions=True,
             # Multi-turn rollouts: clip per-token ratios instead of masking whole sequences.
