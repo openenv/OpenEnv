@@ -13,19 +13,12 @@ tags:
 
 # REPL Environment for OpenEnv
 
-`repl_env` is a Python REPL environment for [Recursive Language Model](https://huggingface.co/papers/2512.24601) (RLM) style execution. The model writes code that runs in a persistent namespace and can:
+`repl_env` runs model-generated Python in a persistent namespace, with optional
+recursive model queries, following the [RLM paradigm](https://huggingface.co/papers/2512.24601).
 
-- inspect `context`
-- execute Python across multiple turns with persistent state
-- call `llm_query(...)` and `llm_query_batched(...)` to query a language model
-- call `rlm_query(...)` and `rlm_query_batched(...)` for recursive child runs, when configured
-- finish with `FINAL(...)`, `FINAL_VAR(...)`, or `answer = {"content": ..., "ready": True}`
-
-The package provides:
-
-- `REPLEnv`: the async client for a remote server (`.sync()` for synchronous code), with `execute(code)`, `submit_final_answer(answer)`, `get_variable(name)` and `list_variables()` on top of `reset()`/`step()`
-- `LocalREPLEnv`: the same environment, in process
-- `LocalRLMRunner`: a local RLM loop that prompts a model, runs its code and handles recursion
+- `REPLEnv`: remote async client, or synchronous client via `.sync()`.
+- `LocalREPLEnv`: the environment in process.
+- `LocalRLMRunner`: the model prompting, code-execution, and recursion loop.
 
 Try it on the [`openenv/repl`](https://huggingface.co/spaces/openenv/repl) Space, or connect a client to `https://openenv-repl.hf.space`.
 
@@ -58,20 +51,9 @@ async def main():
 asyncio.run(main())
 ```
 
-Sync:
-
-```python
-from repl_env import REPLEnv
-
-with REPLEnv(base_url="http://127.0.0.1:8000").sync() as env:
-    result = env.reset(
-        context="alpha beta gamma",
-        task_prompt="Count the words",
-    )
-    result = env.execute("count = len(context.split())")
-    result = env.execute("print(FINAL(count))")
-    print(result.observation.result.stdout)
-```
+For synchronous remote use, enter `with REPLEnv(...).sync() as env:` and omit
+`await`. Both clients also provide `submit_final_answer()`, `get_variable()`, and
+`list_variables()`.
 
 ### In Process
 
@@ -105,198 +87,143 @@ Environment variables read by [`server/app.py`](server/app.py):
 
 ## Reward
 
-Rewards use the OpenEnv [rubric system](https://huggingface.co/docs/openenv/guides/rewards). The default `REPLRubric` combines:
-
-- **Outcome reward** (on terminal steps): compares `final_answer` against
-  `expected_answer` if provided. Returns 1.0 for match, 0.0 otherwise.
-- **Process reward** (on non-terminal steps): returns -0.05 for code
-  execution errors, 0.0 for successful steps.
-- **Failure reward**: returns -0.1 when max iterations exhausted without an answer.
-
-For RL training (GRPO, etc.), pass `expected_answer` at reset time:
+The default `REPLRubric` gives 1.0 for a matching `expected_answer`, 0.0 for a
+mismatch or successful intermediate step, -0.05 for execution errors, and -0.1
+when iterations run out without an answer. Set the expected answer at reset:
 
 ```python
 with LocalREPLEnv() as env:
-    env.reset(
-        context="...",
-        task_prompt="...",
-        expected_answer="42",  # ground truth for rubric scoring
-    )
+    env.reset(expected_answer="42")
     result = env.execute("print(FINAL(42))")
-    print(result.reward)  # 1.0 (correct)
+    print(result.reward)
 ```
 
-Other rubrics: `ExactMatchRubric` (binary match), `FuzzyMatchRubric` (1.0 for an exact match, 0.5 when the expected answer is contained in the final answer), `CustomMetricRubric` (your `metric(expected, predicted) -> float`) and `CodeExecutionRubric` (per-step error penalty). Pass one at construction:
-
-```python
-from repl_env import LocalREPLEnv, CustomMetricRubric, REPLRubric
-
-def my_metric(expected, predicted):
-    return 1.0 if expected.strip() == predicted.strip() else 0.0
-
-env = LocalREPLEnv(rubric=REPLRubric(outcome=CustomMetricRubric(my_metric)))
-```
+Customize `LocalREPLEnv(rubric=...)` with the match, partial-credit, custom-metric,
+or execution rubrics in [`rubrics.py`](rubrics.py). See the
+[rubric guide](https://huggingface.co/docs/openenv/guides/rewards) for composition.
 
 ## Running an RLM Locally
 
-`LocalRLMRunner` takes any `chat_fn(messages, model=None) -> str`. It works
-with HF Inference API, vLLM, SGLang, Ollama, or any OpenAI-compatible server.
-
-With HF Inference API:
+`LocalRLMRunner` accepts any `chat_fn(messages, model=None) -> str`, including
+adapters for hosted or local model servers. For HF inference, save this reusable
+factory in `my_model.py` (uses `HF_TOKEN` or your cached login):
 
 ```python
 from huggingface_hub import InferenceClient
-from repl_env import LocalRLMRunner, RLM_SYSTEM_PROMPT
 
-client = InferenceClient(model="Qwen/Qwen3.5-9B", timeout=300)
 
-def chat_fn(messages, model=None):
-    response = client.chat.completions.create(
-        model=model or "Qwen/Qwen3.5-9B",
-        messages=messages,
-        max_tokens=2048,
-        temperature=0.6,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-    )
-    return response.choices[0].message.content
+def make_chat():
+    client = InferenceClient(model="Qwen/Qwen3.5-9B", timeout=300)
 
-runner = LocalRLMRunner(chat_fn, max_iterations=30, max_depth=2)
+    def chat(messages, model=None):
+        response = client.chat.completions.create(
+            model=model or "Qwen/Qwen3.5-9B",
+            messages=messages,
+            max_tokens=2048,
+            temperature=0.6,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
+        return response.choices[0].message.content or ""
+
+    return chat
+```
+
+```python
+from my_model import make_chat
+from repl_env import LocalRLMRunner
+
+runner = LocalRLMRunner(make_chat(), max_iterations=30, max_depth=2)
 result = runner.run("The answer is 42", "What number is mentioned?")
 print(result.final_answer)
 ```
 
-With a local vLLM server:
+The runner supports child-count, batch, timeout, and result-length limits, plus
+`on_subcall_start` / `on_subcall_complete` callbacks and child traces. For different
+outer/inner models, supply a `backend_factory`; see
+[`recursive_backends.py`](recursive_backends.py).
+
+### Managed child lifecycle (opt-in)
+
+Managed children let the parent keep working while queries run in supervised
+processes. Each worker builds its own client; the model server stays shared.
+Use an importable factory such as `my_model.make_chat` above, not a lambda or live
+client, and guard the entry point for Python's `spawn` start method:
 
 ```python
-from openai import OpenAI
-from repl_env import LocalRLMRunner
+from my_model import make_chat
+from repl_env import LocalRLMRunner, ManagedChildConfig
 
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
-
-def chat_fn(messages, model=None):
-    response = client.chat.completions.create(
-        model=model or "Qwen/Qwen3.5-9B",
-        messages=messages,
-        max_tokens=2048,
-        temperature=0.6,
+if __name__ == "__main__":
+    runner = LocalRLMRunner(
+        make_chat(),
+        managed_children=ManagedChildConfig(chat_factory=make_chat),
+        max_depth=3,
+        max_iterations=10,
+        max_children_total=8,
+        max_batch_workers=4,
+        per_child_timeout_s=60,
     )
-    return response.choices[0].message.content
-
-runner = LocalRLMRunner(chat_fn, max_iterations=30, max_depth=2)
-result = runner.run(context, task)
+    print(runner.run("alpha beta gamma", "Count the words").final_answer)
 ```
 
-### Different Models for Outer and Inner Loops
-
-The outer loop (code generation) can use a large model while inner
-`llm_query`/`rlm_query` calls use a smaller, faster model. Pass a
-custom `backend_factory` to the runner:
+Inside the model's REPL:
 
 ```python
-from openai import OpenAI
-from huggingface_hub import InferenceClient
-from repl_env import LocalRLMRunner
-from repl_env.recursive_backends import BackendLimits, LocalChildRLMBackend
-
-# Outer loop: large local model via vLLM
-vllm = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
-
-def outer_chat(messages, model=None):
-    r = vllm.chat.completions.create(
-        model="Qwen/Qwen3-32B", messages=messages, max_tokens=2048,
-    )
-    return r.choices[0].message.content
-
-# Inner calls (llm_query/rlm_query): smaller HF-hosted model
-hf = InferenceClient(model="Qwen/Qwen3.5-9B")
-
-def inner_chat(messages, model=None):
-    r = hf.chat.completions.create(
-        model=model or "Qwen/Qwen3.5-9B", messages=messages, max_tokens=2048,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-    )
-    return r.choices[0].message.content
-
-def my_backend_factory(llm_chat_fn, **kwargs):
-    return LocalChildRLMBackend(
-        inner_chat,  # inner calls use the smaller model
-        runner_factory=LocalRLMRunner,
-        system_prompt=kwargs["system_prompt"],
-        max_iterations=kwargs["max_iterations"],
-        env_max_iterations_multiplier=kwargs["env_max_iterations_multiplier"],
-        depth=kwargs["depth"],
-        limits=BackendLimits(max_depth=2),
-    )
-
-runner = LocalRLMRunner(
-    outer_chat,                        # outer loop: large model
-    backend_factory=my_backend_factory, # inner calls: small model
-    max_iterations=30,
-    max_depth=2,
-)
-result = runner.run(context, task)
+child = rlm_query("Count the words: alpha beta gamma", blocking=False)
+parent_count = len(context.split())
+child_answer = rlm_wait(child, timeout_s=30)
+print(FINAL(parent_count))
 ```
 
-`LocalRLMRunner` also takes recursion limits (`max_children_total`, `max_children_per_batch`, `per_child_timeout_s`, `result_truncation_limit`) and lifecycle callbacks (`on_subcall_start(depth, model, prompt_preview)`, `on_subcall_complete(depth, model, duration, error_or_none)`). Its results carry lightweight child trace metadata.
+- `rlm_query(prompt, model=None, *, blocking=True)` waits for an answer by default.
+  With `blocking=False`, it returns an episode-scoped handle instead and requires
+  managed mode. Use `rlm_status` to inspect the handle,
+  `rlm_result` for a completed answer, or `rlm_wait` for a bounded wait. Failed or
+  unfinished results raise errors; a wait timeout does **not** cancel the child.
+- Nested workers share child-count and concurrency limits. Full concurrency
+  rejects new spawns rather than queuing them. Child timeouts interrupt even
+  in-flight model calls; deeper explicit spawns are rejected at the depth limit.
+- Finalization, reset, and close stop admission, request cooperative shutdown,
+  then escalate to SIGTERM and SIGKILL. Cleanup waits for every registered worker
+  to exit; failure raises `ChildCleanupError` and blocks reuse. Reset invalidates
+  handles and replenishes the budget; close is permanent and idempotent.
+- Controller lifecycle transitions are serialized. Callbacks are asynchronous,
+  ordered notifications: blocked or failing observers do not delay cleanup, and
+  notifications may run after reset/close. REPL execution itself is not thread-safe.
+
+`ManagedChildConfig` exposes `shutdown_grace_s`, `terminate_grace_s`, and
+`kill_timeout_s` (defaults: 1, 1, and 5 seconds). This POSIX-only backend does not
+contain arbitrary subprocesses or guarantee server-side generation abort.
+User-facing cancellation and follow-up messages are deferred.
+
+For manual/server use, pass `managed_children` to
+[`create_server_recursive_controller`](recursive_controller.py), then supply that
+controller to `LocalREPLEnv` or `REPLEnvironment` via `recursive_controller=`.
+Configure its credentials and limits at construction, not through reset overrides;
+infrastructure can cancel a handle with `controller.children.cancel(handle)`.
+`managed_children` cannot be combined with a custom `backend_factory`.
 
 ## Actions and Observations
 
-`REPLAction`
-
-```python
-code: str = ""
-is_final: bool = False
-final_answer: str | None = None
-```
-
-`REPLObservation`
-
-```python
-result: CodeBlockResult
-context_preview: str | None
-context_length: int
-available_variables: list[str]
-iteration: int
-max_iterations: int
-done: bool
-reward: float | None
-metadata: dict
-```
+`REPLAction` carries `code`, or `is_final=True` with a `final_answer` for explicit
+submission. `REPLObservation` includes execution results (stdout/stderr, success,
+exceptions, and timing), context/iteration metadata, `done`, and `reward`.
+See [`models.py`](models.py) for all fields.
 
 ## REPL Helpers
 
 When configured, the REPL namespace exposes:
 
 - `llm_query(prompt, model=None)` and `llm_query_batched(prompts, model=None)`
-- `rlm_query(prompt, model=None)` and `rlm_query_batched(prompts, model=None)`: recursive child runs. At the maximum depth they fall back to direct model calls.
-- `FINAL(value)`, `FINAL_VAR(name)` and `SHOW_VARS()`
+- `rlm_query(prompt, model=None, *, blocking=True)` and `rlm_query_batched(prompts, model=None)`: recursive child runs that wait for their answers. Blocking queries fall back to direct model calls at the recursion limit. In managed mode, `rlm_query(..., blocking=False)` starts a background child and returns a handle.
+- `SHOW_VARS()` lists variables in the namespace.
 
-## Finalization Patterns
-
-### `FINAL(...)`
-
-```python
-result = env.execute("answer = 42")
-result = env.execute("print(FINAL(answer))")
-```
-
-### `FINAL_VAR(...)`
-
-```python
-result = env.execute("my_answer = '42'")
-result = env.execute('print(FINAL_VAR("my_answer"))')
-```
-
-### `answer` dict
-
-```python
-result = env.execute("answer['content'] = '42'")
-result = env.execute("answer['ready'] = True")
-```
+Finish by executing `print(FINAL(value))`, `print(FINAL_VAR("variable_name"))`, or
+`answer.update({"content": value, "ready": True})`.
 
 ## Prompts and Examples
 
-[`prompts.py`](prompts.py) has the system prompts and helpers used by the runner: `RLM_SYSTEM_PROMPT`, `RLM_SYSTEM_PROMPT_QWEN`, `QueryMetadata`, `build_rlm_system_prompt(...)`, `build_user_prompt(...)`, `extract_code_blocks(...)` and `format_observations(...)`.
+See [`prompts.py`](prompts.py) for system prompts and message/code-block helpers.
 
 Examples, which default to `Qwen/Qwen3.5-9B` through Hugging Face inference (needs `HF_TOKEN`):
 
