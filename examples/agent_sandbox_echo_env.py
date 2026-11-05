@@ -32,9 +32,7 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 sys.path.insert(0, str(_REPO_ROOT / "envs"))
 
 from echo_env import EchoEnv
-from openenv.core.containers.runtime.agent_sandbox_provider import (
-    AgentSandboxProvider,
-)
+from openenv.core.containers.runtime.agent_sandbox_provider import AgentSandboxProvider
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +51,10 @@ async def main() -> int:
     )
 
     logger.info("Claiming a sandbox from warm pool %s...", warmpool)
-    base_url = await asyncio.to_thread(provider.start_container)
+    # start_container is inside the try: a failed provisioning can still
+    # leave a claim behind that stop_container() deletes by name.
     try:
+        base_url = await asyncio.to_thread(provider.start_container)
         await asyncio.to_thread(provider.wait_for_ready, base_url, 300)
         logger.info("Server ready")
 

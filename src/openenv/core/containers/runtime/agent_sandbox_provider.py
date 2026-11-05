@@ -11,6 +11,7 @@ The SDK requires Python >= 3.11.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
 import socket
 import threading
@@ -367,6 +368,10 @@ class AgentSandboxProvider(ContainerProvider):
         # (claim_name, namespace) recorded before provisioning so an orphaned
         # claim stays deletable when create_sandbox fails mid-flight.
         self._claim: Optional[tuple[str, str]] = None
+        # Insurance for processes that exit without stop_container(): the
+        # SDK's own atexit cleanup skips explicitly named claims, and
+        # shutdown_after_seconds only bounds the leak for SIGKILL.
+        self._atexit_stop = atexit.register(self._stop_at_exit)
 
     def start_container(
         self,
@@ -445,11 +450,12 @@ class AgentSandboxProvider(ContainerProvider):
                 api_url=self._router_url,
                 server_port=_DEFAULT_PORT,
             )
-        # cleanup=True: an atexit hook deletes tracked sandboxes if the process
-        # ends without stop_container(); shutdown_after_seconds covers SIGKILL.
+        # No cleanup=True: the SDK's atexit hook only deletes auto-generated
+        # claim names, and this provider always names its claims. The
+        # provider's own atexit hook (see __init__) covers a missing
+        # stop_container(); shutdown_after_seconds covers SIGKILL.
         self._client = SandboxClient(
             connection_config=connection_config,
-            cleanup=True,
             api_client=self._api_client,
         )
         # Record the claim identity before provisioning: if create_sandbox
@@ -572,9 +578,15 @@ class AgentSandboxProvider(ContainerProvider):
             time.sleep(1.0)
         raise TimeoutError(f"Agent sandbox did not become ready within {timeout_s}s")
 
+    def _stop_at_exit(self) -> None:
+        """Best-effort cleanup at interpreter shutdown; never raises."""
+        with suppress(Exception):
+            self.stop_container()
+
     def close(self) -> None:
         """Terminate the active sandbox. Also called on context-manager exit."""
         self.stop_container()
+        atexit.unregister(self._atexit_stop)
 
 
 __all__ = ["AgentSandboxProvider"]

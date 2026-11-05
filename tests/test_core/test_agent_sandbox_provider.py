@@ -272,7 +272,9 @@ def test_gateway_mode_happy_path(fake_sdk):
     try:
         assert url.startswith("http://127.0.0.1:")
         client_kwargs = fake_sdk.SandboxClient.call_args.kwargs
-        assert client_kwargs["cleanup"] is True
+        # The SDK's atexit cleanup skips explicitly named claims, so the
+        # provider must not rely on cleanup=True for them.
+        assert client_kwargs.get("cleanup", False) is False
         assert client_kwargs["api_client"] is None
         config = client_kwargs["connection_config"]
         assert isinstance(config, fake_sdk.models.SandboxGatewayConnectionConfig)
@@ -856,3 +858,28 @@ def test_pending_claim_delete_failure_is_retried(fake_sdk):
     assert helper.delete_sandbox_claim.call_count == 2
     assert provider._claim is None
     create.side_effect = original
+
+
+def test_atexit_hook_stops_sandbox_and_swallows_errors(fake_sdk):
+    provider = AgentSandboxProvider(
+        warmpool="openenv-echo-pool", gateway_name="external-http-gateway"
+    )
+    provider.start_container()
+    sandbox = fake_sdk.sandboxes[-1]
+
+    provider._stop_at_exit()
+    sandbox.terminate.assert_called_once()
+
+    # A failing cleanup must not break interpreter shutdown.
+    provider.start_container()
+    fake_sdk.sandboxes[-1].terminate.side_effect = ConnectionError("apiserver down")
+    provider._stop_at_exit()  # must not raise
+
+
+def test_close_unregisters_atexit_hook(fake_sdk):
+    provider = AgentSandboxProvider(
+        warmpool="openenv-echo-pool", gateway_name="external-http-gateway"
+    )
+    with patch("atexit.unregister") as unregister:
+        provider.close()
+    unregister.assert_called_once_with(provider._atexit_stop)
