@@ -17,6 +17,13 @@ failure. The reference job uses Linux x86-64; Docker Desktop arm64 uses the same
 recipe but records its different platform. No host Python code from the subject
 is imported by the validator.
 
+The protocol suite also exercises the installed wheel over real loopback HTTP
+and WebSocket connections using a test-only process provider. It verifies
+authorized session telemetry, full collection/grading/reporting, and process
+cleanup on CPU-only Hugging Face Jobs. Its evidence explicitly records process
+isolation; it does not qualify Docker, resource or network isolation. No Hub or
+GitHub credentials are needed by those tests.
+
 The Docker suite snapshots the current source, builds its exact OpenEnv wheel,
 and installs that wheel into this dedicated non-editable test environment. It
 downloads only binary dependencies selected from the committed lock for the

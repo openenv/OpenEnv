@@ -112,6 +112,27 @@ def test_uncompressed_schema_still_obeys_total_byte_budget(monkeypatch, plan):
     assert evidence.observation_schema_json is None
 
 
+@pytest.mark.parametrize("schema_key", ["observation", "reset_observation"])
+@pytest.mark.parametrize("escaped", [False, True])
+def test_schema_cannot_persist_validation_credential(
+    monkeypatch, plan, schema_key, escaped
+):
+    token = "validation-secret-value-" * 2
+    schemas = {"observation": {"type": "object"}}
+    schemas[schema_key] = {"properties": {token: {"description": token}}}
+    payload = json.dumps(schemas)
+    if escaped:
+        payload = payload.replace(token, "".join(f"\\u{ord(c):04x}" for c in token))
+    stream = TrackedStream(payload.encode())
+    schema_transport(monkeypatch, stream)
+    evidence = collector.collect_runtime_evidence(
+        "http://127.0.0.1:8000", plan, episode_timeout_s=2, validation_token=token
+    )
+    assert getattr(evidence, f"{schema_key}_schema_json") is None
+    assert evidence.failure_phase == "schema"
+    assert token not in str(evidence)
+
+
 @pytest.mark.parametrize("slow_phase", ["headers", "body"])
 def test_schema_deadline_aborts_trickling_http_server(plan, slow_phase):
     body = json.dumps({"observation": {"type": "object"}}).encode()
