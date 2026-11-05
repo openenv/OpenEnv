@@ -163,6 +163,8 @@
     title: Sophistry Bench Sprint
   - local: environments/ortools
     title: OR-Tools
+  - local: environments/sql_optim
+    title: SQL Query Optimization
   title: Environments
 - isExpanded: false
   sections:
