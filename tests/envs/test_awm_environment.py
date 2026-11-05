@@ -578,7 +578,8 @@ class TestVerifier:
             )
             assert reward_type == "complete"
 
-    def test_run_verifier_numeric_answer_stays_complete(self):
+    @pytest.mark.parametrize("final_answer", ["42", 42], ids=["string", "integer"])
+    def test_run_verifier_numeric_answer_stays_complete(self, final_answer):
         """Guarded numeric answer verifiers keep their pass on an untouched db.
 
         The verifier returns 'others' for an empty answer before calling
@@ -600,8 +601,9 @@ class TestVerifier:
         with tempfile.TemporaryDirectory() as td:
             initial, final = self._setup_db(td)
             reward_type, result = run_verifier(
-                verifier_entry, "code", initial, final, final_answer="42"
+                verifier_entry, "code", initial, final, final_answer=final_answer
             )
+            assert isinstance(reward_type, str)
             assert reward_type == "complete"
             assert result["result"] == "complete"
 

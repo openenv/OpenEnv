@@ -228,6 +228,8 @@ def run_verifier(
             break
 
     if verifier_mode == "code":
+        if final_answer is not None and not isinstance(final_answer, str):
+            final_answer = json.dumps(final_answer)
         result = execute_code_verifier(
             code, func_name, initial_db_path, final_db_path, final_answer
         )
