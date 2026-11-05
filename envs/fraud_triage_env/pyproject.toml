@@ -1,0 +1,36 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-fraud-triage-env"
+version = "0.1.0"
+description = "Fraud Triage Environment for OpenEnv - sequential transaction risk-decisioning RL task"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "fraud_triage_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["fraud_triage_env", "fraud_triage_env.server"]
+package-dir = { "fraud_triage_env" = ".", "fraud_triage_env.server" = "server" }

@@ -26,7 +26,7 @@ def main() -> int:
         schema = model.model_json_schema(by_alias=True)
         schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
         schema["$id"] = (
-            "https://raw.githubusercontent.com/huggingface/OpenEnv/main/"
+            "https://raw.githubusercontent.com/openenv/OpenEnv/main/"
             f"src/openenv/discovery/schemas/{PROFILE_VERSION}/{name}.schema.json"
         )
         content = json.dumps(schema, indent=2, sort_keys=True) + "\n"

@@ -1,0 +1,19 @@
+spec_version: 1
+name: ortools_env
+version: 0.1.0
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
+validation:
+  resources:
+    cpu: 4.0
+    memory_mb: 8192
+    disk_mb: 2048
+    episode_timeout_s: 1800.0
+  capabilities:
+    verifier:
+      kind: reward_channel
+    declared_tools: [run_python, check_solution, test_algorithm, submit_solution, submit_algorithm]
+  types:
+    tags: [optimization, operations-research, code]

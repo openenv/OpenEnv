@@ -23,6 +23,7 @@ An OpenEnv wrapper for [TextArena](https://github.com/textarena/textarena) game 
 > Generic wrapper for any [TextArena](https://www.textarena.ai/docs/overview) game inside OpenEnv. This module exposes the TextArena `Env` interface through the standard HTTP server/client APIs used by other OpenEnv environments, enabling quick experimentation with the full suite of word, reasoning, and multi-agent games.
 
 Try Wordle on the [`openenv/wordle`](https://huggingface.co/spaces/openenv/wordle) Space, or connect a client to `https://openenv-wordle.hf.space`.
+To train a model on it, follow the [Wordle tutorial](https://huggingface.co/docs/openenv/tutorials/wordle-grpo): an SFT warmup, then GRPO with TRL.
 
 ## Quick Start
 
@@ -191,7 +192,7 @@ The server supports configuration via environment variables:
 - `TEXTARENA_NUM_PLAYERS` - Number of players (default: 1)
 - `TEXTARENA_MAX_TURNS` - Maximum turns per episode
 - `TEXTARENA_DOWNLOAD_NLTK` - Download NLTK data (default: "1")
-- `TEXTARENA_KW_*` - Pass additional kwargs to TextArena (e.g., `TEXTARENA_KW_difficulty=hard`)
+- `TEXTARENA_KW_*` - Pass additional kwargs to TextArena. Values are read as JSON, so numbers and booleans keep their type (e.g., `TEXTARENA_KW_CLUES=65` for Sudoku, `TEXTARENA_KW_difficulty=hard`)
 
 ## Development & Testing
 

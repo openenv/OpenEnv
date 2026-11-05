@@ -76,6 +76,8 @@ class Sequential(Rubric):
 
         # Pre-hooks run before any child is evaluated
         ran = self._run_leading_sync_pre_hooks(action, observation)
+        if ran < len(self._forward_pre_hooks):
+            return self._call_async_detected(action, observation, None, ran)
 
         # Call first rubric to see if it's async
         first_result = self._rubric_list[0](action, observation)
@@ -128,10 +130,16 @@ class Sequential(Rubric):
         return await self._finish_forward_async(action, observation, result)
 
     async def _call_async_detected(self, action, observation, first_coro, ran=0):
-        """Async path when first child is async."""
+        """Async path for an async first child or pending pre-hooks."""
         await self._run_forward_pre_hooks_async(action, observation, start=ran)
 
-        result = await first_coro
+        result = (
+            self._rubric_list[0](action, observation)
+            if first_coro is None
+            else first_coro
+        )
+        if inspect.iscoroutine(result):
+            result = await result
         if result == 0.0:
             return await self._finish_forward_async(action, observation, result)
 
@@ -211,6 +219,8 @@ class Gate(Rubric):
         """Override to handle async child."""
         # Pre-hooks run before the child is evaluated
         ran = self._run_leading_sync_pre_hooks(action, observation)
+        if ran < len(self._forward_pre_hooks):
+            return self._call_async(action, observation, None, ran)
 
         # Call child
         score = self.rubric(action, observation)
@@ -228,7 +238,9 @@ class Gate(Rubric):
         """Async path."""
         await self._run_forward_pre_hooks_async(action, observation, start=ran)
 
-        score = await score_coro
+        score = self.rubric(action, observation) if score_coro is None else score_coro
+        if inspect.iscoroutine(score):
+            score = await score
         result = 0.0 if score < self.threshold else score
         return await self._finish_forward_async(action, observation, result)
 
@@ -286,6 +298,8 @@ class WeightedSum(Rubric):
         """Override to handle async children with parallel execution."""
         # Pre-hooks run before any child is evaluated
         ran = self._run_leading_sync_pre_hooks(action, observation)
+        if ran < len(self._forward_pre_hooks):
+            return self._call_async(action, observation, None, ran)
 
         # Call all rubrics
         results = [rubric(action, observation) for rubric in self._rubric_list]
@@ -307,6 +321,9 @@ class WeightedSum(Rubric):
     async def _call_async(self, action, observation, results, ran=0):
         """Async path with parallel execution."""
         await self._run_forward_pre_hooks_async(action, observation, start=ran)
+
+        if results is None:
+            results = [rubric(action, observation) for rubric in self._rubric_list]
 
         # Separate sync and async results
         async_tasks = []
