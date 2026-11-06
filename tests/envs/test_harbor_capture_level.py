@@ -26,17 +26,24 @@ graph_mod = pytest.importorskip("openenv.core.harness.capture.graph")
 validate_llm = validate_llm_mod.validate_llm
 
 
-def http_400(payload: dict) -> urllib.error.HTTPError:
+def http_400(payload: dict, code: int = 400) -> urllib.error.HTTPError:
     import io
     import json
 
     return urllib.error.HTTPError(
         "http://engine/v1/chat/completions",
-        400,
+        code,
         "Bad Request",
         {},
         io.BytesIO(json.dumps(payload).encode()),
     )
+
+
+# The HF router's bare 400: no `param`, no parameter named in the message, nothing to diagnose.
+ROUTER_400 = {
+    "message": "invalid request error trace_id: 93bb398d96e7077c4fdbd02ef4ce74bf",
+    "type": "invalid_request_error",
+}
 
 
 def unsupported(param: str, code: str = "unsupported_parameter", message="") -> dict:
@@ -76,6 +83,7 @@ def probe(monkeypatch, script):
 
     monkeypatch.setattr(validate_llm_mod, "_post", fake_post)
     monkeypatch.setattr(validate_llm_mod, "list_models", lambda *a, **k: ["m"])
+    monkeypatch.setattr(validate_llm_mod, "PROBE_RETRY_DELAY", 0.0)
     # The logprobs-mode probe issues its own two calls and is exercised on its own below; leaving it
     # on here would make every scripted case account for requests it is not about.
     return (
@@ -173,6 +181,61 @@ def test_an_unreachable_endpoint_is_neither_trainable_nor_eval(monkeypatch):
     assert "connection refused" in report.summary()
 
 
+# --- errors that name nothing: retry, then fall back to eval ----------------
+def test_a_transient_400_is_retried_with_the_same_request(monkeypatch):
+    """One task in ~150 aborted on this against an endpoint that served the rest."""
+    full = reply(prompt_ids=[1], token_ids=[2], logprobs=[-0.1])
+    report, sent = probe(monkeypatch, [http_400(ROUTER_400), full])
+    assert report.trainable and report.reachable
+    assert sent[0] == sent[1], "a transient error must not rewrite the request"
+    assert report.param_fixes == []
+
+
+@pytest.mark.parametrize(
+    "error", [http_400({"error": "upstream"}, code=503), TimeoutError("timed out")]
+)
+def test_a_5xx_or_a_timeout_is_retried(monkeypatch, error):
+    report, sent = probe(monkeypatch, [error, reply()])
+    assert report.reachable and len(sent) == 2
+
+
+def test_a_bare_400_against_the_capture_params_falls_back_to_eval(monkeypatch):
+    """A provider that rejects `return_token_ids` without naming it. `ENGINE_HINT` promises such an
+    endpoint still works as an eval backend, so the probe must not end on the 400."""
+    script = [http_400(ROUTER_400) for _ in range(validate_llm_mod.PROBE_RETRIES + 1)]
+    report, sent = probe(monkeypatch, [*script, reply()])
+    assert (report.capture_level, report.rollout_type) == ("text", "eval")
+    assert report.reachable and not report.trainable
+    for key in ("return_token_ids", "logprobs", "top_logprobs"):
+        assert key in sent[0] and key not in sent[-1]
+    assert all("eval fallback after HTTP 400" in f for f in report.param_fixes)
+
+
+def test_a_400_that_survives_the_fallback_is_still_reported(monkeypatch):
+    script = [http_400(ROUTER_400) for _ in range(validate_llm_mod.PROBE_RETRIES + 2)]
+    report, sent = probe(monkeypatch, script)
+    assert not report.reachable
+    assert len(sent) == validate_llm_mod.PROBE_RETRIES + 2
+    assert "invalid request error" in report.summary()
+
+
+@pytest.mark.parametrize("code", [401, 403, 404])
+def test_an_auth_or_missing_route_error_fails_fast(monkeypatch, code):
+    report, sent = probe(monkeypatch, [http_400({"error": "nope"}, code=code)])
+    assert not report.reachable
+    assert len(sent) == 1, (
+        "no resend or rewrite can fix bad credentials or a missing route"
+    )
+
+
+def test_a_train_purpose_still_refuses_the_eval_fallback():
+    """RFC 012: `train` fails when the endpoint cannot supply engine tokens; `auto` degrades."""
+    sessions = pytest.importorskip("openenv.core.harness.capture.sessions")
+    assert sessions.rollout_type_for("auto", "text") == "eval"
+    with pytest.raises(ValueError, match="training requires"):
+        sessions.rollout_type_for("train", "text")
+
+
 def test_a_model_the_endpoint_does_not_serve_fails_before_any_completion(monkeypatch):
     monkeypatch.setattr(
         validate_llm_mod, "list_models", lambda *a, **k: ["other-model"]
@@ -197,6 +260,50 @@ def test_an_endpoint_that_publishes_no_model_list_is_still_probed(monkeypatch):
     )
     report = validate_llm("http://engine", "m")
     assert report.trainable
+
+
+HF_ROUTER = "https://router.huggingface.co/v1"
+
+
+def test_the_hf_router_accepts_a_provider_suffix_on_a_listed_model(monkeypatch):
+    """The router lists bare ids but routes `<id>:<provider>` (also `:fastest`, `:cheapest`). The
+    CLI reaches it with the default provider, so the suffix must be recognised from the URL alone,
+    and the suffixed id is what gets sent."""
+    monkeypatch.setattr(
+        validate_llm_mod, "list_models", lambda *a, **k: ["Qwen/Qwen3.5-397B-A17B"]
+    )
+    sent = []
+
+    def fake_post(url, body, timeout, api_key=None, auth_header="Authorization"):
+        sent.append(dict(body))
+        return reply()
+
+    monkeypatch.setattr(validate_llm_mod, "_post", fake_post)
+    report = validate_llm(HF_ROUTER, "Qwen/Qwen3.5-397B-A17B:novita")
+    assert report.reachable
+    assert sent and all(b["model"] == "Qwen/Qwen3.5-397B-A17B:novita" for b in sent)
+
+
+@pytest.mark.parametrize(
+    "url, model",
+    [
+        (HF_ROUTER, "Qwen/Unlisted-Model:novita"),
+        ("http://engine/v1", "Qwen/Qwen3.5-397B-A17B:novita"),
+    ],
+)
+def test_a_suffix_does_not_admit_an_unlisted_model_or_another_endpoint(
+    monkeypatch, url, model
+):
+    monkeypatch.setattr(
+        validate_llm_mod, "list_models", lambda *a, **k: ["Qwen/Qwen3.5-397B-A17B"]
+    )
+    monkeypatch.setattr(
+        validate_llm_mod,
+        "_post",
+        lambda *a, **k: pytest.fail("must not spend a completion on a bad model name"),
+    )
+    report = validate_llm(url, model)
+    assert not report.ok and "is not served here" in report.summary()
 
 
 def test_require_llm_accepts_an_eval_endpoint_but_can_be_told_not_to(monkeypatch):
