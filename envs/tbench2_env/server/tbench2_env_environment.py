@@ -217,7 +217,8 @@ def _parse_canonical_reward(output: str) -> float | None:
     """The verdict test.sh's verifier wrote to reward.txt, echoed on the
     marker line. None when no verdict can be recovered — no marker line, an
     empty value (reward.txt absent: test.sh crashed or was killed before its
-    verifier wrote one), or a non-numeric value. A missing verdict is a
+    verifier wrote one), or a value that is not a finite number (``float``
+    also reads "nan" and "inf"). A missing verdict is a
     scoring failure, not a task failure: callers raise so ``evaluate``
     reports an error (observation.error set, reward None) instead of a 0.0
     indistinguishable from tests genuinely failing — RL consumers must be
@@ -229,9 +230,10 @@ def _parse_canonical_reward(output: str) -> float | None:
             if not raw:
                 return None
             try:
-                return float(raw)
+                value = float(raw)
             except ValueError:
                 return None
+            return value if math.isfinite(value) else None
     return None
 
 
