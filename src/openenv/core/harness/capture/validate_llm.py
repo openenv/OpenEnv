@@ -80,6 +80,8 @@ PROBE_RETRY_DELAY = 1.0
 # Errors no resend or rewrite can fix: bad credentials, no access, no such route or model. Retrying
 # these only delays a message the user needs now.
 _FATAL_HTTP = frozenset({401, 403, 404})
+# Statuses with which a provider rejects a request it doesn't accept, e.g. unsupported capture params.
+_PARAM_REJECTION_HTTP = frozenset({400, 422})
 # What the eval fallback drops. `logprobs` also takes `top_logprobs` with it (see `ParamFix.apply`).
 _CAPTURE_PARAMS = ("return_token_ids", "logprobs")
 
@@ -669,6 +671,10 @@ def validate_llm(
             # nothing, so ask once more without them. If that answers, the endpoint is an eval
             # backend (the level is graded from what comes back), which is what `ENGINE_HINT`
             # promises. A `purpose="train"` rollout still refuses it, since the level is not `tokens`.
+            # Only a request error can be about the params: a 5xx or a 429 that outlasts the retries
+            # is reported, rather than grading a busy token-capable engine as `text`.
+            if exc.code not in _PARAM_REJECTION_HTTP:
+                break
             dropped = [ParamFix(param=p) for p in _CAPTURE_PARAMS]
             dropped = [f for f in dropped if f.apply(body)]
             if not dropped:

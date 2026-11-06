@@ -219,6 +219,21 @@ def test_a_400_that_survives_the_fallback_is_still_reported(monkeypatch):
     assert "invalid request error" in report.summary()
 
 
+@pytest.mark.parametrize("code", [429, 503])
+def test_a_busy_engine_is_never_degraded_to_eval(monkeypatch, code):
+    """A 5xx or 429 that outlasts the retries says nothing about the capture params: a token-capable
+    engine under load must be reported, not graded `text`, or a `purpose="auto"` run turns into eval."""
+    script = [
+        http_400({"error": "busy"}, code=code)
+        for _ in range(validate_llm_mod.PROBE_RETRIES + 1)
+    ]
+    report, sent = probe(monkeypatch, [*script, reply()])
+    assert not report.reachable
+    assert len(sent) == validate_llm_mod.PROBE_RETRIES + 1
+    assert all("return_token_ids" in body for body in sent)
+    assert not any("eval fallback" in f for f in report.param_fixes)
+
+
 @pytest.mark.parametrize("code", [401, 403, 404])
 def test_an_auth_or_missing_route_error_fails_fast(monkeypatch, code):
     report, sent = probe(monkeypatch, [http_400({"error": "nope"}, code=code)])
