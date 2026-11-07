@@ -33,16 +33,18 @@ class JuliaSafetyTransform(Transform):
 
     def __init__(self, penalty: float = -3.0):
         self.penalty = penalty
+        # \b stops a match inside a longer name such as norm( or Uniform(,
+        # while qualified calls such as Base.rm( still match.
         self.dangerous_patterns = [
-            r"run\(",
-            r"read\(",
-            r"write\(",
-            r"unsafe_",
-            r"ccall\(",
+            r"\brun\(",
+            r"\bread\(",
+            r"\bwrite\(",
+            r"\bunsafe_",
+            r"\bccall\(",
             r"Base\.exit",
             r"Base\.kill",
-            r"rm\(",  # file deletion
-            r"download\(",  # downloading
+            r"\brm\(",  # file deletion
+            r"\bdownload\(",  # downloading
         ]
 
     def __call__(self, observation):
