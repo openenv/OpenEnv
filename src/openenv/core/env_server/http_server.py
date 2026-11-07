@@ -2350,4 +2350,8 @@ HTTP API for interacting with OpenEnv environments through a standardized interf
     if mode is None:
         mode = os.environ.get("OPENENV_MODE", ServerMode.SIMULATION.value)
     server.register_routes(app, mode=mode)
+
+    from .security import attach_guard
+
+    attach_guard(app)
     return app
