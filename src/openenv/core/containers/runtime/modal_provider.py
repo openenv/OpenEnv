@@ -9,8 +9,6 @@ The provider boots an OpenEnv server inside a Modal sandbox, exposes it on an
 encrypted tunnel, and returns an ``https://`` URL that ``EnvClient`` connects to
 over ``wss://``.
 
-Modal's Sandbox v2 backend is used by default through
-``modal.Sandbox.create``.
 """
 
 from __future__ import annotations
