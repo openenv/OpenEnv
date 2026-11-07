@@ -3,29 +3,24 @@
 """
 Modal container provider for running OpenEnv environments in Modal sandboxes.
 
-Requires the ``modal`` SDK: ``pip install modal>=1.4``
+Requires the ``modal`` SDK: ``pip install modal>=1.6.3``
 
 The provider boots an OpenEnv server inside a Modal sandbox, exposes it on an
 encrypted tunnel, and returns an ``https://`` URL that ``EnvClient`` connects to
 over ``wss://``.
 
-Supports both the stable Sandbox API (``modal.Sandbox.create``) and the beta
-Sandbox v2 API (``modal.Sandbox._experimental_create``). Sandbox v2 is opt-in
-via ``use_sandbox_v2=True`` because it is an experimental, private SDK feature;
-see https://modal.com/docs/guide/sandbox-v2 .
+Modal's Sandbox v2 backend is used by default through
+``modal.Sandbox.create``.
 """
 
 from __future__ import annotations
 
-import logging
 import shlex
 import time
 from typing import Any, Dict, Optional
 
 from ._server_config import parse_dockerfile_cmd, parse_openenv_app_field
 from .providers import ContainerProvider
-
-logger = logging.getLogger(__name__)
 
 _DEFAULT_MODAL_PORT = 8000
 
@@ -58,28 +53,14 @@ class _DefaultModalAdapter:
     """Thin adapter over the ``modal`` SDK.
 
     The provider talks to this private adapter instead of spreading SDK details
-    through its own logic; tests inject a duck-typed fake in its place. Keeping
-    the SDK surface here also localizes the feature check for the private
-    Sandbox v2 (``_experimental_create``) API.
+    through its own logic; tests inject a duck-typed fake in its place.
     """
 
-    def __init__(self, *, app_name: str, use_sandbox_v2: bool):
+    def __init__(self, *, app_name: str):
         import modal
 
         self._modal = modal
         self._app_name = app_name
-        self._use_sandbox_v2 = use_sandbox_v2
-
-        # Sandbox v2 rides on a private SDK entry point that is not present in
-        # every modal release. Fail fast at construction with clear guidance
-        # rather than at start_container time with an AttributeError.
-        if use_sandbox_v2 and not hasattr(modal.Sandbox, "_experimental_create"):
-            raise RuntimeError(
-                "use_sandbox_v2=True requires modal.Sandbox._experimental_create, "
-                "which is not available in the installed modal SDK. Upgrade modal, "
-                "or use the stable Sandbox API (use_sandbox_v2=False). Sandbox v2 "
-                "is an experimental feature; contact support@modal.com for access."
-            )
 
     def image_from_registry(self, tag: str) -> Any:
         return self._modal.Image.from_registry(tag)
@@ -111,10 +92,6 @@ class _DefaultModalAdapter:
 
         # The sandbox is started with a keep-alive entrypoint; the server
         # command is launched via exec afterwards (see ModalProvider).
-        if self._use_sandbox_v2:
-            return self._modal.Sandbox._experimental_create(
-                "sleep", "infinity", **kwargs
-            )
         return self._modal.Sandbox.create("sleep", "infinity", **kwargs)
 
     def exec(self, sandbox: Any, command: str, *, timeout: int = 10) -> str:
@@ -164,11 +141,6 @@ class ModalProvider(ContainerProvider):
             provider.wait_for_ready(base_url)
         # sandbox terminated on exit
         ```
-
-    Sandbox v2 (beta) is opt-in:
-        ```python
-        provider = ModalProvider(app_name="openenv", use_sandbox_v2=True)
-        ```
     """
 
     _dockerfile_registry: Dict[str, Dict[str, Any]] = {}
@@ -179,7 +151,6 @@ class ModalProvider(ContainerProvider):
         image: str | None = None,
         env_vars: dict[str, str] | None = None,
         app_name: str = "openenv",
-        use_sandbox_v2: bool = False,
         timeout: int = 300,
         cmd: str | None = None,
         cpu: float | None = None,
@@ -198,12 +169,6 @@ class ModalProvider(ContainerProvider):
             app_name (`str`, *optional*, defaults to `"openenv"`):
                 Modal app name the sandbox is created under. Looked up (and
                 created if missing) via ``modal.App.lookup``.
-            use_sandbox_v2 (`bool`, *optional*, defaults to `False`):
-                When `True`, sandboxes are created via the beta
-                ``modal.Sandbox._experimental_create`` API (Sandbox v2). This is
-                an experimental, private SDK feature and is therefore off by
-                default; a feature check fails fast at construction if the
-                installed SDK lacks it. See https://modal.com/docs/guide/sandbox-v2 .
             timeout (`int`, *optional*, defaults to `300`):
                 Maximum sandbox lifetime in seconds.
             cmd (`str`, *optional*):
@@ -228,7 +193,6 @@ class ModalProvider(ContainerProvider):
         self._image = image
         self._env_vars = env_vars
         self._app_name = app_name
-        self._use_sandbox_v2 = use_sandbox_v2
         self._timeout = timeout
         self._cmd = cmd
         self._cpu = cpu
@@ -241,19 +205,11 @@ class ModalProvider(ContainerProvider):
         self._redact_values: set[str] = set()
 
         if _adapter is None:
-            # Import eagerly (inside the adapter) so SDK/configuration errors —
-            # including the Sandbox v2 feature check — surface at construction.
-            self._adapter: Any = _DefaultModalAdapter(
-                app_name=app_name, use_sandbox_v2=use_sandbox_v2
-            )
+            # Import eagerly (inside the adapter) so SDK/configuration errors
+            # surface at construction.
+            self._adapter: Any = _DefaultModalAdapter(app_name=app_name)
         else:
             self._adapter = _adapter
-
-        if use_sandbox_v2:
-            logger.info(
-                "Using Modal Sandbox v2 (experimental). This feature must be "
-                "explicitly enabled. Contact support@modal.com to get access."
-            )
 
     def _discover_server_cmd(self, port: int = _DEFAULT_MODAL_PORT) -> str:
         """Discover the server command from ``openenv.yaml`` inside the sandbox.

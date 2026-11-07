@@ -4,8 +4,7 @@
 
 Provider-behavior tests inject a duck-typed fake adapter (``_adapter=``), so
 they run without ``pip install modal``. A separate test installs a minimal fake
-``modal`` module to pin the real ``_DefaultModalAdapter`` SDK shape (including
-the Sandbox v2 feature check).
+``modal`` module to pin the real ``_DefaultModalAdapter`` SDK shape.
 """
 
 from __future__ import annotations
@@ -451,13 +450,13 @@ class TestWaitForReady:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _DefaultModalAdapter SDK shape + Sandbox v2 feature check
+# Tests: _DefaultModalAdapter SDK shape
 # ---------------------------------------------------------------------------
-def _install_fake_modal(monkeypatch, *, has_experimental: bool = True):
+def _install_fake_modal(monkeypatch):
     """Install a minimal fake ``modal`` module pinned to the SDK shape used by
     ``_DefaultModalAdapter`` and return it for introspection."""
     modal_mod = types.ModuleType("modal")
-    calls: dict = {"create": None, "create_v2": None}
+    calls: dict = {"create": None}
 
     class _FakeProc:
         def __init__(self, output=""):
@@ -491,14 +490,6 @@ def _install_fake_modal(monkeypatch, *, has_experimental: bool = True):
             calls["create"] = (args, kwargs)
             return _FakeSandboxInstance()
 
-    if has_experimental:
-
-        def _experimental_create(*args, **kwargs):
-            calls["create_v2"] = (args, kwargs)
-            return _FakeSandboxInstance()
-
-        _FakeSandbox._experimental_create = staticmethod(_experimental_create)
-
     class _FakeApp:
         @staticmethod
         def lookup(name, *, create_if_missing=False, **kwargs):
@@ -523,9 +514,9 @@ def _install_fake_modal(monkeypatch, *, has_experimental: bool = True):
 
 
 class TestDefaultAdapter:
-    def test_matches_sdk_shape_v1(self, monkeypatch):
+    def test_matches_sdk_shape(self, monkeypatch):
         modal_mod = _install_fake_modal(monkeypatch)
-        adapter = _DefaultModalAdapter(app_name="openenv", use_sandbox_v2=False)
+        adapter = _DefaultModalAdapter(app_name="openenv")
 
         image = adapter.image_from_registry("echo-env:latest")
         assert image == ("registry", "echo-env:latest")
@@ -548,45 +539,3 @@ class TestDefaultAdapter:
         assert adapter.tunnel_url(sandbox, 8000) == "https://sb-xyz-8000.modal.host"
         adapter.terminate(sandbox)
         assert sandbox.terminated is True
-
-    def test_v2_uses_experimental_create(self, monkeypatch):
-        modal_mod = _install_fake_modal(monkeypatch)
-        adapter = _DefaultModalAdapter(app_name="openenv", use_sandbox_v2=True)
-        adapter.create_sandbox(
-            image=("registry", "x"),
-            encrypted_ports=[8000],
-            timeout=300,
-            env=None,
-            extra={},
-        )
-        assert modal_mod._calls["create_v2"] is not None
-        assert modal_mod._calls["create"] is None
-
-    def test_v2_feature_check_raises_when_missing(self, monkeypatch):
-        _install_fake_modal(monkeypatch, has_experimental=False)
-        with pytest.raises(RuntimeError, match="_experimental_create"):
-            _DefaultModalAdapter(app_name="openenv", use_sandbox_v2=True)
-
-    def test_v1_works_without_experimental_create(self, monkeypatch):
-        _install_fake_modal(monkeypatch, has_experimental=False)
-        # No feature check for the stable API.
-        _DefaultModalAdapter(app_name="openenv", use_sandbox_v2=False)
-
-
-class TestSandboxV2Flag:
-    def test_default_is_off(self, adapter):
-        assert ModalProvider(_adapter=adapter)._use_sandbox_v2 is False
-
-    def test_v2_emits_log(self, adapter, caplog):
-        import logging
-
-        with caplog.at_level(logging.INFO):
-            ModalProvider(_adapter=adapter, use_sandbox_v2=True)
-        assert any("Sandbox v2" in r.message for r in caplog.records)
-
-    def test_off_emits_no_log(self, adapter, caplog):
-        import logging
-
-        with caplog.at_level(logging.INFO):
-            ModalProvider(_adapter=adapter)
-        assert not any("Sandbox v2" in r.message for r in caplog.records)
