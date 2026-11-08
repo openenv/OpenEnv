@@ -109,6 +109,10 @@ def _pi(base_url: str, session: str, model: str) -> dict[str, Any]:
 
 logger = logging.getLogger(__name__)
 
+# Harnesses already warned about an inexpressible step limit, in this process. The warning is a fact
+# about the harness, not the rollout: repeating it for every rollout of a training run buries it.
+_STEP_LIMIT_WARNED: set[str] = set()
+
 
 @dataclass(frozen=True)
 class Seam:
@@ -186,11 +190,14 @@ class Seam:
             extra = _deep_merge(extra, self.training_kwargs)
         if step_limit:
             if self.step_limit is None:
-                logger.warning(
-                    "%s has no native step-limit setting; the capture proxy enforces the "
-                    "model-call budget and the agent timeout still applies",
-                    self.name,
-                )
+                if self.name not in _STEP_LIMIT_WARNED:
+                    _STEP_LIMIT_WARNED.add(self.name)
+                    logger.warning(
+                        "%s has no native step-limit setting; the capture proxy enforces the "
+                        "model-call budget and the agent timeout still applies (said once per "
+                        "harness)",
+                        self.name,
+                    )
             else:
                 extra = _deep_merge(extra, self.step_limit(step_limit))
         return self.model_fmt.format(model=model), extra, agent_env, proc_env

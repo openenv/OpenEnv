@@ -63,14 +63,37 @@ def test_a_step_limit_merges_instead_of_replacing_a_seams_own_config():
     assert kwargs["config"]["agent"]["step_limit"] == 7
 
 
-def test_a_harness_that_cannot_cap_steps_warns_rather_than_dropping_it(caplog):
+def test_a_harness_that_cannot_cap_steps_warns_rather_than_dropping_it(
+    caplog, monkeypatch
+):
     """Silently ignoring the cap would let a caller believe its rollouts are bounded."""
+    monkeypatch.setattr(seams, "_STEP_LIMIT_WARNED", set())
     with caplog.at_level("WARNING"):
         _, kwargs, _, _ = seams.get("opencode").resolve(
             base_url="http://proxy", session="s1", model="m", step_limit=20
         )
     assert "capture proxy enforces the model-call budget" in caplog.text
     assert "step_limit" not in str(kwargs)
+
+
+def test_the_step_limit_warning_is_said_once_per_harness(caplog, monkeypatch):
+    """A training run resolves a seam for every rollout; one line per harness is enough."""
+    monkeypatch.setattr(seams, "_STEP_LIMIT_WARNED", set())
+    with caplog.at_level("WARNING"):
+        for session in ("s1", "s2", "s3"):
+            seams.get("opencode").resolve(
+                base_url="http://proxy", session=session, model="m", step_limit=20
+            )
+        seams.get("qwen-coder").resolve(
+            base_url="http://proxy", session="s4", model="m", step_limit=20
+        )
+    warned = [
+        r.getMessage()
+        for r in caplog.records
+        if "no native step-limit" in r.getMessage()
+    ]
+    assert len(warned) == 2
+    assert warned[0].startswith("opencode") and warned[1].startswith("qwen-coder")
 
 
 def test_copilot_byok_routes_without_a_github_model_service():
