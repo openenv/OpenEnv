@@ -310,6 +310,7 @@ class HarborEnvironment(MCPEnvironment):
                 sandbox=sandbox,
                 registry=service.capture.registry,
                 intercept_url=service.public_url,
+                local_intercept_url=getattr(service, "local_url", ""),
                 model=served,
                 trials_dir=_trials_dir(),
                 dataset=split,

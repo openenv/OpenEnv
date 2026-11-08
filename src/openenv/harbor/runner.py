@@ -153,6 +153,7 @@ async def run_batch(
                 sandbox=sandbox,
                 registry=capture.registry,
                 intercept_url=public_url,
+                local_intercept_url=f"http://127.0.0.1:{port}",
                 model=model,
                 trials_dir=trials_dir,
                 dataset=dataset,

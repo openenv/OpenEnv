@@ -288,7 +288,9 @@ def list_harnesses() -> list[HarnessStatus]:
             HarnessStatus(
                 name=name,
                 dialect=seam.dialect,
-                kind="base" if name in HOST_SIDE_AGENTS else "installed",
+                kind="base"
+                if name in HOST_SIDE_AGENTS or seam.host_side
+                else "installed",
                 status=seam.status,
                 needs_subclass=seam.import_path is not None,
                 notes=seam.notes,
