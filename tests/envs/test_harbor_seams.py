@@ -6,6 +6,11 @@ agent rather than on any rollout outcome.
 
 from __future__ import annotations
 
+import sys
+import types
+
+import pytest
+
 from openenv.harbor import seams
 
 # --- step limits --------------------------------------------------------------------------------
@@ -91,6 +96,74 @@ def test_grok_primary_and_auxiliary_models_share_capture_endpoint():
     assert config["model"]["Qwen3.5-4B"]["base_url"] == "https://capture.test/v1"
     assert config["model"]["Qwen3.5-4B"]["env_key"] == "OPENAI_API_KEY"
     assert env["OPENAI_API_KEY"] == "session-key"
+
+
+@pytest.fixture
+def custom_agents(monkeypatch):
+    """A module of agents to name by import path: one host-side, one opencode subclass, one unknown
+    installed agent."""
+    pytest.importorskip("harbor")
+    from harbor.agents.base import BaseAgent
+    from harbor.agents.installed.base import BaseInstalledAgent
+    from harbor.agents.installed.opencode import OpenCode
+
+    module = types.ModuleType("custom_agents_for_test")
+
+    class HostSideAgent(BaseAgent):
+        @staticmethod
+        def name() -> str:
+            return "my-host-side-agent"
+
+    class MyOpenCode(OpenCode):
+        pass
+
+    class UnknownInstalledAgent(BaseInstalledAgent):
+        @staticmethod
+        def name() -> str:
+            return "my-installed-agent"
+
+    for cls in (HostSideAgent, MyOpenCode, UnknownInstalledAgent):
+        setattr(module, cls.__name__, cls)
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    return module.__name__
+
+
+def test_a_host_side_agent_of_your_own_gets_the_proxy_as_kwargs(custom_agents):
+    """`--harness module:Class` is documented; it used to raise "no seam" for any import path."""
+    name = f"{custom_agents}:HostSideAgent"
+    seam = seams.get(name)
+    model, kwargs, agent_env, proc_env = seam.resolve(
+        base_url="https://capture.test", session="session-key", model="Qwen/Qwen3.5-9B"
+    )
+    assert seam.import_path == name
+    assert seam.status == "untested"
+    assert model == "Qwen3.5-9B"
+    assert kwargs == {"api_base": "https://capture.test/v1", "api_key": "session-key"}
+    # Nothing in the sandbox's or our process's environment, so nothing can reach a grader.
+    assert agent_env == {} and proc_env == {}
+
+
+def test_a_subclass_of_a_known_agent_is_wired_like_it(custom_agents):
+    name = f"{custom_agents}:MyOpenCode"
+    seam = seams.get(name)
+    model, kwargs, _, _ = seam.resolve(
+        base_url="https://capture.test", session="session-key", model="m"
+    )
+    assert seam.import_path == name
+    assert model == seams.SEAMS["opencode"].model_fmt.format(model="m")
+    provider = kwargs["opencode_config"]["provider"][seams.OPENCODE_PROVIDER]
+    assert provider["options"]["apiKey"] == "session-key"
+
+
+def test_an_unknown_installed_agent_is_refused_rather_than_guessed(custom_agents):
+    with pytest.raises(ValueError, match="installed into the sandbox"):
+        seams.get(f"{custom_agents}:UnknownInstalledAgent")
+
+
+def test_a_bad_import_path_says_why():
+    pytest.importorskip("harbor")
+    with pytest.raises(KeyError, match="cannot import harness"):
+        seams.get("no_such_module_xyz:Agent")
 
 
 def test_antigravity_uses_the_existing_native_google_endpoint_setting():
