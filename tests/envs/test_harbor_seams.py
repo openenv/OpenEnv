@@ -10,7 +10,6 @@ import sys
 import types
 
 import pytest
-
 from openenv.harbor import seams
 
 # --- step limits --------------------------------------------------------------------------------
