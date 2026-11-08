@@ -564,11 +564,27 @@ ids and logprobs, and where the agent emits a trajectory, its own record agreed 
 
 Supporting four dialects rather than chat-completions alone is what makes the last four rows work.
 
-`terminus-2` runs in the server process rather than inside the sandbox, so it reaches the proxy on
-localhost and needs no public URL.
+`terminus-2` and host-side agents of your own run in the server process rather than inside the
+sandbox, so they are handed the proxy's localhost URL and need no public one.
 
 The other 14 known agents have a seam but are untested; run `openenv harbor info --verbose` to list
-them. Anything Harbor supports can be reached with `--harness module:Class`.
+them.
+
+### Your own agent
+
+Name any Harbor agent class by import path, `--harness my_package.agent:MyAgent`, in `rollout`, in
+`serve` rollouts and from a trainer. How it is pointed at the proxy depends on the class:
+
+| the class | what it gets |
+|---|---|
+| a subclass of an agent above (its `name()` is a known harness) | that agent's wiring |
+| a host-side agent (a `BaseAgent` that calls the model from the server process) | `api_base` (the proxy's `/v1` URL, on localhost) and `api_key` (the rollout's session id) as constructor kwargs |
+| any other agent installed into the sandbox | refused: add a seam for it in `openenv/harbor/seams.py` |
+
+A host-side agent declares both kwargs in its options and sends every model call to `api_base` with
+`api_key` as the bearer token; capture, reward and training traces then work as for any other
+harness. Nothing reaches the sandbox or the verifier. Options the server has no way to pass, such as
+provider extras, are best read from the agent's own environment variables.
 
 ## Supported sandboxes
 
