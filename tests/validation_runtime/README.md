@@ -20,6 +20,13 @@ is imported by the validator.
 Docker test execution has a twenty-minute budget for the full fault/control
 inventory; fast and protocol suites retain their ten-minute budgets.
 
+The protocol suite also exercises the installed wheel over real loopback HTTP
+and WebSocket connections using a test-only process provider. It verifies
+authorized session telemetry, full collection/grading/reporting, and process
+cleanup on CPU-only Hugging Face Jobs. Its evidence explicitly records process
+isolation; it does not qualify Docker, resource or network isolation. No Hub or
+GitHub credentials are needed by those tests.
+
 The Docker suite snapshots the current source, builds its exact OpenEnv wheel,
 and installs that wheel into this dedicated non-editable test environment. It
 downloads only binary dependencies selected from the committed lock for the
