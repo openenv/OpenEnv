@@ -310,9 +310,9 @@ bash .claude/hooks/install.sh
 ```
 
 This installs:
-- **pre-commit**: Branch check (blocks main), format, lint, debug artifacts check
+- **pre-commit**: Branch check (blocks main), format and lint check, debug artifacts check
 - **commit-msg**: Issue reference reminder (soft warning)
-- **pre-push**: Format, lint, tests, invariants, conflict detection
+- **pre-push**: Format and lint check, tests, invariants, conflict detection
 - **post-merge**: Worktree cleanup reminder
 
 Skip temporarily with `git commit/push --no-verify`.
