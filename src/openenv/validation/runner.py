@@ -347,6 +347,8 @@ def _runtime(subject, graders, *, skip_build, provider):
             collect_tools=_applicable("runtime.tool_declaration_accuracy", manifest),
             collect_tasks=_applicable("runtime.task_declaration_accuracy", manifest),
         )
+        # Independent isolation and oracle probes do not spend the replay budget.
+        replay_remaining_s = max(0.0, replay_deadline - time.monotonic())
         # Protocol collection must finish before its dependent contract checks run.
         if evidence.failure_reason:
             result = _outcome(
@@ -368,6 +370,8 @@ def _runtime(subject, graders, *, skip_build, provider):
                         plan,
                         episode_timeout_s=manifest.resources.episode_timeout_s,
                         episodes=2,
+                        validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
+                        request_telemetry=False,
                     )
                 except RuntimeCollectionUnsupported as exc:
                     sequential = exc.evidence
@@ -377,6 +381,8 @@ def _runtime(subject, graders, *, skip_build, provider):
                         running.base_url,
                         plan,
                         episode_timeout_s=manifest.resources.episode_timeout_s,
+                        validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
+                        request_telemetry=False,
                     )
                 except RuntimeCollectionUnsupported as exc:
                     fresh = exc.evidence
@@ -401,7 +407,7 @@ def _runtime(subject, graders, *, skip_build, provider):
             plan,
             evidence,
             capabilities=manifest.capabilities,
-            deadline=replay_deadline,
+            deadline=time.monotonic() + replay_remaining_s,
         )
 
         network_json = None

@@ -170,8 +170,9 @@ def test_uncompressed_schema_still_obeys_total_byte_budget(monkeypatch, plan):
 
 @pytest.mark.parametrize("schema_key", ["observation", "reset_observation"])
 @pytest.mark.parametrize("escaped", [False, True])
+@pytest.mark.parametrize("request_telemetry", [False, True])
 def test_schema_cannot_persist_validation_credential(
-    monkeypatch, plan, schema_key, escaped
+    monkeypatch, plan, schema_key, escaped, request_telemetry
 ):
     token = "validation-secret-value-" * 2
     schemas = {"observation": {"type": "object"}}
@@ -182,11 +183,31 @@ def test_schema_cannot_persist_validation_credential(
     stream = TrackedStream(payload.encode())
     schema_transport(monkeypatch, stream)
     evidence = collector.collect_runtime_evidence(
-        "http://127.0.0.1:8000", plan, episode_timeout_s=2, validation_token=token
+        "http://127.0.0.1:8000",
+        plan,
+        episode_timeout_s=2,
+        validation_token=token,
+        request_telemetry=request_telemetry,
     )
     assert getattr(evidence, f"{schema_key}_schema_json") is None
     assert evidence.failure_phase == "schema"
     assert token not in str(evidence)
+
+
+def test_raw_schema_cannot_hide_validation_credential_in_duplicate_member(
+    monkeypatch, plan
+):
+    token = "validation-secret-value-" * 2
+    payload = json.dumps(
+        {"description": token, "observation": {"type": "object"}}
+    ).replace(f'"{token}"', f'"{token}","description":"safe"')
+    schema_transport(monkeypatch, TrackedStream(payload.encode()))
+    evidence = collector.collect_runtime_evidence(
+        "http://127.0.0.1:8000", plan, episode_timeout_s=2, validation_token=token
+    )
+    assert evidence.failure_phase == "schema"
+    assert evidence.schema_response_json is None
+    assert token not in repr(evidence)
 
 
 @pytest.mark.parametrize("slow_phase", ["headers", "body"])
@@ -298,8 +319,9 @@ def test_reset_schema_shares_entire_response_byte_budget(monkeypatch, plan):
     "schema_key", ["observation", "reset_observation", "action", "state"]
 )
 @pytest.mark.parametrize("escaped", [False, True])
+@pytest.mark.parametrize("request_telemetry", [False, True])
 def test_full_schema_cannot_persist_validation_credential(
-    monkeypatch, plan, schema_key, escaped
+    monkeypatch, plan, schema_key, escaped, request_telemetry
 ):
     token = "validation-private-value-" * 2
     schemas = {"observation": {"type": "object"}, schema_key: {"description": token}}
@@ -308,8 +330,49 @@ def test_full_schema_cannot_persist_validation_credential(
         payload = payload.replace(token, "".join(f"\\u{ord(c):04x}" for c in token))
     schema_transport(monkeypatch, TrackedStream(payload.encode()))
     evidence = collector.collect_runtime_evidence(
-        "http://127.0.0.1:8000", plan, episode_timeout_s=2, validation_token=token
+        "http://127.0.0.1:8000",
+        plan,
+        episode_timeout_s=2,
+        validation_token=token,
+        request_telemetry=request_telemetry,
     )
     assert evidence.failure_phase == "schema"
     assert evidence.schema_response_json is None
     assert token not in repr(evidence)
+
+
+@pytest.mark.parametrize("request_telemetry", [False, True])
+@pytest.mark.parametrize("stage", ["loads", "dumps"])
+@pytest.mark.parametrize(
+    "failure",
+    [ValueError, ArithmeticError, RecursionError, RuntimeError, KeyboardInterrupt],
+)
+def test_schema_parse_or_scan_failure_omits_unchecked_raw_body(
+    monkeypatch, plan, request_telemetry, stage, failure
+):
+    payload = b'{"observation":{"type":"object"}}'
+    schema_transport(monkeypatch, TrackedStream(payload))
+
+    def fail(value):
+        raise failure("untrusted diagnostic")
+
+    monkeypatch.setattr(collector, stage, fail)
+    try:
+        evidence = collector.collect_runtime_evidence(
+            "http://127.0.0.1:8000",
+            plan,
+            episode_timeout_s=2,
+            validation_token="synthetic-control-credential",
+            request_telemetry=request_telemetry,
+        )
+    except (
+        collector.RuntimeCollectionUnsupported,
+        collector.RuntimeCollectionInterrupted,
+    ) as exc:
+        evidence = exc.evidence
+    assert evidence.failure_phase == "schema"
+    assert evidence.schema_response_json is None
+    assert evidence.observation_schema_json is None
+    assert evidence.reset_observation_schema_json is None
+    assert evidence.exchanges == ()
+    assert "untrusted diagnostic" not in repr(evidence)
