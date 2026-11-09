@@ -172,6 +172,45 @@
       "title": "ExecutionDeclaration",
       "type": "object"
     },
+    "HarborExecutionDeclaration": {
+      "additionalProperties": false,
+      "description": "Native process execution for the bounded Harbor oracle/floor pilot.",
+      "properties": {
+        "agent_boundary": {
+          "const": "process",
+          "default": "process",
+          "title": "Agent Boundary",
+          "type": "string"
+        },
+        "contract_path": {
+          "const": "validation/openenv.json",
+          "default": "validation/openenv.json",
+          "title": "Contract Path",
+          "type": "string"
+        },
+        "kind": {
+          "const": "harbor_task",
+          "title": "Kind",
+          "type": "string"
+        },
+        "profile": {
+          "const": "harbor-oracle-floor-v1",
+          "default": "harbor-oracle-floor-v1",
+          "title": "Profile",
+          "type": "string"
+        },
+        "requires_credentials": {
+          "default": false,
+          "title": "Requires Credentials",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "HarborExecutionDeclaration",
+      "type": "object"
+    },
     "JudgePin": {
       "additionalProperties": false,
       "description": "Pinned judge configuration. Required iff `capabilities.llm_judged`.\n\nThe pin lives in the manifest, not the rubric object: `LLMJudge.state_dict()` does\nnot serialize model/version/params, so validation checks the declared pin.",
@@ -328,7 +367,15 @@
           "$ref": "#/$defs/CapabilitiesSpec"
         },
         "execution": {
-          "$ref": "#/$defs/ExecutionDeclaration"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutionDeclaration"
+            },
+            {
+              "$ref": "#/$defs/HarborExecutionDeclaration"
+            }
+          ],
+          "title": "Execution"
         },
         "judge": {
           "anyOf": [

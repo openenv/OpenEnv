@@ -39,6 +39,7 @@ from .graders.runtime.repeatability import (
 from .graders.static import StaticManifestGrader
 from .manifest import ManifestError, NormalizedManifest, NormalizedManifestV2
 from .parsers import ParserRegistry
+from .parsers.harbor_toml import HarborTaskParser
 from .parsers.openenv_yaml import OpenEnvYamlParser
 from .policy import apply_policy, load_policy, PolicyError, SeverityPolicy
 from .providers import CleanupError, ProviderError, StartupError, UnsupportedCapability
@@ -121,6 +122,7 @@ def default_parser_registry() -> ParserRegistry:
     """The parsers shipped in this build."""
     registry = ParserRegistry()
     registry.register(OpenEnvYamlParser())
+    registry.register(HarborTaskParser())
     return registry
 
 
@@ -685,6 +687,22 @@ def run_validation(
             )
         )
         if wants_runtime:
+            if (
+                isinstance(manifest, NormalizedManifestV2)
+                and manifest.execution.kind == "harbor_task"
+            ):
+                from .harbor import validate_harbor
+
+                return validate_harbor(
+                    subject,
+                    max_level=max_level,
+                    policy=policy,
+                    results=results,
+                    digest_before=digest_before,
+                    artifacts_dir=artifacts_dir,
+                    skip_build=skip_build,
+                    provider=provider,
+                )
             (
                 runtime_results,
                 attempted,

@@ -100,12 +100,13 @@ def test_unrecognized_package_exits_two():
     assert "unrecognized" in result.stderr
 
 
-def test_format_without_a_parser_exits_two():
+def test_harbor_without_trusted_contract_fails_manifest_validation():
     result = _validate(
         str(FIXTURES / "harbor_task_min"), "--level", "static", "--skip-build"
     )
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert "unrecognized" in result.stderr
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "static.manifest" in result.stdout
+    assert "Harbor contract" in result.stdout
 
 
 def test_nonexistent_path_exits_two(tmp_path):

@@ -380,6 +380,18 @@ class ExecutionDeclaration(BaseModel):
         return value
 
 
+class HarborExecutionDeclaration(BaseModel):
+    """Native process execution for the bounded Harbor oracle/floor pilot."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["harbor_task"]
+    agent_boundary: Literal["process"] = "process"
+    profile: Literal["harbor-oracle-floor-v1"] = "harbor-oracle-floor-v1"
+    contract_path: Literal["validation/openenv.json"] = "validation/openenv.json"
+    requires_credentials: bool = Field(default=False, strict=True)
+
+
 class NormalizedManifestV2(NormalizedManifest):
     """
     Version 2 adds the runtime execution declaration without changing schema 1.
@@ -390,7 +402,7 @@ class NormalizedManifestV2(NormalizedManifest):
     """
 
     manifest_schema_version: Literal["2"]
-    execution: ExecutionDeclaration
+    execution: ExecutionDeclaration | HarborExecutionDeclaration
 
     @model_validator(mode="after")
     def _finite_declarations(self) -> "NormalizedManifestV2":

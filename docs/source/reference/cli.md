@@ -60,7 +60,7 @@ openenv validate ./my_env --level static
 openenv validate ./my_env --level runtime --local --output report.json
 ```
 
-Runtime validation requires Docker and a `validation.execution` declaration in
+For served packages, runtime validation requires Docker and a `validation.execution` declaration in
 `openenv.yaml`. The declaration points to a bounded JSON replay plan containing
 one reset and a sequence of actions. The validator builds an immutable image,
 collects the original episode, repeats the plan in a fresh WebSocket session and
@@ -68,6 +68,14 @@ with a different seed, then replays it in a fresh container when the provider
 supports that capability. Docker validation uses two containers concurrently
 during the fresh-container replay. Both use the same immutable image and are
 removed even if a check fails.
+
+Native Harbor `task.toml` directories are also recognized. Supply an explicit
+`validation/openenv.json` reward/resource contract and the optional Harbor
+dependency. The `harbor-oracle-floor-v1` binding runs fresh native NOP and oracle
+trials in Docker, verifies raw rewards, actual task image/configuration and cleanup,
+and retains `harbor-evidence.json` in the report bundle. Other standard checks
+remain named SKIPs, so a passing pilot still produces WARN. This does not qualify
+the outer `harbor_env` server or claim full RFC 008 admission.
 
 The 16 implemented runtime checks cover startup, rewards, observation schemas,
 state continuity, network policy, host containment, resource bounds, episode isolation,

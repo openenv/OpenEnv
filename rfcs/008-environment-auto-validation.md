@@ -718,6 +718,42 @@ findings: a WARN exit 0 does not prove completeness. Product publish gating and
 operator certification remain outside this feature; the test workflow only proves
 the implementation's own acceptance cases.
 
+### Native Harbor pilot binding
+
+`task.toml` packages may opt into the explicit `harbor-oracle-floor-v1` pilot
+through an operator-supplied `validation/openenv.json` contract. The contract
+declares the selected reward key, range, oracle tolerance, floor margin and finite
+resource budgets; Harbor metadata and observed rewards do not supply these
+declarations. The normalized schema-2 execution kind is `harbor_task`, with a
+`process` agent boundary. Parsing uses Harbor's data-only Task loader and never
+creates a Trial or executes package code.
+
+This initial profile supports single-step Linux tasks, one Dockerfile, one main
+Docker service, a shared verifier, public network policies and no accelerators,
+external MCP services or credentials. Native execution runs fresh NOP and oracle
+Harbor Trials, inspects the actual agent container at `AGENT_START`, retains its
+immutable image under a run-owned tag, and pins the oracle to that image. Source,
+explicit execution overlays and effective container configuration are bound to
+the evidence. Supported `delete=False` and `keep_containers=True` trial settings
+leave image retention and resource removal to the native supervisor. Cleanup
+independently enumerates the exact run-owned Compose projects, registers anonymous
+volumes from those containers' actual mounts, removes only those owned resources,
+and verifies their absence. The trusted oracle exit marker is captured at
+`AGENT_END`, before later sandbox log synchronization can overwrite host logs.
+
+`harbor-evidence.json` and preserved raw reward/exit files are checksummed bundle
+artifacts. The pilot requires finite nonboolean in-range rewards, an oracle
+without a nonzero exit marker or Trial exception, oracle reward at least the
+declared maximum minus tolerance, and oracle-minus-NOP and maximum-minus-NOP gaps
+at least the declared floor margin. Failures or unverifiable cleanup block the
+normal report. `static.manifest`, `runtime.startup` and
+`runtime.reward_well_formed` may PASS with actual evidence; other requested checks
+remain named SKIPs. In particular this binding supplies no synthetic WebSocket
+exchange, generic semantic PASS, containment qualification or measured resource
+enforcement. A WARN report is admissible only to a driver explicitly choosing this
+pilot and checking its native gates; full RFC validation still rejects required
+SKIPs.
+
 ## Explicitly out of scope
 
 No hub/runner/queue/coordinator; no submission or auth APIs; no statistical-level implementations
