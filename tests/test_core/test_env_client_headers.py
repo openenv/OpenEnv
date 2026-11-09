@@ -179,6 +179,7 @@ async def test_websocket_redirect_does_not_forward_sandbox_token(serve, cross_or
                 open_timeout=8,
             )
         except InvalidStatus:
+            # Redirect rejection is the expected handshake outcome.
             pass
         else:
             await connection.close()

@@ -154,24 +154,24 @@ def main():
             sandbox.files.write("/opt/" + name, (HERE / name).read_text())
         sandbox.run(
             "python -m pip install --disable-pip-version-check uv==0.9.9 && "
-            "uv venv /opt/mathenv && uv pip install --python /opt/mathenv/bin/python "
-            "-r /tmp/math-requirements.txt > /tmp/math-install.log 2>&1",
+            + "uv venv /opt/mathenv && uv pip install --python /opt/mathenv/bin/python "
+            + "-r /tmp/math-requirements.txt > /tmp/math-install.log 2>&1",
             timeout=300,
         )
         sandbox.run(
             "ENABLE_WEB_INTERFACE=false MAX_CONCURRENT_ENVS=4 /opt/mathenv/bin/python "
-            "-m uvicorn scott_wu_math.server.app:app --host 127.0.0.1 --port 8012 "
-            "> /tmp/math-server.log 2>&1",
+            + "-m uvicorn scott_wu_math.server.app:app --host 127.0.0.1 --port 8012 "
+            + "> /tmp/math-server.log 2>&1",
             background=True,
         )
         sandbox.run(
             "/opt/mathenv/bin/python - <<'PY'\n"
-            "import time,urllib.request\n"
-            "for _ in range(60):\n"
-            " try:\n"
-            "  assert urllib.request.urlopen('http://127.0.0.1:8012/health',timeout=1).status==200;break\n"
-            " except Exception: time.sleep(1)\n"
-            "else: raise RuntimeError('server readiness deadline exceeded')\nPY",
+            + "import time,urllib.request\n"
+            + "for _ in range(60):\n"
+            + " try:\n"
+            + "  assert urllib.request.urlopen('http://127.0.0.1:8012/health',timeout=1).status==200;break\n"
+            + " except Exception: time.sleep(1)\n"
+            + "else: raise RuntimeError('server readiness deadline exceeded')\nPY",
             timeout=65,
         )
         sandbox.run(

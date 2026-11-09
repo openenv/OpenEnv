@@ -1006,6 +1006,7 @@ def main():
             }
         )
     except NoLearningSignal:
+        # The signal gate recorded the early stop; finalizers still persist it.
         pass
     except Exception as error:
         failed = True

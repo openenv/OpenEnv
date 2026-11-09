@@ -299,6 +299,7 @@ def served(mode, variant, events):
                 )
                 await connection.send_text(raw)
         except WebSocketDisconnect:
+            # The validation client has closed this fixture connection.
             pass
 
     with socket.socket() as listener:
