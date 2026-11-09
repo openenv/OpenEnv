@@ -162,6 +162,7 @@ def main():
             "ENABLE_WEB_INTERFACE=false MAX_CONCURRENT_ENVS=4 /opt/mathenv/bin/python "
             + "-m uvicorn scott_wu_math.server.app:app --host 127.0.0.1 --port 8012 "
             + "> /tmp/math-server.log 2>&1",
+            # A live SDK-tracked server prevents idle shutdown during the GPU queue.
             background=True,
         )
         sandbox.run(
