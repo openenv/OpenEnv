@@ -392,6 +392,25 @@ def test_space_runtime_still_checks_jobs_flavor_once(
     assert not FakeSandbox.created
 
 
+@pytest.mark.parametrize("revision", [None, "main", "release/v1", "a" * 40, ""])
+def test_source_resolution_defaults_only_an_omitted_revision_to_main(
+    downloads, monkeypatch, revision
+):
+    requested = []
+    original = FakeApi.space_info
+
+    def info(self, space_id, revision=None):
+        requested.append(revision)
+        return original(self, space_id, revision=revision)
+
+    monkeypatch.setattr(FakeApi, "space_info", info)
+    args = [] if revision is None else ["--revision", revision]
+    report = validate_space(*args, "--level", "static")
+    assert requested == ["main" if revision is None else revision]
+    assert downloads == ["a" * 40]
+    assert report["target"] == "spaces/openenv-testing/probe@" + "a" * 40
+
+
 @pytest.mark.parametrize("revision", ["main", "release/v1", "a" * 40])
 def test_named_revision_is_validated_as_its_commit(downloads, monkeypatch, revision):
     revisions = []

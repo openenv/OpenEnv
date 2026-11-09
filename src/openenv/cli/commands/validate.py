@@ -332,7 +332,13 @@ def validate(
                 from huggingface_hub import HfApi, snapshot_download
 
                 # Download and report one commit, even if a branch moves.
-                revision = HfApi().space_info(space, revision=revision).sha
+                revision = (
+                    HfApi()
+                    .space_info(
+                        space, revision="main" if revision is None else revision
+                    )
+                    .sha
+                )
                 package_root = (
                     Path(stack.enter_context(tempfile.TemporaryDirectory())) / "source"
                 )
