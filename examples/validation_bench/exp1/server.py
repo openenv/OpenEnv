@@ -1,6 +1,5 @@
 """Run an actual pinned environment with an explicitly labelled wire fault."""
 
-import asyncio
 import importlib
 import json
 import os
@@ -72,7 +71,7 @@ async def app(scope, receive, send):
                     upstream_completed=True,
                     session=dict(session),
                 )
-                await asyncio.sleep(30)
+                return
             if case in {"malformed_observation", "invalid_reward"}:
                 message = {**message, "text": json.dumps(response)}
                 record(
