@@ -9,6 +9,9 @@ and then ran `git checkout --` on whatever changed, which restores from HEAD:
 that discarded the formatting *and* any uncommitted edits in the same files,
 and left reformatted Markdown behind because the restore only covered `*.py`.
 
+The same holds for the git hooks that `install.sh` writes: they run on every
+commit and push, with the author's uncommitted work in the tree.
+
 These run the real hook against a throwaway git repo with a stub `uv` on PATH,
 so no formatter is actually invoked and the test is hermetic. The stub rewrites
 files in "format" mode and reports status in "check" mode, which is enough to
@@ -98,15 +101,18 @@ def repo(tmp_path: pathlib.Path) -> pathlib.Path:
     return work
 
 
-def _run_hook(repo: pathlib.Path) -> subprocess.CompletedProcess[str]:
+def _run_hook(
+    repo: pathlib.Path, hook: pathlib.Path = LINT_HOOK, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{repo.parent / 'stubbin'}:/usr/bin:/bin:/usr/sbin:/sbin",
         "HOME": str(repo.parent),
     }
     return subprocess.run(
-        ["bash", str(LINT_HOOK)],
+        ["bash", str(hook)],
         cwd=repo,
         env=env,
+        input=stdin,
         capture_output=True,
         text=True,
     )
@@ -176,3 +182,50 @@ def test_hook_passes_when_everything_is_formatted(repo: pathlib.Path) -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert _dirty(repo) == []
+
+
+def _git_state(repo: pathlib.Path) -> list[str]:
+    """Status plus both diffs, so any change to the tree or the index shows."""
+    return [
+        subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout
+        for args in (["status", "--porcelain"], ["diff"], ["diff", "--cached"])
+    ]
+
+
+@pytest.mark.parametrize("hook", ["pre-commit", "pre-push"])
+def test_git_hooks_leave_uncommitted_work_alone(repo: pathlib.Path, hook: str) -> None:
+    """The installed hooks must leave staged and unstaged work as they found it.
+
+    pre-commit used to format in place and `git add` every changed `.py` file,
+    staging edits the author had left unstaged. pre-push formatted in place and
+    then ran `git checkout --` on them, discarding the edits.
+    """
+    git = lambda *a: subprocess.run(  # noqa: E731
+        ["git", *a], cwd=repo, check=True, capture_output=True, text=True
+    )
+    # Both hooks stop on main and master before they get to the files.
+    git("checkout", "-qb", "work")
+    shutil.copytree(REPO_ROOT / ".claude" / "hooks", repo / ".claude" / "hooks")
+    subprocess.run(
+        ["bash", ".claude/hooks/install.sh"], cwd=repo, check=True, capture_output=True
+    )
+    (repo / "src" / "staged.py").write_text("y = 2\n")
+    git("add", "src/staged.py")
+    target = repo / "src" / "mod.py"
+    target.write_text(target.read_text() + "\n" + MARKER)
+    before = _git_state(repo)
+
+    head = git("rev-parse", "HEAD").stdout.strip()
+    result = _run_hook(
+        repo,
+        repo / ".git" / "hooks" / hook,
+        stdin=f"refs/heads/work {head} refs/heads/work {'0' * 40}\n",
+    )
+
+    assert f"Running {hook} checks" in result.stdout, result.stdout + result.stderr
+    assert _git_state(repo) == before, (
+        f"The {hook} hook changed the working tree or the index. It must leave "
+        "formatting to lint.sh, which only reports."
+    )

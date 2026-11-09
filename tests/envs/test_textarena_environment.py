@@ -536,3 +536,25 @@ def test_bandit_seeded_trajectory_is_reproducible_across_sessions():
 
     assert sum(len(v) for v in _bandit_history(first).values()) == len(actions)
     assert _bandit_history(first) == _bandit_history(second)
+
+
+def test_env_kwargs_are_parsed_as_json(monkeypatch):
+    pytest.importorskip("textarena", reason="textarena not installed")
+    from textarena_env.server.app import _parse_env_kwargs
+
+    monkeypatch.setenv("TEXTARENA_KW_CLUES", "65")
+    monkeypatch.setenv("TEXTARENA_KW_DIFFICULTY", "hard")
+    monkeypatch.setenv("TEXTARENA_KW_HARDCORE", "true")
+
+    assert _parse_env_kwargs() == {"clues": 65, "difficulty": "hard", "hardcore": True}
+
+
+def test_sudoku_clues_from_env_kwargs(monkeypatch):
+    pytest.importorskip("textarena", reason="textarena not installed")
+    from textarena_env.server.app import _parse_env_kwargs
+
+    monkeypatch.setenv("TEXTARENA_KW_CLUES", "65")
+    env = TextArenaEnvironment(env_id="Sudoku-v0", env_kwargs=_parse_env_kwargs())
+    board = env.reset().messages[0].content.split("Game Board:")[-1]
+
+    assert board.count(".") <= 81 - 65
