@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 async def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # The sandbox URL is a bearer capability: keep httpx from logging it (RFC 002 S2).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     if not os.environ.get("TENSORLAKE_API_KEY"):
         raise SystemExit("Set TENSORLAKE_API_KEY to create the sandbox.")
