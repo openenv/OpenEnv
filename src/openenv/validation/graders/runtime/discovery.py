@@ -79,6 +79,7 @@ class _EvidenceGrader(_RuntimeGrader):
 
 class ToolDeclarationAccuracyGrader(_EvidenceGrader):
     check_id = "runtime.tool_declaration_accuracy"
+    depends_on = ()
     field, error_field, label = "tools_json", "tools_error", "tool discovery"
     unavailable_field = "tools_unavailable"
 
@@ -116,6 +117,7 @@ class ToolDeclarationAccuracyGrader(_EvidenceGrader):
 
 class TaskDeclarationAccuracyGrader(_EvidenceGrader):
     check_id = "runtime.task_declaration_accuracy"
+    depends_on = ()
     field, error_field, label = "tasks_json", "tasks_error", "task discovery"
 
     def applies_to(self, manifest):
