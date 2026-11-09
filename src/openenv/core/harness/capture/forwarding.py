@@ -33,6 +33,7 @@ why `SessionRegistry.require_registered` defaults to True.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import re
 import secrets
@@ -42,6 +43,12 @@ import subprocess
 import threading
 import time
 from abc import ABC, abstractmethod
+from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows: no advisory locks, keep gradio's unlocked download.
+    fcntl = None
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +154,25 @@ class GradioForwarder(PortForwarder):
                 f"gradio is required for GradioForwarder: {exc}"
             ) from exc
 
+    @staticmethod
+    def _ensure_frpc_binary() -> None:
+        """
+        Download gradio's frpc binary once, under a cross-process lock.
+
+        Gradio checks `Path(BINARY_PATH).exists()` and then writes the binary in place. A second
+        process that starts while the first is still writing sees the file, skips the download and
+        executes a half-written binary, which fails with `Text file busy` (ETXTBSY) or a corrupt
+        executable. Holding an exclusive lock next to the binary makes every other process wait
+        until the first download has finished, after which gradio's own check skips the download.
+        """
+        tunneling = importlib.import_module("gradio.tunneling")
+        binary = Path(tunneling.BINARY_PATH)
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        with open(binary.with_name(binary.name + ".lock"), "a") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file, fcntl.LOCK_EX)
+            tunneling.Tunnel.download_binary()
+
     def start(self, local_port: int, *, local_host: str = "127.0.0.1") -> str:
         from gradio.networking import setup_tunnel
         from gradio.tunneling import CURRENT_TUNNELS
@@ -154,6 +180,7 @@ class GradioForwarder(PortForwarder):
         self.stop()
         share_token = secrets.token_hex(16)
         try:
+            self._ensure_frpc_binary()
             url = setup_tunnel(
                 local_host=local_host,
                 local_port=local_port,
