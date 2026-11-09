@@ -356,6 +356,12 @@ def _runtime(subject, graders, *, skip_build, provider):
                     else replace(isolation, fresh=exc.evidence)
                 )
                 raise KeyboardInterrupt from None
+            except RuntimeCollectionUnsupported as exc:
+                isolation = (
+                    IsolationEvidence(sequential=exc.evidence, fresh=not_started)
+                    if isolation is None
+                    else replace(isolation, fresh=exc.evidence)
+                )
             if manifest.capabilities.oracle is not None:
                 oracle_http = _oracle_probes(
                     running.base_url,

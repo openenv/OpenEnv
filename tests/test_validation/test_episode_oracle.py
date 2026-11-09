@@ -125,6 +125,31 @@ def test_json_beyond_decimal_range_is_unproven():
     assert result.status is CheckStatus.SKIP
 
 
+def test_json_limit_after_a_confirmed_leak_does_not_hide_the_leak():
+    after_reset = episode(2)
+    after_reset[4] = replace(
+        after_reset[4], response_json='{"data":1e9999999999999999999}'
+    )
+    result = grade_isolation(isolation_subject(sequential=episode() + after_reset))
+    assert result.status is CheckStatus.FAIL
+    assert "exchange 2 (step)" in result.evidence[0]
+
+
+def test_incomplete_fresh_trace_after_a_confirmed_leak_does_not_hide_the_leak():
+    subject = isolation_subject(sequential=episode() + episode(2))
+    subject.isolation_evidence = replace(
+        subject.isolation_evidence,
+        fresh=replace(
+            subject.isolation_evidence.fresh,
+            failure_phase="state",
+            failure_reason="state JSON exceeds validator support (json_depth)",
+        ),
+    )
+    result = grade_isolation(subject)
+    assert result.status is CheckStatus.FAIL
+    assert "exchange 2 (step)" in result.evidence[0]
+
+
 @pytest.mark.parametrize(
     "after_reset",
     [

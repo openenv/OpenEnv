@@ -7,12 +7,24 @@ from ...runtime.json_values import loads, typed_json
 from ...types import CheckStatus, Level
 
 
+_JSON_DEPTH = object()
+_JSON_NUMERIC_RANGE = object()
+
+
+def _unsupported(value):
+    return value is _JSON_DEPTH or value is _JSON_NUMERIC_RANGE
+
+
 def _canonical(text):
     """Compare exact decoded values while preserving JSON types and malformed text."""
     try:
         return typed_json(loads(text))
     except ValueError:
         return text  # Malformed text is compared exactly as it was sent.
+    except RecursionError:
+        return _JSON_DEPTH
+    except ArithmeticError:
+        return _JSON_NUMERIC_RANGE
 
 
 def _trace(evidence):
@@ -29,7 +41,9 @@ def _divergence(left, right, complete=True):
     When `left` is an incomplete recording, only its recorded exchanges count.
     """
     for index, (a, b) in enumerate(zip(left, right)):
-        if a != b:
+        if any(
+            not _unsupported(x) and not _unsupported(y) and x != y for x, y in zip(a, b)
+        ):
             return f"exchange {index} ({a[0]})"
     if complete and len(left) != len(right):
         return f"exchange {min(len(left), len(right))} (trace length)"
@@ -71,34 +85,11 @@ class EpisodeIsolationGrader:
         reference = subject.runtime_evidence
         if isolation is None or reference is None:
             return CheckStatus.SKIP, ["isolation evidence is unavailable"], {}
-        if isolation.fresh.failure_reason:
-            return (
-                CheckStatus.SKIP,
-                [
-                    "the fresh reference episode failed: "
-                    + isolation.fresh.failure_reason
-                ],
-                {},
-            )
         failure = isolation.sequential.failure_reason
-        try:
-            sequential = _trace(isolation.sequential)
-            fresh = _trace(isolation.fresh)
-            baseline = _trace(reference)
-        except RecursionError:
-            return (
-                CheckStatus.SKIP,
-                ["JSON nesting exceeds the parser depth, so isolation is unproven"],
-                {},
-            )
-        except ArithmeticError:
-            return (
-                CheckStatus.SKIP,
-                [
-                    "JSON numeric range exceeds Decimal support, so isolation is unproven"
-                ],
-                {},
-            )
+        fresh_failure = isolation.fresh.failure_reason
+        sequential = _trace(isolation.sequential)
+        fresh = _trace(isolation.fresh)
+        baseline = _trace(reference)
         resets = [i for i, x in enumerate(sequential) if x[0] == "reset"]
         if len(resets) < 2 and not failure:
             return CheckStatus.SKIP, ["no second episode was recorded"], {}
@@ -107,7 +98,7 @@ class EpisodeIsolationGrader:
         measured = {"exchanges": len(after_reset)}
         # Isolation is only observable when fixed inputs give a fixed trace, so
         # the first episode of every session must agree.
-        drift = _divergence(baseline, fresh) or _divergence(
+        drift = _divergence(fresh, baseline, complete=not fresh_failure) or _divergence(
             first, baseline, complete=not failure
         )
         if drift:
@@ -116,7 +107,9 @@ class EpisodeIsolationGrader:
                 [f"two fresh episodes differ at {drift}, so isolation is unproven"],
                 measured,
             )
-        leak = _divergence(after_reset, fresh, complete=not failure)
+        leak = _divergence(
+            after_reset, fresh, complete=not failure and not fresh_failure
+        )
         if leak:
             return (
                 CheckStatus.FAIL,
@@ -125,12 +118,39 @@ class EpisodeIsolationGrader:
                 ],
                 measured,
             )
+        if fresh_failure:
+            return (
+                CheckStatus.SKIP,
+                ["the fresh reference episode failed: " + fresh_failure],
+                measured,
+            )
         if failure:
             # A deadline, size bound or transport failure that left no
             # differing response is a gap in the experiment, not a leak.
             return (
                 CheckStatus.SKIP,
                 [f"the same-session episodes did not complete: {failure}"],
+                measured,
+            )
+        values = (
+            value
+            for trace in (sequential, fresh, baseline)
+            for row in trace
+            for value in row
+        )
+        limits = {value for value in values if _unsupported(value)}
+        if _JSON_DEPTH in limits:
+            return (
+                CheckStatus.SKIP,
+                ["JSON nesting exceeds the parser depth, so isolation is unproven"],
+                measured,
+            )
+        if _JSON_NUMERIC_RANGE in limits:
+            return (
+                CheckStatus.SKIP,
+                [
+                    "JSON numeric range exceeds Decimal support, so isolation is unproven"
+                ],
                 measured,
             )
         return CheckStatus.PASS, [], measured

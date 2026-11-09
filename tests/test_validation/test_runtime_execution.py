@@ -157,6 +157,34 @@ def test_unsupported_schema_numbers_skip_and_keep_the_received_schema(
     assert metadata["schema_response_parse_failed"] is True
 
 
+@pytest.mark.parametrize("unsupported_call", [2, 3])
+def test_unsupported_isolation_keeps_startup_and_grades_completed_evidence(
+    package, monkeypatch, unsupported_call
+):
+    partial = replace(
+        measured_episode(),
+        failure_phase="step",
+        failure_reason="step JSON exceeds validator support (json_numeric_range)",
+    )
+    calls = 0
+
+    def collect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == unsupported_call:
+            raise RuntimeCollectionUnsupported(partial)
+        return measured_episode()
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    results = {result.check_id: result for result in report.results}
+
+    assert results["runtime.startup"].status is CheckStatus.PASS
+    assert results["runtime.reward_well_formed"].status is CheckStatus.PASS
+
+
 @pytest.mark.parametrize("interrupted_call", [2, 3])
 def test_interrupted_isolation_retains_every_completed_session(
     package, monkeypatch, tmp_path, interrupted_call
