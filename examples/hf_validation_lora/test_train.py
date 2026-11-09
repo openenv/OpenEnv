@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """CPU-only contract tests: python -B -m unittest discover -s examples/hf_validation_lora."""
 
+import ast
 import importlib.util
 import json
 import tempfile
@@ -24,6 +25,168 @@ def public_observation():
         "solution_steps": [],
         "metadata": {"private": "never pass this field to the model"},
     }
+
+
+class OptimizerWindowTests(unittest.TestCase):
+    def setUp(self):
+        # Execute the production nested callback/reward function without main's
+        # GPU/Hub setup. Only external tensor and scoring operations are mocked.
+        tree = ast.parse(Path(train.__file__).read_text())
+        nodes = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef))
+            and node.name in {"Evidence", "environment_reward"}
+        ]
+
+        class CallbackBase:
+            def on_step_begin(self, *args, **kwargs):
+                pass
+
+        self.report = {"training_groups": [{"std": 0.5}], "optimizer_evidence": []}
+        self.parameter = Mock(requires_grad=True)
+        model = SimpleNamespace(
+            named_parameters=lambda: [("adapter", self.parameter)],
+            parameters=lambda: [self.parameter],
+        )
+        self.torch = Mock()
+        self.torch.isfinite.return_value.all.return_value = True
+        self.rewards = [0.0, 0.4, 0.4, 0.4]
+        namespace = dict(
+            vars(train),
+            TrainerCallback=CallbackBase,
+            report=self.report,
+            model=model,
+            torch=self.torch,
+            deadline=float("inf"),
+            check_time=Mock(),
+            by_key={"train-24-0000": {}},
+            score_texts=lambda *args: [{"reward": r} for r in self.rewards],
+        )
+        exec(
+            compile(ast.Module(body=nodes, type_ignores=[]), train.__file__, "exec"),
+            namespace,
+        )
+        self.evidence = namespace["Evidence"]()
+        self.reward = namespace["environment_reward"]
+        self.args = SimpleNamespace(
+            world_size=1,
+            per_device_train_batch_size=1,
+            gradient_accumulation_steps=4,
+            generation_batch_size=4,
+            num_generations=4,
+            num_iterations=1,
+        )
+        self.state = SimpleNamespace(global_step=0)
+        self.control = SimpleNamespace(should_training_stop=False)
+        self.optimizer = SimpleNamespace(state={}, step_was_skipped=False)
+
+    def begin(self):
+        self.evidence.on_step_begin(self.args, self.state, self.control)
+
+    def score_group(self):
+        # The real reward callback scores four completions and appends one group.
+        return self.reward(["answer"] * 4, ["train-24-0000"] * 4)
+
+    def pre(self, norm=0.5):
+        self.torch.stack.return_value.sum.return_value.sqrt.return_value.cpu.return_value = norm
+        self.evidence.on_pre_optimizer_step(
+            self.args, self.state, self.control, optimizer=self.optimizer
+        )
+
+    def finish(self, *, skipped=False, advance=True, changed=True):
+        self.optimizer.step_was_skipped = skipped
+        if advance:
+            previous = self.optimizer.state.get(self.parameter, {}).get("step", 0)
+            self.optimizer.state[self.parameter] = {"step": previous + 1}
+        self.torch.equal.return_value = not changed
+        self.evidence.on_optimizer_step(
+            self.args, self.state, self.control, optimizer=self.optimizer
+        )
+        self.state.global_step += 1  # Trainer advances even after an AMP skip.
+        self.evidence.on_step_end(self.args, self.state, self.control)
+        return self.report["optimizer_evidence"][-1]
+
+    def test_zero_or_multiple_new_groups_fail_before_optimizer(self):
+        for count in (0, 2):
+            with self.subTest(new_groups=count):
+                self.setUp()
+                self.begin()
+                for _ in range(count):
+                    self.score_group()
+                with self.assertRaisesRegex(
+                    RuntimeError, "one newly scored GRPO group"
+                ):
+                    self.pre()
+                self.assertEqual(self.report["optimizer_evidence"], [])
+
+    def test_one_group_spans_four_completion_advantages_and_std_is_snapshotted(self):
+        self.begin()
+        self.assertEqual(self.score_group(), [0.0, 0.4, 0.4, 0.4])
+        # Representative buffered advantages enter four singleton backwards;
+        # tensor arithmetic is mocked, not a real TRL/backward qualification.
+        backward = Mock()
+        for advantage in (-1.5, 0.5, 0.5, 0.5):
+            backward(advantage)
+        self.pre()
+        # The post-step observation must use the sealed group, not the tail.
+        self.report["training_groups"].append({"std": 0.0})
+        event = self.finish()
+        self.assertAlmostEqual(event["group_std"], 0.17320508075688773)
+        self.assertTrue(train.effective_update(event))
+        self.assertEqual(event["attempt"], 1)
+
+    def test_reused_generation_cannot_borrow_the_previous_groups_signal(self):
+        self.begin()
+        self.score_group()
+        self.pre()
+        self.assertTrue(train.effective_update(self.finish()))
+        self.begin()
+        # Buffered generation reuse scores no new group during this attempt.
+        with self.assertRaisesRegex(RuntimeError, "one newly scored GRPO group"):
+            self.pre()
+        self.assertEqual(len(self.report["optimizer_evidence"]), 1)
+
+    def test_amp_skip_and_consecutive_attempts_keep_their_own_group(self):
+        events = []
+        self.begin()
+        self.score_group()
+        self.pre(float("inf"))
+        events.append(self.finish(skipped=True, advance=False, changed=False))
+        self.begin()
+        self.rewards = [0.4] * 4
+        self.score_group()
+        self.pre()
+        events.append(self.finish())  # Momentum changes alone do not count.
+        self.begin()
+        self.rewards = [0.0, 0.4, 0.4, 0.4]
+        self.score_group()
+        self.pre()
+        events.append(self.finish())
+        self.assertEqual(
+            [train.effective_update(e) for e in events], [False, False, True]
+        )
+        self.assertEqual([e["attempt"] for e in events], [1, 2, 3])
+        self.assertIsNone(events[0]["grad_norm"])
+        self.assertFalse(events[0]["counter_advanced"])
+        self.assertEqual(events[0]["changed_tensors"], 0)
+        self.assertEqual(self.report["global_step"], 3)
+        json.dumps(self.report, allow_nan=False)
+
+    def test_unsupported_recipe_fails_at_step_begin(self):
+        for key, value in (
+            ("world_size", 2),
+            ("per_device_train_batch_size", 4),
+            ("gradient_accumulation_steps", 8),
+            ("generation_batch_size", 16),
+            ("num_generations", 8),
+            ("num_iterations", 2),
+        ):
+            with self.subTest(argument=key):
+                self.setUp()
+                setattr(self.args, key, value)
+                with self.assertRaisesRegex(RuntimeError, "frozen single-group recipe"):
+                    self.begin()
 
 
 class TrainingContractTests(unittest.TestCase):

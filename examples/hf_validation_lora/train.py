@@ -800,6 +800,22 @@ def main():
         ).hexdigest()
 
         class Evidence(TrainerCallback):
+            def on_step_begin(self, args, state, control, **kwargs):
+                # Pinned TRL scores one four-sibling group, then consumes its
+                # four singleton microbatches. Other recipes/reuse are unsupported.
+                if (
+                    args.world_size,
+                    args.per_device_train_batch_size,
+                    args.gradient_accumulation_steps,
+                    args.generation_batch_size,
+                    args.num_generations,
+                    args.num_iterations,
+                ) != (1, 1, 4, 4, 4, 1):
+                    raise RuntimeError(
+                        "Optimizer evidence requires the frozen single-group recipe"
+                    )
+                self.group_start = len(report["training_groups"])
+
             def on_log(self, args, state, control, logs=None, **kwargs):
                 metrics = {
                     key: value
@@ -810,6 +826,11 @@ def main():
                     trackio.log(metrics, step=state.global_step)
 
             def on_pre_optimizer_step(self, args, state, control, **kwargs):
+                if len(report["training_groups"]) != self.group_start + 1:
+                    raise RuntimeError(
+                        "Expected one newly scored GRPO group per optimizer attempt"
+                    )
+                self.group_std = report["training_groups"][self.group_start]["std"]
                 self.before_steps = {
                     id(parameter): int(s["step"].item())
                     if hasattr(s["step"], "item")
@@ -859,7 +880,7 @@ def main():
                             counters_advanced(self.before_steps, steps),
                             changed,
                         ),
-                        "group_std": report["training_groups"][-1]["std"],
+                        "group_std": self.group_std,
                     }
                 )
 
