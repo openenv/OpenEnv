@@ -285,6 +285,17 @@ def test_failed_stop_is_retried_and_withholds_sdk_details(sdk):
     assert provider.start_container() == PUBLIC_URL
 
 
+def test_stop_withholds_handle_close_errors(sdk):
+    provider = TensorlakeProvider(public=True, image="echo-env")
+    provider.start_container()
+    sdk.sandbox.close.side_effect = sdk.SandboxError(f"websocket {SECRET}")
+
+    provider.stop_container()
+
+    sdk.client.delete.assert_called_once_with("sbx-1")
+    assert provider.start_container() == PUBLIC_URL
+
+
 def test_stop_on_expired_sandbox_succeeds(sdk):
     provider = TensorlakeProvider(public=True, image="echo-env")
     provider.start_container()

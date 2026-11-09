@@ -13,6 +13,7 @@ import os
 import shlex
 import time
 import warnings
+from contextlib import suppress
 from typing import Any, Dict, Literal, Optional
 
 from ._server_config import parse_openenv_app_field
@@ -381,7 +382,10 @@ class TensorlakeProvider(ContainerProvider):
         self._probe_config = {}
         self._secret_values = []
         if sandbox is not None:
-            sandbox.close()
+            # The sandbox is gone. A failure to close the local handle can
+            # quote the sandbox URL or API key, so it is withheld (RFC 002 S2/S4).
+            with suppress(Exception):
+                sandbox.close()
 
     def close(self) -> None:
         """Delete the active sandbox. Also called on context-manager exit."""
