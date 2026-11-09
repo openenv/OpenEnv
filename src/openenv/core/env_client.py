@@ -275,6 +275,15 @@ async def _best_effort_graceful_close(ws: ClientConnection) -> None:
     await _best_effort_close(ws)
 
 
+class SessionLostError(ConnectionError):
+    """The connection to the server was lost in the middle of an episode.
+
+    The server keeps one environment per WebSocket connection, so reconnecting
+    opens a new session with an environment this client never reset. Call
+    `reset()` to start a new episode.
+    """
+
+
 class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
     """
     Async environment client for persistent sessions.
@@ -386,6 +395,8 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
         # Strong references for fire-and-forget socket closes (see _receive),
         # so the task isn't garbage-collected mid-close. Discarded on done.
         self._pending_close_tasks: set[asyncio.Task] = set()
+        # The socket that carries the episode started by `reset()`, if one is open.
+        self._episode_ws: Optional[ClientConnection] = None
         if base_url is not None:
             self._set_base_url(base_url)
 
@@ -517,6 +528,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
         coro_factory: Callable[[], Any],
         *,
         allow_async_handoff: bool = False,
+        stop_loop: bool = False,
     ) -> Any:
         """Run an async operation through the sync wrapper."""
         if allow_async_handoff and self._execution_mode == "async":
@@ -525,9 +537,15 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             self._claim_execution_mode("sync")
         if self._sync_client is None:
             self._sync_client = self.sync()
-        return self._sync_client._run(coro_factory())
+        try:
+            return self._sync_client._run(coro_factory())
+        finally:
+            if stop_loop:
+                self._sync_client._stop_loop()
 
-    def _dispatch(self, coro_factory: Callable[[], Any]) -> Any:
+    def _dispatch(
+        self, coro_factory: Callable[[], Any], *, stop_loop: bool = False
+    ) -> Any:
         """Return an awaitable in async code and a concrete result in sync code."""
         try:
             running_loop = asyncio.get_running_loop()
@@ -538,15 +556,17 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             sync_loop = (
                 self._sync_client._loop if self._sync_client is not None else None
             )
-            if running_loop is sync_loop:
+            if running_loop is not None and running_loop is sync_loop:
                 return coro_factory()
-            return self._run_sync(coro_factory)
+            return self._run_sync(coro_factory, stop_loop=stop_loop)
         if running_loop is not None:
             if self._execution_mode == "async":
                 return coro_factory()
             return _AutoAsyncResult(self, coro_factory)
 
-        return self._run_sync(coro_factory, allow_async_handoff=True)
+        return self._run_sync(
+            coro_factory, allow_async_handoff=True, stop_loop=stop_loop
+        )
 
     def connect(self) -> Any:
         return self._dispatch(self._connect_async)
@@ -653,6 +673,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             # leave a stale socket cached for a later operation.
             self._ws = None
             self._ws_loop = None
+            self._episode_ws = None
             same_loop = ws_loop is asyncio.get_running_loop()
             if same_loop:
                 # Keep ownership of the handshake if this caller is cancelled.
@@ -996,8 +1017,12 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             "type": "reset",
             "data": kwargs,
         }
+        # A reset may reconnect: it starts a new episode on whatever session it lands on.
+        self._episode_ws = None
         response = await self._send_and_receive(message)
-        return self._parse_result(response.get("data", {}))
+        result = self._parse_result(response.get("data", {}))
+        self._episode_ws = None if result.done else self._ws
+        return result
 
     def step(self, action: ActT, **kwargs: Any) -> Any:
         return self._dispatch(lambda: self._step_async(action, **kwargs))
@@ -1019,8 +1044,12 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             "type": "step",
             "data": self._step_payload(action),
         }
+        self._raise_if_session_lost()
         response = await self._send_and_receive(message)
-        return self._parse_result(response.get("data", {}))
+        result = self._parse_result(response.get("data", {}))
+        if result.done:
+            self._episode_ws = None
+        return result
 
     def state(self) -> Any:
         return self._dispatch(self._state_async)
@@ -1033,11 +1062,33 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             State object with environment state information
         """
         message = {"type": "state"}
+        self._raise_if_session_lost()
         response = await self._send_and_receive(message)
         return self._parse_state(response.get("data", {}))
 
+    def _raise_if_session_lost(self) -> None:
+        """Raise `SessionLostError` if the socket that carried the episode is gone.
+
+        `_connect_async()` would replace it with a new socket, which the server
+        treats as a new session, and the call would run on an environment this
+        client never reset. It keeps raising until `reset()`, so a retried call
+        does not land on the new session either.
+        """
+        ws = self._episode_ws
+        if ws is None:
+            return
+        if (
+            self._ws is not ws
+            or ws.state in (State.CLOSING, State.CLOSED)
+            or self._ws_loop is not asyncio.get_running_loop()
+        ):
+            raise SessionLostError(
+                f"Lost the connection to {self._ws_url} in the middle of an episode. "
+                "Call reset() to start a new one."
+            )
+
     def close(self) -> Any:
-        return self._dispatch(self._close_async)
+        return self._dispatch(self._close_async, stop_loop=True)
 
     async def _close_child_clients(self) -> asyncio.CancelledError | None:
         """Close every captured child while deferring caller cancellation."""
@@ -1164,7 +1215,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit sync context manager, closing connection."""
-        self._run_sync(self._close_async)
+        self._run_sync(self._close_async, stop_loop=True)
 
     def sync(self) -> "SyncEnvClient":
         """

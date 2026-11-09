@@ -45,7 +45,13 @@ def test_gradio_drains_both_pipes_and_stops_only_its_child(monkeypatch, tmp_path
         sys.modules, "gradio.networking", SimpleNamespace(setup_tunnel=setup_tunnel)
     )
     monkeypatch.setitem(
-        sys.modules, "gradio.tunneling", SimpleNamespace(CURRENT_TUNNELS=tunnels)
+        sys.modules,
+        "gradio.tunneling",
+        SimpleNamespace(
+            CURRENT_TUNNELS=tunnels,
+            BINARY_PATH=str(tmp_path / "frpc"),
+            Tunnel=SimpleNamespace(download_binary=lambda: None),
+        ),
     )
     forwarder = GradioForwarder()
     try:
