@@ -3,6 +3,8 @@
 import importlib.util
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +16,159 @@ SPEC = importlib.util.spec_from_file_location(
 )
 bootstrap = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(bootstrap)
+
+
+class TrainingCommandTests(unittest.TestCase):
+    """Execute the generated shell with offline pip, download, and uv shims."""
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.log = self.root / "events.jsonl"
+        self.source = self.root / "train.py"
+        self.lock = self.root / "training.txt"
+        self.repo = "owner/private-artifacts"
+        self.revision = "6fbf387237893da0580bd2dac0739a741e188120"
+        self.command = bootstrap.training_command(self.repo, self.revision)
+        self.assertEqual(self.command[:2], ["/bin/sh", "-lc"])
+        # Skip host login profiles, which can replace the fixture-only PATH.
+        self.command[1] = "-c"
+        # Change only the two output paths, including their uv arguments.
+        self.command[2] = self.command[2].replace("/tmp/train.py", str(self.source))
+        self.command[2] = self.command[2].replace("/tmp/training.txt", str(self.lock))
+        self.env = {
+            "PATH": str(self.bin),
+            "PYTHONPATH": str(self.root),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "HF_TOKEN": "offline-token",
+            "EVENT_LOG": str(self.log),
+            "PIP_EXIT": "0",
+            "FAIL_DOWNLOAD": "0",
+        }
+        self.pip = [
+            "pip",
+            ["-m", "pip", "install", "--disable-pip-version-check", "uv==0.9.9"],
+        ]
+        self.downloads = [
+            [
+                "download",
+                f"https://huggingface.co/datasets/{self.repo}/resolve/{self.revision}/{src}",
+                {"Authorization": "Bearer offline-token"},
+                60,
+            ]
+            for src in ["scripts/train.py", "locks/training-python311.txt"]
+        ]
+        shims = {
+            "python": """import json, os, sys
+if sys.argv[1:3] == ['-m', 'pip']:
+    with open(os.environ['EVENT_LOG'], 'a') as log:
+        log.write(json.dumps(['pip', sys.argv[1:]]) + '\\n')
+    sys.exit(int(os.environ['PIP_EXIT']))
+assert sys.argv[1:] == ['-'], sys.argv
+os.execv(sys.executable, [sys.executable, '-S', '-'])
+""",
+            "uv": """import json, os, sys
+with open(os.environ['EVENT_LOG'], 'a') as log:
+    log.write(json.dumps(['uv', sys.argv[1:]]) + '\\n')
+""",
+        }
+        for name, script in shims.items():
+            executable = self.bin / name
+            executable.write_text(f"#!{sys.executable} -S\n" + script)
+            executable.chmod(0o700)
+        urllib = self.root / "urllib"
+        urllib.mkdir()
+        (urllib / "__init__.py").write_text(
+            "import sysconfig\n__path__.append(sysconfig.get_path('stdlib') + '/urllib')\n"
+        )
+        (urllib / "request.py").write_text(
+            """import io, json, os
+calls = 0
+class Request:
+    def __init__(self, url, headers):
+        self.url, self.headers = url, headers
+def urlopen(request, timeout):
+    global calls
+    calls += 1
+    with open(os.environ['EVENT_LOG'], 'a') as log:
+        log.write(json.dumps(['download', request.url, request.headers, timeout]) + '\\n')
+    if calls == int(os.environ['FAIL_DOWNLOAD']):
+        raise OSError('offline download failure')
+    return io.BytesIO(('pinned:' + request.url).encode())
+"""
+        )
+        # Refuse to execute the script unless both tools resolve to inert shims.
+        probe = subprocess.run(
+            self.command[:2] + ["command -v python; command -v uv"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        self.assertEqual(
+            probe.stdout.splitlines(),
+            [str(self.bin / "python"), str(self.bin / "uv")],
+        )
+
+    def run_command(self):
+        result = subprocess.run(
+            self.command,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        events = [json.loads(line) for line in self.log.read_text().splitlines()]
+        return result, events
+
+    def assert_failure_stops_training(self, *, pip_exit=0, download_failure=0):
+        self.env.update(PIP_EXIT=str(pip_exit), FAIL_DOWNLOAD=str(download_failure))
+        for contents in [None, "stale complete file", "partial"]:
+            with self.subTest(existing_files=contents):
+                self.log.unlink(missing_ok=True)
+                for path in [self.source, self.lock]:
+                    if contents is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        path.write_text(contents)
+                result, events = self.run_command()
+                self.assertEqual(events, [self.pip] + self.downloads[:download_failure])
+                self.assertEqual(result.returncode, pip_exit or 1, result.stderr)
+
+    def test_pip_failure_prevents_download_and_training(self):
+        self.assert_failure_stops_training(pip_exit=23)
+
+    def test_first_download_failure_prevents_training(self):
+        self.assert_failure_stops_training(download_failure=1)
+
+    def test_second_download_failure_prevents_training(self):
+        self.assert_failure_stops_training(download_failure=2)
+
+    def test_success_downloads_exact_revision_and_preserves_uv_arguments(self):
+        result, events = self.run_command()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            events,
+            [self.pip]
+            + self.downloads
+            + [
+                [
+                    "uv",
+                    [
+                        "run",
+                        "--python",
+                        "/usr/local/bin/python",
+                        "--with-requirements",
+                        str(self.lock),
+                        str(self.source),
+                    ],
+                ]
+            ],
+        )
+        for path, download in zip([self.source, self.lock], self.downloads):
+            self.assertEqual(path.read_bytes(), ("pinned:" + download[1]).encode())
 
 
 class BootstrapLifetimeTests(unittest.TestCase):

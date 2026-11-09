@@ -90,7 +90,8 @@ for src,dst in [('scripts/train.py','/tmp/train.py'),('locks/training-python311.
     return [
         "/bin/sh",
         "-lc",
-        "python -m pip install --disable-pip-version-check uv==0.9.9 && "
+        "set -e\n"
+        "python -m pip install --disable-pip-version-check uv==0.9.9\n"
         "python - <<'PY'\n" + download + "PY\n"
         "uv run --python /usr/local/bin/python --with-requirements /tmp/training.txt /tmp/train.py",
     ]
