@@ -16,6 +16,7 @@ def collect(
     monkeypatch,
     *,
     snapshot=None,
+    snapshot_raw=None,
     leaked_response=None,
     leak_operation="reset",
     escaped=False,
@@ -54,6 +55,8 @@ def collect(
                     "data": {"schema_version": 1, "capability": CAPABILITY},
                 }
             elif operation == "validation_read":
+                if snapshot_raw is not None:
+                    return '{"type":"validation","data":' + snapshot_raw + "}"
                 response = {
                     "type": "validation",
                     "data": snapshot or {"schema_version": 1},
@@ -261,3 +264,48 @@ def test_malformed_wire_cannot_retain_escaped_credentials(
         [] if operation == "reset" else ["reset", "state"]
     )
     assert result.failure_reason == f"{operation} failed (JSONDecodeError)"
+
+
+@pytest.mark.parametrize("surface", ["wire", "telemetry"])
+@pytest.mark.parametrize("credential", [None, TOKEN, CAPABILITY])
+def test_deep_json_retains_credential_checks_without_recursion(
+    monkeypatch, surface, credential
+):
+    value = credential or "public"
+    for _ in range(500):
+        value = [value]
+    result = collect(
+        monkeypatch,
+        **(
+            {"snapshot": {"deep": value}}
+            if surface == "telemetry"
+            else {"leaked_response": value}
+        ),
+    )
+    if credential:
+        assert credential not in repr(result)
+        if surface == "telemetry":
+            assert result.telemetry_json is None
+            assert result.telemetry_error == "session telemetry failed (ValueError)"
+            assert result.failure_reason is None
+        else:
+            assert result.exchanges == ()
+            assert result.failure_reason == "reset failed (ValueError)"
+    else:
+        assert result.failure_reason is None
+        assert result.telemetry_error is None
+        assert result.telemetry_json is not None
+        assert len(result.exchanges) == 4
+
+
+@pytest.mark.parametrize("number", ["1.00000000000000001", "1e-999"])
+def test_telemetry_collection_preserves_exact_json_numbers(monkeypatch, number):
+    from decimal import Decimal
+
+    from openenv.validation.runtime.json_values import loads
+
+    result = collect(
+        monkeypatch, snapshot_raw='{"schema_version":1,"value":' + number + "}"
+    )
+    assert result.telemetry_error is None
+    assert loads(result.telemetry_json)["value"] == Decimal(number)
