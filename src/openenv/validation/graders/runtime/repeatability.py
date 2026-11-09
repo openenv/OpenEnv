@@ -340,41 +340,61 @@ class EpisodeDeterminismGrader(_RuntimeGrader):
             bound = subject.manifest.reward.variance_tolerance
             if type(bound) not in (int, float) or not math.isfinite(bound) or bound < 0:
                 return CheckStatus.FAIL, ["invalid declared variance bound"], measured
-            # A short exponent token must not allocate an unbounded rational.
-            if any(
-                len(value.as_tuple().digits) + abs(value.as_tuple().exponent)
-                > MAX_JUDGED_NUMBER_DIGITS
-                for sample in rewards
-                for value in sample
-                if value is not None
-            ):
+            variances, unsupported = [], []
+            for index, values in enumerate(zip(*rewards)):
+                if values[0] is None:
+                    variance = None
+                # A short exponent token must not allocate an unbounded rational.
+                elif any(
+                    len(value.as_tuple().digits) + abs(value.as_tuple().exponent)
+                    > MAX_JUDGED_NUMBER_DIGITS
+                    for value in values
+                ):
+                    unsupported.append(index)
+                    variance = None
+                else:
+                    # Rational variance avoids float and Decimal-context rounding.
+                    variance = statistics.pvariance(map(Fraction, values))
+                variances.append(variance)
+            failure = next(
+                (
+                    index
+                    for index, variance in enumerate(variances)
+                    if variance is not None and variance > Decimal(str(bound))
+                ),
+                None,
+            )
+            if unsupported and failure is None:
                 return (
                     CheckStatus.SKIP,
                     ["judged reward precision exceeds supported arithmetic bounds"],
                     measured,
                 )
-            variances = [
-                # Rational variance avoids float and Decimal-context rounding.
-                None
-                if values[0] is None
-                else statistics.pvariance(map(Fraction, values))
-                for values in zip(*rewards)
-            ]
+            display = []
+            unavailable = {
+                str(index): "exceeds supported arithmetic bounds"
+                for index in unsupported
+            }
+            for index, variance in enumerate(variances):
+                try:
+                    display.append(None if variance is None else float(variance))
+                except OverflowError:
+                    display.append(None)
+                    unavailable[str(index)] = "exceeds finite float display range"
             measured.update(
-                reward_population_variance=[
-                    None if value is None else float(value) for value in variances
-                ],
+                reward_population_variance=display,
                 variance_units="reward_squared",
             )
-            for index, variance in enumerate(variances):
-                if variance is not None and variance > Decimal(str(bound)):
-                    return (
-                        CheckStatus.FAIL,
-                        [
-                            f"step {index}: reward population variance exceeds declared bound"
-                        ],
-                        measured,
-                    )
+            if unavailable:
+                measured["reward_population_variance_unavailable"] = unavailable
+            if failure is not None:
+                return (
+                    CheckStatus.FAIL,
+                    [
+                        f"step {failure}: reward population variance exceeds declared bound"
+                    ],
+                    measured,
+                )
             if not any(variance is not None for variance in variances):
                 return (
                     CheckStatus.SKIP,
