@@ -375,14 +375,17 @@ class CodingToolsEnvironment(MCPEnvironment):
     def _run_verify_commands(self) -> dict[str, Any]:
         if not self._sandbox:
             return {"passed": 0, "total": 0, "reward": None}
-        self._sandbox.run_shell("mkdir -p /home/user/logs/verifier")
+        # Verification runs as separate sandbox processes, not in the
+        # code-interpreter kernel, so nothing done to the kernel changes how
+        # verify commands run or what they report.
+        self._sandbox.run_command("mkdir -p /home/user/logs/verifier")
         # The override is documented as verify-written, so drop anything the
         # policy wrote there during the episode before verification starts.
-        cleared = self._sandbox.run_shell(_CLEAR_REWARD_FILE).ok
+        cleared = self._sandbox.run_command(_CLEAR_REWARD_FILE).ok
         self._state.verify_results = []
         passed = 0
         for command in self._state.verify_commands:
-            result = self._sandbox.run_shell(command, timeout_s=120)
+            result = self._sandbox.run_command(command, timeout_s=120)
             record = CommandResult(
                 tool="verify",
                 ok=result.ok,
@@ -416,9 +419,7 @@ def _read_reward_override(
 ) -> tuple[float | None, str | None]:
     if not cleared:
         return None, "reward file could not be removed before verification"
-    result = sandbox.read_file(REWARD_FILE)
-    if not result.ok:
-        return None, None
+    result = sandbox.run_command(f"cat {REWARD_FILE} 2>/dev/null || true")
     return _parse_reward_override(result.output or "")
 
 
