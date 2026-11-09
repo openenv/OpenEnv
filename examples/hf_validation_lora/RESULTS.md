@@ -43,10 +43,12 @@ completed in 576 seconds, excluding image/package setup. Inputs:
 
 The 128-completion training-only pilot passed the frozen thresholds with three
 contrasting groups and 35.9375% valid expressions. Training ran 20 optimizer
-steps. **Four** had positive finite gradients, reward contrast, advancing
-optimizer counters and changed weights. Zero-contrast steps are excluded from
+steps. Worker telemetry reports **four** with positive finite gradients, reward
+contrast, advancing optimizer counters and changed weights. Zero-contrast steps are excluded from
 that count, including changes caused by optimizer momentum. No AMP step was
-skipped in this successful run.
+reported skipped in this successful run. These per-step state observations were
+not independently replayed; final adapter changes alone cannot establish the
+per-step count.
 
 | Held-out metric | Base | Reloaded LoRA |
 |---|---:|---:|

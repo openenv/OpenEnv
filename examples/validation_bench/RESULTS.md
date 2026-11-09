@@ -45,9 +45,12 @@ outside the injected-fault statistics; future reward contamination was not shown
 Limits: the execution repeats reuse one task and fixed actions per environment.
 They are descriptive, not independent-task sensitivity estimates. The experiment
 constructs startup status from collection and does not exercise provider startup.
-Its hangs establish response withholding and step timeout, not process-kill
-enforcement; the measured artifacts did not freeze the exact numeric effective
-timeout. Two harness provenance fixes apply only to future runs. Trace equality
+Its historical wrapper delayed the response for 30 seconds, and collection timed
+out before receiving it. This establishes withholding within the observed
+deadline, not permanent withholding or process-kill enforcement; the measured
+artifacts did not freeze the exact numeric effective timeout. The current wrapper
+drops the matching response. Two harness provenance fixes apply only to future
+runs. Trace equality
 does not establish that all hidden environment state resets correctly.
 
 ## 2. Incomplete evidence and reconstruction

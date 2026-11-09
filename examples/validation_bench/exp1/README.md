@@ -40,6 +40,9 @@ state assignment: ScottWuMath retains `submitted`, PortSim retains `checks_used`
 Original snapshots remain unchanged; each mutant's diff and hashes are saved.
 The witness records upstream responses before mutation. Activation assertions
 inspect those records and raw collector traces without reading grader results.
+The current wrapper drops the matching completed-step response. The recorded
+2026-11-09 wrapper delayed it for 30 seconds; its observed timeouts and missing
+effective-timeout provenance remain historical limitations.
 
 PortSim's original reset advertises `CallToolObservation` but returns generic
 `Observation`, so the unmodified source already fails its reset schema check.

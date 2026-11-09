@@ -42,6 +42,9 @@ state. An abruptly killed controller cannot run its finalizer: use the IDs in
 `hf-experiment/state.json` and `hf jobs inspect` / `hf jobs cancel` to reconcile
 that run. The environment server receives no HF token. The trusted training
 worker receives the credential needed for its private outputs and Sandbox exec.
+The Sandbox's 20-minute idle watchdog excludes its registered running server,
+so a GPU queue does not make that healthy process idle. If the controller is
+lost, the pinned SDK's 24-hour Sandbox Job limit is the final backstop.
 
 ## Fixed inputs and measured scope
 
