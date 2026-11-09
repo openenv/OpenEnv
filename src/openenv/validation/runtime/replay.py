@@ -7,7 +7,11 @@ import uuid
 from dataclasses import replace
 
 from ..types import ProviderCapability
-from .collector import collect_runtime_evidence, RuntimeCollectionInterrupted
+from .collector import (
+    collect_runtime_evidence,
+    RuntimeCollectionInterrupted,
+    RuntimeCollectionUnsupported,
+)
 from .contracts import ReplayEvidence, RuntimeEvidence
 
 REPLAY_BUDGET_SECONDS = 300.0
@@ -112,7 +116,7 @@ def collect_replays(
             sample = collect(
                 running, reset_plan, spec.env_vars.get("OPENENV_VALIDATION_TOKEN")
             )
-        except RuntimeCollectionInterrupted as exc:
+        except (RuntimeCollectionInterrupted, RuntimeCollectionUnsupported) as exc:
             retain(scope, exc.evidence)
             raise
         if not retain(scope, sample):
@@ -183,7 +187,7 @@ def collect_replays(
                 sample = collect(
                     fresh, plan, fresh_spec.env_vars["OPENENV_VALIDATION_TOKEN"]
                 )
-            except RuntimeCollectionInterrupted as exc:
+            except (RuntimeCollectionInterrupted, RuntimeCollectionUnsupported) as exc:
                 sample = exc.evidence
                 raise
             finally:
@@ -226,6 +230,8 @@ def collect_replays(
             replay_failure_reason=failure or f"{phase} interrupted",
         )
         raise RuntimeCollectionInterrupted(interrupted) from None
+    except RuntimeCollectionUnsupported as exc:
+        failure = failure or f"{phase} unsupported ({exc})"
     except Exception as exc:
         failure = failure or f"{phase} failed ({type(exc).__name__})"
     return replace(evidence, replays=tuple(replays), replay_failure_reason=failure)
