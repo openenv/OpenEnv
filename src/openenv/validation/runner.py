@@ -474,6 +474,13 @@ def _runtime(subject, graders, *, skip_build, provider):
         result = _outcome(
             "runtime.startup", CheckStatus.SKIP, str(exc), started=started
         )
+        subject = replace(subject, runtime_evidence=evidence)
+        checks = execute_graders(
+            graders,
+            subject,
+            provider_capabilities=provider.capabilities,
+            prior=[result],
+        )
     except UnsupportedCapability as exc:
         result = _outcome(
             "runtime.startup", CheckStatus.SKIP, str(exc), started=started
@@ -696,8 +703,12 @@ def run_validation(
                 reason = "grader not implemented in this build"
                 if manifest is None:
                     reason = "unmet dependency: valid manifest"
-                elif grader is not None and grader.depends_on:
-                    reason = "unmet dependency: " + ", ".join(grader.depends_on)
+                elif grader is not None:
+                    dependencies = grader.depends_on or (
+                        ("runtime.startup",) if grader.level is Level.RUNTIME else ()
+                    )
+                    if dependencies:
+                        reason = "unmet dependency: " + ", ".join(dependencies)
                 results.append(_outcome(entry.check_id, CheckStatus.SKIP, reason))
         source_problem = None
         if not digest_before:
@@ -714,7 +725,11 @@ def run_validation(
                     else "package source could not be verified after validation"
                 )
         if source_problem is not None:
-            invalidated = {"runtime.startup"}
+            invalidated = {
+                "runtime.startup",
+                "runtime.tool_declaration_accuracy",
+                "runtime.task_declaration_accuracy",
+            }
             for grader in order_graders(list(selected.values())):
                 if invalidated.intersection(grader.depends_on):
                     invalidated.add(grader.check_id)

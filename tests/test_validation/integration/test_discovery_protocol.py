@@ -82,7 +82,7 @@ def test_real_tools_share_the_replayed_instance_and_tasks_allow_bounded_listing(
             assert telemetry["trajectory"]["complete"] is True
 
 
-def test_non_mcp_subject_explicitly_rejects_tool_discovery(monkeypatch):
+def test_non_mcp_subject_explicitly_rejects_tool_methods(monkeypatch):
     from test_session_telemetry_protocol import app_for, SessionEnv
 
     class NonMCPEnv(SessionEnv):
@@ -92,17 +92,21 @@ def test_non_mcp_subject_explicitly_rejects_tool_discovery(monkeypatch):
 
     with TestClient(app_for(monkeypatch, NonMCPEnv)) as client:
         with client.websocket_connect("/ws") as ws:
-            ws.send_json(
-                {
-                    "type": "mcp",
-                    "data": {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "tools/list",
-                        "params": {},
-                    },
-                }
-            )
-            reply = ws.receive_json()
-            assert reply["type"] == "mcp"
-            assert reply["data"]["error"]["code"] == -32601
+            for method, params in (
+                ("tools/list", {}),
+                ("tools/call", {"name": "missing", "arguments": {}}),
+            ):
+                ws.send_json(
+                    {
+                        "type": "mcp",
+                        "data": {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": method,
+                            "params": params,
+                        },
+                    }
+                )
+                reply = ws.receive_json()
+                assert reply["type"] == "mcp"
+                assert reply["data"]["error"]["code"] == -32601

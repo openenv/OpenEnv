@@ -507,6 +507,41 @@ def test_initial_unsupported_json_skips_and_keeps_the_received_schema(
     assert metadata["schema_response_parse_failed"] is True
 
 
+@pytest.mark.parametrize("failure", ["episode", "json_limit"])
+def test_declaration_mismatches_survive_primary_collection_failure(
+    discovery_package, monkeypatch, baseline_only, failure
+):
+    tasks = json.loads(discovery_episode().tasks_json)
+    tasks["counts"]["train"] = 99
+    prefix = replace(
+        discovery_episode(),
+        tools_json='{"tools":[{"name":"undeclared"}]}',
+        tasks_json=json.dumps(tasks),
+        failure_phase="step",
+        failure_reason="step failed (ValueError)",
+    )
+
+    def collect(*args, **kwargs):
+        if failure == "json_limit":
+            raise RuntimeCollectionUnsupported(prefix, capability="json_numeric_range")
+        return prefix
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=FakeRuntimeProvider(),
+    )
+    results = {result.check_id: result for result in report.results}
+
+    assert results["runtime.startup"].status is (
+        CheckStatus.FAIL if failure == "episode" else CheckStatus.SKIP
+    )
+    assert results["runtime.tool_declaration_accuracy"].status is CheckStatus.FAIL
+    assert results["runtime.task_declaration_accuracy"].status is CheckStatus.FAIL
+    assert report.verdict.value == "fail"
+
+
 @pytest.mark.parametrize("unsupported_call", [2, 3], ids=["sequential", "fresh"])
 @pytest.mark.parametrize("capability", ["json_depth", "json_numeric_range"])
 @pytest.mark.parametrize("fault", [None, "reward", "observation", "state", "oracle"])
