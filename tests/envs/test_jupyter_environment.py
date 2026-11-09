@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 from jupyter_env.models import JupyterState
+from jupyter_env.server import submission
 from jupyter_env.server.e2b_sandbox import CellResult, E2BSandbox
 from jupyter_env.server.jupyter_environment import JupyterEnvironment
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
@@ -957,3 +958,31 @@ def test_setup_failing_in_the_verifier_sandbox_is_not_a_reward(monkeypatch, tmp_
     assert "setup failed in the verifier sandbox" in obs.error.message
     assert env.state.verify_results == []
     assert env.state.last_reward is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".bash_profile",
+        ".bash_login",
+        ".profile",
+        ".bashrc",
+        "sitecustomize.py",
+        "answer.pth",
+        "conftest.py",
+        "pytest.ini",
+        ".pytest.ini",
+        "pytest.toml",
+        ".pytest.toml",
+        "pyproject.toml",
+        "setup.cfg",
+        "tox.ini",
+    ],
+)
+def test_a_file_read_before_the_first_assertion_stays_behind(name):
+    """@zuraiz-anjum measured the pytest half of this list on #1579: each of
+    those files can carry `addopts = --co`, which collects without running and
+    reports success."""
+    assert submission.excluded_file(f"work/{name}")
+    # Naming one exactly is the task author's decision, so it is still allowed.
+    assert submission.check_declared_path(f"work/{name}") is None

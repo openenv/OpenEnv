@@ -143,9 +143,13 @@ workspace with `..`, a symlink, a socket, a fifo, a device, or a submission over
 200 files or 10 MiB is refused, and the reason is recorded in
 `state.submission_refused`. Files that a shell or a test runner reads before the
 first assertion are left behind even when a declared directory contains them:
-`.bash_profile`, `.bashrc`, `.profile`, `sitecustomize.py`, `*.pth`,
-`conftest.py`, `pytest.ini`, `tox.ini` and `pyproject.toml`. Declaring one of
-those exactly still submits it, since naming it is the task author's decision.
+the login files a shell reads (`.bash_profile`, `.bash_login`, `.profile`,
+`.bashrc`), what Python runs before an import (`sitecustomize.py`, `*.pth`,
+`conftest.py`), and every file pytest takes options from (`pytest.ini`,
+`.pytest.ini`, `pytest.toml`, `.pytest.toml`, `pyproject.toml`, `setup.cfg`,
+`tox.ini`), since any of them can carry `addopts = --co` and report success
+without running a test. Declaring one of those exactly still submits it, since
+naming it is the task author's decision.
 
 Because the submission is no longer in the workspace, a task that opts in writes
 its verify commands against `/submission`. The task's own test files keep coming

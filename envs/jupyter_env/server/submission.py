@@ -18,14 +18,23 @@ WORKSPACE = "/home/user"
 # import-time hooks, and a test runner's configuration and fixtures.
 EXCLUDED_NAMES = frozenset(
     {
+        # A login shell reads the first of these that it can.
         ".bash_profile",
-        ".bashrc",
+        ".bash_login",
         ".profile",
+        ".bashrc",
+        # Python runs these on the way to importing anything.
         "sitecustomize.py",
         "conftest.py",
+        # Every one of these can carry `addopts = --co`, which collects the
+        # tests without running them and reports success.
         "pytest.ini",
-        "tox.ini",
+        ".pytest.ini",
+        "pytest.toml",
+        ".pytest.toml",
         "pyproject.toml",
+        "setup.cfg",
+        "tox.ini",
     }
 )
 
