@@ -125,6 +125,174 @@ def test_json_beyond_decimal_range_is_unproven():
     assert result.status is CheckStatus.SKIP
 
 
+UNSUPPORTED_JSON = [
+    pytest.param('{"data":1e9999999999999999999}', id="numeric_range"),
+    pytest.param('{"data":' + "[" * 10_000 + "0" + "]" * 10_000 + "}", id="depth"),
+    pytest.param('{"data":' + "7" * 5_000 + "}", id="integer_digits"),
+]
+
+
+def with_response(rows, index, raw):
+    rows = list(rows)
+    rows[index] = replace(rows[index], response_json=raw)
+    return rows
+
+
+@pytest.mark.parametrize("raw", UNSUPPORTED_JSON)
+@pytest.mark.parametrize("session", ["reference", "first", "after_reset", "fresh"])
+@pytest.mark.parametrize("failed_prefix", [False, True])
+def test_supported_reset_leak_survives_later_unsupported_json(
+    raw, session, failed_prefix
+):
+    traces = {
+        name: episode() for name in ("reference", "first", "after_reset", "fresh")
+    }
+    traces["after_reset"] = with_response(
+        traces["after_reset"], 0, '{"type":"observation","data":{"c":1}}'
+    )
+    traces[session] = with_response(traces[session], 4, raw)
+    subject = isolation_subject(
+        reference=traces["reference"],
+        sequential=traces["first"] + traces["after_reset"],
+        fresh=traces["fresh"],
+    )
+    if failed_prefix:
+        subject.isolation_evidence = replace(
+            subject.isolation_evidence,
+            sequential=replace(
+                subject.isolation_evidence.sequential,
+                exchanges=subject.isolation_evidence.sequential.exchanges[:-1],
+                failure_reason="state failed (TimeoutError)",
+            ),
+        )
+    result = grade_isolation(subject)
+    assert result.status is CheckStatus.FAIL, result.evidence
+    assert "exchange 0 (reset)" in result.evidence[0]
+
+
+@pytest.mark.parametrize("raw", UNSUPPORTED_JSON)
+def test_supported_reset_leak_survives_a_later_unsupported_fresh_prefix(raw):
+    subject = isolation_subject(
+        sequential=episode() + with_response(episode(), 0, '{"data":"sticky"}')
+    )
+    subject.isolation_evidence = replace(
+        subject.isolation_evidence,
+        fresh=replace(
+            evidence(*with_response(episode()[:5], 4, raw)),
+            failure_phase="step",
+            failure_reason="step JSON exceeds validator support",
+        ),
+    )
+    result = grade_isolation(subject)
+    assert result.status is CheckStatus.FAIL, result.evidence
+    assert "exchange 0 (reset)" in result.evidence[0]
+
+
+def test_supported_transport_failed_fresh_prefix_remains_unproven():
+    subject = isolation_subject(
+        sequential=episode() + with_response(episode(), 0, '{"data":"sticky"}')
+    )
+    subject.isolation_evidence = replace(
+        subject.isolation_evidence,
+        fresh=replace(
+            evidence(*episode()[:5]), failure_reason="state failed (TimeoutError)"
+        ),
+    )
+    result = grade_isolation(subject)
+    assert result.status is CheckStatus.SKIP, result.evidence
+    assert "the fresh reference episode failed" in result.evidence[0]
+
+
+@pytest.mark.parametrize("raw", UNSUPPORTED_JSON)
+@pytest.mark.parametrize("encoding", ["identical", "whitespace", "escaped_key"])
+def test_unsupported_json_is_neither_equality_nor_a_leak(raw, encoding):
+    after = raw
+    if encoding == "whitespace":
+        after = raw.replace(":", ": ")
+    elif encoding == "escaped_key":
+        after = raw.replace('"data"', '"\\u0064ata"')
+    result = grade_isolation(first_step_subject(after, raw))
+    assert result.status is CheckStatus.SKIP, result.evidence
+
+
+@pytest.mark.parametrize("raw", UNSUPPORTED_JSON)
+@pytest.mark.parametrize("session", ["reference", "first", "after_reset", "fresh"])
+def test_unsupported_value_at_the_only_differing_position_cannot_prove_a_leak(
+    raw, session
+):
+    traces = {
+        name: episode() for name in ("reference", "first", "after_reset", "fresh")
+    }
+    traces["after_reset"] = with_response(traces["after_reset"], 2, '{"data":1}')
+    traces[session] = with_response(traces[session], 2, raw)
+    result = grade_isolation(
+        isolation_subject(
+            reference=traces["reference"],
+            sequential=traces["first"] + traces["after_reset"],
+            fresh=traces["fresh"],
+        )
+    )
+    assert result.status is CheckStatus.SKIP, result.evidence
+
+
+@pytest.mark.parametrize("raw", UNSUPPORTED_JSON)
+@pytest.mark.parametrize("drift_at", [0, 2])
+def test_supported_fresh_instability_still_vetoes_leak_with_unknown_elsewhere(
+    raw, drift_at
+):
+    subject = isolation_subject(
+        sequential=episode() + with_response(episode(), 0, '{"data":"sticky"}'),
+        fresh=with_response(
+            with_response(episode(), drift_at, '{"data":"fresh drift"}'), 4, raw
+        ),
+    )
+    result = grade_isolation(subject)
+    assert result.status is CheckStatus.SKIP, result.evidence
+    assert "two fresh episodes differ" in result.evidence[0]
+
+
+@pytest.mark.parametrize("raw", UNSUPPORTED_JSON)
+def test_unknown_json_does_not_turn_missing_trace_coverage_into_a_leak(raw):
+    short = with_response(episode()[:-1], 4, raw)
+    result = grade_isolation(isolation_subject(sequential=episode() + short))
+    assert result.status is CheckStatus.SKIP, result.evidence
+
+
+def test_supported_complete_trace_length_divergence_still_fails():
+    result = grade_isolation(isolation_subject(sequential=episode() + episode()[:-1]))
+    assert result.status is CheckStatus.FAIL, result.evidence
+    assert "trace length" in result.evidence[0]
+
+
+@pytest.mark.parametrize("raw", UNSUPPORTED_JSON)
+def test_known_fresh_input_drift_is_not_hidden_by_an_unknown_response(raw):
+    fresh = with_response(episode(), 4, raw)
+    fresh[4] = replace(fresh[4], request_json='{"type":"step","data":{"different":1}}')
+    result = grade_isolation(
+        isolation_subject(
+            sequential=episode() + with_response(episode(), 0, '{"data":"sticky"}'),
+            fresh=fresh,
+        )
+    )
+    assert result.status is CheckStatus.SKIP, result.evidence
+    assert "two fresh episodes differ at exchange 4 (step)" in result.evidence[0]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param('{"type":"step","data":{"different":1}}', id="changed_input"),
+        *UNSUPPORTED_JSON,
+    ],
+)
+@pytest.mark.parametrize("changed_input_at", [0, 2])
+def test_leak_needs_supported_equal_input_prefix(raw, changed_input_at):
+    after = with_response(episode(), 2, '{"data":"different"}')
+    after[changed_input_at] = replace(after[changed_input_at], request_json=raw)
+    result = grade_isolation(isolation_subject(sequential=episode() + after))
+    assert result.status is CheckStatus.SKIP, result.evidence
+
+
 @pytest.mark.parametrize(
     "after_reset",
     [
