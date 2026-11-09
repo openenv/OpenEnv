@@ -18,6 +18,14 @@ _TOKEN = re.compile(
 _MAX_ARTIFACT_DEPTH = 64
 
 
+def _unique_object(pairs):
+    # A dict cannot retain earlier duplicate values for redaction or replay.
+    value = dict(pairs)
+    if len(value) != len(pairs):
+        raise ValueError("duplicate JSON object members")
+    return value
+
+
 def _redact(value, *, depth=0):
     if depth >= _MAX_ARTIFACT_DEPTH and isinstance(value, (dict, list)):
         return {"omitted": "artifact nesting limit exceeded"}
@@ -49,7 +57,7 @@ def _recording(evidence, trace_file):
             row = asdict(exchange)
             for key in ("request_json", "response_json"):
                 try:
-                    row[key] = loads(row[key])
+                    row[key] = loads(row[key], object_pairs_hook=_unique_object)
                 except (ValueError, ArithmeticError, RecursionError):
                     row[key] = "[malformed or unsupported response omitted]"
                     omitted_fields.append({"exchange_index": index, "field": key})
@@ -58,21 +66,28 @@ def _recording(evidence, trace_file):
         schema_parse_failed = False
         if evidence.observation_schema_json is not None:
             try:
-                schema = loads(evidence.observation_schema_json)
+                schema = loads(
+                    evidence.observation_schema_json, object_pairs_hook=_unique_object
+                )
             except (ValueError, ArithmeticError, RecursionError):
                 schema_parse_failed = True
         reset_schema = None
         reset_schema_parse_failed = False
         if evidence.reset_observation_schema_json is not None:
             try:
-                reset_schema = loads(evidence.reset_observation_schema_json)
+                reset_schema = loads(
+                    evidence.reset_observation_schema_json,
+                    object_pairs_hook=_unique_object,
+                )
             except (ValueError, ArithmeticError, RecursionError):
                 reset_schema_parse_failed = True
         schema_response = None
         schema_response_parse_failed = False
         if evidence.schema_response_json is not None:
             try:
-                schema_response = loads(evidence.schema_response_json)
+                schema_response = loads(
+                    evidence.schema_response_json, object_pairs_hook=_unique_object
+                )
             except (ValueError, ArithmeticError, RecursionError):
                 schema_response_parse_failed = True
         collector_metadata = {
@@ -109,7 +124,7 @@ def _http_body(body):
     text = body.decode("utf-8", errors="replace")
     omitted = False
     try:
-        value = loads(text.lstrip("\ufeff"))
+        value = loads(text.lstrip("\ufeff"), object_pairs_hook=_unique_object)
     except (ValueError, ArithmeticError, RecursionError):
         value = text
         # Unparseable JSON loses the key context used by the structured redactor.
