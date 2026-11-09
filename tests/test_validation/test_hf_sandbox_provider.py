@@ -1,5 +1,6 @@
 """The HF Sandbox provider: Space revision pinning, server start and verified cleanup."""
 
+import asyncio
 import hashlib
 import importlib
 import json
@@ -9,6 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import huggingface_hub
 import pytest
@@ -626,6 +628,137 @@ def test_unverified_cleanup_is_an_error(provider, monkeypatch):
     monkeypatch.setattr(hf_sandbox.time, "monotonic", lambda: next(clock))
     with pytest.raises(ProviderError, match="did not stop"):
         running.stop()
+
+
+@pytest.fixture
+def stopping_subject(provider, monkeypatch):
+    hf = provider()
+    hf._api.inspect_job = Mock(wraps=hf._api.inspect_job)
+    sandbox = FakeSandbox()
+    sandbox.kill = Mock(wraps=sandbox.kill)
+    running = hf_sandbox.HFSandboxSubject(sandbox, hf)
+    running._proxy = SimpleNamespace(stop=Mock())
+    clock = SimpleNamespace(now=0)
+
+    def sleep(seconds):
+        clock.now += seconds
+
+    monkeypatch.setattr(
+        hf_sandbox,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock.now, sleep=Mock(side_effect=sleep)),
+    )
+    return running
+
+
+@pytest.mark.parametrize("stage", ["COMPLETED", "CANCELED", "ERROR", "DELETED"])
+@pytest.mark.parametrize("has_proxy", [True, False])
+def test_stop_confirms_terminal_job_and_is_idempotent(
+    stopping_subject, stage, has_proxy
+):
+    running = stopping_subject
+    proxy = running._proxy
+    if not has_proxy:
+        running._proxy = None
+    api = running._provider._api
+    api.stages = ["RUNNING", stage]
+
+    assert running.stop() is None
+    assert running._stopped
+    assert running._proxy is None
+    assert proxy.stop.call_count == int(has_proxy)
+    running._sandbox.kill.assert_called_once_with()
+    assert api.inspect_job.call_count == 2
+    api.inspect_job.assert_called_with(job_id="job-1")
+    hf_sandbox.time.sleep.assert_called_once_with(2)
+
+    running.stop()
+    assert proxy.stop.call_count == int(has_proxy)
+    running._sandbox.kill.assert_called_once_with()
+    assert api.inspect_job.call_count == 2
+    with pytest.raises(ProviderError, match="Subject has stopped"):
+        running.exec(["echo", "stopped"], 1)
+
+
+@pytest.mark.parametrize(
+    "error_type", [RuntimeError, KeyboardInterrupt, SystemExit, asyncio.CancelledError]
+)
+def test_stop_confirms_job_despite_proxy_failure_and_retries(
+    stopping_subject, error_type
+):
+    running = stopping_subject
+    proxy = running._proxy
+    proxy_error = error_type("proxy shutdown failed")
+    proxy.stop.side_effect = [proxy_error, None]
+    api = running._provider._api
+
+    with pytest.raises(error_type) as failure:
+        running.stop()
+    assert failure.value is proxy_error
+    running._sandbox.kill.assert_called_once_with()
+    assert api.inspect_job.call_count == 2
+    hf_sandbox.time.sleep.assert_called_once_with(2)
+    assert running._proxy is proxy
+    assert not running._stopped
+
+    running.stop()
+    assert running._stopped
+    assert running._proxy is None
+    assert proxy.stop.call_count == 2
+    assert running._sandbox.kill.call_count == 2
+    assert api.inspect_job.call_count == 3
+    running.stop()
+    assert running._sandbox.kill.call_count == 2
+
+
+@pytest.mark.parametrize("proxy_fails", [False, True])
+@pytest.mark.parametrize("remote_failure", ["kill", "inspection", "timeout"])
+def test_stop_retains_incomplete_cleanup_and_chains_dual_failures(
+    stopping_subject, proxy_fails, remote_failure
+):
+    running = stopping_subject
+    proxy = running._proxy
+    proxy_error = RuntimeError("proxy shutdown failed")
+    if proxy_fails:
+        proxy.stop.side_effect = [proxy_error, None]
+    api = running._provider._api
+    remote_error = RuntimeError("remote teardown failed")
+    if remote_failure == "kill":
+        running._sandbox.kill.side_effect = remote_error
+    elif remote_failure == "inspection":
+        api.inspect_job.side_effect = remote_error
+    else:
+        # kill() can return normally even when cancellation failed.
+        api.stages = ["RUNNING"]
+
+    with pytest.raises(
+        ProviderError if remote_failure == "timeout" else RuntimeError
+    ) as failure:
+        running.stop()
+    if remote_failure == "timeout":
+        assert "job-1 did not stop" in str(failure.value)
+        assert api.inspect_job.call_count == 30
+        assert hf_sandbox.time.monotonic() == 60
+        assert [call.args for call in hf_sandbox.time.sleep.call_args_list] == [
+            (2,)
+        ] * 30
+    else:
+        assert failure.value is remote_error
+        assert api.inspect_job.call_count == int(remote_failure == "inspection")
+    assert failure.value.__context__ is (proxy_error if proxy_fails else None)
+    running._sandbox.kill.assert_called_once_with()
+    assert not running._stopped
+    assert running._sandbox.id == "job-1"
+    assert running._proxy is (proxy if proxy_fails else None)
+
+    running._sandbox.kill.side_effect = None
+    api.inspect_job.side_effect = None
+    api.stages = ["CANCELED"]
+    running.stop()
+    assert running._stopped
+    assert running._proxy is None
+    assert proxy.stop.call_count == (2 if proxy_fails else 1)
+    assert running._sandbox.kill.call_count == 2
 
 
 @pytest.mark.parametrize(

@@ -283,18 +283,21 @@ class HFSandboxSubject:
     def stop(self) -> None:
         if self._stopped:
             return
-        if self._proxy is not None:
-            self._proxy.stop()
-            self._proxy = None
-        self._sandbox.kill()
-        # kill() logs rather than raises on failure, so confirm with the Jobs API.
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            stage = self._provider._api.inspect_job(
-                job_id=self._sandbox.id
-            ).status.stage
-            if stage in _TERMINAL_STAGES:
-                self._stopped = True
-                return
-            time.sleep(2)
-        raise ProviderError(f"HF Sandbox job {self._sandbox.id} did not stop")
+        try:
+            if self._proxy is not None:
+                self._proxy.stop()
+                self._proxy = None
+        finally:
+            self._sandbox.kill()
+            # kill() logs rather than raises on failure, so confirm with the Jobs API.
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                stage = self._provider._api.inspect_job(
+                    job_id=self._sandbox.id
+                ).status.stage
+                if stage in _TERMINAL_STAGES:
+                    break
+                time.sleep(2)
+            else:
+                raise ProviderError(f"HF Sandbox job {self._sandbox.id} did not stop")
+        self._stopped = True
