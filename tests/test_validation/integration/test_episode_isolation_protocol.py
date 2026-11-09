@@ -88,6 +88,7 @@ def served(mode):
                         raw = raw.replace(":", ": ")
                 await connection.send_text(raw)
         except WebSocketDisconnect:
+            # The client closes the connection after collecting each session.
             pass
 
     with socket.socket() as listener:
