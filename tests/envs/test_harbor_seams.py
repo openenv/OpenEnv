@@ -124,7 +124,9 @@ def test_grok_primary_and_auxiliary_models_share_capture_endpoint():
 def custom_agents(monkeypatch):
     """A module of agents to name by import path: one host-side, one opencode subclass, one unknown
     installed agent."""
-    pytest.importorskip("harbor")
+    # Not bare "harbor": without Harbor (Python 3.11), `examples/harbor` imports under that name
+    # once another test puts `examples/` on sys.path.
+    pytest.importorskip("harbor.agents.base")
     from harbor.agents.base import BaseAgent
     from harbor.agents.installed.base import BaseInstalledAgent
     from harbor.agents.installed.opencode import OpenCode
@@ -183,7 +185,7 @@ def test_an_unknown_installed_agent_is_refused_rather_than_guessed(custom_agents
 
 
 def test_a_bad_import_path_says_why():
-    pytest.importorskip("harbor")
+    pytest.importorskip("harbor.agents.base")
     with pytest.raises(KeyError, match="cannot import harness"):
         seams.get("no_such_module_xyz:Agent")
 
