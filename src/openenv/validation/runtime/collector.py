@@ -111,13 +111,15 @@ def collect_runtime_evidence(
             at its reset, so one episode never spends what another saved and the
             collection is bounded by `episodes` single-episode budgets.
         validation_token (`str`, *optional*):
-            Run-scoped telemetry authorization; never retained in evidence.
+            Run-scoped credential to omit from evidence; also authorizes optional
+            telemetry when `request_telemetry` is enabled.
         collect_tools (`bool`, *optional*, defaults to `False`):
             Discover tools on the measured WebSocket before reset.
         collect_tasks (`bool`, *optional*, defaults to `False`):
             Discover the server's environment namespace and sample its task metadata.
         request_telemetry (`bool`, *optional*, defaults to `True`):
-            Whether to request session telemetry when authorization is provided.
+            Request session telemetry with the provided authorization. Disable
+            for scrub-only collection with the ordinary protocol byte limits.
 
     Returns:
         [`~openenv.validation.runtime.contracts.RuntimeEvidence`]: raw evidence.
@@ -169,18 +171,17 @@ def collect_runtime_evidence(
                     if len(payload) + len(chunk) > MAX_MESSAGE_BYTES:
                         raise ValueError("schema exceeds size bound")
                     payload.extend(chunk)
-            schema_response_json = payload.decode("utf-8")
-            try:
-                schema = loads(payload)
-                if validation_token and (
-                    validation_token in schema_response_json
-                    or validation_token in dumps(schema)
-                ):
-                    raise ValueError("schema contains validation credentials")
-            except (ValueError, ArithmeticError, RecursionError):
-                if validation_token:
-                    schema_response_json = None
-                raise
+            raw_schema = payload.decode("utf-8")
+            if not validation_token:
+                schema_response_json = raw_schema
+            # Only retain credential-aware schemas after both scans and parsing
+            # succeed. The raw body can include values lost to duplicate keys.
+            if validation_token and validation_token in raw_schema:
+                raise ValueError("schema contains validation credentials")
+            schema = loads(payload)
+            if validation_token and validation_token in dumps(schema):
+                raise ValueError("schema contains validation credentials")
+            schema_response_json = raw_schema
             if not isinstance(schema, dict) or "observation" not in schema:
                 raise ValueError("missing observation schema")
             schema_payload = dumps(schema["observation"])
