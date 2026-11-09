@@ -335,6 +335,8 @@ def _runtime(subject, graders, *, skip_build, provider):
             ),
             validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
         )
+        # Independent isolation and oracle probes do not spend the replay budget.
+        replay_remaining_s = max(0.0, replay_deadline - time.monotonic())
         # Protocol collection must finish before its dependent contract checks run.
         if evidence.failure_reason:
             result = _outcome(
@@ -393,7 +395,7 @@ def _runtime(subject, graders, *, skip_build, provider):
             plan,
             evidence,
             capabilities=manifest.capabilities,
-            deadline=replay_deadline,
+            deadline=time.monotonic() + replay_remaining_s,
         )
 
         network_json = None

@@ -195,6 +195,237 @@ def test_runtime_collection_caps_declared_episode_timeout_at_total_budget(
     ]
 
 
+@pytest.mark.parametrize(
+    "sequential_s,fresh_s,oracle_s",
+    [(301.0, 0.0, 0.0), (0.0, 301.0, 0.0), (59.0, 0.0, 10.0)],
+    ids=["slow-sequential", "slow-fresh", "oracle-crosses-old-deadline"],
+)
+@pytest.mark.parametrize("outcome", ["healthy", "known-fail", "interrupted"])
+def test_replay_budget_excludes_isolation_and_oracle_but_charges_all_replay_work(
+    package, monkeypatch, tmp_path, sequential_s, fresh_s, oracle_s, outcome
+):
+    path = package / "openenv.yaml"
+    path.write_text(
+        path.read_text().replace("episode_timeout_s: 30.0", "episode_timeout_s: 600.0")
+    )
+    now = [1000.0]
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr("openenv.validation.runner.time", clock)
+    monkeypatch.setattr("openenv.validation.runtime.replay.time", clock)
+    provider = FakeRuntimeProvider(capabilities=frozenset(ProviderCapability))
+    events, timeouts = [], []
+    original = provider.subject
+    fresh = type(original)(base_url="http://fresh")
+    image = "sha256:" + "a" * 64
+
+    def inspect_original():
+        events.append("inspect-original")
+        if len(timeouts) > 1:
+            now[0] += 3.0
+        return {"container_id": "original", "image_id": image}
+
+    def inspect_fresh():
+        events.append("inspect-fresh")
+        now[0] += 2.0
+        return {"container_id": "fresh", "image_id": image}
+
+    def start(spec):
+        provider.launches.append(spec)
+        events.append(
+            "start-original" if len(provider.launches) == 1 else "start-fresh"
+        )
+        if len(provider.launches) == 1:
+            return original
+        now[0] += 4.0
+        return fresh
+
+    def stop(subject, name):
+        events.append(name)
+        subject.stopped = True
+
+    monkeypatch.setattr(provider, "start", start)
+    monkeypatch.setattr(original, "inspect", inspect_original)
+    monkeypatch.setattr(fresh, "inspect", inspect_fresh)
+    monkeypatch.setattr(original, "stop", lambda: stop(original, "stop-original"))
+    monkeypatch.setattr(fresh, "stop", lambda: stop(fresh, "stop-fresh"))
+
+    def collect(base_url, plan, **kwargs):
+        phases = [
+            "primary",
+            "sequential",
+            "fresh-isolation",
+            "session",
+            "seed",
+            "container",
+        ]
+        durations = [240.0, sequential_s, fresh_s, 10.0, 20.0, 5.0]
+        index = len(timeouts)
+        events.append(phases[index])
+        timeouts.append(kwargs["episode_timeout_s"])
+        now[0] += durations[index]
+        assert base_url == (fresh.base_url if index == 5 else original.base_url)
+        sample = measured_episode(seed=plan.reset.seed)
+        if outcome == "known-fail":
+            row = sample.exchanges[0]
+            response = json.loads(row.response_json)
+            response["data"]["reward"] = 2
+            sample = replace(
+                sample,
+                exchanges=(
+                    replace(row, response_json=json.dumps(response)),
+                    *sample.exchanges[1:],
+                ),
+            )
+        if outcome == "interrupted" and index == 5:
+            raise RuntimeCollectionInterrupted(
+                replace(
+                    sample, exchanges=sample.exchanges[:2], failure_reason="interrupted"
+                )
+            )
+        return replace(sample, exchanges=sample.exchanges * kwargs.get("episodes", 1))
+
+    def oracle(*args):
+        events.append("oracle")
+        now[0] += oracle_s
+        return (HttpProbe("/oracle/solve.sh", 404),)
+
+    def measure(name, value):
+        def measured():
+            events.append(name)
+            return value
+
+        return measured
+
+    for name, value in (
+        ("network", network_evidence("public")),
+        ("containment", contained()),
+        ("resources", bounded()),
+    ):
+        monkeypatch.setattr(
+            original, f"measure_{name}", measure(name, value), raising=False
+        )
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr(
+        "openenv.validation.runtime.replay.collect_runtime_evidence", collect
+    )
+    monkeypatch.setattr("openenv.validation.runner._oracle_probes", oracle)
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+
+    assert timeouts == [300.0, 600.0, 600.0, 60.0, 50.0, 21.0]
+    assert provider.launches[1].startup_timeout_s == 27.0
+    assert events == [
+        "start-original",
+        "inspect-original",
+        "primary",
+        "sequential",
+        "fresh-isolation",
+        "oracle",
+        "session",
+        "seed",
+        "inspect-original",
+        "start-fresh",
+        "inspect-fresh",
+        "container",
+        "stop-fresh",
+        *([] if outcome == "interrupted" else ["network", "containment", "resources"]),
+        "stop-original",
+    ]
+    assert original.stopped and fresh.stopped
+    results = {r.check_id: r for r in report.results}
+    assert results["runtime.startup"].status is (
+        CheckStatus.ERROR if outcome == "interrupted" else CheckStatus.PASS
+    )
+    assert results["runtime.episode_determinism"].status is (
+        CheckStatus.SKIP if outcome == "interrupted" else CheckStatus.PASS
+    )
+    assert (
+        results["runtime.reward_well_formed"].status
+        is (
+            {
+                "healthy": CheckStatus.PASS,
+                "known-fail": CheckStatus.FAIL,
+                "interrupted": CheckStatus.SKIP,
+            }[outcome]
+        )
+    )
+    assert (
+        report.verdict.value
+        == {"healthy": "warn", "known-fail": "fail", "interrupted": "fail"}[outcome]
+    )
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    replays = json.loads((bundle / "replays.json").read_text())
+    assert [row["scope"] for row in replays["samples"]] == [
+        "session",
+        "seed",
+        "container",
+    ]
+    assert replays["samples"][-1]["cleanup_complete"] is True
+    if outcome == "interrupted":
+        assert results["runtime.startup"].evidence == ["validation interrupted"]
+        assert replays["failure_reason"] == "fresh container replay interrupted"
+
+
+@pytest.mark.parametrize(
+    "primary_s,replay_s,expected_timeouts",
+    [(300.0, 0.0, []), (305.0, 0.0, []), (290.0, 6.0, [10.0, 4.0])],
+    ids=["exhausted-primary", "late-primary", "shared-replay-remainder"],
+)
+def test_replay_budget_cannot_refill_after_primary_or_between_replays(
+    package, monkeypatch, tmp_path, primary_s, replay_s, expected_timeouts
+):
+    path = package / "openenv.yaml"
+    path.write_text(
+        path.read_text().replace("episode_timeout_s: 30.0", "episode_timeout_s: 600.0")
+    )
+    now = [1000.0]
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr("openenv.validation.runner.time", clock)
+    monkeypatch.setattr("openenv.validation.runtime.replay.time", clock)
+    calls, timeouts = [], []
+
+    def primary(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            now[0] += primary_s
+        sample = measured_episode()
+        return replace(sample, exchanges=sample.exchanges * kwargs.get("episodes", 1))
+
+    def replay(base_url, plan, **kwargs):
+        timeouts.append(kwargs["episode_timeout_s"])
+        now[0] += min(replay_s, kwargs["episode_timeout_s"])
+        return measured_episode(seed=plan.reset.seed)
+
+    provider = FakeRuntimeProvider(
+        capabilities=frozenset(
+            {*FakeRuntimeProvider().capabilities, ProviderCapability.FRESH_CONTAINER}
+        )
+    )
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", primary)
+    monkeypatch.setattr(
+        "openenv.validation.runtime.replay.collect_runtime_evidence", replay
+    )
+    monkeypatch.setattr("openenv.validation.runner._oracle_probes", lambda *a: ())
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+
+    assert timeouts == expected_timeouts
+    assert [call.get("episodes", 1) for call in calls] == [1, 2, 1]
+    assert len(provider.launches) == 1
+    assert provider.subject.stopped
+    results = {r.check_id: r for r in report.results}
+    assert results["runtime.startup"].status is CheckStatus.PASS
+    assert results["runtime.episode_determinism"].status is CheckStatus.SKIP
+    replays = json.loads((bundle / "replays.json").read_text())
+    assert "TimeoutError" in replays["failure_reason"]
+    assert len(replays["samples"]) == len(expected_timeouts)
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+
+
 @pytest.mark.parametrize("capability", ["json_depth", "json_numeric_range"])
 def test_initial_unsupported_json_skips_and_keeps_the_received_schema(
     package, monkeypatch, tmp_path, capability
