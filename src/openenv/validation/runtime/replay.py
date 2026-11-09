@@ -22,6 +22,8 @@ def _evidence_bytes(evidence):
             evidence.observation_schema_json or "",
             evidence.reset_observation_schema_json or "",
             evidence.telemetry_json or "",
+            evidence.tools_json or "",
+            evidence.tasks_json or "",
             *(
                 value
                 for row in evidence.exchanges

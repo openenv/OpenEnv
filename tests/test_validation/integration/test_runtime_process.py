@@ -19,9 +19,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 from openenv.validation.providers import StartupError, UnsupportedCapability
 from openenv.validation.runner import run_validation
 from openenv.validation.types import CheckStatus, Level, ProviderCapability
+from test_runtime_cli import _assert_discovery
 
 FIXTURE = Path(__file__).parents[2] / "fixtures/validation/runtime/served_probe"
 SERVER = """
@@ -167,6 +169,15 @@ class ProcessProvider:
         ("ignored_seed", "runtime.seed_control"),
         ("missing_record", "runtime.trajectory_record"),
         ("trace_mismatch", "runtime.trajectory_record"),
+        ("missing_tool", "runtime.tool_declaration_accuracy"),
+        ("extra_tool", "runtime.tool_declaration_accuracy"),
+        ("tool_discovery_error", "runtime.tool_declaration_accuracy"),
+        ("bad_task_count", "runtime.task_declaration_accuracy"),
+        ("missing_rubric_config", "runtime.rubric_introspectable"),
+        ("bad_attribution", "runtime.reward_attribution"),
+        ("changed_rubric_config", "runtime.reward_attribution"),
+        ("empty_tools", None),
+        ("namespace_mismatch", None),
     ],
 )
 def test_installed_server_collector_and_graders_over_loopback(
@@ -177,10 +188,23 @@ def test_installed_server_collector_and_graders_over_loopback(
         / "process"
         / mode
     )
-    provider = ProcessProvider(artifacts / "subject", mode)
+    target = FIXTURE
+    if mode in {"empty_tools", "namespace_mismatch"}:
+        target = tmp_path / mode
+        shutil.copytree(FIXTURE, target, ignore=shutil.ignore_patterns("__pycache__"))
+        manifest_path = target / "openenv.yaml"
+        manifest = yaml.safe_load(manifest_path.read_text())
+        if mode == "empty_tools":
+            manifest["validation"]["capabilities"]["declared_tools"] = []
+        else:
+            manifest["name"] = "package_metadata_name"
+        manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False))
+    provider = ProcessProvider(
+        artifacts / "subject", "good" if mode == "namespace_mismatch" else mode
+    )
     try:
         report = run_validation(
-            FIXTURE,
+            target,
             max_level=Level.RUNTIME,
             provider=provider,
             artifacts_dir=artifacts / "report",
@@ -200,6 +224,10 @@ def test_installed_server_collector_and_graders_over_loopback(
             "state_contract",
             "seed_control",
             "trajectory_record",
+            "tool_declaration_accuracy",
+            "task_declaration_accuracy",
+            "rubric_introspectable",
+            "reward_attribution",
         ):
             assert checks[f"runtime.{check}"].status is CheckStatus.PASS
     if mode != "startup_failure":
@@ -208,6 +236,11 @@ def test_installed_server_collector_and_graders_over_loopback(
         manifest = json.loads((artifacts / "report/run-manifest.json").read_text())
         assert manifest["provider"]["isolation"] == "process"
         assert manifest["provider"]["container_build_exercised"] is False
+        discovery = json.loads((artifacts / "report/discovery.json").read_text())
+        _assert_discovery(discovery, mode)
+        assert discovery["tasks"]["environments"] == ["validation_probe"]
+        if mode == "namespace_mismatch":
+            assert report.manifest.name == "package_metadata_name"
         telemetry_path = artifacts / "report/session-telemetry.json"
         telemetry = json.loads(telemetry_path.read_text())
         assert telemetry["seed"]["accepted"] is (mode != "ignored_seed")

@@ -1264,7 +1264,7 @@ class HTTPEnvServer:
                                 request_id=request_id,
                             )
                         return JsonRpcResponse.error_response(
-                            JsonRpcErrorCode.INTERNAL_ERROR,
+                            JsonRpcErrorCode.METHOD_NOT_FOUND,
                             "Environment does not support MCP",
                             request_id=request_id,
                         )
