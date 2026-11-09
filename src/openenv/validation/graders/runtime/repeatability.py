@@ -1,29 +1,39 @@
 """Seed forwarding, independent records and bounded fresh replay comparisons."""
 
-import json
 import math
 import statistics
 import time
+from decimal import Decimal, DecimalException
+from fractions import Fraction
 
 from ...report import CheckResult
+from ...runtime.json_values import dumps, loads
 from ...types import CheckStatus
 from .basic import _RuntimeGrader
 
 JUDGED_REPLAYS = 20
+MAX_JUDGED_NUMBER_DIGITS = 10_000
+
+
+def _json(text):
+    try:
+        return loads(text)
+    except DecimalException as error:
+        raise ValueError("unsupported JSON number") from error
 
 
 def _trace(evidence, *, operation=None):
     trace = [
         {
             "operation": row.operation,
-            "request": json.loads(row.request_json),
-            "response": json.loads(row.response_json),
+            "request": _json(row.request_json),
+            "response": _json(row.response_json),
         }
         for row in evidence.exchanges
         if operation is None or row.operation == operation
     ]
     for row in trace:
-        json.dumps(row, allow_nan=False)
+        dumps(row)
         operation, request, response = (
             row["operation"],
             row["request"],
@@ -67,7 +77,7 @@ def _difference(expected, observed, path="$"):
 
 
 def _telemetry(evidence):
-    value = json.loads(evidence.telemetry_json)
+    value = _json(evidence.telemetry_json)
     if not isinstance(value, dict) or type(value.get("schema_version")) is not int:
         raise ValueError("malformed telemetry")
     if value["schema_version"] != 1:
@@ -168,7 +178,7 @@ class SeedControlGrader(_RuntimeGrader):
             if len(resets) != 1:
                 problems.append(f"replay {index}: expected one measured reset")
                 continue
-            seed = json.loads(resets[0].request_json)["data"]["seed"]
+            seed = _json(resets[0].request_json)["data"]["seed"]
             if type(seed) is not int:
                 problems.append(f"replay {index}: requested seed is not an integer")
                 continue
@@ -280,16 +290,16 @@ class EpisodeDeterminismGrader(_RuntimeGrader):
                         continue
                     low, high = subject.manifest.reward.range
                     if (
-                        type(reward) not in (int, float)
-                        or not math.isfinite(reward)
-                        or not low <= reward <= high
+                        type(reward) not in (int, Decimal)
+                        or not Decimal(reward).is_finite()
+                        or not Decimal(str(low)) <= reward <= Decimal(str(high))
                     ):
                         return (
                             CheckStatus.FAIL,
                             ["invalid judged replay reward"],
                             measured,
                         )
-                    sample_rewards.append(reward)
+                    sample_rewards.append(Decimal(reward))
                     # Keep null versus numeric positions visible to trace comparison.
                     data["reward"] = 0.0
             rewards.append(sample_rewards)
@@ -327,19 +337,37 @@ class EpisodeDeterminismGrader(_RuntimeGrader):
                 measured,
             )
         if judged:
-            variances = [
-                None if values[0] is None else statistics.pvariance(values)
-                for values in zip(*rewards)
-            ]
-            measured.update(
-                reward_population_variance=variances,
-                variance_units="reward_squared",
-            )
             bound = subject.manifest.reward.variance_tolerance
             if type(bound) not in (int, float) or not math.isfinite(bound) or bound < 0:
                 return CheckStatus.FAIL, ["invalid declared variance bound"], measured
+            # A short exponent token must not allocate an unbounded rational.
+            if any(
+                len(value.as_tuple().digits) + abs(value.as_tuple().exponent)
+                > MAX_JUDGED_NUMBER_DIGITS
+                for sample in rewards
+                for value in sample
+                if value is not None
+            ):
+                return (
+                    CheckStatus.SKIP,
+                    ["judged reward precision exceeds supported arithmetic bounds"],
+                    measured,
+                )
+            variances = [
+                # Rational variance avoids float and Decimal-context rounding.
+                None
+                if values[0] is None
+                else statistics.pvariance(map(Fraction, values))
+                for values in zip(*rewards)
+            ]
+            measured.update(
+                reward_population_variance=[
+                    None if value is None else float(value) for value in variances
+                ],
+                variance_units="reward_squared",
+            )
             for index, variance in enumerate(variances):
-                if variance is not None and variance > bound:
+                if variance is not None and variance > Decimal(str(bound)):
                     return (
                         CheckStatus.FAIL,
                         [

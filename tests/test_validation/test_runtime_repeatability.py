@@ -71,6 +71,224 @@ def alter_telemetry(evidence, mutate):
     return replace(evidence, telemetry_json=json.dumps(value))
 
 
+def step_token(evidence, token, location):
+    """Insert a literal JSON token without rounding it in the test fixture."""
+    rows = list(evidence.exchanges)
+    attribute = "request_json" if location == "request" else "response_json"
+    value = json.loads(
+        rows[2].request_json if location == "request" else rows[2].response_json
+    )
+    if location == "reward":
+        value["data"]["reward"] = "EXACT_TOKEN"
+    else:
+        value["data"]["precision_probe"] = "EXACT_TOKEN"
+    payload = json.dumps(value).replace('"EXACT_TOKEN"', token)
+    rows[2] = replace(rows[2], **{attribute: payload})
+    return replace(evidence, exchanges=tuple(rows))
+
+
+def record_exchanges(evidence):
+    value = json.loads(evidence.telemetry_json)
+    value["trajectory"]["records"] = "EXACT_RECORDS"
+    records = (
+        "["
+        + ",".join(
+            '{"operation":'
+            + json.dumps(row.operation)
+            + ',"request":'
+            + row.request_json
+            + ',"response":'
+            + row.response_json
+            + "}"
+            for row in evidence.exchanges
+        )
+        + "]"
+    )
+    return json.dumps(value).replace('"EXACT_RECORDS"', records)
+
+
+@pytest.mark.parametrize("grader", [EpisodeDeterminismGrader, TrajectoryRecordGrader])
+@pytest.mark.parametrize("location", ["request", "response"])
+@pytest.mark.parametrize(
+    "left,right,status",
+    [
+        ("1.00000000000000001", "1.00000000000000002", CheckStatus.FAIL),
+        ("1e-999", "0.0", CheckStatus.FAIL),
+        ("1", "1.0", CheckStatus.FAIL),
+        ("true", "1", CheckStatus.FAIL),
+        ('"1.0"', "1.0", CheckStatus.FAIL),
+        ("null", "0", CheckStatus.FAIL),
+        ("[]", "{}", CheckStatus.FAIL),
+        ("1.00000000000000001", "1.00000000000000001", CheckStatus.PASS),
+        ("1.00", "1e0", CheckStatus.PASS),
+        ("1e-999", "10e-1000", CheckStatus.PASS),
+        ("-0.0", "0.0", CheckStatus.PASS),
+        ('{"a":[1.00],"b":true}', '{"b":true,"a":[1e0]}', CheckStatus.PASS),
+    ],
+)
+def test_exact_json_values_in_replays_and_subject_records(
+    tmp_path, grader, location, left, right, status
+):
+    subject = subject_with_replays(tmp_path)
+    original = subject.runtime_evidence
+    evidence = step_token(original, left, location)
+    other = step_token(original, right, location)
+    if grader is EpisodeDeterminismGrader:
+        evidence = replace(
+            evidence,
+            replays=tuple(
+                replace(row, evidence=other) if row.scope != "seed" else row
+                for row in original.replays
+            ),
+        )
+    else:
+        evidence = replace(evidence, telemetry_json=record_exchanges(other))
+    result = grader().run(replace(subject, runtime_evidence=evidence))
+    assert result.status is status
+    if status is CheckStatus.FAIL:
+        assert "divergence" in result.evidence[0] or "differs at" in result.evidence[0]
+
+
+@pytest.mark.parametrize(
+    "left,right,limits,bound,status",
+    [
+        ("1", "1.0", (0.0, 1.0), 0.0, CheckStatus.PASS),
+        ("0.1", "0.7", (0.1, 0.7), 0.09, CheckStatus.PASS),
+        ("1e-999", "10e-1000", (0.0, 1.0), 0.0, CheckStatus.PASS),
+        ("1.00000000000000001", "1.0", (0.0, 1.0), 0.2, CheckStatus.FAIL),
+        ("-1e-999", "0.0", (0.0, 1.0), 0.2, CheckStatus.FAIL),
+        (
+            "0.50000000000000001",
+            "0.50000000000000002",
+            (0.0, 1.0),
+            0.0,
+            CheckStatus.FAIL,
+        ),
+        ("1e-999", "0.0", (0.0, 1.0), 0.0, CheckStatus.FAIL),
+        (
+            "0.1",
+            "0.70000000000000000000000000000001",
+            (0.0, 1.0),
+            0.09,
+            CheckStatus.FAIL,
+        ),
+    ],
+)
+def test_exact_judged_reward_range_and_variance(
+    tmp_path, left, right, limits, bound, status
+):
+    subject = subject_with_replays(tmp_path, judged=True)
+    subject.manifest.reward.range = limits
+    subject.manifest.reward.variance_tolerance = bound
+    original = subject.runtime_evidence
+    evidence = step_token(original, left, "reward")
+    evidence = replace(
+        evidence,
+        replays=tuple(
+            replace(
+                row,
+                evidence=step_token(
+                    row.evidence, left if index < 9 else right, "reward"
+                ),
+            )
+            if row.scope != "seed"
+            else row
+            for index, row in enumerate(original.replays)
+        ),
+    )
+    result = EpisodeDeterminismGrader().run(replace(subject, runtime_evidence=evidence))
+    assert result.status is status
+    if status is CheckStatus.PASS:
+        assert result.measured["completed_replays"] == 20
+        # Report measurements retain their numeric JSON contract.
+        assert (
+            type(
+                json.loads(result.model_dump_json())["measured"][
+                    "reward_population_variance"
+                ][0]
+            )
+            is float
+        )
+    elif left in {"1.00000000000000001", "-1e-999"}:
+        assert result.evidence == ["invalid judged replay reward"]
+    else:
+        assert result.evidence == [
+            "step 0: reward population variance exceeds declared bound"
+        ]
+
+
+@pytest.mark.parametrize(
+    "token", ["true", '"0.5"', "[]", "{}", "NaN", "Infinity", "-Infinity"]
+)
+def test_judged_rewards_remain_finite_numeric_scalars(tmp_path, token):
+    subject = subject_with_replays(tmp_path, judged=True)
+    evidence = step_token(subject.runtime_evidence, token, "reward")
+    result = EpisodeDeterminismGrader().run(replace(subject, runtime_evidence=evidence))
+    assert result.status is CheckStatus.FAIL
+
+
+@pytest.mark.parametrize("bound", [None, True, "0.2", -0.1, float("nan"), float("inf")])
+def test_judged_variance_bound_remains_validated(tmp_path, bound):
+    subject = subject_with_replays(tmp_path, judged=True)
+    subject.manifest.reward.variance_tolerance = bound
+    result = EpisodeDeterminismGrader().run(subject)
+    assert result.status is CheckStatus.FAIL
+    assert result.evidence == ["invalid declared variance bound"]
+
+
+@pytest.mark.parametrize("grader", [EpisodeDeterminismGrader, TrajectoryRecordGrader])
+@pytest.mark.parametrize(
+    "token", ["NaN", "Infinity", "-Infinity", "1e-9999999999999999999999"]
+)
+def test_nonfinite_or_unsupported_trace_numbers_are_findings(tmp_path, grader, token):
+    subject = subject_with_replays(tmp_path)
+    evidence = step_token(subject.runtime_evidence, token, "response")
+    result = grader().run(replace(subject, runtime_evidence=evidence))
+    assert result.status is CheckStatus.FAIL
+
+
+def test_unsupported_subject_record_number_is_a_finding(tmp_path):
+    subject = subject_with_replays(tmp_path)
+    other = step_token(subject.runtime_evidence, "1e9999999999999999999999", "response")
+    evidence = replace(subject.runtime_evidence, telemetry_json=record_exchanges(other))
+    result = TrajectoryRecordGrader().run(replace(subject, runtime_evidence=evidence))
+    assert result.status is CheckStatus.FAIL
+
+
+@pytest.mark.parametrize("fault", [None, "diverged", "invalid_reward", "invalid_bound"])
+def test_judged_arithmetic_is_bounded_without_hiding_failures(tmp_path, fault):
+    subject = subject_with_replays(tmp_path, judged=True)
+    original = subject.runtime_evidence
+    evidence = step_token(original, "1e-1000000000", "reward")
+    evidence = replace(
+        evidence,
+        replays=tuple(
+            replace(row, evidence=step_token(row.evidence, "1e-1000000000", "reward"))
+            for row in original.replays
+        ),
+    )
+    if fault in {"diverged", "invalid_reward"}:
+        replay = evidence.replays[0]
+        changed = step_token(
+            replay.evidence,
+            "true" if fault == "invalid_reward" else "2",
+            "reward" if fault == "invalid_reward" else "response",
+        )
+        evidence = replace(
+            evidence,
+            replays=(replace(replay, evidence=changed),) + evidence.replays[1:],
+        )
+    elif fault == "invalid_bound":
+        subject.manifest.reward.variance_tolerance = -0.1
+    result = EpisodeDeterminismGrader().run(replace(subject, runtime_evidence=evidence))
+    assert result.status is (CheckStatus.FAIL if fault else CheckStatus.SKIP)
+    if fault is None:
+        assert result.evidence == [
+            "judged reward precision exceeds supported arithmetic bounds"
+        ]
+        assert result.measured == {"completed_replays": 20}
+
+
 @pytest.mark.parametrize("grader", GRADERS)
 def test_seed_invariant_fresh_replays_and_independent_record_pass(tmp_path, grader):
     assert grader().run(subject_with_replays(tmp_path)).status is CheckStatus.PASS
