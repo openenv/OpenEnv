@@ -52,10 +52,13 @@ def verify(root):
             raise ValueError("Required test suite contains failures, errors or skips")
     if not count:
         raise ValueError("Empty test suite cannot establish completion")
-    observed = {
+    identities = [
         f"{case.get('classname', '')}::{case.get('name', '')}"
         for case in document.iter("testcase")
-    }
+    ]
+    observed = set(identities)
+    if len(identities) != len(observed):
+        raise ValueError("Duplicate test identities cannot establish completion")
     missing = set(inventory.get(selected_suite, [])) - observed
     if missing:
         raise ValueError(
