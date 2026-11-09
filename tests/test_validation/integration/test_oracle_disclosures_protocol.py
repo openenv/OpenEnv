@@ -1,5 +1,6 @@
 """Complete oracle disclosures through real HTTP and WebSocket responses."""
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -79,7 +80,13 @@ class AlterWire:
                 message["type"] == "websocket.send"
                 and message.get("text")
                 and self.mode
-                in {"unicode_ws", "json_state", "common_line", "state_only"}
+                in {
+                    "unicode_ws",
+                    "json_state",
+                    "common_line",
+                    "state_only",
+                    "duplicate_ws",
+                }
             ):
                 data = json.loads(message["text"])
                 if data.get("type") == "observation" and self.mode != "state_only":
@@ -94,6 +101,13 @@ class AlterWire:
                 if data.get("type") == "state" and self.mode == "state_only":
                     data["data"]["oracle_for_orchestration"] = self.artifact
                 raw = json.dumps(data, separators=(",", ":"))
+                if self.mode == "duplicate_ws":
+                    raw = raw.replace(
+                        '"sample":' + json.dumps(self.artifact),
+                        '"sample":'
+                        + json.dumps(self.artifact)
+                        + ',"sample":"harmless"',
+                    )
                 if self.mode == "unicode_ws":
                     encoded = (
                         '"' + "".join("\\u%04x" % ord(c) for c in self.artifact) + '"'
@@ -104,6 +118,50 @@ class AlterWire:
             await send(message)
 
         await self.app(scope, receive, output)
+
+
+@pytest.mark.parametrize("surface", ["wire", "http"])
+def test_duplicate_json_loss_is_flagged_without_erasing_live_failure(tmp_path, surface):
+    root = tmp_path / "package"
+    shutil.copytree(FIXTURE, root)
+    (root / "oracle/solve.sh").write_text(CANARY)
+    wire_app = fixture.make_app("good")
+    if surface == "http":
+        wire_app.application.add_api_route(
+            "/oracle/solve.sh",
+            lambda: PlainTextResponse(
+                '{"value":' + json.dumps(CANARY) + ',"value":"harmless"}',
+                media_type="application/json",
+            ),
+        )
+    app = AlterWire(wire_app, "duplicate_ws" if surface == "wire" else "good", CANARY)
+    bundle = tmp_path / "evidence"
+    with serve(app) as url:
+        provider = FakeRuntimeProvider()
+        provider.subject.base_url = url
+        report = run_validation(
+            root, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+        )
+    outcome = next(
+        r for r in report.results if r.check_id == "runtime.oracle_containment"
+    )
+    assert outcome.status.value == "fail", outcome
+    saved = json.loads((bundle / "report.json").read_text())
+    assert next(
+        r for r in saved["results"] if r["check_id"] == outcome.check_id
+    ) == outcome.model_dump(mode="json")
+    if surface == "wire":
+        metadata = json.loads((bundle / "collector-evidence.json").read_text())
+        assert metadata["redacted"] is True
+        assert any(
+            row["field"] == "response_json" for row in metadata["omitted_trace_fields"]
+        )
+    else:
+        probe = json.loads((bundle / "oracle-http.json").read_text())[0]
+        assert probe["body_omitted"] is probe["redacted"] is True
+    for line in (bundle / "SHA256SUMS").read_text().splitlines():
+        digest, name = line.split("  ", 1)
+        assert hashlib.sha256((bundle / name).read_bytes()).hexdigest() == digest
 
 
 @contextmanager
