@@ -68,6 +68,13 @@ def test_info_without_a_harness_keeps_the_existing_json(info_only):
 
 def test_info_constructs_with_dummy_capture_wiring(info_only, agents, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "operator-key")
+    # litellm (which Harbor's agents import) runs load_dotenv() when first imported, and picks up any .env
+    # above the checkout. Import it first, so the check below covers only what the preflight does to os.environ.
+    try:
+        import litellm  # noqa: F401
+    except ImportError:
+        pass
+
     before = dict(os.environ)
     result = CliRunner().invoke(
         app,
