@@ -8,13 +8,13 @@ Requires the ``modal`` SDK: ``pip install modal>=1.6.3``
 The provider boots an OpenEnv server inside a Modal sandbox, exposes it on an
 encrypted tunnel, and returns an ``https://`` URL that ``EnvClient`` connects to
 over ``wss://``.
-
 """
 
 from __future__ import annotations
 
 import shlex
 import time
+import warnings
 from typing import Any, Dict, Optional
 
 from ._server_config import parse_dockerfile_cmd, parse_openenv_app_field
@@ -149,6 +149,7 @@ class ModalProvider(ContainerProvider):
         image: str | None = None,
         env_vars: dict[str, str] | None = None,
         app_name: str = "openenv",
+        use_sandbox_v2: bool | None = None,
         timeout: int = 300,
         cmd: str | None = None,
         cpu: float | None = None,
@@ -167,6 +168,11 @@ class ModalProvider(ContainerProvider):
             app_name (`str`, *optional*, defaults to `"openenv"`):
                 Modal app name the sandbox is created under. Looked up (and
                 created if missing) via ``modal.App.lookup``.
+            use_sandbox_v2 (`bool`, *optional*):
+                Deprecated and ignored; will be removed in OpenEnv 0.15.0.
+                Modal 1.6+ creates Sandbox v2 sandboxes through
+                ``modal.Sandbox.create`` by default. Set ``MODAL_SANDBOX_V2=0``
+                to use Sandbox v1.
             timeout (`int`, *optional*, defaults to `300`):
                 Maximum sandbox lifetime in seconds.
             cmd (`str`, *optional*):
@@ -188,6 +194,15 @@ class ModalProvider(ContainerProvider):
                 orchestrator/CI logs. When `True`, a best-effort redacted,
                 length-bounded excerpt is included in startup-crash errors.
         """
+        if use_sandbox_v2 is not None:
+            warnings.warn(
+                "`use_sandbox_v2` is deprecated, has no effect, and will be removed "
+                "in OpenEnv 0.15.0. Remove the argument: Modal 1.6+ creates Sandbox "
+                "v2 sandboxes through `modal.Sandbox.create` by default. Set "
+                "`MODAL_SANDBOX_V2=0` to use Sandbox v1.",
+                FutureWarning,
+                stacklevel=2,
+            )
         self._image = image
         self._env_vars = env_vars
         self._app_name = app_name

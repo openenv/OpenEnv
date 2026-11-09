@@ -539,3 +539,13 @@ class TestDefaultAdapter:
         assert adapter.tunnel_url(sandbox, 8000) == "https://sb-xyz-8000.modal.host"
         adapter.terminate(sandbox)
         assert sandbox.terminated is True
+
+
+class TestDeprecatedSandboxV2Flag:
+    @pytest.mark.parametrize("value", [True, False])
+    def test_warns_and_is_ignored(self, adapter, value):
+        with pytest.warns(FutureWarning, match="use_sandbox_v2.*0.15.0"):
+            provider = ModalProvider(_adapter=adapter, use_sandbox_v2=value)
+
+        provider.start_container("echo-env:latest")
+        assert len(adapter.created) == 1
