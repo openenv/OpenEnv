@@ -1857,6 +1857,8 @@ class TestMCPSessionResourceLeaks:
         from openenv.core.env_server.types import ConcurrencyConfig
 
         enter_started = asyncio.Event()
+        enter_unwind_started = asyncio.Event()
+        release_enter_unwind = asyncio.Event()
         enter_unwound = asyncio.Event()
         never_finish_enter = asyncio.Event()
         close_started = threading.Event()
@@ -1881,6 +1883,12 @@ class TestMCPSessionResourceLeaks:
                     await never_finish_enter.wait()
                     yield object()
                 finally:
+                    # Releasing resources here has to await, which is the window
+                    # a repeated cancellation can abort. The stack registers no
+                    # exit callback for an __aenter__ that never returned, so
+                    # nothing else can replay this cleanup.
+                    enter_unwind_started.set()
+                    await release_enter_unwind.wait()
                     enter_unwound.set()
 
             def close(self):
@@ -1901,6 +1909,16 @@ class TestMCPSessionResourceLeaks:
         creation = asyncio.create_task(server._create_session())
         await asyncio.wait_for(enter_started.wait(), timeout=5)
         creation.cancel()
+
+        # Cancel a second time while the entry's own unwind is awaiting, before
+        # it can finish releasing what __aenter__ had acquired.
+        await asyncio.wait_for(enter_unwind_started.wait(), timeout=5)
+        creation.cancel()
+        for _ in range(10):
+            await asyncio.sleep(0)
+        finished_before_unwind = creation.done()
+        release_enter_unwind.set()
+
         assert await asyncio.get_running_loop().run_in_executor(
             None, close_started.wait, 5
         ), "environment cleanup never started"
@@ -1914,16 +1932,159 @@ class TestMCPSessionResourceLeaks:
         with pytest.raises(asyncio.CancelledError):
             await creation
 
+        assert not finished_before_unwind, (
+            "_create_session propagated repeated cancellation while the "
+            "interrupted MCP __aenter__ was still unwinding"
+        )
         assert not finished_before_close, (
             "_create_session propagated repeated cancellation while the env "
             "from an interrupted MCP __aenter__ was still closing"
         )
-        assert enter_unwound.is_set(), "mcp_session.__aenter__ was not unwound"
+        assert enter_unwound.is_set(), (
+            "repeated cancellation abandoned the MCP __aenter__ unwind"
+        )
         assert closed.is_set(), "environment was not closed before cancellation escaped"
         assert server._sessions == {}
         assert server._session_executors == {}
         assert server._session_stacks == {}
         assert server._session_info == {}
+
+    async def test_cancel_during_failed_mcp_enter_closes_environment_once(self):
+        """Startup failure and cancellation must share one cleanup owner."""
+        import asyncio
+        import threading
+        from contextlib import asynccontextmanager
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        close_started = threading.Event()
+        release_close = threading.Event()
+        closes: list[int] = []
+
+        class FailingMCPEnterEnv(Environment):
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                raise RuntimeError("MCP handshake failed")
+                yield object()
+
+            def close(self):
+                closes.append(threading.get_ident())
+                close_started.set()
+                release_close.wait(5)
+
+        server = HTTPEnvServer(
+            env=FailingMCPEnterEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        creation = asyncio.create_task(server._create_session())
+        try:
+            # The startup-failure handler has already dispatched one close.
+            assert await asyncio.get_running_loop().run_in_executor(
+                None, close_started.wait, 5
+            ), "startup failure never closed the environment"
+
+            creation.cancel()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            release_close.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(creation, timeout=5)
+
+            assert len(closes) == 1, f"environment closed {len(closes)} times"
+            assert server.active_sessions == 0
+            assert server._sessions == {}
+            assert server._session_executors == {}
+        finally:
+            release_close.set()
+            await asyncio.gather(creation, return_exceptions=True)
+
+    async def test_blocked_mcp_entry_does_not_starve_other_shared_factories(self):
+        """A stalled MCP handshake must not hold the shared creation lock."""
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        loop = asyncio.get_running_loop()
+        first_entered = asyncio.Event()
+        release_first_enter = asyncio.Event()
+        second_constructed = asyncio.Event()
+        instances: list[Environment] = []
+
+        class SingleThreadMCPEnv(Environment):
+            REQUIRES_SINGLE_THREAD_EXECUTOR = True
+            SUPPORTS_CONCURRENT_SESSIONS = True
+
+            def __init__(self):
+                super().__init__()
+                self.number = len(instances) + 1
+                instances.append(self)
+                if self.number == 2:
+                    loop.call_soon_threadsafe(second_constructed.set)
+
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                if self.number == 1:
+                    first_entered.set()
+                    await release_first_enter.wait()
+                yield object()
+
+        server = HTTPEnvServer(
+            env=SingleThreadMCPEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=2,
+                session_timeout=None,
+            ),
+        )
+
+        first = asyncio.create_task(server._create_session())
+        second = None
+        try:
+            await asyncio.wait_for(first_entered.wait(), timeout=5)
+            second = asyncio.create_task(server._create_session())
+            try:
+                await asyncio.wait_for(second_constructed.wait(), timeout=1)
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "second factory starved behind MCP entry with an idle executor"
+                )
+        finally:
+            release_first_enter.set()
+            tasks = [first] + ([second] if second is not None else [])
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for session_id in list(server._sessions):
+                await server._destroy_session(session_id)
+            assert server._shared_session_executor is not None
+            server._shared_session_executor.shutdown(wait=True)
 
 
 class TestHTTPMCPSessionShutdown:

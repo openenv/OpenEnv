@@ -421,7 +421,43 @@ class HTTPEnvServer:
         env: Optional[Environment] = None
         stack: Optional[AsyncExitStack] = None
         factory_future: Optional[Future[Environment]] = None
+        mcp_entry_task: Optional[asyncio.Task[Any]] = None
+        cleanup_task: Optional[asyncio.Task[None]] = None
         creation_lock_acquired = False
+
+        def start_cleanup() -> asyncio.Task[None]:
+            # Startup failure and cancellation share one cleanup owner. Whoever
+            # gets here first starts the task; a later caller joins the same one
+            # instead of submitting a second env.close().
+            nonlocal cleanup_task
+            if cleanup_task is None:
+                cleanup_task = asyncio.create_task(
+                    self._discard_reserved_session(
+                        session_id,
+                        executor,
+                        env,
+                        stack,
+                        factory_future,
+                        mcp_entry_task,
+                    )
+                )
+            return cleanup_task
+
+        async def drain_cleanup(task: asyncio.Task[None]) -> None:
+            # ASGI cancel scopes may cancel a request repeatedly. Keep awaiting
+            # the shielded cleanup task until it reaches a terminal state so
+            # cancellation cannot escape while the reservation still exists.
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        pass
+                task.result()
+                raise
+
         try:
             if self._shared_session_creation_lock is not None:
                 await self._shared_session_creation_lock.acquire()
@@ -454,6 +490,19 @@ class HTTPEnvServer:
                 )
                 raise EnvironmentFactoryError(factory_name) from e
 
+            # The factory result is delivered, so the shared executor thread is
+            # free. Release the creation lock before MCP startup: it exists to
+            # order factory calls (and disposal of a factory cancelled
+            # mid-flight) on that one thread, and holding it through an MCP
+            # handshake lets a single stalled connection starve every later
+            # session's constructor. Cancellation during construction keeps the
+            # lock instead, so late-factory disposal still precedes the next
+            # constructor.
+            if creation_lock_acquired:
+                assert self._shared_session_creation_lock is not None
+                self._shared_session_creation_lock.release()
+                creation_lock_acquired = False
+
             # Hold the MCP session open for the lifetime of this session,
             # matching the WebSocket path's AsyncExitStack pattern.  This
             # prevents per-request MCP transport teardown/reconnection and
@@ -466,17 +515,23 @@ class HTTPEnvServer:
                     mcp_session_cm = cast(
                         AsyncContextManager[Any], mcp_session_factory()
                     )
-                    await stack.enter_async_context(mcp_session_cm)
+                    # Enter in its own task and await it shielded. An entry that
+                    # blocks before yielding may release resources in its own
+                    # finally, and the stack cannot replay that cleanup: it
+                    # registers the exit callback only once __aenter__ returns.
+                    # Shielding keeps repeated cancellation off the entry, so
+                    # the cleanup owner can cancel it exactly once and drain the
+                    # unwind instead of aborting it part-way.
+                    mcp_entry_task = asyncio.create_task(
+                        stack.enter_async_context(mcp_session_cm)
+                    )
+                    await asyncio.shield(mcp_entry_task)
             except Exception:
                 # MCP transport failed to start — clean up the reserved slot,
                 # the env, and the executor so they don't leak permanently
-                # against _max_concurrent_envs.
-                await stack.aclose()  # best-effort
-                async with self._session_lock:
-                    self._sessions.pop(session_id, None)
-                    self._session_executors.pop(session_id, None)
-                    self._session_info.pop(session_id, None)
-                await self._cleanup_session_resources(env, executor)
+                # against _max_concurrent_envs. Cancellation arriving mid-close
+                # joins this same task rather than closing the env twice.
+                await drain_cleanup(start_cleanup())
                 raise
 
             async with self._session_lock:
@@ -493,23 +548,12 @@ class HTTPEnvServer:
                     environment_type=type(env).__name__,
                 )
         except asyncio.CancelledError:
-            # ASGI cancel scopes may cancel a request repeatedly. Keep awaiting
-            # the shielded cleanup task until it reaches a terminal state so
-            # cancellation cannot escape while the reservation still exists.
-            cleanup = asyncio.create_task(
-                self._discard_reserved_session(
-                    session_id, executor, env, stack, factory_future
-                )
-            )
+            # Joins the cleanup already under way if startup failure began one,
+            # so the environment is closed by a single owner.
             try:
-                await asyncio.shield(cleanup)
+                await drain_cleanup(start_cleanup())
             except asyncio.CancelledError:
-                while not cleanup.done():
-                    try:
-                        await asyncio.shield(cleanup)
-                    except asyncio.CancelledError:
-                        pass
-                cleanup.result()
+                pass
             raise
         finally:
             if creation_lock_acquired:
@@ -525,6 +569,7 @@ class HTTPEnvServer:
         env: Optional[Environment] = None,
         stack: Optional[AsyncExitStack] = None,
         factory_future: Optional[Future[Environment]] = None,
+        mcp_entry_task: Optional[asyncio.Task[Any]] = None,
     ) -> None:
         """
         Release a session slot reserved by `_create_session` that never opened.
@@ -545,7 +590,23 @@ class HTTPEnvServer:
             factory_future (`Future`, *optional*):
                 The factory's thread future, if the factory call was reached.
                 Used to close an environment the thread is still building.
+            mcp_entry_task (`asyncio.Task`, *optional*):
+                The in-flight MCP session entry, if MCP startup was reached.
+                Cancelled and drained here so an entry interrupted before it
+                yielded can finish releasing what it had already acquired.
         """
+        if mcp_entry_task is not None:
+            # Cancel at most once: a second cancellation would abort the entry's
+            # own unwind, and the stack holds no exit callback to replay it.
+            if not mcp_entry_task.done():
+                mcp_entry_task.cancel()
+            try:
+                await mcp_entry_task
+            except (asyncio.CancelledError, Exception):
+                # A cancelled or failed entry has unwound itself. If it did
+                # finish, `stack` owns the context and closes it below.
+                pass
+
         if env is None and factory_future is not None:
             # Cancelling the await can cancel a queued future, but cannot stop a
             # factory whose executor thread is already running. In that case,
