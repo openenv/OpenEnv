@@ -458,11 +458,13 @@ def _runtime(subject, graders, *, skip_build, provider):
             isolation_evidence=isolation,
             oracle_http=oracle_http,
         )
-        checks = execute_graders(
-            graders,
-            subject,
-            provider_capabilities=provider.capabilities,
-            prior=[result],
+        checks.extend(
+            execute_graders(
+                graders,
+                subject,
+                provider_capabilities=provider.capabilities,
+                prior=[result],
+            )
         )
         # Cleanup failure cannot invalidate evidence already collected from a
         # healthy subject. Preserve its findings before failing the run closed.
@@ -511,51 +513,56 @@ def _runtime(subject, graders, *, skip_build, provider):
             started=started,
         )
     finally:
-        # Discovery precedes the episode; its completed evidence remains usable
-        # when collection is unsupported or interrupted before normal grading.
-        graded = {check.check_id for check in checks}
-        independent = [
-            grader
-            for grader in graders
-            if not grader.depends_on and grader.check_id not in graded
-        ]
-        if independent:
-            try:
-                checks.extend(
-                    execute_graders(
-                        independent, replace(subject, runtime_evidence=evidence)
+        try:
+            # Discovery precedes the episode; its completed evidence remains usable
+            # when collection is unsupported or interrupted before normal grading.
+            graded = {check.check_id for check in checks}
+            independent = [
+                grader
+                for grader in graders
+                if not grader.depends_on and grader.check_id not in graded
+            ]
+            if independent:
+                try:
+                    checks.extend(
+                        execute_graders(
+                            independent, replace(subject, runtime_evidence=evidence)
+                        )
                     )
-                )
-            except KeyboardInterrupt:
-                result = _outcome(
-                    "runtime.startup",
-                    CheckStatus.ERROR,
-                    "validation interrupted",
-                    started=started,
-                )
-        if running is not None:
-            try:
-                running.stop()
-                cleanup["completed"] = not (
-                    evidence
-                    and any(
-                        replay.cleanup_complete is False for replay in evidence.replays
-                    )
-                )
-            except (Exception, KeyboardInterrupt) as exc:
-                cleanup["completed"] = False
-                cleanup["reason"] = f"subject teardown failed ({type(exc).__name__})"
-                if result is None:
+                except KeyboardInterrupt:
                     result = _outcome(
                         "runtime.startup",
                         CheckStatus.ERROR,
-                        "subject teardown failed",
+                        "validation interrupted",
                         started=started,
                     )
-                else:
-                    result.status = CheckStatus.ERROR
-                    result.evidence.append("subject teardown failed")
-                    result.duration_s = time.monotonic() - started
+        finally:
+            if running is not None:
+                try:
+                    running.stop()
+                    cleanup["completed"] = not (
+                        evidence
+                        and any(
+                            replay.cleanup_complete is False
+                            for replay in evidence.replays
+                        )
+                    )
+                except (Exception, KeyboardInterrupt) as exc:
+                    cleanup["completed"] = False
+                    cleanup["reason"] = (
+                        f"subject teardown failed ({type(exc).__name__})"
+                    )
+                    if result is None:
+                        result = _outcome(
+                            "runtime.startup",
+                            CheckStatus.ERROR,
+                            "subject teardown failed",
+                            started=started,
+                        )
+                    else:
+                        result.status = CheckStatus.ERROR
+                        result.evidence.append("subject teardown failed")
+                        result.duration_s = time.monotonic() - started
     return (
         [result, *checks],
         attempted,

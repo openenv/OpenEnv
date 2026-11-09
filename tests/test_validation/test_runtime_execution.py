@@ -247,6 +247,37 @@ def test_completed_discovery_is_graded_after_primary_episode_failure(
     )
 
 
+class GraderTermination(BaseException):
+    """A grader termination outside ordinary exception and cancellation handling."""
+
+
+@pytest.mark.parametrize("error", [SystemExit, GeneratorExit, GraderTermination])
+def test_terminating_discovery_recovery_still_cleans_up(
+    discovery_package, monkeypatch, error
+):
+    from openenv.validation.graders.runtime.discovery import (
+        TaskDeclarationAccuracyGrader,
+    )
+
+    sample = discovery_episode()
+    termination = error("grader terminated")
+
+    def collect(*args, **kwargs):
+        raise RuntimeCollectionUnsupported(sample, capability="json_depth")
+
+    def grade(*args):
+        raise termination
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr(TaskDeclarationAccuracyGrader, "run", grade)
+    provider = FakeRuntimeProvider()
+    with pytest.raises(error) as raised:
+        run_validation(discovery_package, max_level=Level.RUNTIME, provider=provider)
+    assert raised.value is termination
+    assert len(provider.launches) == 1
+    assert provider.subject.stopped
+
+
 def test_interrupting_discovery_recovery_still_cleans_up(
     discovery_package, monkeypatch, tmp_path
 ):
@@ -257,6 +288,9 @@ def test_interrupting_discovery_recovery_still_cleans_up(
     sample = replace(
         discovery_episode(), failure_phase="step", failure_reason="JSON unsupported"
     )
+    tasks = json.loads(sample.tasks_json)
+    tasks["counts"]["train"] = 101
+    sample = replace(sample, tasks_json=json.dumps(tasks))
     calls = []
 
     def collect(*args, **kwargs):
@@ -280,6 +314,7 @@ def test_interrupting_discovery_recovery_still_cleans_up(
     assert calls == [True]
     assert results["runtime.startup"].status is CheckStatus.ERROR
     assert results["runtime.startup"].evidence == ["validation interrupted"]
+    assert results["runtime.task_declaration_accuracy"].status is CheckStatus.FAIL
     assert results["runtime.tool_declaration_accuracy"].status is CheckStatus.SKIP
     assert results["runtime.tool_declaration_accuracy"].evidence == [
         "grader did not complete"
@@ -287,6 +322,69 @@ def test_interrupting_discovery_recovery_still_cleans_up(
     assert report.verdict.value == "fail"
     assert provider.subject.stopped
     assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    assert len(results) == len(report.results)
+    assert json.loads((bundle / "report.json").read_text()) == report.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.parametrize("interruptions", [1, 2])
+def test_grading_interruption_preserves_completed_results_without_rerunning(
+    discovery_package, monkeypatch, tmp_path, baseline_only, interruptions
+):
+    from openenv.validation.graders.runtime.discovery import (
+        TaskDeclarationAccuracyGrader,
+        ToolDeclarationAccuracyGrader,
+    )
+
+    sample = replace(
+        discovery_episode(), failure_phase="step", failure_reason="step failed"
+    )
+    tasks = json.loads(sample.tasks_json)
+    tasks["counts"]["train"] = 101
+    sample = replace(sample, tasks_json=json.dumps(tasks))
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence", lambda *a, **k: sample
+    )
+    calls = []
+    task_run = TaskDeclarationAccuracyGrader.run
+    tool_run = ToolDeclarationAccuracyGrader.run
+
+    def task(self, subject):
+        calls.append("task")
+        return task_run(self, subject)
+
+    def tool(self, subject):
+        calls.append("tool")
+        if calls.count("tool") <= interruptions:
+            raise KeyboardInterrupt
+        return tool_run(self, subject)
+
+    monkeypatch.setattr(TaskDeclarationAccuracyGrader, "run", task)
+    monkeypatch.setattr(ToolDeclarationAccuracyGrader, "run", tool)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=bundle,
+    )
+    results = {row.check_id: row for row in report.results}
+    assert calls == ["task", "tool", "tool"]
+    assert results["runtime.task_declaration_accuracy"].status is CheckStatus.FAIL
+    assert results["runtime.tool_declaration_accuracy"].status is (
+        CheckStatus.PASS if interruptions == 1 else CheckStatus.SKIP
+    )
+    assert results["runtime.startup"].status is CheckStatus.ERROR
+    assert results["runtime.startup"].evidence == ["validation interrupted"]
+    assert report.verdict.value == "fail"
+    assert provider.subject.stopped
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    assert len(results) == len(report.results)
+    assert json.loads((bundle / "report.json").read_text()) == report.model_dump(
+        mode="json"
+    )
 
 
 def test_runtime_collects_primary_isolation_and_session_replays_then_cleans_up(
