@@ -511,6 +511,28 @@ def _runtime(subject, graders, *, skip_build, provider):
             started=started,
         )
     finally:
+        # Discovery precedes the episode; its completed evidence remains usable
+        # when collection is unsupported or interrupted before normal grading.
+        graded = {check.check_id for check in checks}
+        independent = [
+            grader
+            for grader in graders
+            if not grader.depends_on and grader.check_id not in graded
+        ]
+        if independent:
+            try:
+                checks.extend(
+                    execute_graders(
+                        independent, replace(subject, runtime_evidence=evidence)
+                    )
+                )
+            except KeyboardInterrupt:
+                result = _outcome(
+                    "runtime.startup",
+                    CheckStatus.ERROR,
+                    "validation interrupted",
+                    started=started,
+                )
         if running is not None:
             try:
                 running.stop()
@@ -698,6 +720,8 @@ def run_validation(
                     reason = "unmet dependency: valid manifest"
                 elif grader is not None and grader.depends_on:
                     reason = "unmet dependency: " + ", ".join(grader.depends_on)
+                elif grader is not None:
+                    reason = "grader did not complete"
                 results.append(_outcome(entry.check_id, CheckStatus.SKIP, reason))
         source_problem = None
         if not digest_before:
@@ -715,6 +739,12 @@ def run_validation(
                 )
         if source_problem is not None:
             invalidated = {"runtime.startup"}
+            # Independent discovery also depends on the verified package source.
+            invalidated.update(
+                grader.check_id
+                for grader in selected.values()
+                if grader.level is Level.RUNTIME
+            )
             for grader in order_graders(list(selected.values())):
                 if invalidated.intersection(grader.depends_on):
                     invalidated.add(grader.check_id)
