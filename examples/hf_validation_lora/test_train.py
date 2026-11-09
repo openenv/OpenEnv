@@ -3,9 +3,11 @@
 
 import ast
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -25,6 +27,145 @@ def public_observation():
         "solution_steps": [],
         "metadata": {"private": "never pass this field to the model"},
     }
+
+
+class ResetSensitiveClient:
+    def __init__(self):
+        self.resets = []
+        self.actions = []
+        self.closed = False
+        self.error = None
+
+    def sync(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, error, traceback):
+        self.closed = True
+        self.error = error
+
+    def reset(self, **kwargs):
+        self.resets.append(kwargs)
+        self.observation = public_observation()
+        self.observation.update(
+            level="24", task_id=f"{kwargs['split']}-24-{kwargs['index']:04d}"
+        )
+        self.observation["prompt"] += json.dumps(kwargs, sort_keys=True) + "\n"
+        return SimpleNamespace(done=False, observation=self.observation)
+
+    def step(self, action):
+        self.actions.append(action)
+        # Both the seed and episode id affect the fake environment's raw reward.
+        identity = json.dumps(self.resets[-1], sort_keys=True)
+        reward = (sum(identity.encode()) % 90 + 1) / 100
+        return SimpleNamespace(
+            done=True,
+            reward=reward if action["expression"] else 0.0,
+            observation={
+                **self.observation,
+                "result": {"valid": action["expression"] == "10+13-3+4"},
+            },
+        )
+
+
+class DirectResetTests(unittest.TestCase):
+    def setUp(self):
+        self.clients = []
+
+        def new_client(**kwargs):
+            client = ResetSensitiveClient()
+            self.clients.append(client)
+            return client
+
+        client_patch = patch(
+            "openenv.core.generic_client.GenericEnvClient", side_effect=new_client
+        )
+        client_patch.start()
+        self.addCleanup(client_patch.stop)
+        spec = importlib.util.spec_from_file_location(
+            "scottwu_score_batch", Path(__file__).with_name("score_batch.py")
+        )
+        self.bridge = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.bridge)
+        self.remote = train.RemoteEnvironment(Mock(), "direct")
+
+    def bridge_output(self, payload):
+        output = io.StringIO()
+        with (
+            patch("sys.stdin", io.StringIO(json.dumps(payload))),
+            redirect_stdout(output),
+        ):
+            self.bridge.main()
+        return json.loads(output.getvalue())
+
+    def test_direct_resets_match_bridge_prompts_and_raw_rewards(self):
+        expressions = ["10+13-3+4", "", "invalid"]
+        for split, indices in (("train", [0, 7, 0]), ("test", [2, 49, 2])):
+            for operation in ("tasks", "score"):
+                with self.subTest(split=split, operation=operation):
+                    expected = self.bridge_output(
+                        dict(
+                            operation=operation,
+                            split=split,
+                            indices=indices,
+                            expressions=expressions,
+                        )
+                    )
+                    bridge_client = self.clients[-1]
+                    if operation == "tasks":
+                        actual = self.remote.tasks(split, indices)
+                    else:
+                        actual = self.remote.score(split, indices, expressions)
+                    direct_client = self.clients[-1]
+                    self.assertTrue(bridge_client.closed)
+                    self.assertTrue(direct_client.closed)
+                    self.assertIsNone(direct_client.error)
+                    # Compare with the executed bridge, not a copied reset recipe.
+                    self.assertEqual(direct_client.resets, bridge_client.resets)
+                    if operation == "tasks":
+                        self.assertEqual(
+                            [row["prompt"] for row in actual],
+                            [row["prompt"] for row in expected["tasks"]],
+                        )
+                        self.assertEqual([row["index"] for row in actual], indices)
+                        self.assertEqual([row["split"] for row in actual], [split] * 3)
+                        self.assertNotIn("private", json.dumps(actual))
+                    else:
+                        self.assertEqual(direct_client.actions, bridge_client.actions)
+                        self.assertEqual(
+                            direct_client.actions,
+                            [{"expression": expression} for expression in expressions],
+                        )
+                        self.assertEqual(
+                            [row["reward"] for row in actual], expected["rewards"]
+                        )
+                        self.assertEqual(
+                            [row["valid"] for row in actual], expected["valid"]
+                        )
+
+    def test_direct_client_closes_when_reset_or_step_raises(self):
+        for operation, failure in (
+            ("tasks", "reset"),
+            ("score", "reset"),
+            ("score", "step"),
+        ):
+            with (
+                self.subTest(operation=operation, failure=failure),
+                patch.object(
+                    ResetSensitiveClient,
+                    failure,
+                    side_effect=RuntimeError("client failed"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "client failed") as error:
+                    if operation == "tasks":
+                        self.remote.tasks("test", [3])
+                    else:
+                        self.remote.score("test", [3], [""])
+                self.assertTrue(self.clients[-1].closed)
+                self.assertIs(self.clients[-1].error, error.exception)
 
 
 class OptimizerWindowTests(unittest.TestCase):

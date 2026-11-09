@@ -354,7 +354,11 @@ class RemoteEnvironment:
             with self._client() as client:
                 for index in indices:
                     result = client.reset(
-                        split=split, index=index, reward_mode="shaped"
+                        split=split,
+                        index=index,
+                        seed=20261104,
+                        episode_id=f"{split}-{index}",
+                        reward_mode="shaped",
                     )
                     if result.done:
                         raise RuntimeError("Reset was terminal")
@@ -392,7 +396,13 @@ class RemoteEnvironment:
             payload = {"rewards": [], "task_ids": [], "valid": []}
             with self._client() as client:
                 for index, expression in zip(indices, expressions, strict=True):
-                    client.reset(split=split, index=index, reward_mode="shaped")
+                    client.reset(
+                        split=split,
+                        index=index,
+                        seed=20261104,
+                        episode_id=f"{split}-{index}",
+                        reward_mode="shaped",
+                    )
                     result = client.step({"expression": expression})
                     if not result.done or result.reward is None:
                         raise RuntimeError("Expected one terminal environment reward")
