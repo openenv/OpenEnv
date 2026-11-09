@@ -119,6 +119,16 @@ class TestTrajectoryRubricBasics:
         rubric.reset()
         assert len(rubric._trajectory) == 0
 
+    def test_reset_resets_child_rubrics(self):
+        """reset() also resets child rubrics."""
+        rubric = EqualCreditRubric()
+        rubric.history = EqualCreditRubric()
+        rubric.history(MockAction(), MockObservation(done=False))
+
+        rubric.reset()
+
+        assert rubric.history.trajectory == []
+
     def test_trajectory_property_returns_copy(self):
         """trajectory property returns a copy."""
         rubric = EqualCreditRubric()
