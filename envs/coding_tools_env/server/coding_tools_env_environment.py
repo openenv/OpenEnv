@@ -420,7 +420,8 @@ def _read_reward_override(
     if not cleared:
         return None, "reward file could not be removed before verification"
     result = sandbox.run_command(f"cat {REWARD_FILE} 2>/dev/null || true")
-    return _parse_reward_override(result.output or "")
+    # stdout alone: `output` also carries stderr, such as a login profile's.
+    return _parse_reward_override(result.metadata.get("stdout", ""))
 
 
 def _parse_reward_override(raw: str) -> tuple[float | None, str | None]:

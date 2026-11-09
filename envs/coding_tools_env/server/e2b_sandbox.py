@@ -49,7 +49,7 @@ def _command_result(
         ok=ok,
         output=output,
         error=None if ok else f"exit_code={exit_code}",
-        metadata={"exit_code": exit_code},
+        metadata={"exit_code": exit_code, "stdout": stdout or ""},
     )
 
 

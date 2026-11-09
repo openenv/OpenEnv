@@ -39,7 +39,9 @@ class FakeSandbox:
                 ok=False, output="", error="exit_code=1", metadata={"exit_code": 1}
             )
         if command.startswith("cat /home/user/logs/verifier/reward.txt"):
-            return ToolResult(ok=True, output="", error=None, metadata={"exit_code": 0})
+            return ToolResult(
+                ok=True, output="", error=None, metadata={"exit_code": 0, "stdout": ""}
+            )
         return ToolResult(
             ok=True, output=f"shell: {command}", error=None, metadata={"exit_code": 0}
         )
@@ -257,11 +259,12 @@ class RewardFileSandbox(FakeSandbox):
                 metadata={"exit_code": 0 if gone else 1},
             )
         if command.startswith(f"cat {REWARD_FILE}"):
+            value = self.files.get(REWARD_FILE, "")
             return ToolResult(
                 ok=True,
-                output=self.files.get(REWARD_FILE, ""),
+                output=value,
                 error=None,
-                metadata={"exit_code": 0},
+                metadata={"exit_code": 0, "stdout": value},
             )
         return None
 
@@ -532,6 +535,22 @@ def test_reward_file_is_read_outside_the_kernel(monkeypatch, tmp_path):
     assert env.state.last_reward == 0.8
 
 
+def test_reward_file_read_ignores_login_shell_stderr(monkeypatch, tmp_path):
+    env, _, _, paths = _environment_on_real_sandbox(
+        monkeypatch,
+        tmp_path,
+        ["echo 0.8 > /home/user/logs/verifier/reward.txt", "exit 1"],
+    )
+    # Every command is a login shell, so anything a profile prints to stderr
+    # comes back next to the reward file's contents.
+    (paths.root / ".bash_profile").write_text("echo profile notice >&2\n")
+
+    _submit_solution(env)
+
+    # Parsing stdout and stderr together would fall back to the 0.5 pass rate.
+    assert env.state.last_reward == 0.8
+
+
 def test_verification_does_not_inherit_the_kernel_directory(monkeypatch, tmp_path):
     env, kernel, processes, paths = _environment_on_real_sandbox(
         monkeypatch, tmp_path, ["pwd"]
@@ -572,7 +591,7 @@ def test_run_command_reports_a_non_zero_exit():
     assert not result.ok
     assert result.error == "exit_code=3"
     assert result.output == "partial output\nboom"
-    assert result.metadata == {"exit_code": 3}
+    assert result.metadata == {"exit_code": 3, "stdout": "partial output"}
     # The command exited, so there is nothing to stop.
     assert not handle.killed
 
