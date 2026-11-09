@@ -15,20 +15,13 @@ import tempfile
 import threading
 import time
 import uuid
-from contextlib import contextmanager
 from pathlib import Path
-from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[2]
 PROJECT = ROOT / "tests/validation_runtime"
 FIXTURE = ROOT / "tests/fixtures/validation/runtime/served_probe"
 ECHO_OVERLAY = ROOT / "tests/fixtures/validation/runtime/echo_canary"
 MAX_LOG_BYTES = 1024 * 1024
-DOCKER_CLEANUP_GRACE_SECONDS = 40
-DOCKER_WORKERS = (
-    ("contracts", "test_cli_runtime_contract_findings"),
-    ("remaining", "not test_cli_runtime_contract_findings"),
-)
 
 
 def digest(path):
@@ -63,22 +56,6 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def drain(stream, tail):
-    try:
-        while chunk := stream.read(8192):
-            tail.extend(chunk)
-            if len(tail) > MAX_LOG_BYTES:
-                del tail[:-MAX_LOG_BYTES]
-    finally:
-        stream.close()
-
-
-def redact(output):
-    return re.sub(
-        r"(?:hf_|ghp_|github_pat_|sk-)[A-Za-z0-9_-]{8,}", "[REDACTED]", output
-    )
-
-
 def run(argv, *, cwd=ROOT, timeout=600, log=None, env=None):
     process = subprocess.Popen(
         [str(arg) for arg in argv],
@@ -91,6 +68,15 @@ def run(argv, *, cwd=ROOT, timeout=600, log=None, env=None):
     )
     stdout_tail = bytearray()
     stderr_tail = bytearray()
+
+    def drain(stream, tail):
+        try:
+            while chunk := stream.read(8192):
+                tail.extend(chunk)
+                if len(tail) > MAX_LOG_BYTES:
+                    del tail[:-MAX_LOG_BYTES]
+        finally:
+            stream.close()
 
     readers = [
         threading.Thread(target=drain, args=(stream, tail), daemon=True)
@@ -125,8 +111,12 @@ def run(argv, *, cwd=ROOT, timeout=600, log=None, env=None):
                 reader.join(timeout=5)
         output = bytes(stdout_tail).decode("utf-8", "replace")
         errors = bytes(stderr_tail).decode("utf-8", "replace")
-        output = redact(output)
-        errors = redact(errors)
+        output = re.sub(
+            r"(?:hf_|ghp_|github_pat_|sk-)[A-Za-z0-9_-]{8,}", "[REDACTED]", output
+        )
+        errors = re.sub(
+            r"(?:hf_|ghp_|github_pat_|sk-)[A-Za-z0-9_-]{8,}", "[REDACTED]", errors
+        )
         diagnostics = (
             (output + errors).encode("utf-8")[-MAX_LOG_BYTES:].decode("utf-8", "ignore")
         )
@@ -138,205 +128,6 @@ def run(argv, *, cwd=ROOT, timeout=600, log=None, env=None):
             f"Command failed ({process.returncode}): {argv[0:3]}\n{diagnostics[-4000:]}"
         )
     return output.strip()
-
-
-def worker_groups(processes):
-    # CLI acceptance starts new sessions. Include their groups before stopping
-    # pytest, while PPIDs still establish ownership; never scan by command name.
-    table = subprocess.run(
-        ["ps", "-axo", "pid=,ppid=,pgid="],
-        capture_output=True,
-        text=True,
-        timeout=2,
-        check=True,
-    )
-    rows = [tuple(map(int, line.split())) for line in table.stdout.splitlines()]
-    owned = {process.pid for process in processes}
-    while children := {pid for pid, parent, _ in rows if parent in owned} - owned:
-        owned.update(children)
-    return {group for pid, _, group in rows if pid in owned and group in owned}
-
-
-def stop_docker_workers(processes):
-    groups = {process.pid for process in processes}
-    try:
-        groups.update(worker_groups(processes))
-    finally:
-        # SIGINT lets pytest run case-owned cleanup. Force the captured CLI
-        # sessions too, even if their pytest parent exits during the grace time.
-        for group in groups:
-            try:
-                os.killpg(group, signal.SIGINT)
-            except ProcessLookupError:
-                pass
-        deadline = time.monotonic() + DOCKER_CLEANUP_GRACE_SECONDS
-        try:
-            while any(process.poll() is None for process in processes):
-                if time.monotonic() >= deadline:
-                    break
-                groups.update(worker_groups(processes))
-                time.sleep(0.05)
-        finally:
-            for group in groups:
-                try:
-                    os.killpg(group, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            deadline = time.monotonic() + 5
-            for process in processes:
-                process.wait(timeout=max(0.01, deadline - time.monotonic()))
-
-
-def merge_docker_junit(output):
-    combined = ElementTree.Element("testsuites")
-    try:
-        for name, _ in DOCKER_WORKERS:
-            document = ElementTree.parse(output / f"junit-{name}.xml").getroot()
-            if document.tag not in {"testsuites", "testsuite"}:
-                raise ValueError("Expected JUnit testsuites or testsuite")
-            combined.extend([document] if document.tag == "testsuite" else document)
-    except (OSError, ElementTree.ParseError, ValueError) as error:
-        raise RuntimeError(f"Docker worker JUnit incomplete: {error}") from error
-    ElementTree.ElementTree(combined).write(output / "junit.xml", encoding="utf-8")
-
-
-@contextmanager
-def staging_directory(processes):
-    work = Path(tempfile.mkdtemp(prefix="openenv-validation-"))
-    try:
-        yield work
-    finally:
-        if any(process.poll() is None for process in processes):
-            raise RuntimeError(
-                f"Docker worker not reaped; staged context retained: {work}"
-            )
-        shutil.rmtree(work)
-
-
-def run_docker_tests(test_args, *, output, env, basetemp, processes, timeout=1200):
-    started = time.monotonic()
-    deadline = started + timeout
-    workers = []
-    summary = {"timeout_seconds": timeout, "timed_out": False, "cancelled": False}
-
-    def cancel(signum, frame):
-        # Defer the exception until a newly spawned worker has been registered.
-        summary.update(cancelled=True, signal=signal.Signals(signum).name)
-
-    handlers = {
-        sig: signal.signal(sig, cancel) for sig in (signal.SIGINT, signal.SIGTERM)
-    }
-    try:
-        for name, selector in DOCKER_WORKERS:
-            if summary["cancelled"]:
-                raise KeyboardInterrupt(
-                    f"Docker workers cancelled by {summary['signal']}"
-                )
-            if time.monotonic() >= deadline:
-                raise subprocess.TimeoutExpired("Docker workers", timeout)
-            argv = [
-                sys.executable,
-                "-m",
-                "pytest",
-                *test_args,
-                "-k",
-                selector,
-                "-vv",
-                "--durations=0",
-                "-o",
-                "faulthandler_timeout=180",
-                "--basetemp",
-                basetemp / name,
-                "--junitxml",
-                output / f"junit-{name}.xml",
-            ]
-            worker_started = time.monotonic()
-            process = subprocess.Popen(
-                [str(arg) for arg in argv],
-                cwd=output,
-                env={**env, "PYTHONUNBUFFERED": "1"},
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            processes.append(process)
-            tail = bytearray()
-            reader = threading.Thread(
-                target=drain, args=(process.stdout, tail), daemon=True
-            )
-            worker = {
-                "name": name,
-                "selector": selector,
-                "process": process,
-                "started": worker_started,
-                "reader": reader,
-                "tail": tail,
-                "elapsed_seconds": None,
-            }
-            workers.append(worker)
-            reader.start()
-        pending = list(workers)
-        while pending:
-            if time.monotonic() >= deadline:
-                raise subprocess.TimeoutExpired("Docker workers", timeout)
-            if summary["cancelled"]:
-                raise KeyboardInterrupt(
-                    f"Docker workers cancelled by {summary['signal']}"
-                )
-            for worker in pending[:]:
-                if worker["process"].poll() is not None:
-                    worker["elapsed_seconds"] = round(
-                        time.monotonic() - worker["started"], 3
-                    )
-                    pending.remove(worker)
-            if pending:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise subprocess.TimeoutExpired("Docker workers", timeout)
-                time.sleep(min(0.05, remaining))
-    except subprocess.TimeoutExpired:
-        summary["timed_out"] = True
-        raise
-    except KeyboardInterrupt as error:
-        summary["cancelled"] = True
-        raise RuntimeError(str(error)) from error
-    finally:
-        summary["execution_seconds"] = round(time.monotonic() - started, 3)
-        # Repeated cancellation must not interrupt bounded cleanup/reaping.
-        for sig in handlers:
-            signal.signal(sig, signal.SIG_IGN)
-        try:
-            if any(worker["process"].poll() is None for worker in workers):
-                stop_docker_workers([worker["process"] for worker in workers])
-        finally:
-            summary["elapsed_seconds"] = round(time.monotonic() - started, 3)
-            summary["workers"] = []
-            for worker in workers:
-                worker["reader"].join(timeout=2)
-                log = output / "logs" / f"tests-{worker['name']}.log"
-                log.parent.mkdir(parents=True, exist_ok=True)
-                log.write_text(redact(bytes(worker["tail"]).decode("utf-8", "replace")))
-                summary["workers"].append(
-                    {
-                        "name": worker["name"],
-                        "selector": worker["selector"],
-                        "start_seconds": round(worker["started"] - started, 3),
-                        "elapsed_seconds": worker["elapsed_seconds"]
-                        if worker["elapsed_seconds"] is not None
-                        else round(time.monotonic() - worker["started"], 3),
-                        "returncode": worker["process"].poll(),
-                    }
-                )
-            write_json(output / "docker-workers.json", summary)
-            write_json(output / "logs/tests.log", summary)
-            for sig, handler in handlers.items():
-                signal.signal(sig, handler)
-    merge_docker_junit(output)
-    if any(worker["process"].returncode for worker in workers):
-        raise RuntimeError(
-            "Docker worker failed; see docker-workers.json and worker logs"
-        )
 
 
 def snapshot_source(destination):
@@ -656,9 +447,8 @@ def main():
     environment.pop("PYTEST_ADDOPTS", None)
     environment["OPENENV_VALIDATION_ARTIFACTS"] = str(output)
     environment["OPENENV_REQUIRE_COMPLETE"] = "1" if args.require_complete else "0"
-    docker_processes = []
     try:
-        with staging_directory(docker_processes) as temporary:
+        with tempfile.TemporaryDirectory(prefix="openenv-validation-") as temporary:
             if args.suite == "docker":
                 manifest["docker_info"] = json.loads(
                     run(
@@ -710,30 +500,21 @@ def main():
                     str(ROOT / "tests/test_validation"),
                     "--ignore=" + str(ROOT / "tests/test_validation/integration"),
                 ]
-            if args.suite == "docker":
-                run_docker_tests(
-                    test_args,
-                    output=output,
-                    env=environment,
-                    basetemp=temporary / "pytest",
-                    processes=docker_processes,
-                )
-            else:
-                run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "pytest",
-                        *test_args,
-                        "-q",
-                        "--junitxml",
-                        output / "junit.xml",
-                    ],
-                    cwd=output,
-                    env=environment,
-                    timeout=600,
-                    log=output / "logs/tests.log",
-                )
+            run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    *test_args,
+                    "-q",
+                    "--junitxml",
+                    output / "junit.xml",
+                ],
+                cwd=output,
+                env=environment,
+                timeout=1200 if args.suite == "docker" else 600,
+                log=output / "logs/tests.log",
+            )
             status = 0
     except (RuntimeError, subprocess.TimeoutExpired, OSError) as error:
         manifest["error"] = str(error)

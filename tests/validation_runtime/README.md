@@ -18,17 +18,7 @@ recipe but records its different platform. No host Python code from the subject
 is imported by the validator.
 
 Docker test execution has a twenty-minute budget for the full fault/control
-inventory, shared by two concurrent subprocess workers: twenty CLI contract cases
-and the other thirty-eight cases. Both use the same staged wheel and distinct
-pytest temporary directories. Worker logs (`logs/tests-*.log`), JUnit files
-(`junit-*.xml`) and timing/exits (`docker-workers.json`) survive failure. Valid
-worker JUnit documents are combined at `junit.xml`; complete acceptance still
-requires both zero exits, every required case, no duplicates and no failures,
-errors or skips. Timeout/cancellation interrupts owned process groups, including
-detached CLI sessions, then forces termination and reaps workers with bounded
-cleanup before releasing the staged context. Logs include verbose progress,
-durations and 180-second faulthandler dumps. Fast and protocol suites retain their
-ten-minute budgets.
+inventory; fast and protocol suites retain their ten-minute budgets.
 
 The protocol suite also exercises the installed wheel over real loopback HTTP
 and WebSocket connections using a test-only process provider. It verifies
