@@ -92,17 +92,25 @@ def test_non_mcp_subject_explicitly_rejects_tool_discovery(monkeypatch):
 
     with TestClient(app_for(monkeypatch, NonMCPEnv)) as client:
         with client.websocket_connect("/ws") as ws:
-            ws.send_json(
-                {
-                    "type": "mcp",
-                    "data": {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "tools/list",
-                        "params": {},
-                    },
-                }
-            )
-            reply = ws.receive_json()
-            assert reply["type"] == "mcp"
-            assert reply["data"]["error"]["code"] == -32601
+            for request_id, (method, params) in enumerate(
+                [
+                    ("tools/list", {}),
+                    ("tools/call", {"name": "unavailable", "arguments": {}}),
+                ],
+                1,
+            ):
+                ws.send_json(
+                    {
+                        "type": "mcp",
+                        "data": {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "method": method,
+                            "params": params,
+                        },
+                    }
+                )
+                reply = ws.receive_json()
+                assert reply["type"] == "mcp"
+                assert reply["data"]["id"] == request_id
+                assert reply["data"]["error"]["code"] == -32601

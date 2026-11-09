@@ -158,6 +158,137 @@ def discovery_episode():
     )
 
 
+@pytest.mark.parametrize("failure", ["episode", "depth", "numeric", "interrupted"])
+@pytest.mark.parametrize(
+    "discovery,tool_status,task_status",
+    [
+        ("healthy", CheckStatus.PASS, CheckStatus.PASS),
+        ("extra-tool", CheckStatus.FAIL, CheckStatus.PASS),
+        ("wrong-count", CheckStatus.PASS, CheckStatus.FAIL),
+        ("missing", CheckStatus.SKIP, CheckStatus.SKIP),
+        ("unavailable", CheckStatus.SKIP, CheckStatus.PASS),
+        ("errors", CheckStatus.FAIL, CheckStatus.FAIL),
+    ],
+)
+def test_completed_discovery_is_graded_after_primary_episode_failure(
+    discovery_package,
+    monkeypatch,
+    tmp_path,
+    failure,
+    discovery,
+    tool_status,
+    task_status,
+):
+    sample = replace(
+        discovery_episode(), failure_phase="step", failure_reason="step incomplete"
+    )
+    if discovery == "extra-tool":
+        sample = replace(sample, tools_json='{"tools":[{"name":"undeclared"}]}')
+    elif discovery == "wrong-count":
+        tasks = json.loads(sample.tasks_json)
+        tasks["counts"]["train"] = 101
+        sample = replace(sample, tasks_json=json.dumps(tasks))
+    elif discovery == "missing":
+        sample = replace(sample, tools_json=None, tasks_json=None)
+    elif discovery == "unavailable":
+        sample = replace(sample, tools_json=None, tools_unavailable="unsupported tools")
+    elif discovery == "errors":
+        sample = replace(
+            sample, tools_error="tool discovery denied", tasks_error="task API failed"
+        )
+
+    def collect(*args, **kwargs):
+        assert kwargs["collect_tools"] is kwargs["collect_tasks"] is True
+        if failure == "interrupted":
+            raise RuntimeCollectionInterrupted(sample)
+        if failure != "episode":
+            raise RuntimeCollectionUnsupported(
+                sample,
+                capability="json_depth" if failure == "depth" else "json_numeric_range",
+            )
+        return sample
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=bundle,
+    )
+    results = {result.check_id: result for result in report.results}
+    assert (
+        results["runtime.startup"].status
+        is {
+            "episode": CheckStatus.FAIL,
+            "depth": CheckStatus.SKIP,
+            "numeric": CheckStatus.SKIP,
+            "interrupted": CheckStatus.ERROR,
+        }[failure]
+    )
+    assert results["runtime.tool_declaration_accuracy"].status is tool_status
+    assert results["runtime.task_declaration_accuracy"].status is task_status
+    assert report.verdict.value == (
+        "fail"
+        if failure in {"episode", "interrupted"}
+        or CheckStatus.FAIL in {tool_status, task_status}
+        else "warn"
+    )
+    for check in (
+        "runtime.tool_declaration_accuracy",
+        "runtime.task_declaration_accuracy",
+    ):
+        assert sum(row.check_id == check for row in report.results) == 1
+    assert provider.subject.stopped
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    assert json.loads((bundle / "report.json").read_text()) == report.model_dump(
+        mode="json"
+    )
+
+
+def test_interrupting_discovery_recovery_still_cleans_up(
+    discovery_package, monkeypatch, tmp_path
+):
+    from openenv.validation.graders.runtime.discovery import (
+        ToolDeclarationAccuracyGrader,
+    )
+
+    sample = replace(
+        discovery_episode(), failure_phase="step", failure_reason="JSON unsupported"
+    )
+    calls = []
+
+    def collect(*args, **kwargs):
+        raise RuntimeCollectionUnsupported(sample, capability="json_depth")
+
+    def grade(*args):
+        calls.append(True)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr(ToolDeclarationAccuracyGrader, "run", grade)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=bundle,
+    )
+    results = {row.check_id: row for row in report.results}
+    assert calls == [True]
+    assert results["runtime.startup"].status is CheckStatus.ERROR
+    assert results["runtime.startup"].evidence == ["validation interrupted"]
+    assert results["runtime.tool_declaration_accuracy"].status is CheckStatus.SKIP
+    assert results["runtime.tool_declaration_accuracy"].evidence == [
+        "grader did not complete"
+    ]
+    assert report.verdict.value == "fail"
+    assert provider.subject.stopped
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+
+
 def test_runtime_collects_primary_isolation_and_session_replays_then_cleans_up(
     package, monkeypatch, tmp_path
 ):
@@ -1426,7 +1557,7 @@ def test_claims_without_evidence_are_incomplete_or_fail_not_pass(
     assert checks["runtime.reward_attribution"].status is CheckStatus.SKIP
 
 
-def test_all_claimed_discovery_checks_name_the_missing_startup_dependency(
+def test_claimed_discovery_checks_name_missing_evidence_or_dependencies(
     discovery_package,
 ):
     result = run_validation(discovery_package, max_level=Level.RUNTIME, skip_build=True)
@@ -1439,6 +1570,9 @@ def test_all_claimed_discovery_checks_name_the_missing_startup_dependency(
     ):
         check = checks["runtime." + name]
         assert check.status is CheckStatus.SKIP
+        if name in {"tool_declaration_accuracy", "task_declaration_accuracy"}:
+            assert check.evidence == ["runtime evidence is unavailable"]
+            continue
         dependencies = "runtime.startup"
         if name == "reward_attribution":
             dependencies += ", runtime.rubric_introspectable"
