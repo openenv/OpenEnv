@@ -271,9 +271,9 @@ def test_descendant_probe_requires_a_live_correlated_fork(
             if reads > 1 and case == "vanished":
                 raise FileNotFoundError(path)
             if reads > 1 and case == "reused":
-                return io.StringIO(
-                    original(path).read().rsplit(" ", 1)[0] + f" {100 + reads}"
-                )
+                with original(path) as stream:
+                    content = stream.read()
+                return io.StringIO(content.rsplit(" ", 1)[0] + f" {100 + reads}")
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "open", read)
