@@ -689,6 +689,7 @@ class DockerRunningSubject:
             except CleanupError:
                 raise
             except (ProviderError, ValueError):
+                # Witness collection is best effort; preserve timeout and cleanup.
                 pass
             try:
                 stimulus.result()

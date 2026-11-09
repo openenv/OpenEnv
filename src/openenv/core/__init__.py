@@ -11,7 +11,7 @@ from . import env_server
 from .env_server import *  # noqa: F403
 
 if TYPE_CHECKING:
-    from .env_client import EnvClient
+    from .env_client import EnvClient, SessionLostError
     from .generic_client import GenericAction, GenericEnvClient
     from .llm_client import (
         AnthropicClient,
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "EnvClient",
+    "SessionLostError",
     "SyncEnvClient",
     "GenericEnvClient",
     "GenericAction",
@@ -42,6 +43,7 @@ __all__ = [
 
 _LAZY_ATTRS = {
     "EnvClient": (".env_client", "EnvClient"),
+    "SessionLostError": (".env_client", "SessionLostError"),
     "SyncEnvClient": (".sync_client", "SyncEnvClient"),
     "GenericEnvClient": (".generic_client", "GenericEnvClient"),
     "GenericAction": (".generic_client", "GenericAction"),

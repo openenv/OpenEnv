@@ -173,6 +173,59 @@ def test_stop_allowance_is_bounded_by_responses_actually_emitted():
     assert not reconcile(doc, native).ok
 
 
+def pi_session(tmp_path, replies):
+    """A pi session log with one assistant record per `(text, output_tokens)` reply."""
+    import json
+
+    sessions = tmp_path / "agent" / "pi" / "sessions"
+    sessions.mkdir(parents=True)
+    records = []
+    for i, (text, output) in enumerate(replies):
+        content = (
+            [{"type": "text", "text": text}]
+            if text
+            else [
+                {"type": "toolCall", "id": f"call_{i}", "name": "ls", "arguments": {}}
+            ]
+        )
+        records.append(
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                    "usage": {"output": output},
+                },
+            }
+        )
+        records.append(
+            {"type": "message", "message": {"role": "toolResult", "content": "ok"}}
+        )
+    (sessions / "s.jsonl").write_text("\n".join(json.dumps(r) for r in records))
+    trace, source = atif.load_trace(tmp_path)
+    assert source == "pi_session"
+    return trace
+
+
+def test_pi_rollout_ended_by_the_proxy_budget_stop_reconciles(tmp_path):
+    """pi logs the proxy's stop reply as an assistant message; it is not a model call."""
+    doc = document([10, 20])
+    doc["budget_stop_count"] = 1
+    native = pi_session(
+        tmp_path, [(None, 10), (None, 20), (atif.BUDGET_STOP_MESSAGE, 0)]
+    )
+    report = reconcile(doc, native)
+    assert report.ok, report.findings
+    assert "proxy_budget_stops" in codes(report)
+
+
+def test_pi_zero_token_reply_that_is_not_a_budget_stop_still_fails(tmp_path):
+    doc = document([10, 20])
+    doc["budget_stop_count"] = 1
+    native = pi_session(tmp_path, [(None, 10), (None, 20), ("Done.", 0)])
+    assert not reconcile(doc, native).ok
+
+
 def test_extra_captured_calls_embed_as_auxiliary_when_coverage_is_high():
     """Seeing MORE than the harness logged is benign and explainable: a next-speaker check, a title
     generator. The asymmetry is deliberate — missing calls mean we lost something, extra ones do not."""
