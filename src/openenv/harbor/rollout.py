@@ -150,6 +150,48 @@ def _finite_reward(key: str, value: Any) -> float:
     return number
 
 
+def _graded_nonzero_exit(info: Any, reward: float | None) -> bool:
+    """Whether a trial's exception is only the agent's exit code, after the verifier graded the run.
+
+    `opencode run` has been seen to exit 1 on runs that finished normally: the stream ends on a
+    `step_finish` with `reason: "stop"`, it carries no `error` event and stderr is empty. Harbor runs
+    the command under `set -o pipefail` and turns any non-zero status into
+    `NonZeroAgentExitCodeError` (agents/installed/base.py `_exec`), records it on the trial, and
+    still runs the verifier. Treating that record as the outcome failed solved and unsolved rollouts
+    alike.
+
+    Only the plain exit code qualifies. Harbor's own classifications of the same failure (`ApiError`
+    and its subclasses, refusals) keep failing, and so does an opencode stream that carries an
+    `error` event, since that run was cut short by the provider rather than finished.
+
+    Args:
+        info (`Any`):
+            The trial's `exception_info` (Harbor's `ExceptionInfo`).
+        reward (`float`, *optional*):
+            The headline reward already picked from the verifier, `None` when there is none.
+
+    Returns:
+        `bool`: `True` when the exception should be kept as a warning rather than a failure.
+    """
+    if reward is None:
+        return False
+    if getattr(info, "exception_type", None) != "NonZeroAgentExitCodeError":
+        return False
+    message = str(getattr(info, "exception_message", "") or "")
+    return (
+        message.startswith("Command failed (exit ") and '"type":"error"' not in message
+    )
+
+
+def _first_line(info: Any) -> str:
+    """The exception's type and the first line of its message, for a one-line finding."""
+    message = str(getattr(info, "exception_message", "") or "")
+    first = message.splitlines()[0] if message else ""
+    if len(first) > 200:
+        first = first[:200] + "..."
+    return f"{getattr(info, 'exception_type', None)}: {first}"
+
+
 def _pick_reward(
     rewards: dict[str, float], reward_key: str = ""
 ) -> tuple[float | None, str]:
@@ -589,9 +631,17 @@ async def run_rollout(
                 )
             info = getattr(trial_result, "exception_info", None)
             if info is not None and result.error is None:
-                result.ok = False
-                result.exception_type = getattr(info, "exception_type", None)
-                result.error = str(getattr(info, "exception_message", ""))[:600]
+                if _graded_nonzero_exit(info, result.reward):
+                    # The agent's exit status is not the outcome when the verifier graded the run.
+                    # The capture checks below still decide `ok`, so an empty or broken capture fails.
+                    result.findings.append(
+                        "[WARN] agent exited non-zero after a graded run: "
+                        + _first_line(info)
+                    )
+                else:
+                    result.ok = False
+                    result.exception_type = getattr(info, "exception_type", None)
+                    result.error = str(getattr(info, "exception_message", ""))[:600]
 
         # --- capture --------------------------------------------------------
         try:

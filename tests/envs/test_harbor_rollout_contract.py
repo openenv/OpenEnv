@@ -448,6 +448,60 @@ def test_host_side_seams():
     assert not seams.get("opencode").host_side
 
 
+@pytest.mark.parametrize("strict", [True, False], ids=["train", "look"])
+def test_ambiguous_rewards_fail_training_but_not_a_rollout_to_look_at(
+    monkeypatch, tmp_path, strict
+):
+    """The verifier ran and wrote several keys, none named `reward` and none asked for.
+
+    Training must not pick a signal, so the strict default fails the rollout. The look-at path keeps
+    it usable, with no headline reward and every key still in `rewards`.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from openenv.core.harness.capture.sessions import SessionRegistry
+
+    trial_module = pytest.importorskip("harbor.trial.trial")
+    rewards = {"correctness": 1.0, "submission": 1.0}
+
+    class Trial:
+        @classmethod
+        async def create(cls, config):
+            return cls()
+
+        async def run(self):
+            return SimpleNamespace(verifier_result=SimpleNamespace(rewards=rewards))
+
+    monkeypatch.setattr(trial_module, "Trial", Trial)
+    monkeypatch.setattr(rollout, "build_trial_config", lambda **kwargs: None)
+    result = asyncio.run(
+        rollout.run_rollout(
+            task_dir=tmp_path,
+            harness="opencode",
+            sandbox="e2b",
+            registry=SessionRegistry(),
+            intercept_url="http://127.0.0.1:9",
+            model="m",
+            trials_dir=tmp_path,
+            purpose="eval",
+            capture_level="text",
+            require_reward=strict,
+        )
+    )
+    assert result.reward is None
+    assert result.rewards == rewards
+    # The fake trial makes no model calls, so capture fails on its own: only the reward reason is
+    # under test here.
+    if strict:
+        assert result.ok is False
+        assert "none is named 'reward'" in result.error
+    else:
+        assert "reward" not in (result.error or "")
+        assert any("no headline reward" in item for item in result.findings)
+        assert not any("ungraded" in item for item in result.findings)
+
+
 @pytest.mark.parametrize("name", ["my trials", "a+b", "user@host", "c:d"])
 def test_trial_uri_with_escaped_characters_still_finds_the_trace(tmp_path, name):
     """Harbor sets `trial_uri` with `Path.as_uri()`, which percent-encodes these characters."""

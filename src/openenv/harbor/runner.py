@@ -158,6 +158,11 @@ async def run_batch(
                 trials_dir=trials_dir,
                 dataset=dataset,
                 reward_key=reward_key,
+                # A rollout to look at, not to train on: when the verifier wrote several rewards and
+                # `reward_key` names none of them, the capture is still usable and every reward stays
+                # in `rewards`. Failing it would report a graded rollout as an infra error. The
+                # training path (`run_rollout`'s default) still refuses to pick a signal.
+                require_reward=False,
                 keep_sandbox=keep_sandbox,
                 force_build=force_build,
                 capture_level=capture_level,
@@ -194,6 +199,12 @@ def _summarise(r: HarborRolloutResult) -> str:
         f"{status:<26} reward={reward:<6} turns={r.n_turns:<3} roots={r.n_roots:<3} "
         f"{mode:<11} {detail} atif={r.atif:<9} {r.wall_s:.0f}s"
         + (f"\n      {r.error[:180]}" if r.error else "")
+        + (
+            f"\n      verifier wrote {r.rewards} but none is the headline reward: "
+            "pass --reward-key (a comma-separated preference order is accepted)"
+            if r.reward is None and r.rewards
+            else ""
+        )
     )
 
 
@@ -203,15 +214,24 @@ def _report(results: list[HarborRolloutResult]) -> str:
     ok = sum(1 for r in results if r.ok)
     graded = [r for r in results if r.reward is not None]
     solved = sum(1 for r in graded if r.reward and r.reward > 0)
+    # Two different reasons for no reward. Only an empty `rewards` means the verifier never ran:
+    # with keys present it did run, and no key was chosen as the headline one.
+    no_headline = [r for r in results if r.reward is None and r.rewards]
+    never_ran = len(results) - len(graded) - len(no_headline)
+    ungraded = []
+    if no_headline:
+        keys = sorted({key for r in no_headline for key in r.rewards})
+        ungraded.append(
+            f"{len(no_headline)} ungraded: the verifier ran but no headline reward among "
+            f"{keys}, pass --reward-key"
+        )
+    if never_ran:
+        ungraded.append(f"{never_ran} ungraded: the verifier never ran")
     lines = [
         "=" * 78,
         f"capture   {ok}/{len(results)} usable",
         f"solved    {solved}/{len(graded)} graded"
-        + (
-            f"   ({len(results) - len(graded)} ungraded — the verifier never ran)"
-            if len(graded) != len(results)
-            else ""
-        ),
+        + "".join(f"   ({reason})" for reason in ungraded),
     ]
     if all(r.rollout_type == "eval" for r in results):
         lines.append(
