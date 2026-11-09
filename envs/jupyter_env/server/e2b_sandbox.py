@@ -203,6 +203,10 @@ del _patched_show
         """Upload a file into the sandbox filesystem."""
         self._sbx.files.write(filename, content)
 
+    def read_file(self, filename: str) -> bytes:
+        """Read a file out of the sandbox filesystem."""
+        return self._sbx.files.read(filename, format="bytes")
+
     def kill(self) -> None:
         """Terminate the sandbox. Safe to call multiple times."""
         try:
