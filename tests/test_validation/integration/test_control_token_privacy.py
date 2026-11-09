@@ -1,4 +1,4 @@
-"""Run-scoped credentials must not survive any of the three real collections."""
+"""Run-scoped credentials must not survive primary, isolation or replay collection."""
 
 import hashlib
 import json
@@ -10,7 +10,7 @@ import yaml
 from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
 from openenv.core.env_server.types import WSErrorCode
 from openenv.validation import runner
-from openenv.validation.runtime import collector
+from openenv.validation.runtime import collector, replay
 from openenv.validation.runtime.json_values import loads
 from openenv.validation.types import CheckStatus, Level
 from support.runtime import FakeRuntimeProvider
@@ -139,6 +139,7 @@ def test_control_token_omission_across_real_collections(
         return real_connect(*args, **kwargs)
 
     monkeypatch.setattr(runner, "collect_runtime_evidence", collect)
+    monkeypatch.setattr(replay, "collect_runtime_evidence", collect)
     monkeypatch.setattr(collector, "connect", connect)
     bundle = tmp_path / "bundle"
     with served(app) as base_url:
@@ -181,21 +182,21 @@ def test_control_token_omission_across_real_collections(
     assert len(provider.launches) == len(provider.builds) == 1
     assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
 
-    expected_calls = 1 if attack_call == 1 else 3
+    expected_calls = 1 if attack_call == 1 else 5
     assert len(schemas) == len(collected) == expected_calls
-    assert [kwargs.get("episodes", 1) for kwargs, _ in collected] == [1, 2, 1][
+    assert [kwargs.get("episodes", 1) for kwargs, _ in collected] == [1, 2, 1, 1, 1][
         :expected_calls
     ]
     for index, (kwargs, _) in enumerate(collected):
         assert kwargs["episode_timeout_s"] == 30.0
         assert kwargs.get("request_timeout_s") is None
-        if index == 0:
-            assert kwargs["validation_token"] == marker
-        elif attack_call is not None:
-            assert kwargs["validation_token"] == marker
+        assert kwargs["validation_token"] == marker
+        if index in (1, 2):
             assert kwargs["request_telemetry"] is False
+        else:
+            assert kwargs.get("request_telemetry", True) is True
     assert [call for call, operation in requests if operation == "validation_open"] == (
-        [] if attack_call == 1 and surface != "wire" else [1]
+        ([] if surface != "wire" else [1]) if attack_call == 1 else [1, 4, 5]
     )
     assert not any(operation == "validation_read" for _, operation in requests)
     for connection in connections:
@@ -203,7 +204,7 @@ def test_control_token_omission_across_real_collections(
         assert connection["max_queue"] == 1
         assert connection["compression"] is None
     expected_sizes = [
-        8 * 1024 * 1024 if i == 0 else 1024 * 1024
+        1024 * 1024 if i in (1, 2) else 8 * 1024 * 1024
         for i in range(expected_calls)
         if not (attack_call == i + 1 and surface != "wire")
     ]
@@ -215,7 +216,7 @@ def test_control_token_omission_across_real_collections(
     )
     assert report.verdict.value == ("fail" if attack_call == 1 else "warn")
     names = ["collector", "isolation-sequential", "isolation-fresh"]
-    for call, (_, evidence) in enumerate(collected, 1):
+    for call, (_, evidence) in enumerate(collected[:3], 1):
         metadata = loads((bundle / f"{names[call - 1]}-evidence.json").read_text())
         if call > 1:
             assert evidence.telemetry_json is None
@@ -251,6 +252,17 @@ def test_control_token_omission_across_real_collections(
             )
         assert metadata["omitted_trace_fields"] == []
         assert metadata["redacted"] is False
+    if attack_call == 1:
+        assert not (bundle / "replays.json").exists()
+        samples = []
+    else:
+        samples = json.loads((bundle / "replays.json").read_text())["samples"]
+        assert [sample["scope"] for sample in samples] == ["session", "seed"]
+    for (_, evidence), sample in zip(collected[3:], samples, strict=True):
+        assert evidence.failure_reason is sample["failure_reason"] is None
+        assert len(evidence.exchanges) == len(sample["trace"]) == 6
+        assert sample["omitted_trace_fields"] == []
+        assert evidence.schema_response_json == PUBLIC_SCHEMA
     for line in (bundle / "SHA256SUMS").read_text().splitlines():
         digest, name = line.split("  ")
         assert hashlib.sha256((bundle / name).read_bytes()).hexdigest() == digest
