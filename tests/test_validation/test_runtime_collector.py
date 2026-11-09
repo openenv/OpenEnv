@@ -189,6 +189,22 @@ def test_schema_cannot_persist_validation_credential(
     assert token not in str(evidence)
 
 
+def test_raw_schema_cannot_hide_validation_credential_in_duplicate_member(
+    monkeypatch, plan
+):
+    token = "validation-secret-value-" * 2
+    payload = json.dumps(
+        {"description": token, "observation": {"type": "object"}}
+    ).replace(f'"{token}"', f'"{token}","description":"safe"')
+    schema_transport(monkeypatch, TrackedStream(payload.encode()))
+    evidence = collector.collect_runtime_evidence(
+        "http://127.0.0.1:8000", plan, episode_timeout_s=2, validation_token=token
+    )
+    assert evidence.failure_phase == "schema"
+    assert evidence.schema_response_json is None
+    assert token not in repr(evidence)
+
+
 @pytest.mark.parametrize("slow_phase", ["headers", "body"])
 def test_schema_deadline_aborts_trickling_http_server(plan, slow_phase):
     body = json.dumps({"observation": {"type": "object"}}).encode()

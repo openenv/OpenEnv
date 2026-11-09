@@ -356,6 +356,8 @@ def _runtime(subject, graders, *, skip_build, provider):
                         plan,
                         episode_timeout_s=manifest.resources.episode_timeout_s,
                         episodes=2,
+                        validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
+                        request_telemetry=False,
                     )
                 except RuntimeCollectionUnsupported as exc:
                     sequential = exc.evidence
@@ -365,6 +367,8 @@ def _runtime(subject, graders, *, skip_build, provider):
                         running.base_url,
                         plan,
                         episode_timeout_s=manifest.resources.episode_timeout_s,
+                        validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
+                        request_telemetry=False,
                     )
                 except RuntimeCollectionUnsupported as exc:
                     fresh = exc.evidence

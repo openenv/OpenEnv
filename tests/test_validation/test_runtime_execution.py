@@ -140,6 +140,12 @@ def test_runtime_collects_primary_isolation_and_session_replays_then_cleans_up(
     # Primary, same-session pair, fresh isolation session, then repeatability controls.
     assert [kwargs.get("episodes", 1) for _, kwargs in calls] == [1, 2, 1, 1, 1]
     assert [args[1].reset.seed for args, _ in calls] == [42, 42, 42, 42, 43]
+    assert len({kwargs["validation_token"] for _, kwargs in calls[:3]}) == 1
+    assert [kwargs.get("request_telemetry", True) for _, kwargs in calls[:3]] == [
+        True,
+        False,
+        False,
+    ]
     assert len(provider.builds) == len(provider.launches) == 1
     assert provider.subject.stopped
     assert report.report_schema_version == "2"
