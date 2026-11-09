@@ -54,8 +54,9 @@ def collect_replays(
         capabilities (`CapabilitiesSpec`):
             Manifest capabilities; judged rewards require 20 identical-input samples.
         deadline (`float`, *optional*):
-            Absolute monotonic deadline set before primary collection. Defaults to
-            300 seconds from this call; every collection and launch shares it.
+            Absolute monotonic deadline for the remaining baseline-and-replay
+            budget, excluding intervening independent probes. Defaults to 300
+            seconds from this call; every replay collection and launch shares it.
 
     Returns:
         `RuntimeEvidence`: the original episode plus immutable replay evidence.

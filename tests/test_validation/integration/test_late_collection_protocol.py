@@ -191,8 +191,14 @@ def test_late_collection_limits_grade_completed_evidence(
     )
     if limit == "ws_depth":
         rows = json.loads((bundle / f"isolation-{phase}-trace.json").read_text())
-        assert len(rows) == (9 if unsupported_call == 2 else 3)
-        assert metadata["omitted_trace_fields"] == [
-            {"exchange_index": len(rows) - 1, "field": "response_json"}
-        ]
+        # Credential-aware collection cannot retain an unscannable response.
+        # The complete reset/state prefix still reaches grading and the bundle.
+        assert len(rows) == (8 if unsupported_call == 2 else 2)
+        assert rows[-1]["operation"] == "state"
+        assert metadata["omitted_trace_fields"] == []
+    else:
+        assert metadata["schema_response_available"] is False
+        assert metadata["schema_response_parse_failed"] is False
+        assert metadata["schema_available"] is False
+        assert metadata["reset_schema_available"] is False
     assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
