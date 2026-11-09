@@ -40,7 +40,7 @@ def _server_command(dockerfile: str) -> list[str]:
     if "<<" in lines:
         raise UnsupportedCapability(
             "missing provider capability: dockerfile_heredoc; "
-            "hf-sandbox does not interpret heredocs or literal << markers"
+            + "hf-sandbox does not interpret heredocs or literal << markers"
         )
     for line in lines.splitlines():
         parts = line.strip().split(maxsplit=1)
@@ -148,7 +148,7 @@ class HFSandboxValidationProvider:
         if info.sha != self.revision:
             raise ProviderError(
                 f"Space {self.space_id} is at revision {info.sha}, not the "
-                f"validated revision {self.revision}"
+                + f"validated revision {self.revision}"
             )
         # Raw runtime metadata is not provenance for a separately launched Job.
         runtime = info.runtime.raw if info.runtime else {}
@@ -159,14 +159,14 @@ class HFSandboxValidationProvider:
         ):
             raise ProviderError(
                 f"Space {self.space_id} reports stage {stage}, runtime revision "
-                f"{runtime_revision}; expected RUNNING at source revision {self.revision}; "
-                "job image identity remains unverified"
+                + f"{runtime_revision}; expected RUNNING at source revision {self.revision}; "
+                + "job image identity remains unverified"
             )
         if stage is None or runtime_revision is None:
             raise UnsupportedCapability(
                 "missing provider capability: space_runtime_metadata; "
-                "Space runtime stage or revision is unavailable; "
-                "job image identity remains unverified; no job launched"
+                + "Space runtime stage or revision is unavailable; "
+                + "job image identity remains unverified; no job launched"
             )
 
     def build(self, root: Path, execution: ExecutionDeclaration) -> str:
@@ -183,8 +183,8 @@ class HFSandboxValidationProvider:
         self._check_space()
         raise UnsupportedCapability(
             "missing provider capability: immutable_image; "
-            f"Space source revision {self.revision} matches the Hub runtime revision, "
-            "but no verified source-to-image digest binding is available; no job launched"
+            + f"Space source revision {self.revision} matches the Hub runtime revision, "
+            + "but no verified source-to-image digest binding is available; no job launched"
         )
 
     def start(self, spec: LaunchSpec) -> "HFSandboxSubject":
@@ -195,13 +195,13 @@ class HFSandboxValidationProvider:
         if spec.resources.gpus > self.gpus:
             raise UnsupportedCapability(
                 f"flavor {self.flavor} has {self.gpus} GPUs, "
-                f"{spec.resources.gpus} declared"
+                + f"{spec.resources.gpus} declared"
             )
         self._check_space()
         raise UnsupportedCapability(
             "missing provider capability: immutable_image; "
-            f"no verified image digest for Space source revision {self.revision}; "
-            "no job launched"
+            + f"no verified image digest for Space source revision {self.revision}; "
+            + "no job launched"
         )
 
 
