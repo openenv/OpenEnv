@@ -86,6 +86,12 @@ class WordleClient:
             reward=reward,
         )
 
+    def sync(self):
+        return self
+
+    def close(self):
+        pass
+
     def reset(self):
         return self.result()
 
