@@ -440,6 +440,18 @@ class TestPercentagePointsNotation:
         """Test negative percentage points."""
         assert compute_reward("-2.5%", r"\boxed{-2.5}") == 1.0
 
+    def test_percentage_points_multiple_boxed(self):
+        r"""Percentage points in an answer with one \boxed{} per value."""
+        gt = r"\boxed{4.5} \boxed{6.0}"
+        assert compute_reward("4.5%, 6.0%", gt) == 1.0
+        assert compute_reward("4.5%, 7.0%", gt) == 0.0
+
+    def test_percentage_points_multiple_boxed_with_labels(self):
+        r"""A year label does not stop the percentage points fallback."""
+        gt = r"\boxed{4.5} \boxed{6.0}"
+        assert compute_reward("2023: 4.5%, 2024: 6.0%", gt) == 1.0
+        assert compute_reward("2023: 4.5%, 2024: 7.0%", gt) == 0.0
+
     def test_multi_value_in_single_boxed(self):
         """Test comma-separated values inside single \\boxed{} with tolerance."""
         assert (
