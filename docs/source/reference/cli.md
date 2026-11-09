@@ -10,8 +10,8 @@ The `openenv` CLI provides a set of commands for building, validating, and pushi
 
 Import a supported third-party source environment into a generated OpenEnv
 wrapper package. The command detects the source format from the directory
-contents, so ORS/OpenReward and Prime Intellect Verifiers sources do not
-require `--type` in the common case.
+contents, so ORS/OpenReward, Prime Intellect Verifiers and AgentEnv sources do
+not require `--type` in the common case.
 
 The generated wrapper vendors the source tree into the package and includes
 vendored files as package data, so non-secret fixture/data files are available to
@@ -25,6 +25,24 @@ wrapper.
 ```bash
 openenv import path/to/source --name my_env --output-dir ./envs
 openenv import path/to/source --name my_env --output-dir ./envs --env-class MyEnv
+```
+
+An [AgentEnv](https://github.com/scaleapi/agentenv-framework) bundle is a folder
+whose `tasks/` holds task files. When a source holds several bundles, pick one
+with `--env-class` and its folder name; only that folder is vendored. The
+generated server runs it with `build_app` from `agentenv-framework`, which by
+default deploys each episode using local Docker. The server needs a Docker CLI
+and a running daemon accessible for image builds and episode containers. The
+generated `server/Dockerfile` does not supply that runtime, so `openenv build`
+and `openenv push` alone do not produce a working deployment. The generated
+README describes local startup and these prerequisites. The generated client is
+an `MCPToolClient`, since the served environment takes MCP actions. See
+[AgentEnv's OpenEnv page](https://www.agentenvframework.com/docs/openenv) for
+what it serves and what it needs.
+
+```bash
+openenv import path/to/bundle --name my_env --output-dir ./envs
+openenv import path/to/plugin --name my_env --output-dir ./envs --env-class my-bundle
 ```
 
 [[autodoc]] openenv.cli.commands.import_env.import_env
@@ -45,12 +63,17 @@ openenv validate ./my_env --level runtime --local --output report.json
 Runtime validation requires Docker and a `validation.execution` declaration in
 `openenv.yaml`. The declaration points to a bounded JSON replay plan containing
 one reset and a sequence of actions. The validator builds an immutable image,
-opens one WebSocket session, measures reward values, observation schemas and
-state continuity, and removes the container even if a check fails.
+collects the original episode, repeats the plan in a fresh WebSocket session and
+with a different seed, then replays it in a fresh container when the provider
+supports that capability. Docker validation uses two containers concurrently
+during the fresh-container replay. Both use the same immutable image and are
+removed even if a check fails.
 
-The runtime level implements startup, reward, observation, state, network
-policy, host containment, resource bounds, episode isolation and oracle
-containment checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
+The 16 implemented runtime checks cover startup, rewards, observation schemas,
+state continuity, network policy, host containment, resource bounds, episode isolation,
+oracle containment, seed forwarding, determinism, emitted trajectory records, tool
+and task discovery, rubric introspection and reward attribution. Applicable checks
+with unsupported capabilities or incomplete evidence appear as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
@@ -121,11 +144,21 @@ these measured responses. It does not test arbitrary MCP tool reads, partial or
 transformed disclosures, or writes to reward artifacts; it does not certify the
 full agent boundary.
 `--local` explicitly selects this default package mode and rejects a remote URL.
-The declared `episode_timeout_s` bounds collection; a reset or judged step may use
-its remaining budget. Collection failures appear once under `runtime.startup`,
-with dependent contract checks skipped and the completed trace retained.
+Explicitly unsupported session telemetry yields a `SKIP` naming `session_telemetry`;
+authorization refusals and malformed telemetry remain failures. Explicitly unsupported
+`tools/list` similarly skips with `tool_discovery` named. Internal discovery errors
+and malformed responses remain failures, even for an empty declared tool set. Seed control
+reports observed forwarding to reset, separately from empirical determinism.
+The declared `episode_timeout_s` bounds each episode; a reset or judged step may use
+its remaining budget. Original and replay collection share a 300-second deadline
+and a 32 MiB evidence budget. `llm_judged` requests 20 identical-input episodes,
+including the original, plus the different-seed episode. Validation repeats the
+actions and any external service calls they make, so budget for the additional
+runtime and cost. Missing replay samples cannot pass determinism. Primary episode
+collection failures appear under `runtime.startup`, with dependent contract checks
+skipped and the completed trace retained.
 Validator JSON numeric-range and depth limits report named capability `SKIP`s,
-preserving the received evidence.
+preserving the received evidence when it can be retained without validation credentials.
 
 `--space` validates a Hugging Face Space on HF Jobs instead of a local directory:
 

@@ -9,7 +9,14 @@ import math
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from .types import SignatureKind
 
@@ -240,6 +247,14 @@ class CapabilitiesSpec(BaseModel):
     canaries: str | None = None
     declared_tools: list[str] = Field(default_factory=list)
     declared_task_count: dict[str, int] = Field(default_factory=dict)
+
+    @model_serializer(mode="wrap")
+    def _preserve_declaration_presence(self, serialize):
+        data = serialize(self)
+        for field in ("declared_tools", "declared_task_count"):
+            if field not in self.model_fields_set:
+                data.pop(field, None)
+        return data
 
     @model_validator(mode="after")
     def _injected_state_requires_set_state(self) -> "CapabilitiesSpec":

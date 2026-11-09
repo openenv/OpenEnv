@@ -18,6 +18,14 @@ _TOKEN = re.compile(
 _MAX_ARTIFACT_DEPTH = 64
 
 
+def _unique_object(pairs):
+    # A dict cannot retain earlier duplicate values for redaction or replay.
+    value = dict(pairs)
+    if len(value) != len(pairs):
+        raise ValueError("duplicate JSON object members")
+    return value
+
+
 def _redact(value, *, depth=0):
     if depth >= _MAX_ARTIFACT_DEPTH and isinstance(value, (dict, list)):
         return {"omitted": "artifact nesting limit exceeded"}
@@ -49,7 +57,7 @@ def _recording(evidence, trace_file):
             row = asdict(exchange)
             for key in ("request_json", "response_json"):
                 try:
-                    row[key] = loads(row[key])
+                    row[key] = loads(row[key], object_pairs_hook=_unique_object)
                 except (ValueError, ArithmeticError, RecursionError):
                     row[key] = "[malformed or unsupported response omitted]"
                     omitted_fields.append({"exchange_index": index, "field": key})
@@ -58,21 +66,28 @@ def _recording(evidence, trace_file):
         schema_parse_failed = False
         if evidence.observation_schema_json is not None:
             try:
-                schema = loads(evidence.observation_schema_json)
+                schema = loads(
+                    evidence.observation_schema_json, object_pairs_hook=_unique_object
+                )
             except (ValueError, ArithmeticError, RecursionError):
                 schema_parse_failed = True
         reset_schema = None
         reset_schema_parse_failed = False
         if evidence.reset_observation_schema_json is not None:
             try:
-                reset_schema = loads(evidence.reset_observation_schema_json)
+                reset_schema = loads(
+                    evidence.reset_observation_schema_json,
+                    object_pairs_hook=_unique_object,
+                )
             except (ValueError, ArithmeticError, RecursionError):
                 reset_schema_parse_failed = True
         schema_response = None
         schema_response_parse_failed = False
         if evidence.schema_response_json is not None:
             try:
-                schema_response = loads(evidence.schema_response_json)
+                schema_response = loads(
+                    evidence.schema_response_json, object_pairs_hook=_unique_object
+                )
             except (ValueError, ArithmeticError, RecursionError):
                 schema_response_parse_failed = True
         collector_metadata = {
@@ -91,6 +106,8 @@ def _recording(evidence, trace_file):
             "omitted_trace_fields": omitted_fields,
             "failure_phase": evidence.failure_phase,
             "failure_reason": evidence.failure_reason,
+            "telemetry_error": evidence.telemetry_error,
+            "telemetry_unavailable": evidence.telemetry_unavailable,
             "complete": evidence.failure_phase is None
             and evidence.failure_reason is None,
         }
@@ -109,7 +126,7 @@ def _http_body(body):
     text = body.decode("utf-8", errors="replace")
     omitted = False
     try:
-        value = loads(text.lstrip("\ufeff"))
+        value = loads(text.lstrip("\ufeff"), object_pairs_hook=_unique_object)
     except (ValueError, ArithmeticError, RecursionError):
         value = text
         # Unparseable JSON loses the key context used by the structured redactor.
@@ -192,6 +209,21 @@ def write_runtime_bundle(
         trace, metadata = _recording(recording, trace_file)
         if metadata is not None:
             metadata["session"] = session
+            if recording.telemetry_json is not None:
+                try:
+                    telemetry = loads(
+                        recording.telemetry_json, object_pairs_hook=_unique_object
+                    )
+                    telemetry_file = (
+                        "session-telemetry.json"
+                        if session == "collector"
+                        else f"{session}-telemetry.json"
+                    )
+                    files[telemetry_file] = telemetry
+                    metadata["redacted"] |= _redact(telemetry) != telemetry
+                except (ValueError, ArithmeticError, RecursionError):
+                    metadata["telemetry_error"] = "malformed telemetry omitted"
+                    metadata["redacted"] = True
         files[trace_file] = trace
         files[f"{session}-evidence.json"] = metadata
     probes = []
@@ -211,6 +243,90 @@ def write_runtime_bundle(
             after["redacted"] |= before["body"] != after["body"]
             retained["redacted"] |= after["redacted"]
     files["oracle-http.json"] = retained_probes
+    if evidence:
+        discovery = {}
+        omitted = []
+        for name in ("tools", "tasks"):
+            raw = getattr(evidence, name + "_json")
+            discovery[name + "_available"] = raw is not None
+            discovery[name + "_error"] = getattr(evidence, name + "_error")
+            if name == "tools":
+                discovery["tools_unavailable"] = evidence.tools_unavailable
+            try:
+                discovery[name] = (
+                    loads(raw, object_pairs_hook=_unique_object)
+                    if raw is not None
+                    else None
+                )
+            except (ValueError, ArithmeticError, RecursionError):
+                discovery[name] = "[malformed evidence omitted]"
+                omitted.append(name)
+        discovery["omitted_fields"] = omitted
+        discovery["redacted"] = bool(omitted) or _redact(discovery) != discovery
+        files["discovery.json"] = discovery
+    if evidence and (evidence.replays or evidence.replay_failure_reason):
+        samples = []
+        for replay in evidence.replays:
+            sample = replay.evidence
+            row = {
+                "scope": replay.scope,
+                "cleanup_complete": replay.cleanup_complete,
+                "failure_phase": sample.failure_phase,
+                "failure_reason": sample.failure_reason,
+                "telemetry_error": sample.telemetry_error,
+                "telemetry_unavailable": sample.telemetry_unavailable,
+                "trace": [],
+                "omitted_trace_fields": [],
+                "omitted_evidence_fields": [],
+            }
+            for index, exchange in enumerate(sample.exchanges):
+                item = {"operation": exchange.operation}
+                for key in ("request_json", "response_json"):
+                    try:
+                        item[key] = loads(
+                            getattr(exchange, key), object_pairs_hook=_unique_object
+                        )
+                    except (ValueError, ArithmeticError, RecursionError):
+                        item[key] = "[malformed response omitted]"
+                        row["omitted_trace_fields"].append(
+                            {"exchange_index": index, "field": key}
+                        )
+                row["trace"].append(item)
+            for key, raw in (
+                ("telemetry", sample.telemetry_json),
+                ("schema", sample.observation_schema_json),
+                ("reset_schema", sample.reset_observation_schema_json),
+                ("provider", replay.provider_json),
+            ):
+                row[f"{key}_available"] = raw is not None
+                try:
+                    row[key] = (
+                        loads(raw, object_pairs_hook=_unique_object)
+                        if raw is not None
+                        else None
+                    )
+                except (ValueError, ArithmeticError, RecursionError):
+                    row[key] = "[malformed evidence omitted]"
+                    row["omitted_evidence_fields"].append(key)
+            row["redacted"] = (
+                bool(row["omitted_trace_fields"])
+                or bool(row["omitted_evidence_fields"])
+                or _redact(row) != row
+            )
+            samples.append(row)
+        files["replays.json"] = {
+            "schema_version": "1",
+            "failure_reason": evidence.replay_failure_reason,
+            "samples": samples,
+        }
+    for name in (
+        "runtime-plan.json",
+        "session-telemetry.json",
+        "replays.json",
+        "discovery.json",
+    ):
+        if name not in files:
+            (directory / name).unlink(missing_ok=True)
     digests = []
     for name, value in files.items():
         payload = (dumps(_redact(value)) + "\n").encode()

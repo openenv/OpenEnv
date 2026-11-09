@@ -265,6 +265,22 @@ class RuntimeEvidence:
             Collector phase that failed; a truncated transcript cannot pass silently.
         failure_reason (`str`, *optional*):
             Credential-safe explanation of the collection failure.
+        telemetry_json (`str`, *optional*):
+            Subject-emitted session snapshot, independent of the wire transcript.
+        telemetry_error (`str`, *optional*):
+            Bounded telemetry failure without invalidating completed wire evidence.
+        tools_json (`str`, *optional*):
+            Raw tools/list result from the measured WebSocket session.
+        tools_unavailable (`str`, *optional*):
+            Named capability absent from a subject that explicitly rejects discovery.
+        tools_error (`str`, *optional*):
+            Sanitized tool-discovery failure, distinct from a successful empty list.
+        tasks_json (`str`, *optional*):
+            Task split descriptors, counts and bounded item samples.
+        tasks_error (`str`, *optional*):
+            Sanitized task-discovery failure, independent of tool discovery.
+        telemetry_unavailable (`str`, *optional*):
+            Named capability absent from a subject that explicitly rejects telemetry.
         reset_observation_schema_json (`str`, *optional*):
             Explicit `/schema` reset_observation value; absent means use the step schema.
         schema_response_json (`str`, *optional*):
@@ -275,8 +291,28 @@ class RuntimeEvidence:
     observation_schema_json: str | None = None
     failure_phase: str | None = None
     failure_reason: str | None = None
+    telemetry_json: str | None = None
+    telemetry_error: str | None = None
+    telemetry_unavailable: str | None = None
+    replays: tuple["ReplayEvidence", ...] = ()
+    replay_failure_reason: str | None = None
+    tools_json: str | None = None
+    tools_error: str | None = None
+    tools_unavailable: str | None = None
+    tasks_json: str | None = None
+    tasks_error: str | None = None
     reset_observation_schema_json: str | None = None
     schema_response_json: str | None = None
+
+
+@dataclass(frozen=True)
+class ReplayEvidence:
+    """A fresh replay and, for containers, inspected identity and cleanup evidence."""
+
+    scope: Literal["session", "container", "seed"]
+    evidence: RuntimeEvidence
+    provider_json: str | None = None
+    cleanup_complete: bool | None = None
 
 
 class ProbeOutcome(BaseModel):

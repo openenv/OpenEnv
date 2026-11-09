@@ -4,11 +4,16 @@ import json
 from decimal import Decimal
 
 
-def loads(text):
+def loads(text, *, object_pairs_hook=None):
     # Match the stdlib's BOM handling for bytes after UTF-8 text retention.
     if isinstance(text, str):
         text = text.removeprefix("\ufeff")
-    return json.loads(text, parse_float=Decimal, parse_constant=Decimal)
+    return json.loads(
+        text,
+        parse_float=Decimal,
+        parse_constant=Decimal,
+        object_pairs_hook=object_pairs_hook,
+    )
 
 
 def typed_json(value):
@@ -30,22 +35,41 @@ def typed_json(value):
     return tuple(result)
 
 
-def dumps(value):
-    """Serialize depth-bounded, redacted values without rounding Decimal leaves."""
-    if isinstance(value, dict):
-        return (
-            "{"
-            + ",".join(
-                json.dumps(key) + ":" + dumps(value[key]) for key in sorted(value)
+def dumps(value, *, ensure_ascii=True):
+    """Serialize exact JSON numbers without recursing through containers."""
+    chunks, pending = [], [(False, value)]
+    while pending:
+        literal, child = pending.pop()
+        if literal:
+            chunks.append(child)
+        elif isinstance(child, dict):
+            chunks.append("{")
+            pending.append((True, "}"))
+            for index, key in reversed(list(enumerate(sorted(child)))):
+                pending.extend(
+                    [
+                        (False, child[key]),
+                        (True, ":"),
+                        (True, json.dumps(key, ensure_ascii=ensure_ascii)),
+                    ]
+                )
+                if index:
+                    pending.append((True, ","))
+        elif isinstance(child, list):
+            chunks.append("[")
+            pending.append((True, "]"))
+            for index, item in reversed(list(enumerate(child))):
+                pending.append((False, item))
+                if index:
+                    pending.append((True, ","))
+        elif isinstance(child, Decimal):
+            if not child.is_finite():
+                raise ValueError("non-finite JSON constant")
+            number = str(child)
+            # Decimal('1') came from a decimal/exponent token, never an integer.
+            chunks.append(
+                number if "." in number or "e" in number.lower() else number + ".0"
             )
-            + "}"
-        )
-    if isinstance(value, list):
-        return "[" + ",".join(dumps(child) for child in value) + "]"
-    if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("non-finite JSON constant")
-        number = str(value)
-        # Decimal('1') came from a decimal/exponent token, never an integer.
-        return number if "." in number or "e" in number.lower() else number + ".0"
-    return json.dumps(value, allow_nan=False)
+        else:
+            chunks.append(json.dumps(child, allow_nan=False, ensure_ascii=ensure_ascii))
+    return "".join(chunks)
