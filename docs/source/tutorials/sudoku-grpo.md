@@ -166,7 +166,7 @@ def reset(self, **kwargs):
 
 The old session is released asynchronously, which is why `MAX_CONCURRENT_ENVS` is 96 rather than 64.
 
-Since [#1536](https://github.com/openenv/OpenEnv/pull/1536), the client no longer reconnects silently in the middle of an episode. It raises `SessionLostError` and the next `reset()` starts a new session. A dropped game then fails instead of being played on the wrong board, and a new connection per game still keeps the drops away from training.
+Since OpenEnv 0.12.0 ([#1536](https://github.com/openenv/OpenEnv/pull/1536)), the client no longer reconnects silently in the middle of an episode. It raises `SessionLostError` and the next `reset()` starts a new session. A dropped game then fails instead of being played on the wrong board, and a new connection per game still keeps the drops away from training.
 
 ## 8. Evaluate and make the GIF
 
