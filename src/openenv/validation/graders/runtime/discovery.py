@@ -3,6 +3,7 @@
 import json
 import math
 import time
+from decimal import Decimal
 
 from ...report import CheckResult
 from ...types import CheckStatus
@@ -12,16 +13,21 @@ from .repeatability import _difference
 
 def _finite(value):
     try:
-        return type(value) in (int, float) and math.isfinite(value)
+        return type(value) in (int, float, Decimal) and math.isfinite(value)
     except OverflowError:
         return False
 
 
-def _json_float(value):
+def _json_decimal(value):
     number = float(value)
     if not math.isfinite(number):
         raise ValueError("runtime JSON numbers must be finite")
-    return number
+    # Retain the original token for configuration equality.
+    return Decimal(value)
+
+
+def _arithmetic_value(value):
+    return float(value) if isinstance(value, Decimal) else value
 
 
 class _EvidenceGrader(_RuntimeGrader):
@@ -47,8 +53,8 @@ class _EvidenceGrader(_RuntimeGrader):
             try:
                 payload = json.loads(
                     getattr(evidence, self.field),
-                    parse_float=_json_float,
-                    parse_constant=_json_float,
+                    parse_float=_json_decimal,
+                    parse_constant=_json_decimal,
                 )
                 if not isinstance(payload, dict):
                     raise ValueError("evidence must be an object")
@@ -198,7 +204,12 @@ def _rubric_nodes(payload):
                 or not all(_finite(weight) for weight in weights)
             ):
                 raise ValueError("invalid rubric weights")
-            if not math.isclose(sum(weights), 1, rel_tol=0, abs_tol=1e-6):
+            if not math.isclose(
+                sum(_arithmetic_value(weight) for weight in weights),
+                1,
+                rel_tol=0,
+                abs_tol=1e-6,
+            ):
                 raise ValueError("rubric weights do not sum to one")
         if aggregation == "gate" and (
             len(children) != 1 or not _finite(node["config"]["threshold"])
@@ -319,11 +330,17 @@ class RewardAttributionGrader(RubricIntrospectableGrader):
                         )
                         break
                     visited += 1
-                    score = child["score"]
+                    score = _arithmetic_value(child["score"])
                     if aggregation == "weighted_sum":
-                        expected += score * node["config"]["weights"][visited - 1]
+                        expected += score * _arithmetic_value(
+                            node["config"]["weights"][visited - 1]
+                        )
                     elif aggregation == "gate":
-                        expected = 0.0 if score < node["config"]["threshold"] else score
+                        expected = (
+                            0.0
+                            if score < _arithmetic_value(node["config"]["threshold"])
+                            else score
+                        )
                     else:
                         expected = score
                         if score == 0:

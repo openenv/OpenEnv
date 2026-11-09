@@ -439,6 +439,63 @@ def test_attribution_detects_rubric_configuration_type_changes(tmp_path, before,
     assert result.evidence == ["step 0: rubric configuration changed"]
 
 
+@pytest.mark.parametrize(
+    "before,after,changed",
+    [
+        ("1.00000000000000001", "1.00000000000000002", True),
+        ("1e-999", "0.0", True),
+        ("1.0", "1.0", False),
+        ("1.0", "2.0", True),
+        ("1.00000000000000001", "1.00000000000000001", False),
+        ("1e-999", "1e-999", False),
+        ("1.00", "1e0", False),
+    ],
+)
+def test_attribution_compares_exact_json_configuration(
+    tmp_path, before, after, changed
+):
+    payload = telemetry()
+    payload["rubric"][1]["config"] = {"nested": [{"value": "__BEFORE__"}]}
+    payload["attribution"][0]["rubric"][1]["config"] = {
+        "nested": [{"value": "__AFTER__"}]
+    }
+    raw = (
+        json.dumps(payload)
+        .replace('"__BEFORE__"', before)
+        .replace('"__AFTER__"', after)
+    )
+    result = RewardAttributionGrader().run(subject(tmp_path, telemetry_json=raw))
+    assert result.status is (CheckStatus.FAIL if changed else CheckStatus.PASS)
+    assert result.evidence == [
+        "step 0: rubric configuration changed"
+        if changed
+        else "observed rubric telemetry contract holds"
+    ]
+
+
+@pytest.mark.parametrize(
+    "grader,field",
+    [
+        (ToolDeclarationAccuracyGrader, "tools_json"),
+        (TaskDeclarationAccuracyGrader, "tasks_json"),
+        (RubricIntrospectableGrader, "telemetry_json"),
+        (RewardAttributionGrader, "telemetry_json"),
+    ],
+)
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity", "1e999"])
+def test_discovery_rejects_nonfinite_numbers_in_unused_fields(
+    tmp_path, grader, field, token
+):
+    measured = subject(tmp_path)
+    payload = json.loads(getattr(measured.runtime_evidence, field))
+    payload["unused"] = {"nested": ["__NUMBER__"]}
+    raw = json.dumps(payload).replace('"__NUMBER__"', token)
+    setattr(measured.runtime_evidence, field, raw)
+    result = grader().run(measured)
+    assert result.status is CheckStatus.FAIL
+    assert result.evidence == [f"malformed {grader.label} evidence"]
+
+
 def test_attribution_ignores_rubric_configuration_key_order(tmp_path):
     payload = telemetry()
     payload["rubric"][1]["config"] = {"enabled": True, "threshold": 1}
@@ -486,6 +543,75 @@ def test_stock_aggregation_rules_and_sequential_short_circuit(tmp_path, aggregat
         .status
         is CheckStatus.PASS
     )
+
+
+@pytest.mark.parametrize("aggregation", ["gate", "sequential", "weighted_sum"])
+@pytest.mark.parametrize("error,passes", [(0, True), (5e-10, True), (2e-9, False)])
+def test_decimal_aggregation_retains_numeric_tolerance(
+    tmp_path, aggregation, error, passes
+):
+    if aggregation == "gate":
+        nodes = [
+            node(
+                score=0.7 + error,
+                children=["root.a"],
+                aggregation="gate",
+                config={"threshold": 0.6},
+            ),
+            node("root.a", 0.7),
+        ]
+    else:
+        nodes = [
+            node(
+                score=(0.575 if aggregation == "weighted_sum" else 0.7) + error,
+                children=["root.a", "root.b"],
+                aggregation=aggregation,
+                config={"weights": [0.25, 0.75]}
+                if aggregation == "weighted_sum"
+                else {},
+            ),
+            node("root.a", 0.2),
+            node("root.b", 0.7),
+        ]
+    result = RewardAttributionGrader().run(
+        subject(tmp_path, snapshot=telemetry(nodes), reward=nodes[0]["score"])
+    )
+    assert result.status is (CheckStatus.PASS if passes else CheckStatus.FAIL)
+    assert result.evidence == [
+        "observed rubric telemetry contract holds"
+        if passes
+        else "step 0: child attribution does not match the parent score"
+    ]
+
+
+@pytest.mark.parametrize("aggregation", ["gate", "weighted_sum"])
+def test_attribution_preserves_integer_configuration_arithmetic(tmp_path, aggregation):
+    if aggregation == "gate":
+        nodes = [
+            node(
+                score=0,
+                children=["root.a"],
+                aggregation="gate",
+                config={"threshold": 2**53 + 1},
+            ),
+            node("root.a", 2**53),
+        ]
+    else:
+        nodes = [
+            node(
+                score=0,
+                children=["root.a", "root.b", "root.c"],
+                aggregation="weighted_sum",
+                config={"weights": [2**53, 1, -(2**53)]},
+            ),
+            node("root.a", 1),
+            node("root.b", 0),
+            node("root.c", 1),
+        ]
+    result = RewardAttributionGrader().run(
+        subject(tmp_path, snapshot=telemetry(nodes), reward=0)
+    )
+    assert result.status is CheckStatus.PASS
 
 
 def test_unknown_aggregation_is_explicitly_incomplete_but_wrong_root_still_fails(
