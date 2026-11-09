@@ -289,6 +289,107 @@ def test_judged_arithmetic_is_bounded_without_hiding_failures(tmp_path, fault):
         assert result.measured == {"completed_replays": 20}
 
 
+def with_reward_columns(subject, columns):
+    """Supply ten samples of each literal token at each numeric step position."""
+
+    def changed(evidence, index):
+        rows = list(evidence.exchanges[:2])
+        for position, tokens in enumerate(columns, 1):
+            step_rows = mutate_response(
+                list(evidence.exchanges),
+                2,
+                lambda value: value["data"]["observation"].update(counter=position),
+            )
+            mutate_response(
+                step_rows, 3, lambda value: value["data"].update(step_count=position)
+            )
+            step = step_token(
+                replace(evidence, exchanges=tuple(step_rows)),
+                tokens[index >= 10],
+                "reward",
+            )
+            rows.extend(step.exchanges[2:])
+        return replace(evidence, exchanges=tuple(rows))
+
+    original = subject.runtime_evidence
+    evidence = replace(
+        changed(original, 0),
+        replays=tuple(
+            replace(row, evidence=changed(row.evidence, index + 1))
+            if row.scope != "seed"
+            else row
+            for index, row in enumerate(original.replays)
+        ),
+    )
+    return replace(subject, runtime_evidence=evidence)
+
+
+@pytest.mark.parametrize("unsupported_first", [False, True])
+@pytest.mark.parametrize(
+    "right,constant,status",
+    [
+        ("1.0", "1e-1000000000", CheckStatus.FAIL),
+        ("0.0", "1e-1000000000", CheckStatus.SKIP),
+        ("1.0", "1e-9999", CheckStatus.FAIL),
+        ("0.0", "1e-9999", CheckStatus.PASS),
+    ],
+)
+def test_supported_step_variance_is_checked_before_arithmetic_skip(
+    tmp_path, unsupported_first, right, constant, status
+):
+    subject = subject_with_replays(tmp_path, judged=True)
+    subject.manifest.reward.variance_tolerance = 0.0
+    columns = [("0.0", right), (constant, constant)]
+    if unsupported_first:
+        columns.reverse()
+    result = EpisodeDeterminismGrader().run(with_reward_columns(subject, columns))
+    assert result.status is status
+    assert result.measured["completed_replays"] == 20
+    if status is CheckStatus.FAIL:
+        index = int(unsupported_first)
+        assert result.evidence == [
+            f"step {index}: reward population variance exceeds declared bound"
+        ]
+        assert result.measured["reward_population_variance"][index] == 0.25
+    elif status is CheckStatus.PASS:
+        assert result.measured["reward_population_variance"] == [0.0, 0.0]
+
+
+@pytest.mark.parametrize(
+    "left,right,status",
+    [
+        (str(-(10**308)), str(10**308), CheckStatus.FAIL),
+        ("-1e308", "1e308", CheckStatus.FAIL),
+        ("1e308", "1e308", CheckStatus.PASS),
+    ],
+    ids=["integer_tokens", "decimal_tokens", "constant_decimal_tokens"],
+)
+def test_extreme_variance_finding_survives_unrepresentable_display(
+    tmp_path, left, right, status
+):
+    subject = subject_with_replays(tmp_path, judged=True)
+    subject.manifest.reward.range = (-1e308, 1e308)
+    subject.manifest.reward.variance_tolerance = 1e308
+    subject = with_reward_columns(subject, [(left, right)])
+    result = EpisodeDeterminismGrader().run(subject)
+    assert result.status is status
+    assert result.measured["completed_replays"] == 20
+    if status is CheckStatus.FAIL:
+        assert result.evidence == [
+            "step 0: reward population variance exceeds declared bound"
+        ]
+        assert result.measured["reward_population_variance"] == [None]
+        assert result.measured["reward_population_variance_unavailable"] == {
+            "0": "exceeds finite float display range"
+        }
+        # Missing display values are explicit JSON nulls, never fabricated numbers.
+        saved = json.loads(result.model_dump_json())
+        assert saved["measured"] == result.measured
+    else:
+        assert result.measured["reward_population_variance"] == [0.0]
+        assert "reward_population_variance_unavailable" not in result.measured
+
+
 @pytest.mark.parametrize("grader", GRADERS)
 def test_seed_invariant_fresh_replays_and_independent_record_pass(tmp_path, grader):
     assert grader().run(subject_with_replays(tmp_path)).status is CheckStatus.PASS
