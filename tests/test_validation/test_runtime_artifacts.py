@@ -396,6 +396,53 @@ def test_unsupported_decimal_range_is_visibly_omitted(tmp_path):
     assert probe["redacted"] is probe["body_omitted"] is True
 
 
+@pytest.mark.parametrize("prefix", ["", "\ufeff"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"value":"earlier-oracle-canary","value":"harmless"}',
+        '{"nested":[{"value":"earlier-oracle-canary","val\\u0075e":"harmless"}]}',
+        '{"api_key":"opaque-credential","api_key":"harmless"}',
+    ],
+)
+def test_duplicate_members_are_visibly_omitted_from_every_artifact_surface(
+    tmp_path, prefix, raw
+):
+    raw = prefix + raw
+    original = RuntimeEvidence(
+        exchanges=(WireExchange("step", raw, raw),),
+        observation_schema_json=raw,
+        reset_observation_schema_json=raw,
+        schema_response_json=raw,
+    )
+    body = raw.encode()
+    write_runtime_bundle(
+        tmp_path,
+        report(),
+        evidence=original,
+        isolation=IsolationEvidence(original, original),
+        oracle_http=(HttpProbe("/oracle", 200, body, redirect_bodies=(body,)),),
+    )
+    for session in ("collector", "isolation-sequential", "isolation-fresh"):
+        metadata = loads((tmp_path / f"{session}-evidence.json").read_text())
+        assert metadata["redacted"] is True
+        assert metadata["omitted_trace_fields"] == [
+            {"exchange_index": 0, "field": "request_json"},
+            {"exchange_index": 0, "field": "response_json"},
+        ]
+        for schema in ("schema", "reset_schema", "schema_response"):
+            assert metadata[f"{schema}_available"] is True
+            assert metadata[f"{schema}_parse_failed"] is True
+    probe = loads((tmp_path / "oracle-http.json").read_text())[0]
+    for hop in (probe, *probe["redirect_bodies"]):
+        assert hop["body_omitted"] is hop["redacted"] is True
+        assert hop["body_sha256"] == hashlib.sha256(body).hexdigest()
+        assert hop["retained_bytes"] == len(body)
+    assert "opaque-credential" not in "".join(
+        path.read_text() for path in tmp_path.iterdir()
+    )
+
+
 @pytest.mark.parametrize("schema", [None, '{"action":{"default":"canary"}}'])
 def test_bundle_replays_the_complete_schema_response(tmp_path, schema):
     original = replace(measured(), schema_response_json=schema)
@@ -506,7 +553,12 @@ def test_malformed_wire_omission_is_visible_in_metadata(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "telemetry", ['{"rubric":[{"config":{"api_key":"private-value"}}]}', "{broken"]
+    "telemetry",
+    [
+        '{"rubric":[{"config":{"api_key":"private-value"}}]}',
+        "{broken",
+        '{"rubric":[],"rubric":[]}',
+    ],
 )
 def test_telemetry_redaction_or_omission_marks_bundle_modified(tmp_path, telemetry):
     original = replace(measured(), telemetry_json=telemetry)
@@ -591,8 +643,12 @@ def test_replay_artifact_redacts_each_independent_evidence_source(tmp_path):
     assert row["provider"]["secret"] == "[REDACTED]"
 
 
-def test_malformed_replay_omissions_are_explicit_and_do_not_leak_raw_data(tmp_path):
-    malformed = "not-json-private-value"
+@pytest.mark.parametrize(
+    "malformed", ["not-json-private-value", '{"value":"private-first","value":"safe"}']
+)
+def test_malformed_replay_omissions_are_explicit_and_do_not_leak_raw_data(
+    tmp_path, malformed
+):
     sample = RuntimeEvidence(
         exchanges=(WireExchange("step", malformed, malformed),),
         observation_schema_json=malformed,

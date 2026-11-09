@@ -4,11 +4,16 @@ import json
 from decimal import Decimal
 
 
-def loads(text):
+def loads(text, *, object_pairs_hook=None):
     # Match the stdlib's BOM handling for bytes after UTF-8 text retention.
     if isinstance(text, str):
         text = text.removeprefix("\ufeff")
-    return json.loads(text, parse_float=Decimal, parse_constant=Decimal)
+    return json.loads(
+        text,
+        parse_float=Decimal,
+        parse_constant=Decimal,
+        object_pairs_hook=object_pairs_hook,
+    )
 
 
 def typed_json(value):
