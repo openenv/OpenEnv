@@ -97,8 +97,14 @@ The worker evaluates the unadapted model, then samples 32 training groups of
 four. The frozen signal gate requires two groups with different rewards and at
 least 25% server-valid expressions. Failure saves `no_grpo_learning_signal` and
 stops without claiming training. Passing enables rank-8 LoRA on `q_proj/v_proj`,
-up to 20 GRPO updates, four generations per group, beta zero, temperature 0.8,
+up to 20 optimizer attempts, four generations per group, beta zero, temperature 0.8,
 128 completion tokens, seed 42, and thinking disabled.
+
+Optimizer evidence supports the pinned single-process recipe: one newly scored
+four-completion group is split across four loss microbatches per attempt. The
+callback checks that configuration and group freshness before the optimizer
+step, then records that group's reward contrast. Other configurations or reused
+groups stop the run rather than producing unsupported update counts.
 
 Evaluation repeats the same 16 held-out tasks with greedy decoding and seeds
 7001/7002 (offset by task index): 48 paired trials per model. Results include raw
