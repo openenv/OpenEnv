@@ -241,8 +241,8 @@ def _require_canonical_verdict(reward: float | None, output: str) -> float:
     """Raise when the canonical harness produced no verdict (see above)."""
     if reward is None:
         raise RuntimeError(
-            "canonical harness produced no verdict (reward.txt missing after "
-            f"tests/test.sh ran); test.sh log tail: {output[-800:]!r}"
+            "canonical harness produced no verdict (reward.txt missing or not a "
+            f"finite number after tests/test.sh ran); test.sh log tail: {output[-800:]!r}"
         )
     return reward
 
