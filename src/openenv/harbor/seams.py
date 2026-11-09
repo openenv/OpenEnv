@@ -958,7 +958,8 @@ def custom(import_path: str) -> Seam:
     at the capture proxy, and that depends only on what the class is:
 
       * a subclass of an agent with a seam (its `name()` is in `SEAMS`, e.g. your own opencode
-        subclass) is wired exactly like that agent;
+        subclass) is wired exactly like that agent. Where the seam's wiring lives in an OpenEnv
+        subclass (pi's `InterceptPi` writes models.json), yours must subclass that class;
       * a host-side agent (a plain `BaseAgent`, like terminus-2) makes its model calls from THIS
         process, so it gets `api_base` (the proxy's `/v1` URL) and `api_key` (the capture session
         id) as constructor kwargs. Nothing reaches the sandbox or the verifier;
@@ -986,6 +987,16 @@ def custom(import_path: str) -> Seam:
     except Exception:  # noqa: BLE001 - a name() that needs an instance is not a known agent
         parent = None
     if parent in SEAMS:
+        wired_by = SEAMS[parent].import_path
+        if wired_by:
+            wired_module, _, wired_attr = wired_by.partition(":")
+            if not issubclass(
+                cls, getattr(importlib.import_module(wired_module), wired_attr)
+            ):
+                raise ValueError(
+                    f"{import_path} subclasses {parent}, which OpenEnv points at the capture "
+                    f"proxy through {wired_by}. Subclass {wired_by} instead."
+                )
         return replace(
             SEAMS[parent],
             name=import_path,

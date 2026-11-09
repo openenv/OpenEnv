@@ -561,11 +561,13 @@ them.
 ### Your own agent
 
 Name any Harbor agent class by import path, `--harness my_package.agent:MyAgent`, in `rollout`, in
-`serve` rollouts and from a trainer. How it is pointed at the proxy depends on the class:
+`serve` rollouts and from a trainer. Naming a class imports its module, so `serve` accepts only the
+import paths its operator lists with `--allow-harness my_package.agent:MyAgent`. How the class is
+pointed at the proxy depends on what it is:
 
 | the class | what it gets |
 |---|---|
-| a subclass of an agent above (its `name()` is a known harness) | that agent's wiring |
+| a subclass of an agent above (its `name()` is a known harness) | that agent's wiring. If OpenEnv runs that agent through its own subclass, such as `openenv.harbor.install_fixes:InterceptPi` for pi, subclass that one instead: the error names it |
 | a host-side agent (a `BaseAgent` that calls the model from the server process) | `api_base` (the proxy's `/v1` URL, on localhost) and `api_key` (the rollout's session id) as constructor kwargs |
 | any other agent installed into the sandbox | refused: add a seam for it in `openenv/harbor/seams.py` |
 

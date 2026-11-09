@@ -21,11 +21,6 @@ from typing import Any
 
 from . import seams
 
-# Harbor agents that run HOST-SIDE, in this server's process, rather than being installed into the
-# sandbox. The distinction is not cosmetic: their LLM traffic never leaves the host, so they reach
-# the capture proxy on localhost and need no public URL at all.
-HOST_SIDE_AGENTS = frozenset({"terminus-2", "computer-1", "oracle", "nop", "dspy-rlm"})
-
 # Backends worth advertising. Harbor registers 23; these are the ones with a credential story we
 # check and have exercised. Others still work via `--sandbox <name>`, just unadvertised.
 KNOWN_SANDBOXES = ("docker", "e2b", "modal", "daytona", "hf-sandbox")
@@ -288,9 +283,7 @@ def list_harnesses() -> list[HarnessStatus]:
             HarnessStatus(
                 name=name,
                 dialect=seam.dialect,
-                kind="base"
-                if name in HOST_SIDE_AGENTS or seam.host_side
-                else "installed",
+                kind="base" if seam.host_side else "installed",
                 status=seam.status,
                 needs_subclass=seam.import_path is not None,
                 notes=seam.notes,

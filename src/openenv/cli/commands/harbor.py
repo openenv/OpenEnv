@@ -399,6 +399,16 @@ def serve(
     reward_key: Annotated[
         str, typer.Option("--reward-key", help=_REWARD_KEY_HELP)
     ] = "",
+    allow_harness: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--allow-harness",
+            help=(
+                "Accept this `module:Class` harness in clients' rollouts. Naming a class imports "
+                "its module on this server, so other import paths are refused. Repeatable."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Serve Harbor tasks over the OpenEnv Task API and MCP.
 
@@ -422,6 +432,8 @@ def serve(
     )
     # The UI's laptop defaults (this machine's token, private URLs) are for a loopback-only server.
     os.environ["OPENENV_HARBOR_UI_HOST"] = host
+    if allow_harness:
+        os.environ["OPENENV_HARBOR_ALLOW_HARNESS"] = ",".join(allow_harness)
     serve_harbor(
         llm_url=llm_url,
         model=model or None,
