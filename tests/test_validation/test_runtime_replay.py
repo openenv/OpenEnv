@@ -5,7 +5,11 @@ from unittest.mock import Mock
 
 import pytest
 from openenv.validation.runtime import replay
-from openenv.validation.runtime.collector import RuntimeCollectionInterrupted
+from openenv.validation.runtime.collector import (
+    collect_runtime_evidence,
+    RuntimeCollectionInterrupted,
+    RuntimeCollectionUnsupported,
+)
 from openenv.validation.runtime.contracts import (
     LaunchSpec,
     RuntimeEvidence,
@@ -13,6 +17,7 @@ from openenv.validation.runtime.contracts import (
     WireExchange,
 )
 from openenv.validation.types import ProviderCapability
+from test_runtime_collector import schema_transport, TrackedStream
 
 
 def inputs(monkeypatch, *, judged=False, fresh_container=True):
@@ -217,11 +222,11 @@ def test_collection_failure_retains_prefix_and_stops_replaying(monkeypatch):
     values[0].start.assert_not_called()
 
 
-@pytest.mark.parametrize("interrupted_call", [1, 3])
+@pytest.mark.parametrize("interrupted_call", [1, 2, 3, 4])
 def test_interruption_keeps_partial_replay_and_cleans_fresh_container(
     monkeypatch, interrupted_call
 ):
-    values = inputs(monkeypatch)
+    values = inputs(monkeypatch, judged=True)
     partial = RuntimeEvidence(
         failure_phase="step", failure_reason="step failed (KeyboardInterrupt)"
     )
@@ -234,9 +239,9 @@ def test_interruption_keeps_partial_replay_and_cleans_fresh_container(
     assert len(result.replays) == interrupted_call
     assert result.replays[-1].evidence is partial
     assert "interrupted" in result.replay_failure_reason
-    if interrupted_call == 3:
+    if interrupted_call >= 3:
         values[2].stop.assert_called_once()
-        assert result.replays[-1].cleanup_complete is True
+        assert result.replays[2].cleanup_complete is True
 
 
 def test_failed_baseline_is_returned_without_further_execution(monkeypatch):
@@ -339,3 +344,154 @@ def test_full_schema_counts_toward_retained_replay_budget(
     assert replay._evidence_bytes(result) <= budget
     assert values[-1].call_count == collections
     values[0].start.assert_not_called()
+
+
+@pytest.mark.parametrize("capability", ["json_numeric_range", "json_depth"])
+@pytest.mark.parametrize(
+    "unsupported_call,phase",
+    [
+        (1, "fresh session"),
+        (2, "different-seed session"),
+        (3, "fresh container replay"),
+        (4, "judged replay sampling"),
+    ],
+)
+def test_unsupported_replay_retains_production_collector_prefix(
+    monkeypatch, capability, unsupported_call, phase
+):
+    values = inputs(monkeypatch, judged=True)
+    token = (
+        "1e9999999999999999999"
+        if capability == "json_numeric_range"
+        else "[" * 20000 + "0" + "]" * 20000
+    )
+    raw = '{"observation":{},"x-exact":1.0000000000000001,"limit":' + token + "}"
+    schema_transport(monkeypatch, TrackedStream(raw.encode()))
+    with pytest.raises(RuntimeCollectionUnsupported) as caught:
+        collect_runtime_evidence("http://original", values[4], episode_timeout_s=2)
+    partial = caught.value.evidence
+    assert partial.schema_response_json == raw
+    assert partial.failure_phase == "schema"
+    assert capability in partial.failure_reason
+    values[-1].side_effect = [RuntimeEvidence()] * (unsupported_call - 1) + [
+        caught.value
+    ]
+
+    result = run(values)
+
+    assert len(result.replays) == unsupported_call
+    assert result.replays[-1].evidence is partial
+    assert capability in result.replay_failure_reason
+    assert phase in result.replay_failure_reason
+    assert values[-1].call_count == unsupported_call
+    if unsupported_call >= 3:
+        container = result.replays[2]
+        assert container.cleanup_complete is True
+        assert json.loads(container.provider_json) == {
+            "container_id": "fresh",
+            "image_id": values[3].image_ref,
+        }
+        values[2].stop.assert_called_once()
+    else:
+        values[0].start.assert_not_called()
+
+
+@pytest.mark.parametrize("unsupported_call", [1, 2, 3, 4])
+@pytest.mark.parametrize("budget_slack", [-1, 0], ids=["over-budget", "exact-fit"])
+def test_unsupported_prefix_obeys_shared_byte_budget(
+    monkeypatch, unsupported_call, budget_slack
+):
+    values = list(inputs(monkeypatch, judged=True))
+    values[5] = RuntimeEvidence(observation_schema_json="é")
+    completed = RuntimeEvidence(schema_response_json="{}")
+    partial = RuntimeEvidence(
+        schema_response_json='{"precise":1.0000000000000001}',
+        failure_phase="schema",
+        failure_reason="schema JSON exceeds validator support (json_numeric_range)",
+    )
+    budget = (
+        2 + 2 * (unsupported_call - 1) + replay._evidence_bytes(partial) + budget_slack
+    )
+    monkeypatch.setattr(replay, "MAX_REPLAY_BYTES", budget)
+    values[-1].side_effect = [completed] * (unsupported_call - 1) + [
+        RuntimeCollectionUnsupported(partial)
+    ]
+
+    result = run(values)
+
+    if budget_slack < 0:
+        assert (
+            result.replay_failure_reason
+            == f"total retained replay evidence exceeds {budget} bytes"
+        )
+        assert all(row.evidence is not partial for row in result.replays)
+        assert len(result.replays) == (
+            3 if unsupported_call == 3 else unsupported_call - 1
+        )
+    else:
+        assert "json_numeric_range" in result.replay_failure_reason
+        assert result.replays[-1].evidence is partial
+        assert len(result.replays) == unsupported_call
+    assert (
+        replay._evidence_bytes(result)
+        + sum(replay._evidence_bytes(row.evidence) for row in result.replays)
+        <= budget
+    )
+    if unsupported_call >= 3:
+        assert result.replays[2].cleanup_complete is True
+        assert json.loads(result.replays[2].provider_json)["container_id"] == "fresh"
+        values[2].stop.assert_called_once()
+    values[1].stop.assert_not_called()
+
+
+@pytest.mark.parametrize("cleanup_failure", [RuntimeError, KeyboardInterrupt])
+@pytest.mark.parametrize(
+    "collection_failure", [RuntimeCollectionUnsupported, RuntimeCollectionInterrupted]
+)
+def test_carried_container_prefix_survives_cleanup_failure(
+    monkeypatch, collection_failure, cleanup_failure
+):
+    values = inputs(monkeypatch)
+    partial = RuntimeEvidence(
+        exchanges=(
+            WireExchange(
+                "state", '{"type":"state"}', '{"type":"state","data":{"step_count":0}}'
+            ),
+        ),
+        observation_schema_json='{"x-exact":1.0000000000000001}',
+        reset_observation_schema_json='{"type":"object"}',
+        schema_response_json='{"observation":{"type":"object"}}',
+        telemetry_json='{"schema_version":1}',
+        failure_phase="step",
+        failure_reason=(
+            "step JSON exceeds validator support (json_numeric_range)"
+            if collection_failure is RuntimeCollectionUnsupported
+            else "step failed (KeyboardInterrupt)"
+        ),
+    )
+    values[-1].side_effect = [
+        RuntimeEvidence(),
+        RuntimeEvidence(),
+        collection_failure(partial),
+    ]
+    values[2].stop.side_effect = cleanup_failure("private-provider-message")
+
+    if (
+        cleanup_failure is KeyboardInterrupt
+        or collection_failure is RuntimeCollectionInterrupted
+    ):
+        with pytest.raises(RuntimeCollectionInterrupted) as caught:
+            run(values)
+        result = caught.value.evidence
+    else:
+        result = run(values)
+
+    assert result.replays[-1].evidence is partial
+    assert result.replays[-1].cleanup_complete is False
+    assert result.replay_failure_reason == (
+        "fresh container cleanup interrupted"
+        if cleanup_failure is KeyboardInterrupt
+        else "fresh container cleanup failed"
+    )
+    assert "private-provider-message" not in result.replay_failure_reason
+    values[2].stop.assert_called_once()
