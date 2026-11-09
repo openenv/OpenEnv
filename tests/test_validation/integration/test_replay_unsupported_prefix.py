@@ -91,6 +91,7 @@ def protocol_app(unsupported_call, limit):
                         )
                 await connection.send_text(raw)
         except WebSocketDisconnect:
+            # The collector closes after rejecting the unsupported response.
             pass
 
     return app, schema_raw, operations
