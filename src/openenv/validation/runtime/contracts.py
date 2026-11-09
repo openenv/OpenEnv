@@ -361,3 +361,147 @@ class NetworkEvidence(BaseModel):
     subject_network_mode: str
     namespace: NamespaceEvidence
     probes: list[NetworkProbe]
+
+
+class LaunchIsolation(BaseModel):
+    """
+    Isolation settings inspected from outside the subject.
+
+    Attributes:
+        privileged (`bool`):
+            Whether the subject runs privileged.
+        host_namespaces (`list[str]`):
+            Namespaces shared with the host, e.g. `"pid"` or `"network"`.
+        cap_add (`list[str]`):
+            Linux capabilities added to the launch.
+        devices (`list[str]`):
+            Host devices passed into the subject.
+        unconfined (`list[str]`):
+            Security options that disable a confinement profile.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    privileged: bool
+    host_namespaces: list[str]
+    cap_add: list[str]
+    devices: list[str]
+    unconfined: list[str]
+
+
+class ProcessIdentity(BaseModel):
+    """
+    Identity of one subject process, read from `/proc/<pid>/status`.
+
+    Attributes:
+        pid (`int`):
+            Process ID inside the subject's PID namespace.
+        name (`str`):
+            Process name, for diagnostics only.
+        uids (`list[int]`):
+            Real, effective, saved and filesystem user IDs.
+        cap_eff (`int`):
+            Effective capability bit set.
+        no_new_privs (`bool`):
+            Whether the process can gain no new privileges.
+        seccomp (`int`):
+            Seccomp mode; `0` means disabled.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    pid: int = Field(ge=1)
+    name: str = Field(max_length=64)
+    uids: list[int] = Field(min_length=1, max_length=4)
+    cap_eff: int = Field(ge=0)
+    no_new_privs: bool
+    seccomp: int = Field(ge=0)
+
+
+class MountRecord(BaseModel):
+    """
+    One mount in the subject's mount namespace.
+
+    The mounts that are not read-only are the subject's complete writable-filesystem
+    inventory.
+
+    Attributes:
+        mount_point (`str`):
+            Path inside the subject.
+        fstype (`str`):
+            Filesystem type.
+        device (`str`):
+            `major:minor` of the mounted filesystem; bind mounts of one filesystem
+            share it.
+        read_only (`bool`):
+            Whether the mount or its filesystem is read-only.
+        size_bytes (`int`, *optional*):
+            Capacity of the mounted filesystem from `statvfs`. `None` when unknown,
+            including kernel pseudo-filesystems and unbounded tmpfs, which report no
+            capacity.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mount_point: str = Field(max_length=4096)
+    fstype: str = Field(max_length=64)
+    device: str = Field(pattern=r"^\d+:\d+$")
+    read_only: bool
+    size_bytes: int | None = Field(ge=1)
+
+
+class DeviceStorage(BaseModel):
+    """
+    Subject storage access on an otherwise exempt device filesystem.
+
+    Attributes:
+        complete (`bool`):
+            Whether all accessible directories and regular files were inventoried.
+        writable (`bool`):
+            Whether the subject could create a file or open a regular file for writing.
+            Positive evidence is retained even when enumeration is incomplete.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    complete: bool
+    writable: bool
+
+
+class ContainmentEvidence(BaseModel):
+    """
+    Provider-neutral evidence for `runtime.host_containment`.
+
+    Attributes:
+        schema_version (`int`):
+            Evidence format version.
+        launch ([`~openenv.validation.runtime.contracts.LaunchIsolation`]):
+            Settings inspected from outside the subject.
+        processes (`list[ProcessIdentity]`):
+            Every process measured in the subject's PID namespace.
+        mounts (`list[MountRecord]`):
+            The subject's complete mount table; empty if it could not be read.
+        allotted (`list[str]`):
+            Writable roots the provider grants the subject.
+        allotted_writable (`list[str]`):
+            Allotted roots the probe could write as the subject's identity.
+        writable (`list[str]`):
+            Bounded diagnostic sample of paths outside the allotted roots where
+            the subject could create a file or open a regular file for writing.
+        device_storage (`dict[str, DeviceStorage]`):
+            Bounded directory and regular-file inventories keyed by device identity.
+            Missing or incomplete inventories cannot establish storage denial.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    launch: LaunchIsolation
+    processes: list[ProcessIdentity] = Field(max_length=1024)
+    mounts: list[MountRecord] = Field(max_length=1024)
+    allotted: list[str]
+    allotted_writable: list[str]
+    writable: list[str] = Field(max_length=1024)
+    device_storage: dict[str, DeviceStorage] = Field(
+        default_factory=dict, max_length=1024
+    )

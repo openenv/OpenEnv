@@ -2,7 +2,8 @@
 
 Public and no-network modes are enforced; allowlists are refused. No-network subjects
 are reached through a trusted helper sharing only their network namespace. Runtime
-hardening is an execution baseline; it does not certify containment.
+hardening is an execution baseline; `runtime.host_containment` judges its measured
+effect.
 """
 
 import json
@@ -21,7 +22,7 @@ import uuid
 from pathlib import Path
 
 from ..manifest import ExecutionDeclaration
-from ..runtime.contracts import LaunchSpec, NetworkEvidence
+from ..runtime.contracts import ContainmentEvidence, LaunchSpec, NetworkEvidence
 from ..types import ProviderCapability
 from . import ExecResult, ProviderError, StartupError, UnsupportedCapability
 from ._netns import (
@@ -32,9 +33,12 @@ from ._netns import (
     SINK_SCRIPT,
     WAIT_READY_SCRIPT,
 )
+from ._pidns import PROBE_SCRIPT as PIDNS_PROBE_SCRIPT
 
 
 _LABEL = "org.openenv.validation.run"
+# Writable roots granted to every subject; everything else is read-only.
+_ALLOTTED = ("/tmp", "/dev/shm")
 _MAX_OUTPUT = 65536
 _EXCLUDED = {
     ".git",
@@ -251,6 +255,7 @@ class DockerValidationProvider:
             ProviderCapability.IMAGE_BUILD,
             ProviderCapability.EXEC,
             ProviderCapability.NETWORK_POLICY,
+            ProviderCapability.INSPECTED_ISOLATION,
         }
     )
     supported_network_modes = frozenset({"public", "no-network"})
@@ -342,6 +347,9 @@ class DockerValidationProvider:
             "--stop-timeout",
             "0",
             "--init",
+            # cgroup v1 daemons default to the host cgroup namespace.
+            "--cgroupns",
+            "private",
             "--user",
             "65532:65532",
             "--read-only",
@@ -579,6 +587,95 @@ class DockerRunningSubject:
             raise ProviderError("Network probes returned invalid evidence") from exc
         finally:
             self._remove_owned(sink)
+        return evidence.model_dump(mode="json")
+
+    def measure_containment(self, timeout_s: float = 60) -> dict:
+        """
+        Measure the subject's isolation from its inspected launch and its processes.
+
+        A probe from the validator's image joins only the subject's PID namespace and
+        runs as the subject's user, so its writes stand for what the subject can write.
+
+        Args:
+            timeout_s (`float`, *optional*, defaults to `60`):
+                Budget for inspection and the probe.
+
+        Returns:
+            `dict`: a validated [`~openenv.validation.runtime.contracts.ContainmentEvidence`].
+        """
+        _ensure_image(self._helper_image)
+        deadline = time.monotonic() + timeout_s
+        details = self._raw_inspect(deadline - time.monotonic())
+        host = details.get("HostConfig", {})
+        probe = f"{self.name}-pidns"
+        self._auxiliary.append(probe)
+        code, out, _ = _command(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                probe,
+                "--label",
+                f"{_LABEL}={self.run_id}",
+                "--pid",
+                f"container:{self.name}",
+                "--network",
+                "none",
+                *HARDENING,
+                # The last --user wins: write probes run as the subject's own user.
+                "--user",
+                details["Config"].get("User") or "0",
+                self._helper_image,
+                "python3",
+                "-c",
+                PIDNS_PROBE_SCRIPT,
+                *_ALLOTTED,
+            ],
+            deadline - time.monotonic(),
+        )
+        if code:
+            raise ProviderError("Containment probe failed")
+        namespaces = {
+            "pid": "PidMode",
+            "ipc": "IpcMode",
+            "network": "NetworkMode",
+            "uts": "UTSMode",
+            "user": "UsernsMode",
+            "cgroup": "CgroupnsMode",
+        }
+        try:
+            evidence = ContainmentEvidence.model_validate(
+                {
+                    **json.loads(out),
+                    "allotted": list(_ALLOTTED),
+                    "launch": {
+                        "privileged": bool(host.get("Privileged")),
+                        "host_namespaces": [
+                            ns
+                            for ns, key in namespaces.items()
+                            if host.get(key) == "host"
+                        ],
+                        "cap_add": host.get("CapAdd") or [],
+                        "devices": [
+                            device.get("PathOnHost", "")
+                            for device in host.get("Devices") or []
+                        ],
+                        "unconfined": [
+                            option
+                            for option in host.get("SecurityOpt") or []
+                            if option.replace(":", "=")
+                            in {
+                                "seccomp=unconfined",
+                                "apparmor=unconfined",
+                                "label=disable",
+                            }
+                        ],
+                    },
+                }
+            )
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ProviderError("Containment probe returned invalid evidence") from exc
         return evidence.model_dump(mode="json")
 
     def _run(self, argv: list[str], timeout_s: float, max_bytes: int = _MAX_OUTPUT):
