@@ -573,3 +573,75 @@ def test_runner_runs_both_experiments_and_probes_the_oracle_path(tmp_path, monke
     assert probes == ["oracle/solve.sh"]
     assert results["runtime.episode_isolation"].status is CheckStatus.PASS
     assert results["runtime.oracle_containment"].status is CheckStatus.PASS
+
+
+def test_json_limit_on_only_one_side_is_unproven():
+    result = grade_isolation(first_step_subject('{"data":1e9999999999999999999}'))
+    assert result.status is CheckStatus.SKIP
+    assert "JSON numeric range exceeds Decimal support" in result.evidence[0]
+
+
+def test_json_limit_in_one_control_preserves_a_later_supported_leak():
+    first = episode()
+    first[2] = replace(first[2], response_json='{"data":1e9999999999999999999}')
+    result = grade_isolation(isolation_subject(sequential=first + episode(2)))
+    assert result.status is CheckStatus.FAIL
+    assert "exchange 4 (step)" in result.evidence[0]
+
+
+def test_json_limit_after_a_confirmed_leak_does_not_hide_the_leak():
+    after_reset = episode(2)
+    after_reset[4] = replace(
+        after_reset[4], response_json='{"data":1e9999999999999999999}'
+    )
+    result = grade_isolation(isolation_subject(sequential=episode() + after_reset))
+    assert result.status is CheckStatus.FAIL
+    assert "exchange 2 (step)" in result.evidence[0]
+
+
+def test_failed_fresh_trace_without_unsupported_values_is_unproven():
+    subject = isolation_subject(sequential=episode() + episode(2))
+    subject.isolation_evidence = replace(
+        subject.isolation_evidence,
+        fresh=replace(
+            subject.isolation_evidence.fresh,
+            failure_phase="state",
+            failure_reason="state JSON exceeds validator support (json_depth)",
+        ),
+    )
+    result = grade_isolation(subject)
+    assert result.status is CheckStatus.SKIP
+    assert "the fresh reference episode failed" in result.evidence[0]
+
+
+def test_json_limit_in_control_at_the_only_difference_is_unproven():
+    first, after_reset = episode(), episode()
+    first[2] = replace(first[2], response_json='{"data":1e9999999999999999999}')
+    after_reset[2] = replace(after_reset[2], response_json='{"data":3}')
+    result = grade_isolation(isolation_subject(sequential=first + after_reset))
+    assert result.status is CheckStatus.SKIP
+    assert "JSON numeric range exceeds Decimal support" in result.evidence[0]
+
+
+def test_incomplete_fresh_trace_after_a_confirmed_leak_does_not_hide_the_leak():
+    subject = isolation_subject(sequential=episode() + episode(2))
+    fresh = episode()[:4]
+    fresh[3] = replace(
+        fresh[3],
+        response_json='{"type":"state","data":'
+        + "[" * 10_000
+        + "0"
+        + "]" * 10_000
+        + "}",
+    )
+    subject.isolation_evidence = replace(
+        subject.isolation_evidence,
+        fresh=replace(
+            evidence(*fresh),
+            failure_phase="state",
+            failure_reason="state JSON exceeds validator support (json_depth)",
+        ),
+    )
+    result = grade_isolation(subject)
+    assert result.status is CheckStatus.FAIL
+    assert "exchange 2 (step)" in result.evidence[0]

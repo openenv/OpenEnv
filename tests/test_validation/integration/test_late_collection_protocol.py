@@ -9,7 +9,9 @@ from contextlib import contextmanager
 
 import pytest
 import uvicorn
+import yaml
 from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
+from openenv.core.env_server.types import WSErrorCode
 from openenv.validation.runner import run_validation
 from openenv.validation.types import CheckStatus, Level
 from support.runtime import FakeRuntimeProvider
@@ -73,6 +75,17 @@ def protocol_app(root, unsupported_call, limit, fault):
         try:
             while (request := await connection.receive_json())["type"] != "close":
                 operation = request["type"]
+                if operation not in {"reset", "step", "state"}:
+                    await connection.send_json(
+                        {
+                            "type": "error",
+                            "data": {
+                                "code": WSErrorCode.UNKNOWN_TYPE,
+                                "message": f"Unknown message type: {operation}",
+                            },
+                        }
+                    )
+                    continue
                 if operation == "reset":
                     resets += 1
                     steps = 0
@@ -110,6 +123,7 @@ def protocol_app(root, unsupported_call, limit, fault):
                     )
                 await connection.send_text(raw)
         except WebSocketDisconnect:
+            # The collector closes sessions after complete or unsupported evidence.
             pass
 
     return app, http_probes
@@ -125,6 +139,13 @@ def test_late_collection_limits_grade_completed_evidence(
 ):
     root = tmp_path / "subject"
     shutil.copytree(FIXTURE, root, ignore=shutil.ignore_patterns("__pycache__"))
+    # This small server implements the episode protocol and oracle HTTP probe.
+    path = root / "openenv.yaml"
+    document = yaml.safe_load(path.read_text())
+    capabilities = document["validation"]["capabilities"]
+    for field in ("declared_tools", "rubric_tree", "task_api", "declared_task_count"):
+        capabilities.pop(field, None)
+    path.write_text(yaml.safe_dump(document))
     app, probes = protocol_app(root, unsupported_call, limit, fault)
     provider = FakeRuntimeProvider()
     bundle = tmp_path / "bundle"

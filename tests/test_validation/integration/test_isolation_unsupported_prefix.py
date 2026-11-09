@@ -84,6 +84,7 @@ def served(kind, leak, unknown_session="sequential"):
                     raw = raw.replace('"counter": 1', '"counter": ' + value)
                 await connection.send_text(raw)
         except WebSocketDisconnect:
+            # The collector closes sessions after complete or unsupported evidence.
             pass
 
     with socket.socket() as listener:
