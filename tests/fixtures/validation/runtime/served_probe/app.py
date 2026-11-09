@@ -14,6 +14,7 @@ from fastapi.responses import PlainTextResponse
 from openenv.core.env_server.http_server import create_app
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
+from openenv.core.rubrics import Rubric, WeightedSum
 from pydantic import Field
 
 
@@ -23,6 +24,14 @@ class ProbeAction(Action):
 
 class ProbeObservation(Observation):
     counter: int = Field(strict=True)
+
+
+class CounterRubric(Rubric):
+    def forward(self, action, observation):
+        return float(observation.counter >= 2)
+
+    def validation_config(self):
+        return {"threshold": 2}
 
 
 class ProbeEnvironment(Environment):
@@ -49,6 +58,8 @@ class ProbeEnvironment(Environment):
             self.worker = Thread(target=worker, daemon=True)
             self.worker.start()
 
+        self.rubric = WeightedSum([CounterRubric(), CounterRubric()], [0.5, 0.5])
+
     def reset(self, seed=None, episode_id=None, **kwargs):
         if os.environ.get("VALIDATION_FAULT") != "sticky_episode":
             self.counter = 0
@@ -66,11 +77,13 @@ class ProbeEnvironment(Environment):
         else:
             self.counter += action.increment
         self._state.step_count += 1
-        return ProbeObservation(
+        observation = ProbeObservation(
             counter=self.counter,
             reward=float(self.counter >= 2),
             done=self._state.step_count >= 2,
         )
+        observation.reward = self.rubric(action, observation)
+        return observation
 
     @property
     def state(self):

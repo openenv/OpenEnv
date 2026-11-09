@@ -106,6 +106,7 @@ def _recording(evidence, trace_file):
             "omitted_trace_fields": omitted_fields,
             "failure_phase": evidence.failure_phase,
             "failure_reason": evidence.failure_reason,
+            "telemetry_error": evidence.telemetry_error,
             "complete": evidence.failure_phase is None
             and evidence.failure_reason is None,
         }
@@ -207,6 +208,21 @@ def write_runtime_bundle(
         trace, metadata = _recording(recording, trace_file)
         if metadata is not None:
             metadata["session"] = session
+            if recording.telemetry_json is not None:
+                try:
+                    telemetry = loads(
+                        recording.telemetry_json, object_pairs_hook=_unique_object
+                    )
+                    telemetry_file = (
+                        "session-telemetry.json"
+                        if session == "collector"
+                        else f"{session}-telemetry.json"
+                    )
+                    files[telemetry_file] = telemetry
+                    metadata["redacted"] |= _redact(telemetry) != telemetry
+                except (ValueError, ArithmeticError, RecursionError):
+                    metadata["telemetry_error"] = "malformed telemetry omitted"
+                    metadata["redacted"] = True
         files[trace_file] = trace
         files[f"{session}-evidence.json"] = metadata
     probes = []

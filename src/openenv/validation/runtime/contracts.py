@@ -265,6 +265,10 @@ class RuntimeEvidence:
             Collector phase that failed; a truncated transcript cannot pass silently.
         failure_reason (`str`, *optional*):
             Credential-safe explanation of the collection failure.
+        telemetry_json (`str`, *optional*):
+            Subject-emitted session snapshot, independent of the wire transcript.
+        telemetry_error (`str`, *optional*):
+            Bounded telemetry failure without invalidating completed wire evidence.
         reset_observation_schema_json (`str`, *optional*):
             Explicit `/schema` reset_observation value; absent means use the step schema.
         schema_response_json (`str`, *optional*):
@@ -275,6 +279,8 @@ class RuntimeEvidence:
     observation_schema_json: str | None = None
     failure_phase: str | None = None
     failure_reason: str | None = None
+    telemetry_json: str | None = None
+    telemetry_error: str | None = None
     reset_observation_schema_json: str | None = None
     schema_response_json: str | None = None
 
