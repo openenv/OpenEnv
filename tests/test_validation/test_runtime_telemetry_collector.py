@@ -24,6 +24,7 @@ def collect(
     opening_reply=None,
     opening_error=None,
     send_error=None,
+    request_telemetry=True,
 ):
     original = httpx.Client
     monkeypatch.setattr(
@@ -66,6 +67,8 @@ def collect(
                     "type": "state",
                     "data": {"episode_id": "test", "step_count": 0},
                 }
+                if operation == leak_operation and leaked_response is not None:
+                    response["data"]["message"] = leaked_response
             else:
                 response = {
                     "type": "observation",
@@ -99,7 +102,11 @@ def collect(
         }
     )
     return collector.collect_runtime_evidence(
-        "http://127.0.0.1:8000", plan, episode_timeout_s=2, validation_token=TOKEN
+        "http://127.0.0.1:8000",
+        plan,
+        episode_timeout_s=2,
+        validation_token=TOKEN,
+        request_telemetry=request_telemetry,
     )
 
 
@@ -134,6 +141,31 @@ def test_normal_wire_cannot_persist_plain_or_escaped_credentials(
     assert result.exchanges == ()
     assert result.failure_reason == "reset failed (ValueError)"
     assert credential not in repr(result)
+
+
+@pytest.mark.parametrize("operation", ["reset", "step", "state"])
+@pytest.mark.parametrize("escaped", [False, True])
+@pytest.mark.parametrize("malformed", [False, True])
+def test_scrub_only_wire_omits_credentials_without_collecting_telemetry(
+    monkeypatch, operation, escaped, malformed
+):
+    result = collect(
+        monkeypatch,
+        leaked_response=TOKEN,
+        leak_operation=operation,
+        escaped=escaped,
+        malformed=malformed,
+        request_telemetry=False,
+    )
+    assert TOKEN not in repr(result)
+    assert result.failure_phase == operation
+    assert (
+        result.failure_reason
+        == f"{operation} failed ({'JSONDecodeError' if escaped and malformed else 'ValueError'})"
+    )
+    assert len(result.exchanges) == {"reset": 0, "state": 1, "step": 2}[operation]
+    assert result.telemetry_json is None
+    assert result.telemetry_error is None
 
 
 @pytest.mark.parametrize(
