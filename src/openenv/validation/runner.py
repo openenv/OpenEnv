@@ -340,7 +340,15 @@ def _runtime(subject, graders, *, skip_build, provider):
                     episode_timeout_s=manifest.resources.episode_timeout_s,
                     episodes=2,
                 )
-                isolation = IsolationEvidence(sequential=sequential, fresh=not_started)
+            except RuntimeCollectionInterrupted as exc:
+                isolation = IsolationEvidence(
+                    sequential=exc.evidence, fresh=not_started
+                )
+                raise KeyboardInterrupt from None
+            except RuntimeCollectionUnsupported as exc:
+                sequential = exc.evidence
+            isolation = IsolationEvidence(sequential=sequential, fresh=not_started)
+            try:
                 isolation = replace(
                     isolation,
                     fresh=collect_runtime_evidence(
@@ -350,18 +358,10 @@ def _runtime(subject, graders, *, skip_build, provider):
                     ),
                 )
             except RuntimeCollectionInterrupted as exc:
-                isolation = (
-                    IsolationEvidence(sequential=exc.evidence, fresh=not_started)
-                    if isolation is None
-                    else replace(isolation, fresh=exc.evidence)
-                )
+                isolation = replace(isolation, fresh=exc.evidence)
                 raise KeyboardInterrupt from None
             except RuntimeCollectionUnsupported as exc:
-                isolation = (
-                    IsolationEvidence(sequential=exc.evidence, fresh=not_started)
-                    if isolation is None
-                    else replace(isolation, fresh=exc.evidence)
-                )
+                isolation = replace(isolation, fresh=exc.evidence)
             if manifest.capabilities.oracle is not None:
                 oracle_http = _oracle_probes(
                     running.base_url,

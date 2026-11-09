@@ -41,9 +41,7 @@ def _divergence(left, right, complete=True):
     When `left` is an incomplete recording, only its recorded exchanges count.
     """
     for index, (a, b) in enumerate(zip(left, right)):
-        if any(
-            not _unsupported(x) and not _unsupported(y) and x != y for x, y in zip(a, b)
-        ):
+        if a != b:
             return f"exchange {index} ({a[0]})"
     if complete and len(left) != len(right):
         return f"exchange {min(len(left), len(right))} (trace length)"

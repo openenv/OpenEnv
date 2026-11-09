@@ -125,6 +125,20 @@ def test_json_beyond_decimal_range_is_unproven():
     assert result.status is CheckStatus.SKIP
 
 
+def test_json_limit_on_only_one_side_is_a_divergence():
+    result = grade_isolation(first_step_subject('{"data":1e9999999999999999999}'))
+    assert result.status is CheckStatus.FAIL
+    assert "exchange 2 (step)" in result.evidence[0]
+
+
+def test_json_limit_in_first_episode_makes_a_later_leak_unproven():
+    first = episode()
+    first[2] = replace(first[2], response_json='{"data":1e9999999999999999999}')
+    result = grade_isolation(isolation_subject(sequential=first + episode(2)))
+    assert result.status is CheckStatus.SKIP
+    assert "two fresh episodes differ at exchange 2 (step)" in result.evidence[0]
+
+
 def test_json_limit_after_a_confirmed_leak_does_not_hide_the_leak():
     after_reset = episode(2)
     after_reset[4] = replace(

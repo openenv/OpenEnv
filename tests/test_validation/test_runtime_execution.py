@@ -185,6 +185,42 @@ def test_unsupported_isolation_keeps_startup_and_grades_completed_evidence(
     assert results["runtime.reward_well_formed"].status is CheckStatus.PASS
 
 
+def test_unsupported_sequential_still_collects_fresh_and_grades_prefix(
+    package, monkeypatch
+):
+    original = measured_episode()
+    after_reset = list(original.exchanges)
+    after_reset[2] = replace(
+        after_reset[2],
+        response_json=after_reset[2].response_json.replace(
+            '"counter": 1', '"counter": 2'
+        ),
+    )
+    partial = replace(
+        original,
+        exchanges=original.exchanges + tuple(after_reset),
+        failure_phase="state",
+        failure_reason="state JSON exceeds validator support (json_depth)",
+    )
+    calls = 0
+
+    def collect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeCollectionUnsupported(partial)
+        return original
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    results = {result.check_id: result for result in report.results}
+
+    assert calls == 3
+    assert results["runtime.episode_isolation"].status is CheckStatus.FAIL
+
+
 @pytest.mark.parametrize("interrupted_call", [2, 3])
 def test_interrupted_isolation_retains_every_completed_session(
     package, monkeypatch, tmp_path, interrupted_call
