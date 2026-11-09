@@ -413,7 +413,18 @@ def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check
         assert set(artifacts["coverage.json"]["incomplete"]) == PENDING
 
 
-def _assert_partial_episode(artifacts, expected_failure):
+def _assert_partial_episode(artifacts, expected_failure, checks):
+    # Discovery completes before the blocked step; its results remain usable.
+    discovery = {
+        "runtime.tool_declaration_accuracy",
+        "runtime.task_declaration_accuracy",
+    }
+    assert all(checks[key]["status"] == "pass" for key in discovery)
+    assert all(
+        checks[key]["status"] == "skip"
+        for key in IMPLEMENTED - {"runtime.startup"} - discovery
+    )
+    _assert_discovery(artifacts["discovery.json"], "healthy")
     trace = artifacts["collector-trace.json"]
     assert [row["operation"] for row in trace] == ["reset", "state", "step", "state"]
     assert trace[0]["response_json"]["data"]["observation"]["counter"] == 0
@@ -444,10 +455,7 @@ def test_cli_hung_step_times_out_with_partial_evidence(cli_context, tmp_path):
     assert report["verdict"] == "fail"
     assert report["manifest"]["resources"]["episode_timeout_s"] == 3.0
     assert checks["runtime.startup"]["status"] == "fail"
-    assert all(
-        checks[key]["status"] == "skip" for key in IMPLEMENTED - {"runtime.startup"}
-    )
-    _assert_partial_episode(artifacts, "TimeoutError")
+    _assert_partial_episode(artifacts, "TimeoutError", checks)
 
 
 def test_cli_sigint_retains_partial_evidence_and_cleans_up(cli_context, tmp_path):
@@ -462,10 +470,7 @@ def test_cli_sigint_retains_partial_evidence_and_cleans_up(cli_context, tmp_path
     assert report["verdict"] == "fail"
     assert checks["runtime.startup"]["status"] == "error"
     assert "interrupt" in " ".join(checks["runtime.startup"]["evidence"]).lower()
-    assert all(
-        checks[key]["status"] == "skip" for key in IMPLEMENTED - {"runtime.startup"}
-    )
-    _assert_partial_episode(artifacts, "KeyboardInterrupt")
+    _assert_partial_episode(artifacts, "KeyboardInterrupt", checks)
 
 
 def test_cli_sigterm_retains_partial_evidence_and_cleans_up(cli_context, tmp_path):
@@ -482,10 +487,7 @@ def test_cli_sigterm_retains_partial_evidence_and_cleans_up(cli_context, tmp_pat
     assert report["verdict"] == "fail"
     assert checks["runtime.startup"]["status"] == "error"
     assert "interrupt" in " ".join(checks["runtime.startup"]["evidence"]).lower()
-    assert all(
-        checks[key]["status"] == "skip" for key in IMPLEMENTED - {"runtime.startup"}
-    )
-    _assert_partial_episode(artifacts, "KeyboardInterrupt")
+    _assert_partial_episode(artifacts, "KeyboardInterrupt", checks)
 
 
 def test_cli_startup_failure_is_a_finding_and_leaves_no_container(
