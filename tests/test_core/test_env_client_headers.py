@@ -103,9 +103,9 @@ def test_http_redirect_does_not_forward_sandbox_token(serve, cross_origin):
             ("sandbox-only", "mode=test", b"payload", "application/octet-stream")
         ]
         assert redirected_tokens == []
-        assert response.status_code == 307
-        assert response.headers["location"] == location
-        assert response.text == "redirect body"
+        assert response.status_code == 502
+        assert "location" not in response.headers
+        assert response.text == "upstream HF job redirected; rejected"
     finally:
         proxy.stop()
 

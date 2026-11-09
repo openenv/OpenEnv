@@ -17,7 +17,7 @@ mkdir -p "$HOOKS_DIR"
 
 echo "Installing git hooks..."
 
-# Pre-commit hook: format, lint, branch check
+# Pre-commit hook: branch check, format and lint check
 cat > "$HOOKS_DIR/pre-commit" << 'EOF'
 #!/bin/bash
 # Installed by .claude/hooks/install.sh
@@ -38,24 +38,6 @@ if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
     exit 1
 fi
 echo "On branch: $BRANCH"
-
-# === Import Sort + Format Check ===
-echo ""
-echo "=== Import Sort + Format Check ==="
-# Run the arc f pipeline: usort then ruff format
-uv run usort format src/ tests/ >/dev/null 2>&1
-uv run ruff format src/ tests/ >/dev/null 2>&1
-CHANGED=$(git diff --name-only -- '*.py' 2>/dev/null || true)
-if [ -n "$CHANGED" ]; then
-    echo "Files need formatting (usort + ruff format):"
-    echo "$CHANGED"
-    echo ""
-    echo "Auto-formatting and staging changes..."
-    git add $CHANGED
-    echo "Fixed! Changes staged."
-else
-    echo "Import sort + format check passed!"
-fi
 
 # === Lint Check ===
 echo ""
@@ -144,22 +126,7 @@ while read local_ref local_sha remote_ref remote_sha; do
 done
 echo "Not pushing to protected branch - OK"
 
-# 1. Import sort + format check
-echo ""
-echo "=== Import Sort + Format Check ==="
-uv run usort format src/ tests/ >/dev/null 2>&1
-uv run ruff format src/ tests/ >/dev/null 2>&1
-CHANGED_FMT=$(git diff --name-only -- '*.py' 2>/dev/null || true)
-if [ -n "$CHANGED_FMT" ]; then
-    echo "Files not properly formatted:"
-    echo "$CHANGED_FMT"
-    echo ""
-    echo "Run: uv run usort format src/ tests/ && uv run ruff format src/ tests/"
-    git checkout -- $CHANGED_FMT 2>/dev/null || true
-    FAILED=1
-fi
-
-# 2. Lint check
+# 1. Format and lint check
 echo ""
 echo "=== Lint Check ==="
 "$REPO_ROOT/.claude/hooks/lint.sh" || {
@@ -167,7 +134,7 @@ echo "=== Lint Check ==="
     FAILED=1
 }
 
-# 3. Test check
+# 2. Test check
 echo ""
 echo "=== Test Check ==="
 "$REPO_ROOT/.claude/hooks/test.sh" || {
@@ -175,12 +142,12 @@ echo "=== Test Check ==="
     FAILED=1
 }
 
-# 4. Debug artifacts
+# 3. Debug artifacts
 echo ""
 echo "=== Debug Artifacts ==="
 "$REPO_ROOT/.claude/hooks/check-debug.sh"
 
-# 5. Invariant: Client should not import from server
+# 4. Invariant: Client should not import from server
 echo ""
 echo "=== Invariant Checks ==="
 # Check if any client file imports from server directory
@@ -200,7 +167,7 @@ else
     echo "Client-server separation maintained"
 fi
 
-# 6. Check branch freshness with main (warning only, non-blocking)
+# 5. Check branch freshness with main (warning only, non-blocking)
 echo ""
 echo "=== Branch Freshness Check ==="
 # Fetch latest main silently
@@ -223,7 +190,7 @@ else
     echo "Branch is up to date with main"
 fi
 
-# 7. Check for conflicts with main (warning only, non-blocking)
+# 6. Check for conflicts with main (warning only, non-blocking)
 echo ""
 echo "=== Conflict Check with main ==="
 # Try a test merge to detect conflicts (then abort)
@@ -284,9 +251,9 @@ echo ""
 echo "Git hooks installed successfully!"
 echo ""
 echo "Hooks installed:"
-echo "  - pre-commit: branch check, usort+format, lint, check-debug"
+echo "  - pre-commit: branch check, format and lint check, check-debug"
 echo "  - commit-msg: issue reference reminder (soft warning)"
-echo "  - pre-push: usort+format, lint, tests, check-debug, invariant checks, conflict detection"
+echo "  - pre-push: format and lint check, tests, check-debug, invariant checks, conflict detection"
 echo "  - post-merge: worktree cleanup reminder"
 echo ""
 echo "To skip hooks temporarily: git commit/push --no-verify"

@@ -180,7 +180,7 @@ The server supports configuration via environment variables:
 - `TEXTARENA_NUM_PLAYERS` - Number of players (default: 1)
 - `TEXTARENA_MAX_TURNS` - Maximum turns per episode
 - `TEXTARENA_DOWNLOAD_NLTK` - Download NLTK data (default: "1")
-- `TEXTARENA_KW_*` - Pass additional kwargs to TextArena (e.g., `TEXTARENA_KW_difficulty=hard`)
+- `TEXTARENA_KW_*` - Pass additional kwargs to TextArena. Values are read as JSON, so numbers and booleans keep their type (e.g., `TEXTARENA_KW_CLUES=65` for Sudoku, `TEXTARENA_KW_difficulty=hard`)
 
 ## Development & Testing
 
