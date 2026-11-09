@@ -220,6 +220,7 @@ def _get(base_url, location, deadline, max_bytes=MAX_ORACLE_PROBE_BYTES):
     except (httpx.HTTPError, httpx.InvalidURL, TimeoutError) as exc:
         # Exception text may include subject-controlled URLs.
         return probe(type(exc).__name__)
+    return probe("too many redirects")
 
 
 def _oracle_probes(base_url, root, location):
