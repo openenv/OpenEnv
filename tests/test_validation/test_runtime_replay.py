@@ -323,3 +323,19 @@ def test_byte_budget_does_not_swallow_interruption_or_discard_completed_prefix(
         "total retained replay evidence exceeds"
         in error.value.evidence.replay_failure_reason
     )
+
+
+@pytest.mark.parametrize("budget,collections", [(3, 0), (5, 1)])
+def test_full_schema_counts_toward_retained_replay_budget(
+    monkeypatch, budget, collections
+):
+    values = list(inputs(monkeypatch))
+    values[5] = RuntimeEvidence(schema_response_json='"é"')
+    values[-1].return_value = RuntimeEvidence(observation_schema_json="{}")
+    monkeypatch.setattr(replay, "MAX_REPLAY_BYTES", budget)
+    result = run(values)
+    assert "total retained replay evidence exceeds" in result.replay_failure_reason
+    assert not result.replays
+    assert replay._evidence_bytes(result) <= budget
+    assert values[-1].call_count == collections
+    values[0].start.assert_not_called()

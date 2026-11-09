@@ -654,8 +654,6 @@ def test_malformed_replay_omissions_are_explicit_and_do_not_leak_raw_data(
         observation_schema_json=malformed,
         reset_observation_schema_json=malformed,
         telemetry_json=malformed,
-        tools_json=malformed,
-        tasks_json=malformed,
     )
     original = replace(
         measured(), replays=(ReplayEvidence("container", sample, malformed, True),)
@@ -673,8 +671,6 @@ def test_malformed_replay_omissions_are_explicit_and_do_not_leak_raw_data(
         "telemetry",
         "schema",
         "reset_schema",
-        "tools",
-        "tasks",
         "provider",
     ]
 

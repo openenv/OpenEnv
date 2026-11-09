@@ -416,3 +416,20 @@ def test_legacy_non_mcp_reply_is_an_exact_exception(monkeypatch, tmp_path, mutat
         assert result.evidence == ["unsupported capability: tool_discovery"]
     else:
         assert evidence.tools_error and evidence.tools_unavailable is None
+
+
+@pytest.mark.parametrize("number", ["1.00000000000000001", "1e-999"])
+def test_tool_discovery_retains_exact_schema_numbers(monkeypatch, number):
+    from decimal import Decimal
+
+    from openenv.validation.runtime.json_values import loads
+
+    response = json.dumps(
+        tool_response([{"name": "echo", "inputSchema": {"minimum": "exact-number"}}])
+    )
+    connection = DiscoveryConnection(response.replace('"exact-number"', number))
+    evidence, _ = collect(monkeypatch, connection, collect_tools=True)
+    assert evidence.tools_error is None
+    assert loads(evidence.tools_json)["tools"][0]["inputSchema"]["minimum"] == Decimal(
+        number
+    )

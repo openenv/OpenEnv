@@ -234,7 +234,7 @@ def collect_runtime_evidence(
                 raw = receive_response(request)
                 if not isinstance(raw, str) or len(raw.encode()) > max_bytes:
                     raise ValueError("invalid telemetry response")
-                response = json.loads(raw)
+                response = loads(raw)
                 if not isinstance(response, dict):
                     raise ValueError("invalid telemetry envelope")
                 return response
@@ -278,18 +278,20 @@ def collect_runtime_evidence(
                         )
 
             def contains_credential(value):
-                if isinstance(value, str):
-                    return any(
-                        secret and secret in value
-                        for secret in (validation_token, capability)
-                    )
-                if isinstance(value, dict):
-                    return any(
-                        contains_credential(key) or contains_credential(child)
-                        for key, child in value.items()
-                    )
-                if isinstance(value, list):
-                    return any(contains_credential(child) for child in value)
+                pending = [value]
+                while pending:
+                    child = pending.pop()
+                    if isinstance(child, str):
+                        if any(
+                            secret and secret in child
+                            for secret in (validation_token, capability)
+                        ):
+                            return True
+                    elif isinstance(child, dict):
+                        pending.extend(child.keys())
+                        pending.extend(child.values())
+                    elif isinstance(child, list):
+                        pending.extend(child)
                 return False
 
             if collect_tools:
@@ -344,9 +346,7 @@ def collect_runtime_evidence(
                                 or not isinstance(rpc["result"].get("tools"), list)
                             ):
                                 raise ValueError("invalid tool discovery response")
-                            discovered = json.dumps(
-                                rpc["result"], allow_nan=False, ensure_ascii=False
-                            )
+                            discovered = dumps(rpc["result"], ensure_ascii=False)
                             if len(discovered.encode()) > MAX_MESSAGE_BYTES:
                                 raise ValueError("discovery exceeds size bound")
                             tools_json = discovered
@@ -447,12 +447,7 @@ def collect_runtime_evidence(
                         raise ValueError("invalid telemetry envelope")
                     if contains_credential(response["data"]):
                         raise ValueError("telemetry contains validation credentials")
-                    snapshot = json.dumps(
-                        response["data"],
-                        allow_nan=False,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
+                    snapshot = dumps(response["data"], ensure_ascii=False)
                     if len(snapshot.encode("utf-8")) > MAX_TRACE_BYTES:
                         raise ValueError("telemetry exceeds size bound")
                     telemetry_json = snapshot

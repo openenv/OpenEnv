@@ -21,6 +21,7 @@ def _evidence_bytes(evidence):
         for value in (
             evidence.observation_schema_json or "",
             evidence.reset_observation_schema_json or "",
+            evidence.schema_response_json or "",
             evidence.telemetry_json or "",
             evidence.tools_json or "",
             evidence.tasks_json or "",
