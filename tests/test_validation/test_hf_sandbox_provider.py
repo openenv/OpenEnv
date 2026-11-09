@@ -853,6 +853,10 @@ def test_app_port_defaults_to_the_hub_default():
         ),
         ('FROM python AS build\nCMD ["serve"]\nFROM build', ["serve"]),
         ("FROM python\nCMD echo \\\n    hello", ["/bin/sh", "-c", "echo     hello"]),
+        (
+            'FROM python\nCMD ["serve"]\nHEALTHCHECK CMD true \\ \t\n    CMD ["probe"]',
+            ["serve"],
+        ),
     ],
 )
 def test_server_command_continuations_and_stages(dockerfile, expected):
