@@ -95,6 +95,12 @@ def test_runtime_collects_episode_and_isolation_cleans_up_and_marks_remaining_wo
     results = {r.check_id: r.status for r in report.results}
     # The measured episode, then a same-session pair and a fresh episode.
     assert [kwargs.get("episodes", 1) for _, kwargs in calls] == [1, 2, 1]
+    assert len({kwargs["validation_token"] for _, kwargs in calls}) == 1
+    assert [kwargs.get("request_telemetry", True) for _, kwargs in calls] == [
+        True,
+        False,
+        False,
+    ]
     assert len(provider.builds) == len(provider.launches) == 1
     assert provider.subject.stopped
     assert report.report_schema_version == "2"
