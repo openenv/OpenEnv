@@ -24,13 +24,13 @@ IMPLEMENTED = {
     "runtime.state_contract",
     "runtime.network_policy",
     "runtime.host_containment",
+    "runtime.resource_bounds",
 }
 PENDING = {
     "runtime.trajectory_record",
     "runtime.tool_declaration_accuracy",
     "runtime.seed_control",
     "runtime.episode_determinism",
-    "runtime.resource_bounds",
     "runtime.episode_isolation",
     "runtime.oracle_containment",
 }

@@ -505,3 +505,126 @@ class ContainmentEvidence(BaseModel):
     device_storage: dict[str, DeviceStorage] = Field(
         default_factory=dict, max_length=1024
     )
+
+
+class CgroupLimits(BaseModel):
+    """
+    Effective cgroup v2 limits read from inside the subject.
+
+    `None` means unlimited unless the field is listed in `unavailable`.
+
+    Attributes:
+        memory_max (`int`, *optional*):
+            `memory.max` in bytes.
+        swap_max (`int`, *optional*):
+            `memory.swap.max` in bytes.
+        cpu_quota (`int`, *optional*):
+            CPU time allowed per period, in microseconds.
+        cpu_period (`int`):
+            CPU period in microseconds.
+        pids_max (`int`, *optional*):
+            `pids.max`.
+        unavailable (`list[str]`):
+            Fields whose cgroup files could not be read independently.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    memory_max: int | None = Field(ge=0)
+    swap_max: int | None = Field(ge=0)
+    cpu_quota: int | None = Field(ge=0)
+    cpu_period: int | None = Field(gt=0)
+    pids_max: int | None = Field(ge=0)
+    unavailable: list[str] = Field(default_factory=list)
+
+
+class WritableRoot(BaseModel):
+    """
+    Capacity of one writable root, from `statvfs` inside the subject.
+
+    Attributes:
+        path (`str`):
+            Path inside the subject.
+        size_bytes (`int`):
+            Total capacity of the filesystem mounted there.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    size_bytes: int = Field(ge=0)
+
+
+class QualificationProbe(BaseModel):
+    """
+    One bounded stress probe, run in a disposable subject from the same image.
+
+    Attributes:
+        kind (`str`):
+            `"memory"`, `"pids"`, `"disk"` or `"exec_timeout"`.
+        result (`str`):
+            `"contained"` when the limit stopped the probe, `"escaped"` when it
+            exceeded its budget, `"inconclusive"` otherwise.
+        started (`bool`):
+            Whether the stimulus emitted its fresh start marker, or a trusted observer
+            witnessed the exec-timeout stimulus with a live descendant.
+        reason (`str`, *optional*):
+            Trusted corroboration of the outcome.
+        counter_before (`int`, *optional*):
+            Cgroup event count before the stimulus.
+        counter_after (`int`, *optional*):
+            Cgroup event count after the stimulus.
+        oom_killed (`bool`):
+            Whether Docker recorded a container OOM kill.
+        free_bytes_before (`dict[str, int or None]`):
+            Trusted free capacity before the disk stimulus, per allotted root.
+        free_bytes (`dict[str, int or None]`):
+            Trusted free capacity after the disk stimulus, per allotted root.
+        parent_pid (`int`, *optional*):
+            Stimulus PID observed by the trusted helper before timeout.
+        descendant_pid (`int`, *optional*):
+            Live child whose kernel PPID and nonce-bearing command matched the stimulus.
+        removed (`bool`):
+            Whether timeout cleanup independently verified container removal.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["memory", "pids", "disk", "exec_timeout"]
+    result: Literal["contained", "escaped", "inconclusive"]
+    started: bool = False
+    reason: str | None = Field(default=None, max_length=256)
+    counter_before: int | None = Field(default=None, ge=0)
+    counter_after: int | None = Field(default=None, ge=0)
+    oom_killed: bool = False
+    free_bytes_before: dict[str, int | None] = Field(default_factory=dict)
+    free_bytes: dict[str, int | None] = Field(default_factory=dict)
+    parent_pid: int | None = Field(default=None, gt=0)
+    descendant_pid: int | None = Field(default=None, gt=0)
+    removed: bool = False
+
+
+class ResourceEvidence(BaseModel):
+    """
+    Provider-neutral evidence for `runtime.resource_bounds`.
+
+    Attributes:
+        schema_version (`int`):
+            Evidence format version.
+        cgroup ([`~openenv.validation.runtime.contracts.CgroupLimits`], *optional*):
+            Limits measured in the subject; `None` if they could not be read.
+        writable (`list[WritableRoot]`):
+            Capacity of every writable root.
+        qualification (`list[QualificationProbe]`):
+            Enforcement measured by stress probes.
+        containment ([`~openenv.validation.runtime.contracts.ContainmentEvidence`], *optional*):
+            Complete filesystem inventory and write controls for storage accounting.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    cgroup: CgroupLimits | None
+    writable: list[WritableRoot]
+    qualification: list[QualificationProbe]
+    containment: ContainmentEvidence | None = None

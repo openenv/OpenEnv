@@ -40,6 +40,8 @@ class Subject:
             Provider-measured [`~openenv.validation.runtime.contracts.NetworkEvidence`].
         containment_evidence_json (`str`, *optional*):
             Provider-measured [`~openenv.validation.runtime.contracts.ContainmentEvidence`].
+        resource_evidence_json (`str`, *optional*):
+            Provider-measured [`~openenv.validation.runtime.contracts.ResourceEvidence`].
     """
 
     root: Path
@@ -50,6 +52,7 @@ class Subject:
     runtime_evidence: RuntimeEvidence | None = None
     network_evidence_json: str | None = None
     containment_evidence_json: str | None = None
+    resource_evidence_json: str | None = None
 
 
 @runtime_checkable

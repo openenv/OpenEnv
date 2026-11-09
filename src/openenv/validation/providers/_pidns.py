@@ -161,3 +161,160 @@ print(json.dumps({
     "device_storage": device_storage,
 }))
 """
+
+# Read limits independently: an unavailable file must not erase known violations.
+LIMITS_SCRIPT = """
+import json
+root = "/proc/1/root/sys/fs/cgroup/"
+cgroup = {}
+unavailable = []
+for filename, keys in [
+    ("memory.max", ["memory_max"]),
+    ("memory.swap.max", ["swap_max"]),
+    ("cpu.max", ["cpu_quota", "cpu_period"]),
+    ("pids.max", ["pids_max"]),
+]:
+    try:
+        with open(root + filename) as f:
+            values = f.read().split()
+        if len(values) != len(keys):
+            raise ValueError()
+        parsed = [None if value == "max" else int(value) for value in values]
+        if any(value is not None and value < 0 for value in parsed):
+            raise ValueError()
+        if "cpu_period" in keys and (parsed[1] is None or parsed[1] == 0):
+            raise ValueError()
+    except (OSError, ValueError):
+        parsed = [None] * len(keys)
+        unavailable.extend(keys)
+    cgroup.update(zip(keys, parsed))
+cgroup["unavailable"] = unavailable
+print(json.dumps({"cgroup": cgroup}))
+"""
+
+# Trusted pre/post stress evidence from the subject's cgroup and filesystem.
+COUNTERS_SCRIPT = """
+import json, os, sys
+root = "/proc/1/root"
+result = {}
+for filename, key, counter in [
+    ("memory.events", "oom_kill", "oom_kill"),
+    ("pids.events", "pids_max", "max"),
+]:
+    try:
+        with open(root + "/sys/fs/cgroup/" + filename) as f:
+            result[key] = int(dict(line.split() for line in f)[counter])
+    except (OSError, ValueError, KeyError):
+        result[key] = None
+result["free_bytes"] = {}
+for path in sys.argv[1:]:
+    try:
+        info = os.statvfs(root + path)
+        result["free_bytes"][path] = info.f_bavail * info.f_frsize
+    except OSError:
+        result["free_bytes"][path] = None
+print(json.dumps(result))
+"""
+
+# Observe a live fork from the nonce-correlated stimulus using the trusted image.
+DESCENDANTS_SCRIPT = """
+import json, os, sys, time
+proc = "/proc"
+nonce, duration = sys.argv[1], float(sys.argv[2])
+expected = [b"exec_timeout", b"1", nonce.encode(), b"/tmp", b"/dev/shm"]
+me = os.getpid()
+def process(pid):
+    if pid == me:
+        return None
+    try:
+        with open(f"{proc}/{pid}/stat") as f:
+            before = f.read().rsplit(") ", 1)[1].split()
+        with open(f"{proc}/{pid}/cmdline", "rb") as f:
+            argv = f.read().rstrip(b"\\0").split(b"\\0")
+        with open(f"{proc}/{pid}/stat") as f:
+            after = f.read().rsplit(") ", 1)[1].split()
+        if (argv[-5:] != expected or before[0] in ("Z", "X")
+            or after[0] in ("Z", "X") or before[1] != after[1]
+            or before[19] != after[19]):
+            return None
+        return (pid, int(after[1]), int(after[19]))
+    except (OSError, ValueError, IndexError):
+        return None
+witness = {}
+deadline = time.monotonic() + duration
+while time.monotonic() < deadline:
+    try:
+        entries = os.listdir(proc)
+    except OSError:
+        break
+    if len(entries) > 4096:
+        break
+    processes = {}
+    for entry in entries:
+        if entry.isdigit():
+            reading = process(int(entry))
+            if reading is not None:
+                processes[reading[0]] = reading
+    for child in processes.values():
+        parent = processes.get(child[1])
+        if (parent is not None and child[0] != parent[0]
+            and process(parent[0]) == parent and process(child[0]) == child):
+            witness = {"parent_pid": parent[0], "descendant_pid": child[0]}
+            break
+    if witness:
+        break
+    time.sleep(0.02)
+print(json.dumps(witness), flush=True)
+"""
+
+# Subject-image code is only a stimulus. Trusted counters corroborate its result.
+QUALIFY_SCRIPT = """
+import errno, os, sys, time
+kind, budget, nonce = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+print("openenv-probe-start:" + nonce, flush=True)
+mib = 1 << 20
+if kind == "memory":
+    with open("/proc/self/oom_score_adj", "w") as f:
+        f.write("1000")
+    held = []
+    while len(held) * 16 * mib < budget + 64 * mib:
+        held.append(b"\\x01" * (16 * mib))
+    print("escaped", flush=True)
+elif kind == "pids":
+    children = []
+    try:
+        for _ in range(budget + 16):
+            pid = os.fork()
+            if pid == 0:
+                time.sleep(30)
+                os._exit(0)
+            children.append(pid)
+        print("escaped", flush=True)
+    except BlockingIOError:
+        print("contained", flush=True)
+    finally:
+        for pid in children:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
+elif kind == "disk":
+    written = 0
+    for index, path in enumerate(sys.argv[4:]):
+        try:
+            with open(os.path.join(path, f"openenv-fill-{index}"), "wb") as f:
+                while written <= budget + 16 * mib:
+                    f.write(b"\\x01" * mib)
+                    f.flush()
+                    written += mib
+        except OSError as exc:
+            if exc.errno not in (errno.ENOSPC, errno.EDQUOT):
+                print("inconclusive", flush=True)
+                sys.exit()
+    # Leave the files for trusted statvfs verification; this subject is disposable.
+    print("escaped" if written > budget else "contained", flush=True)
+elif kind == "exec_timeout":
+    if os.fork() == 0:
+        time.sleep(300)
+        os._exit(0)
+    print("openenv-probe-descendant:" + nonce, flush=True)
+    time.sleep(300)
+"""
