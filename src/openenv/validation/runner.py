@@ -349,21 +349,26 @@ def _runtime(subject, graders, *, skip_build, provider):
                 failure_reason="validation interrupted before the fresh episode",
             )
             try:
-                sequential = collect_runtime_evidence(
-                    running.base_url,
-                    plan,
-                    episode_timeout_s=manifest.resources.episode_timeout_s,
-                    episodes=2,
-                )
-                isolation = IsolationEvidence(sequential=sequential, fresh=not_started)
-                isolation = replace(
-                    isolation,
-                    fresh=collect_runtime_evidence(
+                # Later JSON limits leave primary contracts and other probes measurable.
+                try:
+                    sequential = collect_runtime_evidence(
                         running.base_url,
                         plan,
                         episode_timeout_s=manifest.resources.episode_timeout_s,
-                    ),
-                )
+                        episodes=2,
+                    )
+                except RuntimeCollectionUnsupported as exc:
+                    sequential = exc.evidence
+                isolation = IsolationEvidence(sequential=sequential, fresh=not_started)
+                try:
+                    fresh = collect_runtime_evidence(
+                        running.base_url,
+                        plan,
+                        episode_timeout_s=manifest.resources.episode_timeout_s,
+                    )
+                except RuntimeCollectionUnsupported as exc:
+                    fresh = exc.evidence
+                isolation = replace(isolation, fresh=fresh)
             except RuntimeCollectionInterrupted as exc:
                 isolation = (
                     IsolationEvidence(sequential=exc.evidence, fresh=not_started)
@@ -447,18 +452,7 @@ def _runtime(subject, graders, *, skip_build, provider):
             result.status = CheckStatus.ERROR
             result.evidence.append("replay subject teardown failed")
     except RuntimeCollectionUnsupported as exc:
-        if evidence is None:
-            evidence = exc.evidence
-        elif isolation is None:
-            isolation = IsolationEvidence(
-                sequential=exc.evidence,
-                fresh=RuntimeEvidence(
-                    failure_phase="not_started",
-                    failure_reason="collection stopped at an unsupported schema",
-                ),
-            )
-        else:
-            isolation = replace(isolation, fresh=exc.evidence)
+        evidence = exc.evidence
         result = _outcome(
             "runtime.startup", CheckStatus.SKIP, str(exc), started=started
         )
