@@ -267,6 +267,8 @@ class RuntimeEvidence:
             Credential-safe explanation of the collection failure.
         reset_observation_schema_json (`str`, *optional*):
             Explicit `/schema` reset_observation value; absent means use the step schema.
+        schema_response_json (`str`, *optional*):
+            Complete bounded `/schema` response, including action, state and reset inputs.
     """
 
     exchanges: tuple[WireExchange, ...] = ()
@@ -274,6 +276,7 @@ class RuntimeEvidence:
     failure_phase: str | None = None
     failure_reason: str | None = None
     reset_observation_schema_json: str | None = None
+    schema_response_json: str | None = None
 
 
 class ProbeOutcome(BaseModel):
@@ -628,3 +631,47 @@ class ResourceEvidence(BaseModel):
     writable: list[WritableRoot]
     qualification: list[QualificationProbe]
     containment: ContainmentEvidence | None = None
+
+
+@dataclass(frozen=True)
+class IsolationEvidence:
+    """
+    Raw evidence for `runtime.episode_isolation`, collected on the running subject.
+
+    Attributes:
+        sequential ([`~openenv.validation.runtime.contracts.RuntimeEvidence`]):
+            The plan run twice on one session: episode A, then a reset into B.
+        fresh ([`~openenv.validation.runtime.contracts.RuntimeEvidence`]):
+            The plan run once on a new session, as the reference for B.
+    """
+
+    sequential: RuntimeEvidence
+    fresh: RuntimeEvidence
+
+
+@dataclass(frozen=True)
+class HttpProbe:
+    """
+    One bounded HTTP GET against the subject's control endpoint.
+
+    Attributes:
+        path (`str`):
+            Requested path.
+        status (`int`, *optional*):
+            Status of the last response, after same-origin redirects; `None` when no
+            response arrived.
+        body (`bytes`):
+            Bounded body of the final response, whatever its status.
+        failure (`str`, *optional*):
+            Why the probe is incomplete: a transport error, the deadline, a compressed
+            or oversized body, or a redirect that was not followed.
+        redirect_bodies (`tuple[bytes, ...]`):
+            Prior redirect response bodies, each retained separately for JSON decoding.
+            All bodies share the probe byte budget.
+    """
+
+    path: str
+    status: int | None
+    body: bytes = b""
+    failure: str | None = None
+    redirect_bodies: tuple[bytes, ...] = ()

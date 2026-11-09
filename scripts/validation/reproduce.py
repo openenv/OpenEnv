@@ -335,6 +335,7 @@ def stage_image(work, output, pins, manifest):
     for name in ("Dockerfile", "openenv.yaml"):
         shutil.copyfile(FIXTURE / name, context / name)
     shutil.copytree(FIXTURE / "validation", context / "validation")
+    shutil.copytree(FIXTURE / "oracle", context / "oracle")
     # Assert the checked-in Dockerfile and declared base pin cannot drift independently.
     if pins["base_image"] not in (context / "Dockerfile").read_text():
         raise RuntimeError("Fixture base image differs from toolchain.json")

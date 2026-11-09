@@ -18,6 +18,9 @@ validation:
   capabilities:
     verifier:
       kind: reward_channel
+    oracle:
+      form: script
+      location: oracle/solve.sh
     declared_tools: []
   types:
     tags: [demo]

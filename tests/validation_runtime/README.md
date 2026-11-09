@@ -30,13 +30,17 @@ checkout with `PYTHONPATH` removed, exercising installed package data and the
 production OpenEnv `/ws` endpoint. Each launch uses a fresh subject.
 
 The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
-`bad_observation`, `missing_done`, `bad_state`, `hung_step`, `slow_step`, and `startup_failure`. All fault
+`bad_observation`, `missing_done`, `bad_state`, `hung_step`, `slow_step`,
+`sticky_episode`, `sticky_file`, `sticky_background`, `exposed_oracle`, and
+`startup_failure`. The sticky modes retain a counter in memory, a file or a worker
+thread across reset. Fresh sessions start clean; `exposed_oracle` serves the fixture's harmless oracle canary
+at its declared path. All fault
 switches and wire corruption remain inside test assets. They share one fixture
 and one public runtime plan, so a defect changes one property at a time.
 
-The Docker suite contains 42 required cases: three provider lifecycle tests,
+The Docker suite contains 44 required cases: three provider lifecycle tests,
 five network-policy tests, eight host-containment tests, fourteen resource-bounds
-tests, eleven CLI fault/control
+tests, thirteen CLI fault/control
 cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
 validator-owned sink, detect a subject launched on the bridge while declared
@@ -74,6 +78,13 @@ boundary without changing Echo or coercing its rewards. Inspect
 Evidence is written to `outputs/validation-runtime/<run-id>/`, including source,
 fixture, lock and wheel hashes; the retained wheelhouse; platform and toolchain
 details; test results and bounded logs; provider cleanup evidence; and checksums.
+Reproduction bundles keep the measured session, the same-session A/B recording,
+the fresh isolation session, and bounded oracle HTTP responses in separate files.
+Each recording includes completion and redaction metadata. Oracle responses also
+record a digest of the retained bytes before redaction. Interrupted experiments
+keep their completed prefix, including HTTP probes and the current response's
+received bytes. Unsafe unstructured HTTP bodies are omitted with an explicit flag;
+their byte counts and original digests remain available.
 The validation subject never receives a host socket, host credentials or host
 directory mount. Tests verify run-owned containers disappear after normal completion,
 failed readiness and exec timeout. No global prune is used.
