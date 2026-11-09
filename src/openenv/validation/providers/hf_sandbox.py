@@ -35,8 +35,8 @@ def _server_command(dockerfile: str) -> list[str]:
     lines = "\n".join(
         line for line in dockerfile.splitlines() if not line.lstrip().startswith("#")
     )
-    # Docker removes escaped newlines before interpreting an instruction.
-    lines = re.sub(r"\\[ \t]*\n", "", lines)
+    # Docker continues only an unescaped backslash, allowing trailing spaces/tabs.
+    lines = re.sub(r"(?<!\\)\\[ \t]*\n", "", lines)
     if "<<" in lines:
         raise UnsupportedCapability(
             "missing provider capability: dockerfile_heredoc; "
