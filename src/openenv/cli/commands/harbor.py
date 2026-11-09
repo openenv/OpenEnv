@@ -272,7 +272,11 @@ def rollout(
     ] = "",
     reward_key: Annotated[
         str,
-        typer.Option("--reward-key", help="Which reward key is the training signal."),
+        typer.Option(
+            "--reward-key",
+            help="Which reward key is the headline one, or a comma-separated preference "
+            "order (e.g. `correctness,reward`) for a dataset whose tasks write different keys.",
+        ),
     ] = "",
     keep_sandbox: Annotated[
         bool,
