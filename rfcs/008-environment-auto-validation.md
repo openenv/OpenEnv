@@ -660,6 +660,11 @@ evaluation flags. Unevaluated gated children never reuse an earlier score.
 Stock container aggregation is named explicitly; custom rubrics may supply
 `validation_config()` to expose public JSON configuration. Arbitrary attributes
 and `state_dict()` are never serialized as configuration.
+Attribution compares each numeric step reward with its freshly evaluated root
+score. Null non-terminal rewards have no emitted score to compare; their records
+must still have the correct identity, unchanged configuration, and valid evaluated
+aggregation. An entirely unscored episode is incomplete rather than passing
+attribution. Terminal null rewards remain invalid.
 
 The subject server also emits a bounded record of the reset/step/state request
 and response envelopes it executed. The validator captures the wire separately
@@ -667,6 +672,27 @@ and later compares the two. The record is bound to the authenticated session,
 limited to 100 steps/202 operations and 8 MiB, and marks truncation explicitly.
 Missing configuration, attribution or records cannot be inferred from other
 successful operations. This transport introduces no new passing grader by itself.
+
+#### Declaration and rubric evidence (PR6)
+
+The validator discovers MCP tools over the authenticated replay connection before
+reset and compares their names with the declaration, including an explicitly empty
+set. Task discovery queries split names and authoritative per-split counts, then
+reads at most two individual tasks per split. Preview length is never treated as
+the dataset size. Requests share the collection deadline and bounded response
+budgets; unavailable or malformed discovery cannot become an empty passing set.
+The task namespace comes from the server's single `/list_environments` entry,
+independently of the package name. Omitted tool/count declarations stay unknown;
+explicit `[]`/`{}` declarations assert zero tools/splits. A declared task API
+without declared counts leaves count accuracy incomplete.
+
+Rubric checks require the declared tree and explicit public configuration, then
+compare every observed step reward with its fresh root score and named child
+attribution. Built-in weighted, sequential and gated aggregation is checked using
+its published configuration. Unknown custom aggregation remains incomplete.
+Optional task and rubric checks are selected only when declared. `discovery.json`
+retains raw discovery results, availability and sanitized errors alongside session
+telemetry; ordinary discovery responses never enter the episode trajectory.
 
 Applicability predicates must distinguish empty declared sets from absent
 capabilities. Missing subject features, missing provider support and checks whose

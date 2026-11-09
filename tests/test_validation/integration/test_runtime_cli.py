@@ -26,20 +26,17 @@ IMPLEMENTED = {
     "runtime.seed_control",
     "runtime.episode_determinism",
     "runtime.trajectory_record",
+    "runtime.tool_declaration_accuracy",
+    "runtime.task_declaration_accuracy",
+    "runtime.rubric_introspectable",
+    "runtime.reward_attribution",
     "runtime.network_policy",
     "runtime.host_containment",
     "runtime.resource_bounds",
     "runtime.episode_isolation",
     "runtime.oracle_containment",
 }
-PENDING = {
-    "runtime.tool_declaration_accuracy",
-}
-NOT_APPLICABLE = {
-    "runtime.rubric_introspectable",
-    "runtime.reward_attribution",
-    "runtime.task_declaration_accuracy",
-}
+PENDING = set()
 
 
 def _copy_asset(source, destination):
@@ -282,19 +279,51 @@ def _invoke_cli(
     assert not marker.exists(), "--skip-build invoked Docker"
     checks = {row["check_id"]: row for row in report["results"]}
     assert len(checks) == len(report["results"]), "Report contains duplicate check IDs"
-    requested = IMPLEMENTED | PENDING
-    not_applicable = NOT_APPLICABLE
-    # Oracle containment applies only to subjects that declare an oracle.
-    if "    oracle:" not in (context / "openenv.yaml").read_text():
-        requested = requested - {"runtime.oracle_containment"}
-        not_applicable = not_applicable | {"runtime.oracle_containment"}
-    assert {key for key in checks if key.startswith("runtime.")} == requested
-    assert not not_applicable & checks.keys()
+    applicable = IMPLEMENTED | PENDING
+    capabilities = report["manifest"]["capabilities"]
+    declarations = yaml.safe_load((context / "openenv.yaml").read_text())["validation"][
+        "capabilities"
+    ]
+    if "declared_tools" not in declarations:
+        applicable -= {"runtime.tool_declaration_accuracy"}
+    if not capabilities["rubric_tree"]:
+        applicable -= {"runtime.rubric_introspectable", "runtime.reward_attribution"}
+    if not capabilities["task_api"] and "declared_task_count" not in declarations:
+        applicable -= {"runtime.task_declaration_accuracy"}
+    if not capabilities["oracle"]:
+        applicable -= {"runtime.oracle_containment"}
+    assert {key for key in checks if key.startswith("runtime.")} == applicable
     assert all(checks[key]["status"] == "skip" for key in PENDING)
     assert all(checks[key]["evidence"] for key in PENDING)
-    assert set(artifacts["coverage.json"]["requested_runtime_checks"]) == requested
+    assert set(artifacts["coverage.json"]["requested_runtime_checks"]) == applicable
     assert artifacts["cleanup.json"]["completed"] is True
     return result, report, checks, artifacts
+
+
+def _assert_discovery(discovery, mode):
+    assert discovery["omitted_fields"] == []
+    if mode == "tool_discovery_error":
+        assert discovery["tools_available"] is False
+        assert discovery["tools_error"]
+        assert discovery["tools"] is None
+    else:
+        assert discovery["tools_available"] is True
+        assert discovery["tools_error"] is None
+        expected = {"increment", "read_counter"}
+        if mode == "empty_tools":
+            expected = set()
+        elif mode == "missing_tool":
+            expected.remove("read_counter")
+        elif mode == "extra_tool":
+            expected.add("unexpected")
+        assert {tool["name"] for tool in discovery["tools"]["tools"]} == expected
+    assert discovery["tasks_available"] is True
+    assert discovery["tasks_error"] is None
+    assert discovery["tasks"]["counts"] == {
+        "train": 5 if mode == "bad_task_count" else 4,
+        "test": 2,
+    }
+    assert all(len(preview) == 2 for preview in discovery["tasks"]["previews"].values())
 
 
 def _assert_fresh_replays(artifacts, identical_samples=3):
@@ -329,11 +358,25 @@ def _assert_fresh_replays(artifacts, identical_samples=3):
         ("nondeterministic", "runtime.episode_determinism"),
         ("missing_record", "runtime.trajectory_record"),
         ("trace_mismatch", "runtime.trajectory_record"),
+        ("missing_tool", "runtime.tool_declaration_accuracy"),
+        ("extra_tool", "runtime.tool_declaration_accuracy"),
+        ("tool_discovery_error", "runtime.tool_declaration_accuracy"),
+        ("bad_task_count", "runtime.task_declaration_accuracy"),
+        ("missing_rubric_config", "runtime.rubric_introspectable"),
+        ("bad_attribution", "runtime.reward_attribution"),
+        ("changed_rubric_config", "runtime.reward_attribution"),
+        ("empty_tools", None),
     ],
 )
 def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check):
     with (cli_context / "Dockerfile").open("a") as stream:
         stream.write(f"\nENV VALIDATION_FAULT={mode}\n")
+    if mode == "empty_tools":
+        manifest = cli_context / "openenv.yaml"
+        data = yaml.safe_load(manifest.read_text())
+        data["validation"]["capabilities"]["declared_tools"] = []
+        manifest.unlink()
+        manifest.write_text(yaml.safe_dump(data, sort_keys=False))
     result, report, checks, artifacts = _invoke_cli(cli_context, tmp_path, mode)
     assert report["levels_run"] == [1, 2]
     assert checks["static.manifest"]["status"] == "pass"
@@ -343,6 +386,7 @@ def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check
     assert artifacts["run-manifest.json"]["provider"]["container_id"]
     assert artifacts["run-manifest.json"]["source_digest"] == report["source_digest"]
     _assert_fresh_replays(artifacts)
+    _assert_discovery(artifacts["discovery.json"], mode)
     trace = artifacts["collector-trace.json"]
     assert [row["operation"] for row in trace] == [
         "reset",
@@ -353,21 +397,34 @@ def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check
         "state",
     ]
     if failed_check:
-        warning_only = failed_check == "runtime.trajectory_record"
+        warning_only = failed_check in {
+            "runtime.trajectory_record",
+            "runtime.rubric_introspectable",
+            "runtime.reward_attribution",
+        }
         assert result.returncode == (0 if warning_only else 1)
         assert report["verdict"] == ("warn" if warning_only else "fail")
         assert checks[failed_check]["status"] == "fail"
         assert checks[failed_check]["evidence"]
     else:
         assert result.returncode == 0
-        assert report["verdict"] == "warn", (
-            "Missing later graders must keep the result incomplete"
-        )
+        assert report["verdict"] == "pass"
         assert all(checks[key]["status"] == "pass" for key in IMPLEMENTED)
         assert set(artifacts["coverage.json"]["incomplete"]) == PENDING
 
 
-def _assert_partial_episode(artifacts, expected_failure):
+def _assert_partial_episode(artifacts, expected_failure, checks):
+    # Discovery completes before the blocked step; its results remain usable.
+    discovery = {
+        "runtime.tool_declaration_accuracy",
+        "runtime.task_declaration_accuracy",
+    }
+    assert all(checks[key]["status"] == "pass" for key in discovery)
+    assert all(
+        checks[key]["status"] == "skip"
+        for key in IMPLEMENTED - {"runtime.startup"} - discovery
+    )
+    _assert_discovery(artifacts["discovery.json"], "healthy")
     trace = artifacts["collector-trace.json"]
     assert [row["operation"] for row in trace] == ["reset", "state", "step", "state"]
     assert trace[0]["response_json"]["data"]["observation"]["counter"] == 0
@@ -398,10 +455,7 @@ def test_cli_hung_step_times_out_with_partial_evidence(cli_context, tmp_path):
     assert report["verdict"] == "fail"
     assert report["manifest"]["resources"]["episode_timeout_s"] == 3.0
     assert checks["runtime.startup"]["status"] == "fail"
-    assert all(
-        checks[key]["status"] == "skip" for key in IMPLEMENTED - {"runtime.startup"}
-    )
-    _assert_partial_episode(artifacts, "TimeoutError")
+    _assert_partial_episode(artifacts, "TimeoutError", checks)
 
 
 def test_cli_sigint_retains_partial_evidence_and_cleans_up(cli_context, tmp_path):
@@ -416,10 +470,7 @@ def test_cli_sigint_retains_partial_evidence_and_cleans_up(cli_context, tmp_path
     assert report["verdict"] == "fail"
     assert checks["runtime.startup"]["status"] == "error"
     assert "interrupt" in " ".join(checks["runtime.startup"]["evidence"]).lower()
-    assert all(
-        checks[key]["status"] == "skip" for key in IMPLEMENTED - {"runtime.startup"}
-    )
-    _assert_partial_episode(artifacts, "KeyboardInterrupt")
+    _assert_partial_episode(artifacts, "KeyboardInterrupt", checks)
 
 
 def test_cli_sigterm_retains_partial_evidence_and_cleans_up(cli_context, tmp_path):
@@ -436,10 +487,7 @@ def test_cli_sigterm_retains_partial_evidence_and_cleans_up(cli_context, tmp_pat
     assert report["verdict"] == "fail"
     assert checks["runtime.startup"]["status"] == "error"
     assert "interrupt" in " ".join(checks["runtime.startup"]["evidence"]).lower()
-    assert all(
-        checks[key]["status"] == "skip" for key in IMPLEMENTED - {"runtime.startup"}
-    )
-    _assert_partial_episode(artifacts, "KeyboardInterrupt")
+    _assert_partial_episode(artifacts, "KeyboardInterrupt", checks)
 
 
 def test_cli_startup_failure_is_a_finding_and_leaves_no_container(
@@ -502,12 +550,13 @@ def test_cli_controlled_judge_requires_twenty_samples(
     assert determinism["status"] == expected
     assert determinism["measured"]["completed_replays"] == 20
     _assert_fresh_replays(artifacts, identical_samples=20)
+    _assert_discovery(artifacts["discovery.json"], mode)
     assert determinism["measured"]["variance_units"] == "reward_squared"
     variances = determinism["measured"]["reward_population_variance"]
     assert len(variances) == 2
     if mode == "judged_stable":
         assert variances == [0.0, 0.0]
-        assert result.returncode == 0 and report["verdict"] == "warn"
+        assert result.returncode == 0 and report["verdict"] == "pass"
     else:
         assert all(value > 0.01 for value in variances)
         assert result.returncode == 1 and report["verdict"] == "fail"

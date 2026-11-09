@@ -24,6 +24,12 @@ from .graders.runtime import (
     RewardWellFormedGrader,
     StateContractGrader,
 )
+from .graders.runtime.discovery import (
+    RewardAttributionGrader,
+    RubricIntrospectableGrader,
+    TaskDeclarationAccuracyGrader,
+    ToolDeclarationAccuracyGrader,
+)
 from .graders.runtime.oracle import oracle_inventory
 from .graders.runtime.repeatability import (
     EpisodeDeterminismGrader,
@@ -128,6 +134,10 @@ def default_grader_registry(policy: SeverityPolicy) -> GraderRegistry:
     registry.register(SeedControlGrader())
     registry.register(EpisodeDeterminismGrader())
     registry.register(TrajectoryRecordGrader())
+    registry.register(ToolDeclarationAccuracyGrader())
+    registry.register(TaskDeclarationAccuracyGrader())
+    registry.register(RubricIntrospectableGrader())
+    registry.register(RewardAttributionGrader())
 
     registry.register(NetworkPolicyGrader())
     registry.register(HostContainmentGrader())
@@ -256,9 +266,9 @@ def _applicable(check_id, manifest):
     if check_id in {"runtime.rubric_introspectable", "runtime.reward_attribution"}:
         return manifest.capabilities.rubric_tree
     if check_id == "runtime.task_declaration_accuracy":
-        return manifest.capabilities.task_api or bool(
-            manifest.capabilities.declared_task_count
-        )
+        return TaskDeclarationAccuracyGrader().applies_to(manifest)
+    if check_id == "runtime.tool_declaration_accuracy":
+        return ToolDeclarationAccuracyGrader().applies_to(manifest)
     return True
 
 
@@ -334,6 +344,8 @@ def _runtime(subject, graders, *, skip_build, provider):
                 manifest.resources.episode_timeout_s, REPLAY_BUDGET_SECONDS
             ),
             validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
+            collect_tools=_applicable("runtime.tool_declaration_accuracy", manifest),
+            collect_tasks=_applicable("runtime.task_declaration_accuracy", manifest),
         )
         # Independent isolation and oracle probes do not spend the replay budget.
         replay_remaining_s = max(0.0, replay_deadline - time.monotonic())
@@ -446,11 +458,13 @@ def _runtime(subject, graders, *, skip_build, provider):
             isolation_evidence=isolation,
             oracle_http=oracle_http,
         )
-        checks = execute_graders(
-            graders,
-            subject,
-            provider_capabilities=provider.capabilities,
-            prior=[result],
+        checks.extend(
+            execute_graders(
+                graders,
+                subject,
+                provider_capabilities=provider.capabilities,
+                prior=[result],
+            )
         )
         # Cleanup failure cannot invalidate evidence already collected from a
         # healthy subject. Preserve its findings before failing the run closed.
@@ -499,29 +513,56 @@ def _runtime(subject, graders, *, skip_build, provider):
             started=started,
         )
     finally:
-        if running is not None:
-            try:
-                running.stop()
-                cleanup["completed"] = not (
-                    evidence
-                    and any(
-                        replay.cleanup_complete is False for replay in evidence.replays
+        try:
+            # Discovery precedes the episode; its completed evidence remains usable
+            # when collection is unsupported or interrupted before normal grading.
+            graded = {check.check_id for check in checks}
+            independent = [
+                grader
+                for grader in graders
+                if not grader.depends_on and grader.check_id not in graded
+            ]
+            if independent:
+                try:
+                    checks.extend(
+                        execute_graders(
+                            independent, replace(subject, runtime_evidence=evidence)
+                        )
                     )
-                )
-            except (Exception, KeyboardInterrupt) as exc:
-                cleanup["completed"] = False
-                cleanup["reason"] = f"subject teardown failed ({type(exc).__name__})"
-                if result is None:
+                except KeyboardInterrupt:
                     result = _outcome(
                         "runtime.startup",
                         CheckStatus.ERROR,
-                        "subject teardown failed",
+                        "validation interrupted",
                         started=started,
                     )
-                else:
-                    result.status = CheckStatus.ERROR
-                    result.evidence.append("subject teardown failed")
-                    result.duration_s = time.monotonic() - started
+        finally:
+            if running is not None:
+                try:
+                    running.stop()
+                    cleanup["completed"] = not (
+                        evidence
+                        and any(
+                            replay.cleanup_complete is False
+                            for replay in evidence.replays
+                        )
+                    )
+                except (Exception, KeyboardInterrupt) as exc:
+                    cleanup["completed"] = False
+                    cleanup["reason"] = (
+                        f"subject teardown failed ({type(exc).__name__})"
+                    )
+                    if result is None:
+                        result = _outcome(
+                            "runtime.startup",
+                            CheckStatus.ERROR,
+                            "subject teardown failed",
+                            started=started,
+                        )
+                    else:
+                        result.status = CheckStatus.ERROR
+                        result.evidence.append("subject teardown failed")
+                        result.duration_s = time.monotonic() - started
     return (
         [result, *checks],
         attempted,
@@ -686,6 +727,8 @@ def run_validation(
                     reason = "unmet dependency: valid manifest"
                 elif grader is not None and grader.depends_on:
                     reason = "unmet dependency: " + ", ".join(grader.depends_on)
+                elif grader is not None:
+                    reason = "grader did not complete"
                 results.append(_outcome(entry.check_id, CheckStatus.SKIP, reason))
         source_problem = None
         if not digest_before:
@@ -703,6 +746,12 @@ def run_validation(
                 )
         if source_problem is not None:
             invalidated = {"runtime.startup"}
+            # Independent discovery also depends on the verified package source.
+            invalidated.update(
+                grader.check_id
+                for grader in selected.values()
+                if grader.level is Level.RUNTIME
+            )
             for grader in order_graders(list(selected.values())):
                 if invalidated.intersection(grader.depends_on):
                     invalidated.add(grader.check_id)

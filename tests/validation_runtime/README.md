@@ -17,8 +17,10 @@ failure. The reference job uses Linux x86-64; Docker Desktop arm64 uses the same
 recipe but records its different platform. No host Python code from the subject
 is imported by the validator.
 
-Docker test execution has a twenty-minute budget for the full fault/control
-inventory; fast and protocol suites retain their ten-minute budgets.
+Docker test execution has a thirty-minute budget for the full 58-case fault/control
+inventory, including the restored discovery and judged-replay cases. The Linux
+workflow allows 45 minutes for setup and all three suites. Fast and protocol
+suites retain their ten-minute budgets; per-case and replay deadlines are unchanged.
 
 The protocol suite also exercises the installed wheel over real loopback HTTP
 and WebSocket connections using a test-only process provider. It verifies
@@ -36,14 +38,23 @@ with networking disabled. A cold cache is supported. The tests run outside the
 checkout with `PYTHONPATH` removed, exercising installed package data and the
 production OpenEnv `/ws` endpoint. Each launch uses a fresh subject.
 
-The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
-`bad_observation`, `missing_done`, `bad_state`, `hung_step`, `slow_step`,
-`sticky_episode`, `sticky_file`, `sticky_background`, `exposed_oracle`, and
-`startup_failure`. The sticky modes retain a counter in memory, a file or a worker
-thread across reset. Fresh sessions start clean; `exposed_oracle` serves the fixture's harmless oracle canary
-at its declared path. All fault
-switches and wire corruption remain inside test assets. They share one fixture
-and one public runtime plan, so a defect changes one property at a time.
+The image includes controlled faults for malformed observations/rewards/state,
+startup and timeout failures, ignored seeds, session drift, missing/mismatched
+records, tool/task declarations, rubric configuration and child attribution.
+`judged_stable` and `judged_noisy` exercise the bounded judge procedure. All fault
+switches and wire corruption remain inside test assets with one public runtime plan.
+
+The fixture registers two real MCP tools and declares task counts of four train
+and two test tasks. Its task listing returns only one preview item; the collector
+uses `num_tasks` and samples at most two items per split. Empty tool declarations
+are checked through a real empty FastMCP registry. `discovery.json` preserves raw
+results and distinguishes failed discovery from an empty success. The protocol
+suite contains 64 required cases, including real tool calls and discovery/rubric
+faults through the installed-wheel process provider.
+The sticky modes retain a counter in memory, a file or a worker thread across
+reset. Fresh sessions start clean; `exposed_oracle` serves the fixture's harmless
+oracle canary at its declared path.
+
 
 Repeatability checks replay the original plan in a fresh session, with a different
 seed, and in an independently inspected fresh container. Controlled
@@ -53,9 +64,9 @@ telemetry, container identity and cleanup outcome. A process-only provider expli
 skips fresh-container determinism. Subject-emitted records are compared with the
 independently collected wire trace.
 
-The Docker suite contains 50 required cases: three provider lifecycle tests,
+The Docker suite contains 58 required cases: three provider lifecycle tests,
 five network-policy tests, eight host-containment tests, fourteen resource-bounds
-tests, seventeen CLI fault/control
+tests, twenty-seven CLI fault/control
 cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
 validator-owned sink, detect a subject launched on the bridge while declared

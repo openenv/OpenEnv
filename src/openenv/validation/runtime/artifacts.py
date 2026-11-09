@@ -243,6 +243,27 @@ def write_runtime_bundle(
             after["redacted"] |= before["body"] != after["body"]
             retained["redacted"] |= after["redacted"]
     files["oracle-http.json"] = retained_probes
+    if evidence:
+        discovery = {}
+        omitted = []
+        for name in ("tools", "tasks"):
+            raw = getattr(evidence, name + "_json")
+            discovery[name + "_available"] = raw is not None
+            discovery[name + "_error"] = getattr(evidence, name + "_error")
+            if name == "tools":
+                discovery["tools_unavailable"] = evidence.tools_unavailable
+            try:
+                discovery[name] = (
+                    loads(raw, object_pairs_hook=_unique_object)
+                    if raw is not None
+                    else None
+                )
+            except (ValueError, ArithmeticError, RecursionError):
+                discovery[name] = "[malformed evidence omitted]"
+                omitted.append(name)
+        discovery["omitted_fields"] = omitted
+        discovery["redacted"] = bool(omitted) or _redact(discovery) != discovery
+        files["discovery.json"] = discovery
     if evidence and (evidence.replays or evidence.replay_failure_reason):
         samples = []
         for replay in evidence.replays:
@@ -298,7 +319,12 @@ def write_runtime_bundle(
             "failure_reason": evidence.replay_failure_reason,
             "samples": samples,
         }
-    for name in ("runtime-plan.json", "session-telemetry.json", "replays.json"):
+    for name in (
+        "runtime-plan.json",
+        "session-telemetry.json",
+        "replays.json",
+        "discovery.json",
+    ):
         if name not in files:
             (directory / name).unlink(missing_ok=True)
     digests = []

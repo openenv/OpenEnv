@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from openenv.validation.policy import load_policy, PolicyError
 from openenv.validation.providers import CleanupError, ProviderError, StartupError
 from openenv.validation.report import CheckResult
@@ -37,7 +38,26 @@ FIXTURE = Path(__file__).parents[1] / "fixtures/validation/runtime/served_probe"
 def package(tmp_path):
     root = tmp_path / "subject"
     shutil.copytree(FIXTURE, root, ignore=shutil.ignore_patterns("__pycache__"))
+    # Lifecycle tests use the minimal declaration; discovery tests opt in below.
+    path = root / "openenv.yaml"
+    document = yaml.safe_load(path.read_text())
+    document["validation"]["capabilities"].update(
+        declared_tools=[], rubric_tree=False, task_api=False
+    )
+    document["validation"]["capabilities"].pop("declared_task_count", None)
+    path.write_text(yaml.safe_dump(document))
     return root
+
+
+@pytest.fixture
+def discovery_package(package):
+    path = package / "openenv.yaml"
+    document = yaml.safe_load(path.read_text())
+    document["validation"]["capabilities"].update(
+        task_api=True, declared_task_count={"train": 100}, rubric_tree=True
+    )
+    path.write_text(yaml.safe_dump(document))
+    return package
 
 
 @pytest.fixture
@@ -115,6 +135,255 @@ def measured_episode(seed=42):
                 },
             }
         ),
+    )
+
+
+def discovery_episode():
+    from test_runtime_discovery import node, telemetry
+
+    result = measured_episode()
+    snapshot = json.loads(result.telemetry_json)
+    snapshot.update(telemetry([node(score=1.0)]))
+    return replace(
+        result,
+        tools_json='{"tools":[]}',
+        tasks_json=json.dumps(
+            {
+                "splits": [{"name": "train"}],
+                "counts": {"train": 100},
+                "previews": {"train": ["task-0", "task-1"]},
+            }
+        ),
+        telemetry_json=json.dumps(snapshot),
+    )
+
+
+@pytest.mark.parametrize("failure", ["episode", "depth", "numeric", "interrupted"])
+@pytest.mark.parametrize(
+    "discovery,tool_status,task_status",
+    [
+        ("healthy", CheckStatus.PASS, CheckStatus.PASS),
+        ("extra-tool", CheckStatus.FAIL, CheckStatus.PASS),
+        ("wrong-count", CheckStatus.PASS, CheckStatus.FAIL),
+        ("missing", CheckStatus.SKIP, CheckStatus.SKIP),
+        ("unavailable", CheckStatus.SKIP, CheckStatus.PASS),
+        ("errors", CheckStatus.FAIL, CheckStatus.FAIL),
+    ],
+)
+def test_completed_discovery_is_graded_after_primary_episode_failure(
+    discovery_package,
+    monkeypatch,
+    tmp_path,
+    failure,
+    discovery,
+    tool_status,
+    task_status,
+):
+    sample = replace(
+        discovery_episode(), failure_phase="step", failure_reason="step incomplete"
+    )
+    if discovery == "extra-tool":
+        sample = replace(sample, tools_json='{"tools":[{"name":"undeclared"}]}')
+    elif discovery == "wrong-count":
+        tasks = json.loads(sample.tasks_json)
+        tasks["counts"]["train"] = 101
+        sample = replace(sample, tasks_json=json.dumps(tasks))
+    elif discovery == "missing":
+        sample = replace(sample, tools_json=None, tasks_json=None)
+    elif discovery == "unavailable":
+        sample = replace(sample, tools_json=None, tools_unavailable="unsupported tools")
+    elif discovery == "errors":
+        sample = replace(
+            sample, tools_error="tool discovery denied", tasks_error="task API failed"
+        )
+
+    def collect(*args, **kwargs):
+        assert kwargs["collect_tools"] is kwargs["collect_tasks"] is True
+        if failure == "interrupted":
+            raise RuntimeCollectionInterrupted(sample)
+        if failure != "episode":
+            raise RuntimeCollectionUnsupported(
+                sample,
+                capability="json_depth" if failure == "depth" else "json_numeric_range",
+            )
+        return sample
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=bundle,
+    )
+    results = {result.check_id: result for result in report.results}
+    assert (
+        results["runtime.startup"].status
+        is {
+            "episode": CheckStatus.FAIL,
+            "depth": CheckStatus.SKIP,
+            "numeric": CheckStatus.SKIP,
+            "interrupted": CheckStatus.ERROR,
+        }[failure]
+    )
+    assert results["runtime.tool_declaration_accuracy"].status is tool_status
+    assert results["runtime.task_declaration_accuracy"].status is task_status
+    assert report.verdict.value == (
+        "fail"
+        if failure in {"episode", "interrupted"}
+        or CheckStatus.FAIL in {tool_status, task_status}
+        else "warn"
+    )
+    for check in (
+        "runtime.tool_declaration_accuracy",
+        "runtime.task_declaration_accuracy",
+    ):
+        assert sum(row.check_id == check for row in report.results) == 1
+    assert provider.subject.stopped
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    assert json.loads((bundle / "report.json").read_text()) == report.model_dump(
+        mode="json"
+    )
+
+
+class GraderTermination(BaseException):
+    """A grader termination outside ordinary exception and cancellation handling."""
+
+
+@pytest.mark.parametrize("error", [SystemExit, GeneratorExit, GraderTermination])
+def test_terminating_discovery_recovery_still_cleans_up(
+    discovery_package, monkeypatch, error
+):
+    from openenv.validation.graders.runtime.discovery import (
+        TaskDeclarationAccuracyGrader,
+    )
+
+    sample = discovery_episode()
+    termination = error("grader terminated")
+
+    def collect(*args, **kwargs):
+        raise RuntimeCollectionUnsupported(sample, capability="json_depth")
+
+    def grade(*args):
+        raise termination
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr(TaskDeclarationAccuracyGrader, "run", grade)
+    provider = FakeRuntimeProvider()
+    with pytest.raises(error) as raised:
+        run_validation(discovery_package, max_level=Level.RUNTIME, provider=provider)
+    assert raised.value is termination
+    assert len(provider.launches) == 1
+    assert provider.subject.stopped
+
+
+def test_interrupting_discovery_recovery_still_cleans_up(
+    discovery_package, monkeypatch, tmp_path
+):
+    from openenv.validation.graders.runtime.discovery import (
+        ToolDeclarationAccuracyGrader,
+    )
+
+    sample = replace(
+        discovery_episode(), failure_phase="step", failure_reason="JSON unsupported"
+    )
+    tasks = json.loads(sample.tasks_json)
+    tasks["counts"]["train"] = 101
+    sample = replace(sample, tasks_json=json.dumps(tasks))
+    calls = []
+
+    def collect(*args, **kwargs):
+        raise RuntimeCollectionUnsupported(sample, capability="json_depth")
+
+    def grade(*args):
+        calls.append(True)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr(ToolDeclarationAccuracyGrader, "run", grade)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=bundle,
+    )
+    results = {row.check_id: row for row in report.results}
+    assert calls == [True]
+    assert results["runtime.startup"].status is CheckStatus.ERROR
+    assert results["runtime.startup"].evidence == ["validation interrupted"]
+    assert results["runtime.task_declaration_accuracy"].status is CheckStatus.FAIL
+    assert results["runtime.tool_declaration_accuracy"].status is CheckStatus.SKIP
+    assert results["runtime.tool_declaration_accuracy"].evidence == [
+        "grader did not complete"
+    ]
+    assert report.verdict.value == "fail"
+    assert provider.subject.stopped
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    assert len(results) == len(report.results)
+    assert json.loads((bundle / "report.json").read_text()) == report.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.parametrize("interruptions", [1, 2])
+def test_grading_interruption_preserves_completed_results_without_rerunning(
+    discovery_package, monkeypatch, tmp_path, baseline_only, interruptions
+):
+    from openenv.validation.graders.runtime.discovery import (
+        TaskDeclarationAccuracyGrader,
+        ToolDeclarationAccuracyGrader,
+    )
+
+    sample = replace(
+        discovery_episode(), failure_phase="step", failure_reason="step failed"
+    )
+    tasks = json.loads(sample.tasks_json)
+    tasks["counts"]["train"] = 101
+    sample = replace(sample, tasks_json=json.dumps(tasks))
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence", lambda *a, **k: sample
+    )
+    calls = []
+    task_run = TaskDeclarationAccuracyGrader.run
+    tool_run = ToolDeclarationAccuracyGrader.run
+
+    def task(self, subject):
+        calls.append("task")
+        return task_run(self, subject)
+
+    def tool(self, subject):
+        calls.append("tool")
+        if calls.count("tool") <= interruptions:
+            raise KeyboardInterrupt
+        return tool_run(self, subject)
+
+    monkeypatch.setattr(TaskDeclarationAccuracyGrader, "run", task)
+    monkeypatch.setattr(ToolDeclarationAccuracyGrader, "run", tool)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=bundle,
+    )
+    results = {row.check_id: row for row in report.results}
+    assert calls == ["task", "tool", "tool"]
+    assert results["runtime.task_declaration_accuracy"].status is CheckStatus.FAIL
+    assert results["runtime.tool_declaration_accuracy"].status is (
+        CheckStatus.PASS if interruptions == 1 else CheckStatus.SKIP
+    )
+    assert results["runtime.startup"].status is CheckStatus.ERROR
+    assert results["runtime.startup"].evidence == ["validation interrupted"]
+    assert report.verdict.value == "fail"
+    assert provider.subject.stopped
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    assert len(results) == len(report.results)
+    assert json.loads((bundle / "report.json").read_text()) == report.model_dump(
+        mode="json"
     )
 
 
@@ -465,6 +734,41 @@ def test_initial_unsupported_json_skips_and_keeps_the_received_schema(
     metadata = json.loads((tmp_path / "bundle/collector-evidence.json").read_text())
     assert metadata["schema_response_available"] is True
     assert metadata["schema_response_parse_failed"] is True
+
+
+@pytest.mark.parametrize("failure", ["episode", "json_limit"])
+def test_declaration_mismatches_survive_primary_collection_failure(
+    discovery_package, monkeypatch, baseline_only, failure
+):
+    tasks = json.loads(discovery_episode().tasks_json)
+    tasks["counts"]["train"] = 99
+    prefix = replace(
+        discovery_episode(),
+        tools_json='{"tools":[{"name":"undeclared"}]}',
+        tasks_json=json.dumps(tasks),
+        failure_phase="step",
+        failure_reason="step failed (ValueError)",
+    )
+
+    def collect(*args, **kwargs):
+        if failure == "json_limit":
+            raise RuntimeCollectionUnsupported(prefix, capability="json_numeric_range")
+        return prefix
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=FakeRuntimeProvider(),
+    )
+    results = {result.check_id: result for result in report.results}
+
+    assert results["runtime.startup"].status is (
+        CheckStatus.FAIL if failure == "episode" else CheckStatus.SKIP
+    )
+    assert results["runtime.tool_declaration_accuracy"].status is CheckStatus.FAIL
+    assert results["runtime.task_declaration_accuracy"].status is CheckStatus.FAIL
+    assert report.verdict.value == "fail"
 
 
 @pytest.mark.parametrize("unsupported_call", [2, 3], ids=["sequential", "fresh"])
@@ -968,7 +1272,7 @@ def test_provider_failure_diagnostics_are_visible_and_bounded(package):
 
 @pytest.mark.parametrize("mutation", ["content", "symlink", "unreadable"])
 def test_source_change_withdraws_dependent_runtime_results(
-    package, monkeypatch, tmp_path, mutation, baseline_only
+    package, monkeypatch, tmp_path, mutation, baseline_only, discovery_package
 ):
     provider = FakeRuntimeProvider()
     original_digest = source_digest(package)
@@ -985,7 +1289,7 @@ def test_source_change_withdraws_dependent_runtime_results(
             monkeypatch.setattr(
                 "openenv.validation.runner.source_digest", unreadable_source
             )
-        return measured_episode()
+        return discovery_episode()
 
     monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
     bundle = tmp_path / "bundle"
@@ -1000,7 +1304,15 @@ def test_source_change_withdraws_dependent_runtime_results(
         else "package source could not be verified after validation"
     )
     assert results["runtime.startup"].evidence == [reason]
-    for name in ("reward_well_formed", "observation_schema", "state_contract"):
+    for name in (
+        "reward_well_formed",
+        "observation_schema",
+        "state_contract",
+        "tool_declaration_accuracy",
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+        "reward_attribution",
+    ):
         result = results[f"runtime.{name}"]
         assert result.status is CheckStatus.SKIP
         assert "runtime.startup" in result.evidence[0]
@@ -1244,6 +1556,187 @@ def test_semantic_ceiling_does_not_claim_semantic_execution(package):
         r.check_id == "semantic.oracle_max" and r.status is CheckStatus.SKIP
         for r in report.results
     )
+
+
+def test_runner_checks_empty_tools_and_omits_undeclared_optional_capabilities(
+    package, monkeypatch, baseline_only
+):
+    observed = []
+
+    def collect(*args, **kwargs):
+        observed.append(kwargs)
+        return replace(measured_episode(), tools_json='{"tools":[]}')
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    result = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    checks = {row.check_id: row for row in result.results}
+    assert checks["runtime.tool_declaration_accuracy"].status is CheckStatus.PASS
+    assert observed[0]["collect_tools"] is True
+    assert observed[0]["collect_tasks"] is False
+    for name in (
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+        "reward_attribution",
+    ):
+        assert "runtime." + name not in checks
+
+
+def test_runner_collects_and_grades_claimed_discovery_and_rubric_evidence(
+    discovery_package, monkeypatch, baseline_only
+):
+    observed = []
+
+    def collect(*args, **kwargs):
+        observed.append(kwargs)
+        return discovery_episode()
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    result = run_validation(
+        discovery_package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    checks = {row.check_id: row for row in result.results}
+    assert observed[0]["collect_tasks"] is True
+    for name in (
+        "tool_declaration_accuracy",
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+        "reward_attribution",
+    ):
+        assert checks["runtime." + name].status is CheckStatus.PASS
+
+
+@pytest.mark.parametrize("declared", [False, True])
+@pytest.mark.parametrize("task_api", [False, True])
+def test_parsed_declaration_presence_controls_collection_and_findings(
+    package, monkeypatch, baseline_only, declared, task_api
+):
+    path = package / "openenv.yaml"
+    document = yaml.safe_load(path.read_text())
+    capabilities = document["validation"]["capabilities"]
+    capabilities["task_api"] = task_api
+    for field, empty in (("declared_tools", []), ("declared_task_count", {})):
+        if declared:
+            capabilities[field] = empty
+        else:
+            capabilities.pop(field, None)
+    path.write_text(yaml.safe_dump(document))
+    observed = []
+
+    def collect(*args, **kwargs):
+        observed.append(kwargs)
+        # Omitted counts are unknown even when a working API advertises tasks.
+        return replace(
+            discovery_episode(),
+            tools_json='{"tools":[]}',
+            tasks_json='{"splits":[],"counts":{},"previews":{}}'
+            if declared
+            else discovery_episode().tasks_json,
+        )
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    result = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    parsed = result.manifest.capabilities.model_fields_set
+    assert ("declared_tools" in parsed) is declared
+    assert ("declared_task_count" in parsed) is declared
+    restored = type(result).model_validate_json(result.model_dump_json())
+    restored_fields = restored.manifest.capabilities.model_fields_set
+    assert ("declared_tools" in restored_fields) is declared
+    assert ("declared_task_count" in restored_fields) is declared
+    assert observed[0]["collect_tools"] is declared
+    assert observed[0]["collect_tasks"] is (declared or task_api)
+    checks = {row.check_id: row for row in result.results}
+    assert ("runtime.tool_declaration_accuracy" in checks) is declared
+    assert ("runtime.task_declaration_accuracy" in checks) is (declared or task_api)
+    if declared:
+        assert checks["runtime.tool_declaration_accuracy"].status is CheckStatus.PASS
+        assert checks["runtime.task_declaration_accuracy"].status is CheckStatus.PASS
+    elif task_api:
+        check = checks["runtime.task_declaration_accuracy"]
+        assert check.status is CheckStatus.SKIP
+        assert check.evidence == ["task counts were not declared"]
+
+
+@pytest.mark.parametrize("failed_collection", [False, True])
+def test_claims_without_evidence_are_incomplete_or_fail_not_pass(
+    discovery_package, monkeypatch, baseline_only, failed_collection
+):
+    reason = "discovery failed (ValueError)" if failed_collection else None
+    measured = replace(
+        measured_episode(),
+        telemetry_json=None,
+        telemetry_error=reason,
+        tools_error=reason,
+        tasks_error=reason,
+    )
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence", lambda *a, **k: measured
+    )
+    result = run_validation(
+        discovery_package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    checks = {row.check_id: row for row in result.results}
+    for name in (
+        "tool_declaration_accuracy",
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+    ):
+        assert checks["runtime." + name].status is (
+            CheckStatus.FAIL if failed_collection else CheckStatus.SKIP
+        )
+    assert checks["runtime.reward_attribution"].status is CheckStatus.SKIP
+
+
+def test_claimed_discovery_checks_name_missing_evidence_or_dependencies(
+    discovery_package,
+):
+    result = run_validation(discovery_package, max_level=Level.RUNTIME, skip_build=True)
+    checks = {row.check_id: row for row in result.results}
+    for name in (
+        "tool_declaration_accuracy",
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+        "reward_attribution",
+    ):
+        check = checks["runtime." + name]
+        assert check.status is CheckStatus.SKIP
+        if name in {"tool_declaration_accuracy", "task_declaration_accuracy"}:
+            assert check.evidence == ["runtime evidence is unavailable"]
+            continue
+        dependencies = "runtime.startup"
+        if name == "reward_attribution":
+            dependencies += ", runtime.rubric_introspectable"
+        assert check.evidence == [f"unmet dependency: {dependencies}"]
+
+
+def test_task_count_claim_is_checked_even_without_task_api_flag(
+    package, monkeypatch, baseline_only
+):
+    path = package / "openenv.yaml"
+    document = yaml.safe_load(path.read_text())
+    document["validation"]["capabilities"]["declared_task_count"] = {"train": 2}
+    path.write_text(yaml.safe_dump(document))
+    observed = []
+
+    def collect(*args, **kwargs):
+        observed.append(kwargs)
+        return measured_episode()
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    result = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    task_check = next(
+        row
+        for row in result.results
+        if row.check_id == "runtime.task_declaration_accuracy"
+    )
+    assert task_check.status is CheckStatus.SKIP
+    assert "missing prerequisite" in task_check.evidence[0]
+    assert observed[0]["collect_tasks"] is True
 
 
 def grader(check_id, depends_on=(), *, status=CheckStatus.PASS, requires=frozenset()):

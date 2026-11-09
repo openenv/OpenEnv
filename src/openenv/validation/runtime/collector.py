@@ -11,6 +11,7 @@ from websockets.sync.client import connect
 
 from ...core.env_server.types import WSErrorCode
 from .contracts import RuntimeEvidence, RuntimePlan, WireExchange
+from .discovery import collect_task_evidence
 from .json_values import dumps, loads
 from .transport import abort_socket, http_deadline
 
@@ -82,6 +83,8 @@ def collect_runtime_evidence(
     request_timeout_s: float | None = None,
     episodes: int = 1,
     validation_token: str | None = None,
+    collect_tools: bool = False,
+    collect_tasks: bool = False,
     request_telemetry: bool = True,
 ) -> RuntimeEvidence:
     """
@@ -110,6 +113,10 @@ def collect_runtime_evidence(
         validation_token (`str`, *optional*):
             Run-scoped credential to omit from evidence; also authorizes optional
             telemetry when `request_telemetry` is enabled.
+        collect_tools (`bool`, *optional*, defaults to `False`):
+            Discover tools on the measured WebSocket before reset.
+        collect_tasks (`bool`, *optional*, defaults to `False`):
+            Discover the server's environment namespace and sample its task metadata.
         request_telemetry (`bool`, *optional*, defaults to `True`):
             Request session telemetry with the provided authorization. Disable
             for scrub-only collection with the ordinary protocol byte limits.
@@ -124,6 +131,8 @@ def collect_runtime_evidence(
     trace_bytes = 0
     telemetry_json = None
     telemetry_error = None
+    tools_json = tools_error = tasks_json = tasks_error = None
+    tools_unavailable = None
     telemetry_unavailable = None
     server_code = None
 
@@ -231,10 +240,10 @@ def collect_runtime_evidence(
                     raise
                 return connection.recv(timeout=remaining())
 
-            def telemetry_request(operation, data):
+            def telemetry_request(operation, data, max_bytes=MAX_TRACE_BYTES):
                 request = json.dumps({"type": operation, "data": data})
                 raw = receive_response(request)
-                if not isinstance(raw, str) or len(raw.encode()) > MAX_TRACE_BYTES:
+                if not isinstance(raw, str) or len(raw.encode()) > max_bytes:
                     raise ValueError("invalid telemetry response")
                 response = loads(raw)
                 if not isinstance(response, dict):
@@ -295,6 +304,84 @@ def collect_runtime_evidence(
                     elif isinstance(child, list):
                         pending.extend(child)
                 return False
+
+            if collect_tools:
+                phase = "tools/list"
+                try:
+                    response = telemetry_request(
+                        "mcp",
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "tools/list",
+                            "params": {},
+                        },
+                        MAX_MESSAGE_BYTES,
+                    )
+                    if contains_credential(response):
+                        raise ValueError("discovery contains validation credentials")
+                    rpc = response.get("data")
+                    if _server_error_code(response) == WSErrorCode.UNKNOWN_TYPE:
+                        tools_unavailable = "unsupported capability: tool_discovery"
+                    else:
+                        if (
+                            response.get("type") != "mcp"
+                            or not isinstance(rpc, dict)
+                            or rpc.get("jsonrpc") != "2.0"
+                            or type(rpc.get("id")) is not int
+                            or rpc["id"] != 1
+                        ):
+                            raise ValueError("invalid tool discovery envelope")
+                        error = rpc.get("error")
+                        if (
+                            isinstance(error, dict)
+                            and type(error.get("code")) is int
+                            and isinstance(error.get("message"), str)
+                            and rpc.get("result") is None
+                            and (
+                                error["code"] == -32601
+                                or (
+                                    # Legacy non-MCP tools/list used INTERNAL_ERROR.
+                                    error["code"] == -32603
+                                    and error["message"]
+                                    == "Environment does not support MCP"
+                                    and error.get("data") is None
+                                )
+                            )
+                        ):
+                            tools_unavailable = "unsupported capability: tool_discovery"
+                        else:
+                            if (
+                                error is not None
+                                or not isinstance(rpc.get("result"), dict)
+                                or not isinstance(rpc["result"].get("tools"), list)
+                            ):
+                                raise ValueError("invalid tool discovery response")
+                            discovered = dumps(rpc["result"], ensure_ascii=False)
+                            if len(discovered.encode()) > MAX_MESSAGE_BYTES:
+                                raise ValueError("discovery exceeds size bound")
+                            tools_json = discovered
+                except Exception as exc:
+                    tools_error = f"tool discovery failed ({type(exc).__name__})"
+
+            if collect_tasks:
+                phase = "tasks"
+                try:
+                    discovered, tasks_error = collect_task_evidence(
+                        base_url,
+                        deadline=deadline,
+                        request_timeout_s=request_timeout_s,
+                    )
+                    if discovered is not None:
+                        if contains_credential(discovered) or contains_credential(
+                            json.loads(discovered)
+                        ):
+                            raise ValueError(
+                                "discovery contains validation credentials"
+                            )
+                        tasks_json = discovered
+                except Exception as exc:
+                    tasks_error = f"task discovery failed ({type(exc).__name__})"
 
             def exchange(operation: str, data: dict | None = None) -> dict:
                 nonlocal phase, trace_bytes, server_code
@@ -400,6 +487,11 @@ def collect_runtime_evidence(
             schema_response_json=schema_response_json,
             telemetry_json=telemetry_json,
             telemetry_error=telemetry_error,
+            tools_json=tools_json,
+            tools_error=tools_error,
+            tools_unavailable=tools_unavailable,
+            tasks_json=tasks_json,
+            tasks_error=tasks_error,
             telemetry_unavailable=telemetry_unavailable,
             reset_observation_schema_json=reset_schema_json,
         )
@@ -414,6 +506,11 @@ def collect_runtime_evidence(
                 failure_reason=f"{phase} failed (KeyboardInterrupt)",
                 telemetry_json=telemetry_json,
                 telemetry_error=telemetry_error,
+                tools_json=tools_json,
+                tools_error=tools_error,
+                tools_unavailable=tools_unavailable,
+                tasks_json=tasks_json,
+                tasks_error=tasks_error,
                 telemetry_unavailable=telemetry_unavailable,
             )
         ) from None
@@ -431,6 +528,11 @@ def collect_runtime_evidence(
                 failure_reason=f"{phase} JSON exceeds validator support ({capability})",
                 telemetry_json=telemetry_json,
                 telemetry_error=telemetry_error,
+                tools_json=tools_json,
+                tools_error=tools_error,
+                tools_unavailable=tools_unavailable,
+                tasks_json=tasks_json,
+                tasks_error=tasks_error,
                 telemetry_unavailable=telemetry_unavailable,
             ),
             capability=capability,
@@ -446,5 +548,10 @@ def collect_runtime_evidence(
             failure_reason=f"{phase} failed ({server_code or type(exc).__name__})",
             telemetry_json=telemetry_json,
             telemetry_error=telemetry_error,
+            tools_json=tools_json,
+            tools_error=tools_error,
+            tools_unavailable=tools_unavailable,
+            tasks_json=tasks_json,
+            tasks_error=tasks_error,
             telemetry_unavailable=telemetry_unavailable,
         )
