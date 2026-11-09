@@ -347,4 +347,4 @@ BSD 3-Clause License (see LICENSE file in repository root)
 
 - [FinRL Paper](https://arxiv.org/abs/2011.09607)
 - [FinRL GitHub](https://github.com/AI4Finance-Foundation/FinRL)
-- [OpenEnv Documentation](https://github.com/huggingface/OpenEnv/blob/main/envs/finrl_env/README.md)
+- [OpenEnv Documentation](https://github.com/openenv/OpenEnv/blob/main/envs/finrl_env/README.md)

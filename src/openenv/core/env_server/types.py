@@ -236,6 +236,10 @@ class SchemaResponse(BaseMessage):
     state: Dict[str, Any] = Field(
         description="JSON schema for environment state objects"
     )
+    reset: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="JSON schema for reset parameters accepted by this environment",
+    )
     reset_observation: Optional[Dict[str, Any]] = Field(
         default=None, description="JSON schema for observations returned by reset"
     )
@@ -243,6 +247,8 @@ class SchemaResponse(BaseMessage):
     @model_serializer(mode="wrap")
     def _omit_undeclared_reset_schema(self, handler):
         data = handler(self)
+        if self.reset is None:
+            data.pop("reset", None)
         if self.reset_observation is None:
             data.pop("reset_observation", None)
         return data

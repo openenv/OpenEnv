@@ -27,6 +27,8 @@ The package provides:
 - `LocalREPLEnv`: the same environment, in process
 - `LocalRLMRunner`: a local RLM loop that prompts a model, runs its code and handles recursion
 
+Try it on the [`openenv/repl`](https://huggingface.co/spaces/openenv/repl) Space, or connect a client to `https://openenv-repl.hf.space`.
+
 ## Quick Start
 
 Start a server:
