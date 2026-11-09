@@ -280,6 +280,7 @@ class DockerValidationProvider:
         {
             ProviderCapability.IMAGE_BUILD,
             ProviderCapability.EXEC,
+            ProviderCapability.FRESH_CONTAINER,
             ProviderCapability.NETWORK_POLICY,
             ProviderCapability.INSPECTED_ISOLATION,
             ProviderCapability.RESOURCE_ENFORCEMENT,

@@ -124,6 +124,7 @@ def collect_runtime_evidence(
     trace_bytes = 0
     telemetry_json = None
     telemetry_error = None
+    telemetry_unavailable = None
     server_code = None
 
     def remaining() -> float:
@@ -269,6 +270,10 @@ def collect_runtime_evidence(
                         and 16 <= len(data["capability"]) <= 256
                     ):
                         capability = data["capability"]
+                    elif code == WSErrorCode.UNKNOWN_TYPE:
+                        telemetry_unavailable = (
+                            "unsupported capability: session_telemetry"
+                        )
                     else:
                         telemetry_error = (
                             "session telemetry unavailable or authorization refused"
@@ -395,6 +400,7 @@ def collect_runtime_evidence(
             schema_response_json=schema_response_json,
             telemetry_json=telemetry_json,
             telemetry_error=telemetry_error,
+            telemetry_unavailable=telemetry_unavailable,
             reset_observation_schema_json=reset_schema_json,
         )
     except KeyboardInterrupt:
@@ -408,6 +414,7 @@ def collect_runtime_evidence(
                 failure_reason=f"{phase} failed (KeyboardInterrupt)",
                 telemetry_json=telemetry_json,
                 telemetry_error=telemetry_error,
+                telemetry_unavailable=telemetry_unavailable,
             )
         ) from None
     except (ArithmeticError, RecursionError) as exc:
@@ -424,6 +431,7 @@ def collect_runtime_evidence(
                 failure_reason=f"{phase} JSON exceeds validator support ({capability})",
                 telemetry_json=telemetry_json,
                 telemetry_error=telemetry_error,
+                telemetry_unavailable=telemetry_unavailable,
             ),
             capability=capability,
         ) from None
@@ -438,4 +446,5 @@ def collect_runtime_evidence(
             failure_reason=f"{phase} failed ({server_code or type(exc).__name__})",
             telemetry_json=telemetry_json,
             telemetry_error=telemetry_error,
+            telemetry_unavailable=telemetry_unavailable,
         )
