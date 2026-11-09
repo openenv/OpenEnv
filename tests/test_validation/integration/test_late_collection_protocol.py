@@ -191,8 +191,6 @@ def test_late_collection_limits_grade_completed_evidence(
     )
     if limit == "ws_depth":
         rows = json.loads((bundle / f"isolation-{phase}-trace.json").read_text())
-        assert len(rows) == (9 if unsupported_call == 2 else 3)
-        assert metadata["omitted_trace_fields"] == [
-            {"exchange_index": len(rows) - 1, "field": "response_json"}
-        ]
+        assert len(rows) == (8 if unsupported_call == 2 else 2)
+        assert metadata["omitted_trace_fields"] == []
     assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True

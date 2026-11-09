@@ -85,6 +85,7 @@ def collect_runtime_evidence(
     validation_token: str | None = None,
     collect_tools: bool = False,
     collect_tasks: bool = False,
+    request_telemetry: bool = True,
 ) -> RuntimeEvidence:
     """
     Preserve schema and reset/step/state responses without model coercion.
@@ -115,6 +116,8 @@ def collect_runtime_evidence(
             Discover tools on the measured WebSocket before reset.
         collect_tasks (`bool`, *optional*, defaults to `False`):
             Discover the server's environment namespace and sample its task metadata.
+        request_telemetry (`bool`, *optional*, defaults to `True`):
+            Whether to request session telemetry when authorization is provided.
 
     Returns:
         [`~openenv.validation.runtime.contracts.RuntimeEvidence`]: raw evidence.
@@ -169,7 +172,10 @@ def collect_runtime_evidence(
             schema_response_json = payload.decode("utf-8")
             try:
                 schema = loads(payload)
-                if validation_token and validation_token in dumps(schema):
+                if validation_token and (
+                    validation_token in schema_response_json
+                    or validation_token in dumps(schema)
+                ):
                     raise ValueError("schema contains validation credentials")
             except (ValueError, ArithmeticError, RecursionError):
                 if validation_token:
@@ -200,7 +206,11 @@ def collect_runtime_evidence(
             proxy=None,
             open_timeout=remaining(),
             close_timeout=1,
-            max_size=MAX_TRACE_BYTES if validation_token else MAX_MESSAGE_BYTES,
+            max_size=(
+                MAX_TRACE_BYTES
+                if validation_token and request_telemetry
+                else MAX_MESSAGE_BYTES
+            ),
             max_queue=1,
             compression=None,
         )
@@ -240,7 +250,7 @@ def collect_runtime_evidence(
                 return response
 
             capability = None
-            if validation_token:
+            if validation_token and request_telemetry:
                 phase = "validation_open"
                 try:
                     response = telemetry_request(
