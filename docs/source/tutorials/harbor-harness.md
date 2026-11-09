@@ -20,6 +20,17 @@ openenv harbor rollout \
 
 Against a hosted provider you get an evaluation rollout: the reward and the full trace. Against vLLM or SGLang you also get the token ids and logprobs that training needs. `openenv harbor info` checks first which agents, sandboxes and capture level this machine can use.
 
+Before running an agent of your own, check its wiring and constructor without starting a sandbox:
+
+```bash
+openenv harbor info --harness my_package.agent:MyAgent --model org/model --json
+```
+
+This imports and constructs the named class with dummy capture credentials; only name code you
+trust. It reports errors such as a missing constructor setting or undeclared `api_base`/`api_key`,
+and returns exit code 1 on failure. Success confirms construction, while model calls and capture
+remain untested. See [Your own agent](../environments/harbor#your-own-agent) for the contract.
+
 ## Train on the Captures
 
 Each rollout comes back as a `TrainingTrace`: the token ids, logprobs and loss masks of every model call, plus the task's reward. It doesn't depend on a trainer, so any framework can train on it. TRL has a worked example: `AsyncGRPOTrainer` with a `HarnessRolloutWorker` runs each task to completion, reads back the trace, and syncs the new weights into the same vLLM server.
