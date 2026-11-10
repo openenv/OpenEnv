@@ -677,6 +677,24 @@ def validate_harbor(
     evidence = None
     checks = []
     semantic_graded = False
+    if (
+        semantic
+        and subject.manifest.capabilities.oracle is None
+        and all(result.status is CheckStatus.PASS for result in results)
+    ):
+        # RFC 008: a missing oracle is a graded FAIL, never a SKIP.
+        semantic_graded = True
+        checks.append(
+            CheckResult(
+                check_id="semantic.oracle_max",
+                status=CheckStatus.FAIL,
+                evidence=["the task has no oracle (solution/solve.sh)"],
+                remediation=(
+                    "Add solution/solve.sh that drives the task to a correct solution."
+                ),
+                duration_s=0,
+            )
+        )
     if not problem:
         if subject.manifest.capabilities.oracle is None:
             startup = _result(
@@ -684,21 +702,6 @@ def validate_harbor(
                 CheckStatus.SKIP,
                 "native Harbor trials need solution/solve.sh",
             )
-            if semantic:
-                # RFC 008: a missing oracle is a graded FAIL, never a SKIP.
-                semantic_graded = True
-                checks.append(
-                    CheckResult(
-                        check_id="semantic.oracle_max",
-                        status=CheckStatus.FAIL,
-                        evidence=["the task has no oracle (solution/solve.sh)"],
-                        remediation=(
-                            "Add solution/solve.sh that drives the task to a "
-                            "correct solution."
-                        ),
-                        duration_s=0,
-                    )
-                )
         else:
             attempted = True
             try:

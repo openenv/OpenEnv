@@ -435,9 +435,18 @@ def test_copy_change_and_restore_cannot_escape_source_binding(
     assert "validated source digest" in native["trials"][1]["reason"]
 
 
-def test_missing_oracle_fails_oracle_max_without_starting_trial(task, boundary):
+@pytest.mark.parametrize("blocked", [None, "skip-build", "unsupported", "provider"])
+def test_missing_oracle_fails_oracle_max_without_starting_trial(
+    task, boundary, blocked
+):
     (task / "solution/solve.sh").unlink()
-    report = run_validation(task)
+    if blocked == "unsupported":
+        (task / "task.toml").write_text('[environment]\ndocker_image="prebuilt"\n')
+    report = run_validation(
+        task,
+        skip_build=blocked == "skip-build",
+        provider=object() if blocked == "provider" else None,
+    )
     assert report.verdict is Verdict.FAIL
     assert report.levels_run == [Level.STATIC, Level.SEMANTIC]
     # RFC 008: no oracle is a graded FAIL, not a SKIP.
