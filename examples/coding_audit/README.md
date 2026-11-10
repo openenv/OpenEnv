@@ -35,6 +35,9 @@ alongside request parameters. Support depends on the selected provider/model.
 Candidate generation streams bounded content and reasoning; only a complete
 `stop` response with validated usage can produce an executable candidate. A
 `length` response remains rejected even when its terminal usage is retained.
+The candidate prompt declares the allowed output files and requests a Bash script
+that writes them. Its versioned contract is recorded with the model metadata;
+standalone source-code fences remain errors.
 Recognized Bash/sh Markdown fences are parsed before execution; the raw response
 and both raw/script hashes are retained. Other language fences are rejected.
 

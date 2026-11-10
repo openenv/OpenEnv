@@ -1090,12 +1090,22 @@ class HFTaskBackend:
                 instruction = self._candidate_instruction(model, record)
                 model, allowed, limits, client = self._model(model, seed)
                 record["model_metadata"] = self._model_metadata(model, seed)
+                record["model_metadata"]["candidate_output_contract"] = {
+                    "format": "bash_script",
+                    "version": 2,
+                    "submission_paths": list(self.submission_paths),
+                }
                 messages = [
                     {
                         "role": "system",
-                        "content": "Return only a bash script that attempts the task. Do not use Markdown fences.",
+                        "content": "Return only an executable /bin/bash script that creates or edits the required submission files. For source-code solutions, write the source into those files with a quoted heredoc or equivalent; do not return bare Python or other source code. Do not use Markdown fences.",
                     },
-                    {"role": "user", "content": instruction},
+                    {
+                        "role": "user",
+                        "content": instruction
+                        + "\n\nRequired submission files: "
+                        + json.dumps(self.submission_paths),
+                    },
                 ]
                 record["transcript"] = messages
                 message = self._chat(

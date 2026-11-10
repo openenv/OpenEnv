@@ -744,6 +744,16 @@ def test_provider_requests_base_id_with_distinct_token_and_records_source_limit(
     assert "PRIVATE_CANARY_SENTINEL" not in repr(request)
     assert "test.sh" not in repr(request)
     metadata = generated["model_metadata"]
+    assert metadata["candidate_output_contract"] == {
+        "format": "bash_script",
+        "version": 2,
+        "submission_paths": ["/app/answer.txt"],
+    }
+    assert "creates or edits" in request["messages"][0]["content"]
+    assert (
+        'Required submission files: ["/app/answer.txt"]'
+        in request["messages"][1]["content"]
+    )
     assert metadata["source_revision"] == MODEL["revision"]
     assert metadata["served_weight_revision_pinned"] is False
     assert metadata["seed_supported"] is False
