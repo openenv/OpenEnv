@@ -153,6 +153,9 @@ The frozen report's `summary.errors` also omits cold-build errors; inspect its
 The frozen harness's startup-failure matching flag is too weak to distinguish
 a build error from the intended server error; raw command/log witnesses are
 therefore required.
+The current matcher requires successful create/start command exit codes and
+the fixture's deliberate-error log for the same recorded subject. This harness
+fix does not change the frozen flags or measurements.
 
 The coordinator reclaimed only 22 precisely selected experiment-owned,
 reclaimable `source.local` cache records (**773.6 MB**). No pre-existing/shared

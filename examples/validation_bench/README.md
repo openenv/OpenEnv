@@ -119,6 +119,8 @@ fixture's deliberate-startup-error log; the frozen harness's
 `expected_failure_match` flag alone also accepts a build failure. For all cases,
 inspect `errors`, milestones, retained trace prefixes and independent cleanup.
 A shell exit of zero is not an experiment success verdict.
+The current startup-fault matcher also requires successful create/start command
+exit codes and the deliberate-error log for the same recorded subject.
 
 Raw phase spans are inclusive; exclusive totals remove nested work on the
 calling thread. CPU time covers the validator's calling thread, excluding

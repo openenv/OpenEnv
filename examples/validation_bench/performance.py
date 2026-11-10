@@ -916,10 +916,26 @@ def failure_subprocess(row, args):
                 }
             )
     else:
+        commands = [
+            command["argv"]
+            for command in result.get("commands", [])
+            if command.get("exit_code") == 0
+        ]
         result["expected_failure_match"] = (
             result["checks"].get("runtime.startup") == "fail"
             and result["verdict"] == "fail"
             and result["parent_cleanup"]["assert_empty"]
+            and any(
+                any(
+                    command[:4] == ["docker", "create", "--name", name]
+                    for command in commands
+                )
+                and ["docker", "start", name] in commands
+                and (artifact.parent / f"{name}.log").is_file()
+                and "Deliberate startup failure from the validation test fixture"
+                in (artifact.parent / f"{name}.log").read_text()
+                for name in result.get("subject_names", [])
+            )
         )
     save(directory / "result.json", result)
     checksums(directory)
