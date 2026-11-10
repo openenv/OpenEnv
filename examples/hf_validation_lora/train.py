@@ -396,20 +396,26 @@ class RemoteEnvironment:
             payload = {"rewards": [], "task_ids": [], "valid": []}
             with self._client() as client:
                 for index, expression in zip(indices, expressions, strict=True):
-                    client.reset(
+                    result = client.reset(
                         split=split,
                         index=index,
                         seed=20261104,
                         episode_id=f"{split}-{index}",
                         reward_mode="shaped",
                     )
+                    obs = result.observation
+                    if (
+                        result.done
+                        or obs["level"] != "24"
+                        or obs["solution"] is not None
+                    ):
+                        raise RuntimeError("reset contract failed")
                     result = client.step({"expression": expression})
                     if not result.done or result.reward is None:
                         raise RuntimeError("Expected one terminal environment reward")
-                    obs = result.observation
                     payload["rewards"].append(result.reward)
                     payload["task_ids"].append(obs["task_id"])
-                    payload["valid"].append(obs["result"]["valid"])
+                    payload["valid"].append(result.observation["result"]["valid"])
         expected_ids = [f"{split}-24-{i:04d}" for i in indices]
         if payload["task_ids"] != expected_ids:
             raise RuntimeError("Scored task identity mismatch")

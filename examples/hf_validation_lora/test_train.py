@@ -64,7 +64,6 @@ class ResetSensitiveClient:
             done=True,
             reward=reward if action["expression"] else 0.0,
             observation={
-                **self.observation,
                 "result": {"valid": action["expression"] == "10+13-3+4"},
             },
         )
