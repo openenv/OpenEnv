@@ -49,6 +49,8 @@ _HOST_FAILURES = {
     "CleanupNotVerified",
     "RewardArtifactDrift",
     "UnsafeRewardArtifact",
+    "RetainedImageDrift",
+    "RetainedImageUnverified",
 }
 # Checks this binding measures; every other local check is a named SKIP.
 _IMPLEMENTED = {

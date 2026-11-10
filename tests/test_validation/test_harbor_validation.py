@@ -66,6 +66,7 @@ def boundary(monkeypatch, task):
         no_identity=False,
         timeout=False,
         retained=True,
+        retained_error=False,
         overwrite_exit=False,
         excluded_copied=[],
     )
@@ -105,6 +106,8 @@ def boundary(monkeypatch, task):
             }
 
         def verify_image(self, tag, image_ref):
+            if state.retained_error:
+                raise OSError("inspect failed")
             return state.retained
 
     class Trial:
@@ -504,6 +507,18 @@ def test_missing_oracle_fails_oracle_max_without_starting_trial(
 def test_retained_image_drift_blocks(task, boundary):
     boundary.retained = False
     assert run_validation(task).verdict is Verdict.FAIL
+
+
+@pytest.mark.parametrize("inspect_error", [False, True])
+def test_retained_image_failure_is_not_hidden_by_bad_reward(
+    task, boundary, inspect_error
+):
+    boundary.rewards["nop"] = b'{"reward":true}'
+    boundary.retained = False
+    boundary.retained_error = inspect_error
+    report = run_validation(task)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
 
 
 def test_host_inspector_scopes_inventory_and_cleanup_to_owned_project(monkeypatch):
