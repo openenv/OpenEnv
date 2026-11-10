@@ -595,6 +595,16 @@ def test_separate_verifier_is_named_unsupported(task, boundary):
     assert not boundary.trials
 
 
+def test_task_declared_image_is_refused_before_trials(task, boundary):
+    with (task / "task.toml").open("a") as stream:
+        stream.write('[environment]\ndocker_image="registry.example/image:latest"\n')
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.SKIP
+    assert "docker_image" in startup.evidence[0]
+    assert not boundary.trials
+
+
 def test_explicit_contract_and_valid_toml_required(task, boundary):
     (task / "validation/openenv.json").unlink()
     with pytest.raises(ManifestError):

@@ -242,6 +242,8 @@ def _unsupported(task, contract):
         return "multi-step Harbor tasks"
     if env.os.value != "linux":
         return "non-Linux Harbor tasks"
+    if env.docker_image is not None:
+        return "task-declared environment.docker_image instead of a Dockerfile build"
     if config.verifier.environment is not None or (
         config.verifier.environment_mode is not None
         and config.verifier.environment_mode.value != "shared"
