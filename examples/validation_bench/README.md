@@ -48,6 +48,13 @@ when a measured mismatch is present; inspect `exp2-report.json`. Its independent
 reconstruction of saved evidence is experimental. OpenEnv has no production
 replay reader at the measured revision.
 
+The frozen matrix records the statuses expected at the measured revision. The
+runtime graders later restored by #1320–#1322 were absent there and reported
+SKIP. Run against current `main`, those graders FAIL on the loopback subjects,
+for example seed control and tool declaration accuracy. The run then reports
+expected-status mismatches against the frozen matrix. They come from the newer
+graders and do not change the recorded results.
+
 The independently reproduced artifact-fidelity regression can also be run alone:
 
 ```sh
