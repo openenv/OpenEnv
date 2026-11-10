@@ -48,20 +48,29 @@ when a measured mismatch is present; inspect `exp2-report.json`. Its independent
 reconstruction of saved evidence is experimental. OpenEnv has no production
 replay reader at the measured revision.
 
-The frozen matrix records the statuses expected at the measured revision. The
-runtime graders later restored by #1320–#1322 were absent there and reported
-SKIP. Run against current `main`, those graders FAIL on the loopback subjects,
-for example seed control and tool declaration accuracy. The run then reports
-expected-status mismatches against the frozen matrix. They come from the newer
-graders and do not change the recorded results.
+The frozen matrix records the statuses expected at the measured revision.
+Current `main` reports 51 mismatches. The graders restored by #1321 (seed control
+and trajectory record) and #1322 (rubric introspection and task/tool declaration
+accuracy) account for 42: 15 WARN-to-FAIL verdicts and 27 supported-replay
+mismatches where live FAIL becomes reconstructed SKIP. The duplicate-key loss
+flags from #1524 (`e4ca57b7`) account for six: the wire and HTTP cases now classify
+as `inconclusive`. Three more come from #1320 (`5adf93e1`): failed schema parsing
+leaves `schema_response_available` and `schema_response_parse_failed` false, so
+`unsupported_schema_number` now reconstructs as `supported` with unchanged SKIP
+statuses. None of these changes alters the recorded results.
 
-The independently reproduced artifact-fidelity regression can also be run alone:
+The reproducer shows the duplicate-key artifact-fidelity defect at the measured
+revision. On current `main`, #1524's loss flags make the case `inconclusive`, so
+it reports `"reproduced": false` and exits 1. Use a fresh output directory for
+each surface:
 
 ```sh
 PYTHONPATH=src:envs .venv/bin/python \
-  examples/validation_bench/exp2/reproduce_duplicate.py --surface wire
+  examples/validation_bench/exp2/reproduce_duplicate.py --surface wire \
+  --output "$(mktemp -d /tmp/validation-exp2-wire.XXXXXX)"
 PYTHONPATH=src:envs .venv/bin/python \
-  examples/validation_bench/exp2/reproduce_duplicate.py --surface http
+  examples/validation_bench/exp2/reproduce_duplicate.py --surface http \
+  --output "$(mktemp -d /tmp/validation-exp2-http.XXXXXX)"
 ```
 
 ## 3. Docker cost, concurrency and recovery
