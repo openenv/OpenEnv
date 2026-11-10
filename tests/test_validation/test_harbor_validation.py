@@ -629,6 +629,29 @@ def test_explicit_contract_and_valid_toml_required(task, boundary):
     assert not boundary.trials
 
 
+@pytest.mark.parametrize(
+    "field,token",
+    [
+        # As a float this margin is 0.1, so a measured gap of 0.1 would pass.
+        ("floor_margin", "0.100000000000000001"),
+        ("oracle_tolerance", "1e-999"),
+        ("range", "[0, 1.0000000000000001]"),
+    ],
+)
+def test_contract_numbers_must_keep_their_exact_value(task, boundary, field, token):
+    path = task / "validation/openenv.json"
+    contract = json.loads(path.read_text())
+    contract["reward"][field] = "TOKEN"
+    path.write_text(json.dumps(contract).replace('"TOKEN"', token))
+    boundary.rewards["nop"] = b'{"reward":0.9}'
+    with pytest.raises(ManifestError):
+        read_harbor_contract(task)
+    report = run_validation(task)
+    assert report.verdict is Verdict.FAIL
+    assert result(report, "static.manifest").status is CheckStatus.FAIL
+    assert not boundary.trials
+
+
 def test_malformed_toml_is_manifest_failure(task, boundary):
     (task / "task.toml").write_text("invalid = [")
     report = run_validation(task)

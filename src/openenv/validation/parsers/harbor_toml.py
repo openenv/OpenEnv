@@ -3,6 +3,7 @@
 import json
 import math
 import stat
+from decimal import Decimal
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -68,6 +69,7 @@ def read_harbor_contract(package_root: Path) -> HarborContract:
         raw = json.loads(
             (package_root / "validation/openenv.json").read_text(),
             object_pairs_hook=_unique_object,
+            parse_float=Decimal,
         )
         if not isinstance(raw, dict):
             raise ValueError("contract must be an object")
@@ -91,6 +93,14 @@ def read_harbor_contract(package_root: Path) -> HarborContract:
                 ):
                     raise ValueError(
                         "numeric declarations must be finite and nonboolean"
+                    )
+                # Graders compare against the stored float, so it must keep the
+                # declared value exactly: 0.100000000000000001 would become 0.1.
+                elif isinstance(item, (int, Decimal)) and Decimal(
+                    repr(float(item))
+                ) != Decimal(item):
+                    raise ValueError(
+                        "numeric declarations must keep their exact value as floats"
                     )
         return HarborContract.model_validate(raw)
     except (OSError, ValueError, TypeError, AttributeError) as exc:
