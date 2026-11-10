@@ -1,9 +1,10 @@
 """`openenv harbor` — run Harbor tasks with token-level capture.
 
-Four commands, in the order you would use them:
+Five commands, in the order you would use them:
 
     openenv harbor info                     what can this machine run right now?
     openenv harbor rollout --task-index 0   one rollout, end to end, no server
+    openenv harbor export-sft results/      rollouts as SFT rows (messages + tools)
     openenv harbor serve                    the env server, for trainers and clients
     openenv harbor push                     the same server, deployed to a Space
 
@@ -329,6 +330,90 @@ def rollout(
         Path(out).write_text(json.dumps([r.model_dump() for r in results], indent=2))
         print(f"\nwrote {out}")
     raise typer.Exit(0 if all(r.ok for r in results) else 1)
+
+
+def _read_results(paths: list[str]) -> list[dict[str, Any]]:
+    """Rollouts from `rollout --out` files, or from every `*.json` in a directory."""
+    files: list[Path] = []
+    for spec in paths:
+        path = Path(spec)
+        files.extend(sorted(path.glob("*.json")) if path.is_dir() else [path])
+    results: list[dict[str, Any]] = []
+    for file in files:
+        data = json.loads(file.read_text())
+        results.extend(data if isinstance(data, list) else [data])
+    return results
+
+
+@app.command("export-sft")
+def export_sft_command(
+    results: Annotated[
+        list[str],
+        typer.Argument(
+            help="Result JSONs written by `rollout --out`, or directories of them."
+        ),
+    ],
+    out: Annotated[
+        str, typer.Option("--out", help="JSON Lines file for the SFT rows.")
+    ] = "sft_rows.jsonl",
+    min_reward: Annotated[
+        Optional[float],
+        typer.Option(
+            "--min-reward",
+            help="Keep only rollouts graded at least this, e.g. 1.0 for solved tasks. Unset, every rollout is kept with its reward.",
+        ),
+    ] = None,
+    reward_key: Annotated[
+        str,
+        typer.Option(
+            "--reward-key",
+            help="Reward to read when the verifier reported several and none was picked at rollout time.",
+        ),
+    ] = "",
+    push_to: Annotated[
+        str,
+        typer.Option("--push-to", help="Hub dataset repo to upload the rows to."),
+    ] = "",
+    private: Annotated[
+        bool, typer.Option("--private", help="Create --push-to as a private dataset.")
+    ] = False,
+) -> None:
+    """Turn rollouts into conversational SFT rows (`messages` + `tools`), one per rollout.
+
+    Works on evaluation rollouts against a hosted model: SFT needs the conversation, not token ids. Load the rows
+    with `datasets.load_dataset("json", ...)`, which keeps each tool call's arguments as they are.
+    """
+    from openenv.harbor.sft import export_sft
+
+    rows, stats = export_sft(
+        _read_results(results), min_reward=min_reward, reward_key=reward_key
+    )
+    path = Path(out)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    print(f"{stats.rows} rows from {stats.rollouts} rollouts -> {path}")
+    if stats.below_min_reward or stats.ungraded:
+        print(
+            f"  dropped: {stats.below_min_reward} below --min-reward, {stats.ungraded} ungraded"
+        )
+    if stats.no_agent_turn:
+        print(f"  {stats.no_agent_turn} rollouts had no agent turn")
+    if stats.ended_on_tool_call:
+        print(
+            f"  {len(stats.ended_on_tool_call)} rollouts ended right after a tool call, usually a failed model call"
+            f" worth rerunning: {', '.join(stats.ended_on_tool_call)}"
+        )
+    if push_to:
+        from huggingface_hub import HfApi
+
+        api = HfApi()
+        api.create_repo(push_to, repo_type="dataset", private=private, exist_ok=True)
+        api.upload_file(
+            path_or_fileobj=path,
+            path_in_repo=f"data/{path.name}",
+            repo_id=push_to,
+            repo_type="dataset",
+        )
+        print(f"pushed to https://huggingface.co/datasets/{push_to}")
 
 
 @app.command("serve")
