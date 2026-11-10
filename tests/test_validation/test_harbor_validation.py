@@ -73,13 +73,22 @@ def boundary(monkeypatch, task):
         start_delay=0,
         agent_delay=0,
         pending_compose=False,
+        inventory_problem=None,
+        cleanup_calls=[],
+        preflight_error=None,
     )
 
     class Inspector:
         def preflight(self):
+            if state.preflight_error is not None:
+                raise state.preflight_error
             return {"os": "linux", "daemon_id": "mock-host"}
 
         def inventory(self, project):
+            if state.inventory_problem and "canary-1__env" in project:
+                if state.inventory_problem == "error":
+                    raise OSError("Docker inventory failed")
+                return {"containers": ["preexisting"], "networks": [], "volumes": []}
             return {"containers": [], "networks": [], "volumes": []}
 
         def capture(self, project, retained_tag, *, retain=True):
@@ -96,6 +105,7 @@ def boundary(monkeypatch, task):
             }
 
         def cleanup(self, project):
+            state.cleanup_calls.append(project)
             verified = (
                 state.cleanup_ok
                 and _role(project.removesuffix("__env")) != state.cleanup_fail_role
@@ -869,6 +879,44 @@ def test_canary_cleanup_failure_preserves_completed_semantics(
     assert len(native["trials"]) == 5
     assert not native["cleanup"]["verified"]
     assert native["floor_reward"] == floor
+
+
+@pytest.mark.parametrize("problem", ["error", "collision"])
+def test_preallocation_inventory_failure_preserves_completed_trials(
+    task, boundary, canaries, tmp_path, problem
+):
+    boundary.inventory_problem = problem
+    boundary.rewards["nop"] = b'{"reward":1}'
+    artifacts = tmp_path / "inventory-error"
+    report = run_validation(task, artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.episode_determinism").status is CheckStatus.PASS
+    assert result(report, "semantic.floor_gap").status is CheckStatus.FAIL
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert len(native["trials"]) == 4
+    assert len(boundary.trials) == len(boundary.cleanup_calls) == 3
+    assert all(trial["cleanup"]["verified"] for trial in native["trials"][:3])
+    assert not native["trials"][-1]["cleanup"]["verified"]
+    assert (
+        artifacts / "harbor-trials/oracle/reward.json"
+    ).read_bytes() == b'{"reward":1}'
+
+
+@pytest.mark.parametrize("safe", [False, True])
+def test_collection_failure_keeps_only_safe_native_reasons(
+    task, boundary, tmp_path, safe
+):
+    reason = "Harbor requires a Linux Docker daemon" if safe else "token=do-not-persist"
+    boundary.preflight_error = (
+        harbor.NativeEvidenceError(reason) if safe else RuntimeError(reason)
+    )
+    artifacts = tmp_path / "preflight"
+    report = run_validation(task, artifacts_dir=artifacts)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert (reason in startup.evidence[0]) is safe
+    native = (artifacts / "harbor-evidence.json").read_text()
+    assert (reason in native) is safe
 
 
 def test_canaries_run_only_at_the_semantic_level(task, boundary, canaries):

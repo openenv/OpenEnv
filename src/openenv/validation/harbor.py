@@ -26,6 +26,7 @@ from pathlib import Path
 from .graders import GraderRegistry
 from .graders.semantic import CanaryFloorGrader, FloorGapGrader, OracleMaxGrader
 from .parsers.harbor_toml import (
+    _unique_object,
     canary_scripts,
     HARBOR_PROFILE,
     read_harbor_contract,
@@ -92,7 +93,7 @@ class DockerInspector:
     def preflight(self):
         info = json.loads(self._docker("info", "--format", "{{json .}}"))
         if info["OSType"] != "linux":
-            raise NativeEvidenceError("the Harbor pilot requires a Linux Docker daemon")
+            raise NativeEvidenceError("Harbor requires a Linux Docker daemon")
         self._docker("compose", "version")
         return {
             "os": info["OSType"],
@@ -119,9 +120,7 @@ class DockerInspector:
     def capture(self, project, retained_tag, *, retain=True):
         inventory = self.inventory(project)
         if len(inventory["containers"]) != 1:
-            raise NativeEvidenceError(
-                "the Harbor pilot requires exactly one main container"
-            )
+            raise NativeEvidenceError("Harbor requires exactly one main container")
         item = json.loads(self._docker("inspect", inventory["containers"][0]))[0]
         labels = item["Config"]["Labels"]
         if (
@@ -383,8 +382,6 @@ def _read_output(path, root):
 
 
 def _reward(raw_files, parsed, contract):
-    from .parsers.harbor_toml import _unique_object
-
     if "reward.json" in raw_files:
         raw = json.loads(
             raw_files["reward.json"],
@@ -457,10 +454,15 @@ async def _trial(
     raw_files = {}
     trial = None
     phase = "trial creation"
-    # Register and verify ownership before Trial.create can allocate anything.
-    if any(inspector.inventory(project).values()):
-        raise NativeEvidenceError("run-owned project was not empty before allocation")
+    registered = False
     try:
+        # Verify ownership before Trial.create can allocate anything.
+        record["pre_allocation_inventory"] = inspector.inventory(project)
+        if any(record["pre_allocation_inventory"].values()):
+            raise NativeEvidenceError(
+                "run-owned project was not empty before allocation"
+            )
+        registered = True
         task_copy = work / role / "task"
         shutil.copytree(
             root,
@@ -657,23 +659,29 @@ async def _trial(
                     await trial.agent_environment.stop(delete=False)
             except (Exception, KeyboardInterrupt):
                 record["failure"] = "HarborTeardownError"
-        try:
-            record["cleanup"] = inspector.cleanup(project)
-            if trial is not None and trial._openenv_cancelled_compose:
-                record["cleanup"].update(
-                    {
-                        "verified": False,
-                        "pending_operations": trial._openenv_cancelled_compose,
-                    }
-                )
-                record["reason"] = (
-                    "Docker daemon completion after cancelled Compose allocation is unverified"
-                )
-            if not record["cleanup"]["verified"]:
+        if registered:
+            try:
+                record["cleanup"] = inspector.cleanup(project)
+                if trial is not None and trial._openenv_cancelled_compose:
+                    record["cleanup"].update(
+                        {
+                            "verified": False,
+                            "pending_operations": trial._openenv_cancelled_compose,
+                        }
+                    )
+                    record["reason"] = (
+                        "Docker daemon completion after cancelled Compose allocation is unverified"
+                    )
+                if not record["cleanup"]["verified"]:
+                    record["failure"] = "CleanupNotVerified"
+            except (Exception, KeyboardInterrupt) as exc:
+                record["cleanup"] = {"verified": False, "failure": type(exc).__name__}
                 record["failure"] = "CleanupNotVerified"
-        except (Exception, KeyboardInterrupt) as exc:
-            record["cleanup"] = {"verified": False, "failure": type(exc).__name__}
-            record["failure"] = "CleanupNotVerified"
+        else:
+            record["cleanup"] = {
+                "verified": False,
+                "reason": "project ownership was not verified before allocation",
+            }
         if trial is not None:
             # Preserve raw verifier files even when Harbor rejects their values.
             for filename, path in (
@@ -1020,10 +1028,14 @@ def validate_harbor(
                     )
             except (Exception, KeyboardInterrupt) as exc:
                 record["failure"] = type(exc).__name__
+                reason = f"native Harbor collection failed ({type(exc).__name__})"
+                if isinstance(exc, NativeEvidenceError):
+                    record["reason"] = str(exc)
+                    reason += ": " + str(exc)
                 startup = _result(
                     "runtime.startup",
                     CheckStatus.ERROR,
-                    f"native Harbor collection failed ({type(exc).__name__})",
+                    reason,
                 )
             if semantic:
                 registry = GraderRegistry()
