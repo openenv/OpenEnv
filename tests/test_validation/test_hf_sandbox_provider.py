@@ -853,10 +853,44 @@ def test_app_port_defaults_to_the_hub_default():
         ),
         ('FROM python AS build\nCMD ["serve"]\nFROM build', ["serve"]),
         ("FROM python\nCMD echo \\\n    hello", ["/bin/sh", "-c", "echo     hello"]),
+        (
+            'FROM python\nCMD ["serve"]\nHEALTHCHECK CMD true \\ \t\n    CMD ["probe"]',
+            ["serve"],
+        ),
     ],
 )
 def test_server_command_continuations_and_stages(dockerfile, expected):
     assert _server_command(dockerfile) == expected
+
+
+@pytest.mark.parametrize("escape_count", [2, 3])
+@pytest.mark.parametrize("trailing", ["", " ", "\t", " \t"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize(
+    "tail,error,expected",
+    [
+        ('CMD ["serve"]', None, ["serve"]),
+        ('ENTRYPOINT ["entry"]', UnsupportedCapability, "ENTRYPOINT"),
+        ("FROM other", StartupError, "no CMD"),
+        ('SHELL ["bash", "-c"]\nCMD echo hello', UnsupportedCapability, "SHELL"),
+    ],
+)
+def test_escaped_backslashes_cannot_hide_following_instructions(
+    escape_count, trailing, newline, tail, error, expected
+):
+    dockerfile = newline.join(
+        [
+            "FROM python",
+            'CMD ["old"]',
+            "HEALTHCHECK CMD true " + chr(92) * escape_count + trailing,
+            *tail.splitlines(),
+        ]
+    )
+    if error is None:
+        assert _server_command(dockerfile) == expected
+    else:
+        with pytest.raises(error, match=expected):
+            _server_command(dockerfile)
 
 
 def test_final_stage_does_not_inherit_an_unrelated_stage_cmd():
