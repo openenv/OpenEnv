@@ -55,6 +55,7 @@ def boundary(monkeypatch, task):
         rewards={"nop": b'{"reward":0}', "oracle": b'{"reward":1}'},
         trials=[],
         cleanup_ok=True,
+        cleanup_fail_role=None,
         mutate=False,
         private_mutate=False,
         image_drift=False,
@@ -90,10 +91,14 @@ def boundary(monkeypatch, task):
             }
 
         def cleanup(self, project):
+            verified = (
+                state.cleanup_ok
+                and _role(project.removesuffix("__env")) != state.cleanup_fail_role
+            )
             return {
-                "verified": state.cleanup_ok,
+                "verified": verified,
                 "after": {
-                    "containers": [] if state.cleanup_ok else ["leftover"],
+                    "containers": [] if verified else ["leftover"],
                     "networks": [],
                     "volumes": [],
                 },
@@ -743,6 +748,31 @@ def test_canaries_at_the_floor_pass(task, boundary, canaries):
     boundary.rewards.update({"canary-1": b'{"reward":0}', "canary-2": b'{"reward":0}'})
     report = run_validation(task)
     assert result(report, "semantic.canary_floor").status is CheckStatus.PASS
+
+
+@pytest.mark.parametrize("floor,oracle", [(1, 1), (0, 0.8)])
+def test_canary_cleanup_failure_preserves_completed_semantics(
+    task, boundary, canaries, tmp_path, floor, oracle
+):
+    boundary.rewards["nop"] = json.dumps({"reward": floor}).encode()
+    boundary.rewards["oracle"] = json.dumps({"reward": oracle}).encode()
+    boundary.cleanup_fail_role = "canary-2"
+    artifacts = tmp_path / "partial-semantics"
+    report = run_validation(task, artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
+    assert result(report, "runtime.episode_determinism").status is CheckStatus.PASS
+    assert result(report, "semantic.floor_gap").status is (
+        CheckStatus.FAIL if floor else CheckStatus.PASS
+    )
+    assert result(report, "semantic.oracle_max").status is (
+        CheckStatus.PASS if oracle == 1 else CheckStatus.FAIL
+    )
+    assert result(report, "semantic.canary_floor").status is CheckStatus.SKIP
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert len(native["trials"]) == 5
+    assert not native["cleanup"]["verified"]
+    assert native["floor_reward"] == floor
 
 
 def test_canaries_run_only_at_the_semantic_level(task, boundary, canaries):

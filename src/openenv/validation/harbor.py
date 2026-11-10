@@ -845,57 +845,64 @@ def validate_harbor(
                                 "reward_key": contract.reward_key,
                             },
                         )
-                        nop, oracle, replay, *canary_trials = trials
-                        same = (
-                            oracle["rewards"] == replay["rewards"]
-                            and oracle["oracle_exit_code"] == replay["oracle_exit_code"]
-                        )
-                        determinism = _result(
-                            "runtime.episode_determinism",
-                            CheckStatus.PASS if same else CheckStatus.FAIL,
-                            "the oracle replay in a fresh container "
-                            + (
-                                "reproduced every reward and the exit code"
-                                if same
-                                else "produced different rewards or a different exit code"
-                            ),
-                            {
-                                "rewards": [
-                                    json.loads(dumps(trial["rewards"]))
-                                    for trial in (oracle, replay)
-                                ],
-                                "exit_codes": [
-                                    trial["oracle_exit_code"]
-                                    for trial in (oracle, replay)
-                                ],
-                            },
-                        )
-                        key = contract.reward_key
-                        record.update(
-                            {
-                                "floor_reward": nop["rewards"][key],
-                                "oracle_reward": oracle["rewards"][key],
-                            }
-                        )
-                        evidence = OracleEvidence(
-                            floor=Fraction(nop["rewards"][key]),
-                            oracle=tuple(
-                                Fraction(trial["rewards"][key])
+                complete_baseline = (
+                    len(trials) >= 3
+                    and all(
+                        "failure" not in trial and trial["cleanup"]["verified"]
+                        for trial in trials[:3]
+                    )
+                    and len(set(containers[:3])) == 3
+                )
+                if complete_baseline:
+                    nop, oracle, replay, *canary_trials = trials
+                    same = (
+                        oracle["rewards"] == replay["rewards"]
+                        and oracle["oracle_exit_code"] == replay["oracle_exit_code"]
+                    )
+                    determinism = _result(
+                        "runtime.episode_determinism",
+                        CheckStatus.PASS if same else CheckStatus.FAIL,
+                        "the oracle replay in a fresh container "
+                        + (
+                            "reproduced every reward and the exit code"
+                            if same
+                            else "produced different rewards or a different exit code"
+                        ),
+                        {
+                            "rewards": [
+                                json.loads(dumps(trial["rewards"]))
                                 for trial in (oracle, replay)
-                            ),
-                            oracle_exit_codes=tuple(
+                            ],
+                            "exit_codes": [
                                 trial["oracle_exit_code"] for trial in (oracle, replay)
-                            ),
-                            canaries=tuple(
-                                (
-                                    trial["task_overlay"]["solution/solve.sh"][
-                                        "canary"
-                                    ],
-                                    Fraction(trial["rewards"][key]),
-                                )
-                                for trial in canary_trials
-                            ),
-                        )
+                            ],
+                        },
+                    )
+                    key = contract.reward_key
+                    record.update(
+                        {
+                            "floor_reward": nop["rewards"][key],
+                            "oracle_reward": oracle["rewards"][key],
+                        }
+                    )
+                    evidence = OracleEvidence(
+                        floor=Fraction(nop["rewards"][key]),
+                        oracle=tuple(
+                            Fraction(trial["rewards"][key])
+                            for trial in (oracle, replay)
+                        ),
+                        oracle_exit_codes=tuple(
+                            trial["oracle_exit_code"] for trial in (oracle, replay)
+                        ),
+                        canaries=tuple(
+                            (
+                                trial["task_overlay"]["solution/solve.sh"]["canary"],
+                                Fraction(trial["rewards"][key]),
+                            )
+                            for trial in canary_trials
+                            if "failure" not in trial and trial["cleanup"]["verified"]
+                        ),
+                    )
             except (Exception, KeyboardInterrupt) as exc:
                 record["failure"] = type(exc).__name__
                 startup = _result(
@@ -911,9 +918,23 @@ def validate_harbor(
                     CanaryFloorGrader(),
                 ):
                     registry.register(grader)
+                selected = registry.select(subject.manifest, max_level)
+                if evidence is not None and len(evidence.canaries) != len(canaries):
+                    selected = [
+                        grader
+                        for grader in selected
+                        if grader.check_id != "semantic.canary_floor"
+                    ]
+                    checks.append(
+                        _result(
+                            "semantic.canary_floor",
+                            CheckStatus.SKIP,
+                            "unmet dependency: complete canary trials with verified cleanup",
+                        )
+                    )
                 checks.extend(
                     execute_graders(
-                        registry.select(subject.manifest, max_level),
+                        selected,
                         replace(subject, oracle_evidence=evidence),
                         prior=[startup, reward_result, determinism],
                     )
