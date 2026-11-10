@@ -13,7 +13,7 @@ memory/environment only. Default exec transport calls the root-provided bridge
 /opt/score_batch.py with /opt/mathenv/bin/python; that bridge uses the REAL
 server's local WebSocket on port 8012. No proxy requests occur in exec mode.
 ENV_TRANSPORT=direct uses GenericEnvClient through the authenticated SDK proxy.
-SBX_NAMESPACE (default OUTPUT_REPO owner) and SBX_PORT (default 8012) are optional.
+SBX_NAMESPACE (default token's user) and SBX_PORT (default 8012) are optional.
 
 Objective: unchanged terminal shaped reward from indexed reset/one expression
 step; group-normalized vanilla GRPO, beta=0, no auxiliary rewards. Missing tags
@@ -656,9 +656,7 @@ def main():
         persist()
         sandbox = Sandbox.connect(
             os.environ["SBX_JOB_ID"],
-            namespace=os.environ.get(
-                "SBX_NAMESPACE", repos["OUTPUT_REPO"].split("/")[0]
-            ),
+            namespace=os.environ.get("SBX_NAMESPACE"),
             token=os.environ["HF_TOKEN"],
         )
         remote = RemoteEnvironment(

@@ -436,6 +436,33 @@ class OptimizerWindowTests(unittest.TestCase):
 
 
 class TrainingContractTests(unittest.TestCase):
+    def test_sandbox_namespace_defaults_to_token_user_for_org_model(self):
+        tree = ast.parse(Path(train.__file__).read_text())
+        connection = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and ast.unparse(node.func) == "Sandbox.connect"
+        )
+        for override in (None, "sandbox-owner"):
+            with self.subTest(namespace=override):
+                environment = {"SBX_JOB_ID": "sandbox", "HF_TOKEN": "synthetic-token"}
+                if override is not None:
+                    environment["SBX_NAMESPACE"] = override
+                connect = Mock()
+                with patch.dict(train.os.environ, environment, clear=True):
+                    eval(
+                        compile(ast.Expression(connection), train.__file__, "eval"),
+                        dict(
+                            vars(train),
+                            Sandbox=SimpleNamespace(connect=connect),
+                            repos={"OUTPUT_REPO": "some-org/lora"},
+                        ),
+                    )
+                connect.assert_called_once_with(
+                    "sandbox", namespace=override, token="synthetic-token"
+                )
+
     def test_precreated_private_tracker_gets_an_app(self):
         api = Mock()
         with patch("huggingface_hub.metadata_update") as update:
