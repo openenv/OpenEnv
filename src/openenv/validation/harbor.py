@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
@@ -18,6 +19,7 @@ import uuid
 from dataclasses import replace
 from decimal import Decimal
 from fractions import Fraction
+from functools import partial
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -276,7 +278,85 @@ def _unsupported(task, contract):
 async def _create_trial(config):
     from harbor.trial.trial import Trial
 
-    return await Trial.create(config)
+    trial = await Trial.create(config)
+    environment = trial.agent_environment
+    trial._openenv_cancelled_compose = []
+    environment._run_docker_compose_command = partial(
+        _run_compose, environment, cancelled=trial._openenv_cancelled_compose
+    )
+    return trial
+
+
+async def _run_compose(
+    environment,
+    command,
+    check=True,
+    timeout_sec=None,
+    stdin_data=None,
+    on_output=None,
+    *,
+    cancelled,
+):
+    # Harbor's Compose collector does not reap the client on outer cancellation.
+    runtime = type(environment).runtime()
+    argv = [*runtime.compose, "--project-name", environment.session_id]
+    if runtime.supports_compose_project_directory:
+        argv.extend(["--project-directory", str(environment.environment_dir.resolve())])
+    for path in environment._docker_compose_paths:
+        argv.extend(["-f", str(path.resolve())])
+    spawn = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            *argv,
+            *command,
+            env=environment._compose_env_vars(include_os_env=True),
+            cwd=str(environment.environment_dir.resolve()),
+            stdin=asyncio.subprocess.PIPE
+            if stdin_data is not None
+            else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+    )
+    try:
+        process = await asyncio.shield(spawn)
+        if on_output is not None:
+            result = await environment._collect_streamed_output(
+                process,
+                timeout_sec=timeout_sec,
+                stdin_data=stdin_data,
+                on_output=on_output,
+            )
+        else:
+            result = await environment._collect_buffered_output(
+                process, timeout_sec=timeout_sec, stdin_data=stdin_data
+            )
+        if check and result.return_code != 0:
+            raise RuntimeError("Harbor Compose command failed")
+        return result
+    except BaseException as exc:
+        # Finish spawning before cleanup, even if cancellation raced with exec.
+        process = await spawn
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await process.wait()
+        if isinstance(exc, asyncio.CancelledError) and command[0] in {
+            "build",
+            "pull",
+            "up",
+        }:
+            cancelled.append(
+                {
+                    "command": command[0],
+                    "project": environment.session_id,
+                    "client_group_killed": True,
+                    "client_reaped": True,
+                    "daemon_completion_verified": False,
+                }
+            )
+        raise
 
 
 def _read_output(path, root):
@@ -361,6 +441,7 @@ async def _trial(
     )
     from harbor.trial.hooks import TrialEvent
 
+    from .providers.docker import DockerValidationProvider
     from .runner import _DIGEST_EXCLUDED_DIRS, source_digest
 
     name = f"openenv-validation-{run_id}-{role}"
@@ -411,6 +492,7 @@ async def _trial(
         record["execution_task_digest"] = digest_before
         record["task_overlay"] = overlay
         budget = contract.resources.episode_timeout_s
+        build_budget = DockerValidationProvider().build_timeout_s
         config = TrialConfig(
             task=TaskConfig(path=task_copy.resolve()),
             agent=AgentConfig(
@@ -437,8 +519,28 @@ async def _trial(
         effective_config.pop("trial_name")
         record["trial_config_digest"] = _digest(effective_config)
         record["resources"] = contract.resources.model_dump()
-        async with asyncio.timeout(budget):
+        async with asyncio.timeout(budget) as deadline:
             trial = await _create_trial(config)
+            trial._environment_build_timeout_sec = (
+                build_budget if not expected else budget
+            )
+            if not expected:
+                record["build_timeout_s"] = build_budget
+                start_environment = trial.agent_environment.start
+
+                async def build_and_start(*, force_build):
+                    nonlocal phase
+                    loop = asyncio.get_running_loop()
+                    remaining = deadline.when() - loop.time()
+                    deadline.reschedule(None)
+                    try:
+                        async with asyncio.timeout(build_budget):
+                            await start_environment(force_build=force_build)
+                    finally:
+                        deadline.reschedule(loop.time() + remaining)
+                    phase = "agent setup"
+
+                trial.agent_environment.start = build_and_start
 
             async def environment_start(_event):
                 nonlocal phase
@@ -557,6 +659,16 @@ async def _trial(
                 record["failure"] = "HarborTeardownError"
         try:
             record["cleanup"] = inspector.cleanup(project)
+            if trial is not None and trial._openenv_cancelled_compose:
+                record["cleanup"].update(
+                    {
+                        "verified": False,
+                        "pending_operations": trial._openenv_cancelled_compose,
+                    }
+                )
+                record["reason"] = (
+                    "Docker daemon completion after cancelled Compose allocation is unverified"
+                )
             if not record["cleanup"]["verified"]:
                 record["failure"] = "CleanupNotVerified"
         except (Exception, KeyboardInterrupt) as exc:

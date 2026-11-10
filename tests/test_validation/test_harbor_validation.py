@@ -1,5 +1,6 @@
 """Native Harbor checks mock only the Trial boundary and trusted host inspector."""
 
+import asyncio
 import hashlib
 import json
 from types import SimpleNamespace
@@ -69,6 +70,9 @@ def boundary(monkeypatch, task):
         retained_error=False,
         overwrite_exit=False,
         excluded_copied=[],
+        start_delay=0,
+        agent_delay=0,
+        pending_compose=False,
     )
 
     class Inspector:
@@ -126,9 +130,10 @@ def boundary(monkeypatch, task):
                 agent_dir=directory / "agent",
             )
             self.agent_environment = SimpleNamespace(
-                session_id=config.trial_name + "__env", stop=self.stop
+                session_id=config.trial_name + "__env", start=self.start, stop=self.stop
             )
             self.hooks = {}
+            self._openenv_cancelled_compose = []
             state.excluded_copied.append(
                 (config.task.path / "environment/.worktrees").exists()
             )
@@ -136,6 +141,21 @@ def boundary(monkeypatch, task):
 
         async def stop(self, *, delete):
             assert not delete
+
+        async def start(self, *, force_build):
+            if state.pending_compose:
+                self._openenv_cancelled_compose.append(
+                    {
+                        "command": "build",
+                        "project": self.agent_environment.session_id,
+                        "client_group_killed": True,
+                        "client_reaped": True,
+                        "daemon_completion_verified": False,
+                    }
+                )
+                raise TimeoutError()
+            if self.role == "nop":
+                await asyncio.sleep(state.start_delay)
 
         def add_hook(self, event, callback):
             self.hooks.setdefault(event.value, []).append(callback)
@@ -148,9 +168,11 @@ def boundary(monkeypatch, task):
                     exception_info=SimpleNamespace(exception_type=state.exception_type),
                     verifier_result=None,
                 )
+            await self.agent_environment.start(force_build=False)
             if not state.no_identity:
                 for hook in self.hooks.get("agent-start", []):
                     await hook(None)
+            await asyncio.sleep(state.agent_delay)
             if state.timeout:
                 raise TimeoutError()
             raw = state.rewards.get(self.role, state.rewards[self.agent])
@@ -657,12 +679,63 @@ def test_static_and_skip_build_do_not_start_trials(task, boundary):
     assert not boundary.trials
 
 
+@pytest.mark.parametrize("timeout_phase", [None, "build", "agent"])
+def test_nop_build_has_a_separate_supervisor_budget(
+    task, boundary, monkeypatch, tmp_path, timeout_phase
+):
+    from openenv.validation.providers import docker
+
+    path = task / "validation/openenv.json"
+    contract = json.loads(path.read_text())
+    contract["resources"]["episode_timeout_s"] = 0.1
+    path.write_text(json.dumps(contract))
+    build_budget = 0.02 if timeout_phase == "build" else 0.5
+    monkeypatch.setattr(
+        docker,
+        "DockerValidationProvider",
+        lambda: SimpleNamespace(build_timeout_s=build_budget),
+    )
+    boundary.start_delay = 0.2
+    boundary.agent_delay = 0.2 if timeout_phase == "agent" else 0
+    artifacts = tmp_path / "build-budget"
+    report = run_validation(task, artifacts_dir=artifacts)
+    startup = result(report, "runtime.startup")
+    assert startup.status is (CheckStatus.FAIL if timeout_phase else CheckStatus.PASS)
+    if timeout_phase:
+        assert len(boundary.trials) == 1
+        phase = "environment" if timeout_phase == "build" else "agent"
+        assert phase in startup.evidence[0]
+        assert (
+            result(report, "runtime.episode_determinism").status is not CheckStatus.PASS
+        )
+    else:
+        assert result(report, "semantic.oracle_max").status is CheckStatus.PASS
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert native["cleanup"]["verified"]
+    assert native["trials"][0]["build_timeout_s"] == build_budget
+
+
 def test_harbor_report_preserves_resolved_space_target(task, boundary, tmp_path):
     target = "spaces/openenv/example@" + "d" * 40
     artifacts = tmp_path / "space-report"
     report = run_validation(task, report_target=target, artifacts_dir=artifacts)
     assert report.target == target
     assert json.loads((artifacts / "report.json").read_text())["target"] == target
+
+
+def test_cancelled_compose_keeps_daemon_cleanup_unverified(task, boundary, tmp_path):
+    boundary.pending_compose = True
+    artifacts = tmp_path / "pending-compose"
+    report = run_validation(task, artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    cleanup = native["trials"][0]["cleanup"]
+    assert not cleanup["verified"]
+    assert not any(cleanup["after"].values())
+    (pending,) = cleanup["pending_operations"]
+    assert pending["command"] == "build"
+    assert pending["project"] == boundary.trials[0].agent_environment.session_id
+    assert pending["client_reaped"] and not pending["daemon_completion_verified"]
 
 
 def test_separate_verifier_is_named_unsupported(task, boundary):
