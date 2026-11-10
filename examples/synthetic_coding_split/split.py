@@ -246,9 +246,25 @@ def validate_evidence(evidence, protocol, task_root, inventory):
 
 def test_results(output):
     """Read executed unittest identities and counts from verbose verifier output."""
-    outcomes = re.findall(
-        r"^(test_.*?) \.\.\. (ok|FAIL|ERROR|skipped.*)$", output, re.MULTILINE
-    )
+    outcomes = []
+    for line in output.splitlines():
+        if outcomes and re.fullmatch(r"[=-]{6,}", line):
+            break
+        header = re.fullmatch(r"(test_\S+ \([^\r\n]*\))(?: \.\.\.(?: (.*))?)?", line)
+        if header:
+            if outcomes and header[1] == outcomes[-1][0]:
+                # unittest repeats the parent description if a failed subTest
+                # is followed by a direct failure in the same test method.
+                if outcomes[-1][1] not in {"FAIL", "ERROR"}:
+                    outcomes[-1][1] = header[2] or outcomes[-1][1]
+            else:
+                outcomes.append([header[1], header[2] or ""])
+        elif outcomes:
+            # A failed subTest is indented beneath its parent, whose header has
+            # no final status. Count that parent once, as unittest's summary does.
+            status = re.search(r"(?:^|\.\.\. )(ok|FAIL|ERROR|skipped.*)$", line)
+            if status and (not outcomes[-1][1] or status[1] in {"FAIL", "ERROR"}):
+                outcomes[-1][1] = status[1]
     total = re.search(r"Ran (\d+) tests?", output)
     skipped = re.search(r"skipped=(\d+)", output)
     return {

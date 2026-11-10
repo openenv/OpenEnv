@@ -319,6 +319,32 @@ class SplitTests(unittest.TestCase):
                 split.check(output, sys.executable, self.task_root, self.inventory_path)
             self.assertFalse(output.exists())
 
+    def test_real_controls_keep_parent_test_identity_for_subtest_failures(self):
+        verifier = self.task / "tests/test_packaging.py"
+        source = verifier.read_text()
+        source = source.replace(
+            '        self.assertEqual(marker["MARKER"], "ready")',
+            '        for label in ("first", "second"):\n'
+            "            with self.subTest(label=label):\n"
+            '                self.assertEqual(marker["MARKER"], "ready")\n'
+            '        self.assertEqual(marker["MARKER"], "ready")',
+        )
+        self.assertIn("with self.subTest", source)
+        verifier.write_text(source)
+        self.refresh_inventory()
+        evidence = split.check(
+            self.root / "controls.json",
+            sys.executable,
+            self.task_root,
+            self.inventory_path,
+        )
+        cases = evidence["tasks"][0]["cases"]
+        self.assertIn("label='first'", cases[0]["verifier_output"])
+        self.assertEqual(cases[0]["failed_tests"], 1)
+        self.assertTrue(
+            all(case["tests_run"] == len(case["test_ids"]) == 3 for case in cases)
+        )
+
     def test_frozen_source_detects_live_and_snapshot_changes(self):
         for mutate_snapshot in (False, True):
             target = self.task / "instruction.md"
