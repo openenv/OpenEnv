@@ -432,42 +432,38 @@ async def _trial(
         effective_config.pop("trial_name")
         record["trial_config_digest"] = _digest(effective_config)
         record["resources"] = contract.resources.model_dump()
-        async with asyncio.timeout(budget):
-            trial = await _create_trial(config)
+        trial = await _create_trial(config)
 
-            async def capture(_event):
-                if trial.agent_environment.session_id != project:
-                    raise NativeEvidenceError(
-                        "Harbor sandbox identity differs from the registered project"
-                    )
-                identity = inspector.capture(project, retained_tag, retain=not expected)
-                record.update(identity)
-                if expected and (
-                    identity["image_ref"] != expected["image_ref"]
-                    or identity["configuration_digest"]
-                    != expected["configuration_digest"]
-                ):
-                    raise NativeEvidenceError(
-                        "fresh native trial image or effective container configuration drifted"
-                    )
+        async def capture(_event):
+            if trial.agent_environment.session_id != project:
+                raise NativeEvidenceError(
+                    "Harbor sandbox identity differs from the registered project"
+                )
+            identity = inspector.capture(project, retained_tag, retain=not expected)
+            record.update(identity)
+            if expected and (
+                identity["image_ref"] != expected["image_ref"]
+                or identity["configuration_digest"] != expected["configuration_digest"]
+            ):
+                raise NativeEvidenceError(
+                    "fresh native trial image or effective container configuration drifted"
+                )
 
-            async def capture_exit(_event):
-                # Harbor writes the marker only for a nonzero exit. Later sandbox
-                # log synchronization can overwrite it, so this reading is trusted.
-                if agent == "oracle":
-                    marker = _read_output(
-                        trial.paths.agent_dir / "exit-code.txt", trial.paths.trial_dir
-                    )
-                    record["oracle_exit_observed_at_agent_end"] = True
-                    record["oracle_exit_code"] = (
-                        int(marker) if marker is not None else 0
-                    )
-                    if marker is not None:
-                        raw_files["oracle-exit-code.txt"] = marker
+        async def capture_exit(_event):
+            # Harbor writes the marker only for a nonzero exit. Later sandbox
+            # log synchronization can overwrite it, so this reading is trusted.
+            if agent == "oracle":
+                marker = _read_output(
+                    trial.paths.agent_dir / "exit-code.txt", trial.paths.trial_dir
+                )
+                record["oracle_exit_observed_at_agent_end"] = True
+                record["oracle_exit_code"] = int(marker) if marker is not None else 0
+                if marker is not None:
+                    raw_files["oracle-exit-code.txt"] = marker
 
-            trial.add_hook(TrialEvent.AGENT_START, capture)
-            trial.add_hook(TrialEvent.AGENT_END, capture_exit)
-            result = await trial.run()
+        trial.add_hook(TrialEvent.AGENT_START, capture)
+        trial.add_hook(TrialEvent.AGENT_END, capture_exit)
+        result = await trial.run()
         if source_digest(task_copy) != digest_before:
             raise NativeEvidenceError(
                 "private execution task changed during validation"

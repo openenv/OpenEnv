@@ -269,6 +269,25 @@ def test_success_grades_semantic_checks_with_native_raw_evidence(
     assert (artifacts / "harbor-trials/nop/reward.json").read_bytes() == b'{"reward":0}'
 
 
+def test_trial_does_not_share_phase_timeout(task, boundary, monkeypatch):
+    timeouts = []
+    timeout = harbor.asyncio.timeout
+
+    def record_timeout(delay):
+        timeouts.append(delay)
+        return timeout(delay)
+
+    monkeypatch.setattr(harbor.asyncio, "timeout", record_timeout)
+    assert run_validation(task).verdict is Verdict.WARN
+    assert timeouts == [30, 30, 30]
+    assert all(
+        trial.config.agent.override_timeout_sec == 10
+        and trial.config.agent.override_setup_timeout_sec == 10
+        and trial.config.verifier.override_timeout_sec == 10
+        for trial in boundary.trials
+    )
+
+
 @pytest.mark.parametrize(
     "raw",
     [

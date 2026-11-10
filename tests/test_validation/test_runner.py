@@ -99,7 +99,8 @@ def test_valid_package_names_unimplemented_static_checks():
     assert report.levels_run == [Level.STATIC]
     assert report.manifest is not None and report.manifest.name == "served-min-pass"
     by_id = {r.check_id: r for r in report.results}
-    assert by_id.pop("static.manifest").status is CheckStatus.PASS
+    manifest_check = by_id.pop("static.manifest")
+    assert manifest_check.status is CheckStatus.PASS
     assert len(by_id) == 9
     assert all(
         r.check_id.startswith("static.")
