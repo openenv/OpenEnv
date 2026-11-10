@@ -1304,7 +1304,6 @@ name = "openenv-validation-runtime-tests"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "harbor" },
     { name = "jsonschema" },
     { name = "openenv" },
     { name = "pip" },
@@ -1314,9 +1313,13 @@ dependencies = [
     { name = "wheel" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "harbor" },
+]
+
 [package.metadata]
 requires-dist = [
-    { name = "harbor", specifier = "==0.25.0" },
     { name = "jsonschema", specifier = "==4.25.1" },
     { name = "openenv", directory = "../../" },
     { name = "pip", specifier = "==26.2.1" },
@@ -1325,6 +1328,9 @@ requires-dist = [
     { name = "setuptools", specifier = "==84.1.0" },
     { name = "wheel", specifier = "==0.48.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "harbor", specifier = "==0.25.0" }]
 
 [[package]]
 name = "opentelemetry-api"
