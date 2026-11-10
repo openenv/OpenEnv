@@ -54,15 +54,18 @@ def rollout_reward(result: HarborRolloutResult, reward_key: str = "") -> float |
         result ([`HarborRolloutResult`]):
             One rollout.
         reward_key (`str`, *optional*, defaults to `""`):
-            Key of `result.rewards` to fall back to.
+            Key of `result.rewards` to fall back to, or a comma-separated preference order.
 
     Returns:
         `float` or `None`: the reward, or `None` when the rollout was not graded.
     """
     if result.reward is not None:
         return result.reward
-    if reward_key and reward_key in result.rewards:
-        return result.rewards[reward_key]
+    if reward_key:
+        # A literal key first, then a comma-separated preference order, as `openenv harbor rollout --reward-key`.
+        for key in [reward_key] + [k.strip() for k in reward_key.split(",")]:
+            if key in result.rewards:
+                return result.rewards[key]
     if len(result.rewards) == 1:
         return next(iter(result.rewards.values()))
     return None

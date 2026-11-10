@@ -173,6 +173,18 @@ def test_reward_from_named_rewards():
     assert sft.export_sft([single], min_reward=1.0)[0][0]["reward"] == 1.0
 
 
+def test_reward_key_preference_order():
+    # a split mixing graders: some tasks write `correctness`, others only `reward`
+    multi = rollout(reward=None, rewards={"correctness": 0.0, "submission": 1.0})
+    single = rollout(reward=None, rewards={"reward": 1.0, "tool_efficiency": 0.5})
+    rows, stats = sft.export_sft([multi, single], reward_key="correctness,reward")
+    assert [r["reward"] for r in rows] == [0.0, 1.0]
+    assert stats.ungraded == 0
+    assert (
+        sft.export_sft([multi], min_reward=0.0, reward_key="missing")[1].ungraded == 1
+    )
+
+
 def test_rollout_cut_short_is_reported():
     _, stats = sft.export_sft([rollout(last_reply="", finish_reason="tool_calls")])
     assert stats.ended_on_tool_call == ["0000_001_qa_1"]

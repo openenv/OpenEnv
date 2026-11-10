@@ -367,7 +367,7 @@ def export_sft_command(
         str,
         typer.Option(
             "--reward-key",
-            help="Reward to read when the verifier reported several and none was picked at rollout time.",
+            help="Reward to read when the verifier reported several and none was picked at rollout time. A comma-separated list is a preference order, e.g. correctness,reward.",
         ),
     ] = "",
     push_to: Annotated[
