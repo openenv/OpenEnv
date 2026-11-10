@@ -113,7 +113,7 @@
     },
     "HarborExecutionDeclaration": {
       "additionalProperties": false,
-      "description": "Native process execution for the bounded Harbor oracle/floor pilot.",
+      "description": "Native process execution of a Harbor task through fresh Docker trials.",
       "properties": {
         "agent_boundary": {
           "const": "process",
@@ -133,8 +133,8 @@
           "type": "string"
         },
         "profile": {
-          "const": "harbor-oracle-floor-v1",
-          "default": "harbor-oracle-floor-v1",
+          "const": "harbor-semantic-v1",
+          "default": "harbor-semantic-v1",
           "title": "Profile",
           "type": "string"
         },

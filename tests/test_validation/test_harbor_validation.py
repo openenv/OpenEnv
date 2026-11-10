@@ -1,4 +1,4 @@
-"""Native pilot checks mock only the Trial boundary and trusted host inspector."""
+"""Native Harbor checks mock only the Trial boundary and trusted host inspector."""
 
 import hashlib
 import json
@@ -32,7 +32,7 @@ def task(tmp_path):
     (root / "tests/test.sh").write_text("#!/bin/sh\nexit 0\n")
     (root / "solution/solve.sh").write_text("#!/bin/sh\nexit 0\n")
     contract = {
-        "profile": "harbor-oracle-floor-v1",
+        "profile": "harbor-semantic-v1",
         "reward_key": "reward",
         "reward": {"range": [0, 1], "oracle_tolerance": 0, "floor_margin": 0.1},
         "resources": {
@@ -76,7 +76,7 @@ def boundary(monkeypatch, task):
             return {"containers": [], "networks": [], "volumes": []}
 
         def capture(self, project, retained_tag, *, retain=True):
-            role = "oracle" if "-oracle__env" in project else "nop"
+            role = _role(project.removesuffix("__env"))
             return {
                 "container_id": role + "-container",
                 "image_ref": "sha256:" + "c" * 64
@@ -104,7 +104,9 @@ def boundary(monkeypatch, task):
     class Trial:
         def __init__(self, config):
             self.config = config
-            self.role = config.agent.name
+            self.role = _role(config.trial_name)
+            self.agent = config.agent.name
+            self.solve = (config.task.path / "solution/solve.sh").read_bytes()
             directory = config.trials_dir / config.trial_name
             (directory / "verifier").mkdir(parents=True)
             (directory / "agent").mkdir()
@@ -135,10 +137,10 @@ def boundary(monkeypatch, task):
                     await hook(None)
             if state.timeout:
                 raise TimeoutError()
-            raw = state.rewards[self.role]
+            raw = state.rewards.get(self.role, state.rewards[self.agent])
             if raw is not None:
                 self.paths.reward_json_path.write_bytes(raw)
-            if self.role == "oracle" and state.oracle_exit is not None:
+            if self.agent == "oracle" and state.oracle_exit is not None:
                 (self.paths.agent_dir / "exit-code.txt").write_text(
                     str(state.oracle_exit)
                 )
@@ -146,7 +148,7 @@ def boundary(monkeypatch, task):
                 for hook in self.hooks.get("agent-end", []):
                     await hook(None)
             finally:
-                if self.role == "oracle" and state.overwrite_exit:
+                if self.agent == "oracle" and state.overwrite_exit:
                     (self.paths.agent_dir / "exit-code.txt").write_text("0")
             if state.mutate:
                 (task / "instruction.md").write_text("changed source")
@@ -173,8 +175,17 @@ def boundary(monkeypatch, task):
     return state
 
 
+def _role(trial_name):
+    # openenv-validation-<run id>-<role>
+    return trial_name.split("-", 3)[3]
+
+
 def result(report, check_id):
     return next(check for check in report.results if check.check_id == check_id)
+
+
+def statuses(report):
+    return {check.check_id: check.status for check in report.results}
 
 
 def test_parser_is_pure_and_describes_process_binding(task, monkeypatch):
@@ -188,36 +199,59 @@ def test_parser_is_pure_and_describes_process_binding(task, monkeypatch):
     assert manifest.reward.floor_margin == 0.1
 
 
-def test_success_is_bounded_warn_with_native_raw_evidence(task, boundary, tmp_path):
+def test_success_grades_semantic_checks_with_native_raw_evidence(
+    task, boundary, tmp_path
+):
     original = source_digest(task)
     artifacts = tmp_path / "artifacts"
     report = run_validation(task, artifacts_dir=artifacts)
+    # Checks this binding does not implement remain named SKIPs.
     assert report.verdict is Verdict.WARN
+    assert report.levels_run == [Level.STATIC, Level.RUNTIME, Level.SEMANTIC]
     assert source_digest(task) == original
-    required = {"static.manifest", "runtime.startup", "runtime.reward_well_formed"}
-    assert {
-        check.check_id for check in report.results if check.status is CheckStatus.PASS
-    } == required
-    assert all(
-        check.status is CheckStatus.SKIP
-        for check in report.results
-        if check.check_id not in required
+    passed = {
+        "static.manifest",
+        "runtime.startup",
+        "runtime.reward_well_formed",
+        "runtime.episode_determinism",
+        "semantic.oracle_max",
+        "semantic.floor_gap",
+    }
+    found = statuses(report)
+    assert {check for check, status in found.items() if status is CheckStatus.PASS} == (
+        passed
     )
-    assert result(report, "semantic.oracle_max").status is CheckStatus.SKIP
+    assert all(
+        status is CheckStatus.SKIP
+        for check, status in found.items()
+        if check not in passed
+    )
+    assert result(report, "semantic.canary_floor").evidence == [
+        "no canaries declared in validation/openenv.json"
+    ]
+    assert result(report, "static.sbom").evidence == [
+        "grader not implemented in this build"
+    ]
+    assert "harbor_task" in result(report, "semantic.replayability").evidence[0]
+    assert result(report, "semantic.floor_gap").measured["measured_floor"] == 0
     native = json.loads((artifacts / "harbor-evidence.json").read_text())
-    assert native["profile"] == "harbor-oracle-floor-v1"
+    assert native["profile"] == "harbor-semantic-v1"
     assert native["task_effective_digest"] == report.source_digest == original
     assert native["original_source_digest"] == "b" * 64
     assert native["image_ref"] == IMAGE
     assert native["floor_reward"] == 0 and native["oracle_reward"] == 1
-    assert native["oracle_max"]["passed"] and native["floor_gap"]["passed"]
     assert native["cleanup"]["verified"]
-    assert [trial.config.agent.name for trial in boundary.trials] == ["nop", "oracle"]
+    assert [trial["role"] for trial in native["trials"]] == [
+        "nop",
+        "oracle",
+        "oracle-replay",
+    ]
+    assert [trial.agent for trial in boundary.trials] == ["nop", "oracle", "oracle"]
     assert all(not trial.config.environment.delete for trial in boundary.trials)
     assert all(
         trial.config.environment.kwargs["keep_containers"] for trial in boundary.trials
     )
-    assert boundary.trials[0].config.task.path != boundary.trials[1].config.task.path
+    assert len({trial.config.task.path for trial in boundary.trials}) == 3
     assert json.loads((artifacts / "report.json").read_text()) == json.loads(
         report.model_dump_json()
     )
@@ -230,6 +264,7 @@ def test_success_is_bounded_warn_with_native_raw_evidence(task, boundary, tmp_pa
         "harbor-evidence.json",
         "harbor-trials/nop/reward.json",
         "harbor-trials/oracle/reward.json",
+        "harbor-trials/oracle-replay/reward.json",
     } <= inventory.keys()
     assert (artifacts / "harbor-trials/nop/reward.json").read_bytes() == b'{"reward":0}'
 
@@ -256,7 +291,9 @@ def test_bad_rewards_block_and_preserve_raw(task, boundary, tmp_path, raw):
     artifacts = tmp_path / "bad"
     report = run_validation(task, artifacts_dir=artifacts)
     assert report.verdict is Verdict.FAIL
-    assert result(report, "runtime.reward_well_formed").status is not CheckStatus.PASS
+    assert result(report, "runtime.startup").status is CheckStatus.PASS
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.FAIL
+    assert result(report, "semantic.oracle_max").status is CheckStatus.SKIP
     assert len(boundary.trials) == 1
     if raw is not None:
         assert (artifacts / "harbor-trials/nop/reward.json").read_bytes() == raw
@@ -273,12 +310,11 @@ def test_actual_oracle_floor_arithmetic(
         "nop": json.dumps({"reward": floor}).encode(),
         "oracle": json.dumps({"reward": oracle}).encode(),
     }
-    artifacts = tmp_path / "arithmetic"
-    report = run_validation(task, artifacts_dir=artifacts)
-    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    report = run_validation(task)
+    expected = {True: CheckStatus.PASS, False: CheckStatus.FAIL}
     assert report.verdict is Verdict.FAIL
-    assert native["oracle_max"]["passed"] is oracle_max
-    assert native["floor_gap"]["passed"] is floor_gap
+    assert result(report, "semantic.oracle_max").status is expected[oracle_max]
+    assert result(report, "semantic.floor_gap").status is expected[floor_gap]
     assert result(report, "runtime.reward_well_formed").status is CheckStatus.PASS
 
 
@@ -289,11 +325,9 @@ def test_tiny_positive_floor_does_not_round_up_to_margin(task, boundary, tmp_pat
     raw_contract["reward"]["floor_margin"] = 0.9
     (task / "validation/openenv.json").write_text(json.dumps(raw_contract))
     boundary.rewards = {"nop": b'{"reward":1e-300}', "oracle": b'{"reward":0.9}'}
-    artifacts = tmp_path / "exact-gap"
-    report = run_validation(task, artifacts_dir=artifacts)
-    native = json.loads((artifacts / "harbor-evidence.json").read_text())
-    assert native["oracle_max"]["passed"]
-    assert not native["floor_gap"]["passed"]
+    report = run_validation(task)
+    assert result(report, "semantic.oracle_max").status is CheckStatus.PASS
+    assert result(report, "semantic.floor_gap").status is CheckStatus.FAIL
     assert report.verdict is Verdict.FAIL
 
 
@@ -326,11 +360,17 @@ def test_cleanup_failure_blocks(task, boundary, tmp_path):
     ]
 
 
-def test_oracle_nonzero_exit_blocks_and_retains_marker(task, boundary, tmp_path):
+def test_oracle_nonzero_exit_fails_oracle_max_and_retains_marker(
+    task, boundary, tmp_path
+):
     boundary.oracle_exit = 7
     artifacts = tmp_path / "exit"
     report = run_validation(task, artifacts_dir=artifacts)
     assert report.verdict is Verdict.FAIL
+    assert result(report, "runtime.startup").status is CheckStatus.PASS
+    oracle_max = result(report, "semantic.oracle_max")
+    assert oracle_max.status is CheckStatus.FAIL
+    assert "oracle run 1 exited with code 7" in oracle_max.evidence
     assert (
         artifacts / "harbor-trials/oracle/oracle-exit-code.txt"
     ).read_bytes() == b"7"
@@ -342,6 +382,7 @@ def test_sandbox_log_sync_cannot_erase_trusted_oracle_exit(task, boundary, tmp_p
     artifacts = tmp_path / "overwritten-exit"
     report = run_validation(task, artifacts_dir=artifacts)
     assert report.verdict is Verdict.FAIL
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
     native = json.loads((artifacts / "harbor-evidence.json").read_text())
     assert native["trials"][1]["oracle_exit_code"] == 7
     assert (
@@ -358,7 +399,7 @@ def test_excluded_symlink_tree_is_never_dereferenced_or_copied(
     excluded.mkdir()
     (excluded / "payload").symlink_to(sentinel)
     assert run_validation(task).verdict is Verdict.WARN
-    assert boundary.excluded_copied == [False, False]
+    assert boundary.excluded_copied == [False, False, False]
 
 
 def test_copy_change_and_restore_cannot_escape_source_binding(
@@ -394,11 +435,13 @@ def test_copy_change_and_restore_cannot_escape_source_binding(
     assert "validated source digest" in native["trials"][1]["reason"]
 
 
-def test_missing_oracle_blocks_without_starting_trial(task, boundary):
+def test_missing_oracle_fails_oracle_max_without_starting_trial(task, boundary):
     (task / "solution/solve.sh").unlink()
     report = run_validation(task)
     assert report.verdict is Verdict.FAIL
-    assert result(report, "runtime.startup").status is CheckStatus.FAIL
+    # RFC 008: no oracle is a graded FAIL, not a SKIP.
+    assert result(report, "semantic.oracle_max").status is CheckStatus.FAIL
+    assert result(report, "runtime.startup").status is CheckStatus.SKIP
     assert not boundary.trials
 
 
@@ -536,7 +579,8 @@ def test_anonymous_volumes_are_registered_removed_and_rechecked(
 
 
 def test_static_and_skip_build_do_not_start_trials(task, boundary):
-    assert run_validation(task, max_level=Level.STATIC).verdict is Verdict.PASS
+    static = run_validation(task, max_level=Level.STATIC)
+    assert result(static, "static.manifest").status is CheckStatus.PASS
     report = run_validation(task, skip_build=True)
     assert result(report, "runtime.startup").status is CheckStatus.SKIP
     assert not boundary.trials
@@ -560,6 +604,86 @@ def test_explicit_contract_and_valid_toml_required(task, boundary):
 
 def test_malformed_toml_is_manifest_failure(task, boundary):
     (task / "task.toml").write_text("invalid = [")
+    report = run_validation(task)
+    assert result(report, "static.manifest").status is CheckStatus.FAIL
+    assert not boundary.trials
+
+
+def test_replay_divergence_fails_determinism_and_skips_semantics(task, boundary):
+    boundary.rewards["oracle-replay"] = b'{"reward":0.5}'
+    report = run_validation(task)
+    assert report.verdict is Verdict.FAIL
+    assert result(report, "runtime.episode_determinism").status is CheckStatus.FAIL
+    for check_id in ("semantic.oracle_max", "semantic.floor_gap"):
+        skipped = result(report, check_id)
+        assert skipped.status is CheckStatus.SKIP
+        assert skipped.evidence == ["unmet dependencies: runtime.episode_determinism"]
+
+
+@pytest.fixture
+def canaries(task):
+    directory = task / "validation/canaries"
+    directory.mkdir()
+    (directory / "a-empty.sh").write_bytes(b"#!/bin/sh\ntrue\n")
+    (directory / "b-hardcoded.sh").write_bytes(b"#!/bin/sh\necho 42 > /app/out\n")
+    contract = json.loads((task / "validation/openenv.json").read_text())
+    contract["canaries"] = "validation/canaries"
+    (task / "validation/openenv.json").write_text(json.dumps(contract))
+    return directory
+
+
+def test_canaries_replace_the_solution_and_must_stay_at_the_floor(
+    task, boundary, canaries, tmp_path
+):
+    boundary.rewards.update({"canary-1": b'{"reward":0}', "canary-2": b'{"reward":1}'})
+    artifacts = tmp_path / "canaries"
+    report = run_validation(task, artifacts_dir=artifacts)
+    assert report.verdict is Verdict.FAIL
+    canary = result(report, "semantic.canary_floor")
+    assert canary.status is CheckStatus.FAIL
+    assert canary.evidence == [
+        "canary validation/canaries/b-hardcoded.sh earned 1.0, "
+        "above the do-nothing reward 0.0"
+    ]
+    by_role = {trial.role: trial for trial in boundary.trials}
+    assert list(by_role) == ["nop", "oracle", "oracle-replay", "canary-1", "canary-2"]
+    assert by_role["oracle"].solve == (task / "solution/solve.sh").read_bytes()
+    assert by_role["canary-1"].solve == (canaries / "a-empty.sh").read_bytes()
+    assert by_role["canary-2"].solve == (canaries / "b-hardcoded.sh").read_bytes()
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    overlay = native["trials"][4]["task_overlay"]["solution/solve.sh"]
+    assert overlay["canary"] == "validation/canaries/b-hardcoded.sh"
+
+
+def test_canaries_at_the_floor_pass(task, boundary, canaries):
+    boundary.rewards.update({"canary-1": b'{"reward":0}', "canary-2": b'{"reward":0}'})
+    report = run_validation(task)
+    assert result(report, "semantic.canary_floor").status is CheckStatus.PASS
+
+
+def test_canaries_run_only_at_the_semantic_level(task, boundary, canaries):
+    report = run_validation(task, max_level=Level.RUNTIME)
+    assert [trial.role for trial in boundary.trials] == [
+        "nop",
+        "oracle",
+        "oracle-replay",
+    ]
+    assert result(report, "runtime.episode_determinism").status is CheckStatus.PASS
+    assert not any(check.check_id.startswith("semantic.") for check in report.results)
+
+
+@pytest.mark.parametrize("declared", ["../outside", "/abs", "validation/missing"])
+def test_invalid_canaries_declaration_is_manifest_failure(task, boundary, declared):
+    contract = json.loads((task / "validation/openenv.json").read_text())
+    contract["canaries"] = declared
+    (task / "validation/openenv.json").write_text(json.dumps(contract))
+    report = run_validation(task)
+    assert result(report, "static.manifest").status is CheckStatus.FAIL
+    assert not boundary.trials
+
+
+def test_canaries_directory_holds_only_scripts(task, boundary, canaries):
+    (canaries / "notes.txt").write_text("not a canary")
     report = run_validation(task)
     assert result(report, "static.manifest").status is CheckStatus.FAIL
     assert not boundary.trials

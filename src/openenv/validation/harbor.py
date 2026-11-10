@@ -1,4 +1,8 @@
-"""Native Harbor oracle/floor pilot; no served-protocol evidence is synthesized."""
+"""Native Harbor execution: fresh Docker trials graded through RFC 008 check ids.
+
+No served-protocol evidence is synthesized. A do-nothing trial builds the image, and
+the oracle, its replay and any canaries run pinned to that image.
+"""
 
 import asyncio
 import hashlib
@@ -11,21 +15,50 @@ import subprocess
 import tempfile
 import time
 import uuid
+from dataclasses import replace
 from decimal import Decimal
 from fractions import Fraction
 from importlib.metadata import distribution
 from pathlib import Path
 
-from .parsers.harbor_toml import HARBOR_PROFILE, read_harbor_contract, read_harbor_task
+from .graders import GraderRegistry
+from .graders.semantic import CanaryFloorGrader, FloorGapGrader, OracleMaxGrader
+from .parsers.harbor_toml import (
+    canary_scripts,
+    HARBOR_PROFILE,
+    read_harbor_contract,
+    read_harbor_task,
+)
 from .policy import apply_policy
 from .report import CheckResult, ValidationReportV2
 from .runtime.artifacts import write_runtime_bundle
+from .runtime.contracts import OracleEvidence
 from .runtime.json_values import dumps
+from .runtime.scheduler import execute_graders
 from .types import CheckStatus, Lane, Level
 
 _IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _RESOURCE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*\Z")
+_PROJECT = re.compile(
+    r"openenv-validation-[a-f0-9]+-(nop|oracle|oracle-replay|canary-[1-8])__env"
+)
 _MAX_REWARD_BYTES = 1024 * 1024
+# Failures the trial's teardown records over any earlier one.
+_HOST_FAILURES = {
+    "HarborTeardownError",
+    "CleanupNotVerified",
+    "RewardArtifactDrift",
+    "UnsafeRewardArtifact",
+}
+# Checks this binding measures; every other local check is a named SKIP.
+_IMPLEMENTED = {
+    "runtime.startup",
+    "runtime.reward_well_formed",
+    "runtime.episode_determinism",
+    "semantic.oracle_max",
+    "semantic.floor_gap",
+    "semantic.canary_floor",
+}
 
 
 class NativeEvidenceError(ValueError):
@@ -64,7 +97,7 @@ class DockerInspector:
         }
 
     def inventory(self, project):
-        if not re.fullmatch(r"openenv-validation-[a-f0-9]+-(nop|oracle)__env", project):
+        if not _PROJECT.fullmatch(project):
             raise NativeEvidenceError("not a run-owned Harbor project")
         label = f"label=com.docker.compose.project={project}"
         inventory = {}
@@ -303,7 +336,16 @@ def _reward(raw_files, parsed, contract):
 
 
 async def _trial(
-    root, role, work, contract, inspector, run_id, source_binding, expected=None
+    root,
+    role,
+    agent,
+    work,
+    contract,
+    inspector,
+    run_id,
+    source_binding,
+    expected=None,
+    canary=None,
 ):
     from harbor.models.environment_type import EnvironmentType
     from harbor.models.trial.config import (
@@ -322,6 +364,7 @@ async def _trial(
     retained_tag = f"openenv-validation:{run_id}"
     record = {
         "role": role,
+        "agent": agent,
         "project": project,
         "raw_rewards": {},
         "cleanup": {"verified": False},
@@ -345,20 +388,28 @@ async def _trial(
             raise NativeEvidenceError(
                 "private execution task differs from the validated source digest"
             )
+        overlay = {}
         if expected:
             task = read_harbor_task(task_copy)
             task.config.environment.docker_image = retained_tag
             (task_copy / "task.toml").write_text(task.config.model_dump_toml())
+            overlay["environment.docker_image"] = retained_tag
+        if canary is not None:
+            # The oracle agent runs the canary in place of the reference solution.
+            script = (task_copy / canary).read_bytes()
+            (task_copy / "solution/solve.sh").write_bytes(script)
+            overlay["solution/solve.sh"] = {
+                "canary": canary,
+                "sha256": hashlib.sha256(script).hexdigest(),
+            }
         digest_before = source_digest(task_copy)
         record["execution_task_digest"] = digest_before
-        record["task_overlay"] = (
-            {"environment.docker_image": retained_tag} if expected else {}
-        )
+        record["task_overlay"] = overlay
         budget = contract.resources.episode_timeout_s
         config = TrialConfig(
             task=TaskConfig(path=task_copy.resolve()),
             agent=AgentConfig(
-                name=role,
+                name=agent,
                 override_timeout_sec=budget,
                 override_setup_timeout_sec=budget,
             ),
@@ -401,7 +452,9 @@ async def _trial(
                     )
 
             async def capture_exit(_event):
-                if role == "oracle":
+                # Harbor writes the marker only for a nonzero exit. Later sandbox
+                # log synchronization can overwrite it, so this reading is trusted.
+                if agent == "oracle":
                     marker = _read_output(
                         trial.paths.agent_dir / "exit-code.txt", trial.paths.trial_dir
                     )
@@ -411,10 +464,6 @@ async def _trial(
                     )
                     if marker is not None:
                         raw_files["oracle-exit-code.txt"] = marker
-                    if record["oracle_exit_code"] != 0:
-                        raise NativeEvidenceError(
-                            "oracle exit-code.txt records a nonzero exit"
-                        )
 
             trial.add_hook(TrialEvent.AGENT_START, capture)
             trial.add_hook(TrialEvent.AGENT_END, capture_exit)
@@ -434,7 +483,7 @@ async def _trial(
             raw = _read_output(path, trial.paths.trial_dir)
             if raw is not None:
                 raw_files[filename] = raw
-        if role == "oracle":
+        if agent == "oracle":
             if not record.get("oracle_exit_observed_at_agent_end"):
                 raise NativeEvidenceError(
                     "oracle has no trusted AGENT_END exit observation"
@@ -442,8 +491,8 @@ async def _trial(
             marker = _read_output(
                 trial.paths.agent_dir / "exit-code.txt", trial.paths.trial_dir
             )
-            if marker is not None and int(marker) != 0:
-                raise NativeEvidenceError("oracle exit-code.txt records a nonzero exit")
+            if marker is not None and int(marker) != record["oracle_exit_code"]:
+                raise NativeEvidenceError("oracle exit marker changed after AGENT_END")
         parsed = result.verifier_result.rewards if result.verifier_result else None
         record["reward_error"] = True
         record["rewards"] = _reward(raw_files, parsed, contract)
@@ -487,20 +536,32 @@ async def _trial(
     return record, raw_files
 
 
-async def _collect(root, contract, work, inspector, source_binding):
+async def _collect(root, contract, work, inspector, source_binding, canaries=()):
     run_id = uuid.uuid4().hex
     daemon = inspector.preflight()
+    # The replay makes episode determinism measurable before any semantic check.
+    plan = [
+        ("nop", "nop", None),
+        ("oracle", "oracle", None),
+        ("oracle-replay", "oracle", None),
+        *(
+            (f"canary-{index}", "oracle", canary)
+            for index, canary in enumerate(canaries, start=1)
+        ),
+    ]
     trials, files = [], {}
-    for role in ("nop", "oracle"):
+    for role, agent, canary in plan:
         trial, raw = await _trial(
             root,
             role,
+            agent,
             work,
             contract,
             inspector,
             run_id,
             source_binding,
             trials[0] if trials else None,
+            canary,
         )
         trials.append(trial)
         for name, value in raw.items():
@@ -533,6 +594,22 @@ def _result(check_id, status, reason, measured=None):
     )
 
 
+def _reward_only(trial):
+    # `reward_error` marks a failure raised while parsing the verifier's reward:
+    # the package's defect, unless teardown or cleanup later found a host problem.
+    return trial.get("reward_error") and trial.get("failure") not in _HOST_FAILURES
+
+
+def _skip_reason(entry, contract):
+    if entry.check_id not in _IMPLEMENTED:
+        if entry.level is Level.STATIC:
+            return "grader not implemented in this build"
+        return f"not implemented for the harbor_task binding ({HARBOR_PROFILE})"
+    if entry.check_id == "semantic.canary_floor" and contract.canaries is None:
+        return "no canaries declared in validation/openenv.json"
+    return "unmet dependency: native Harbor trials"
+
+
 def validate_harbor(
     subject,
     *,
@@ -544,20 +621,24 @@ def validate_harbor(
     skip_build=False,
     provider=None,
 ):
-    """Return the usual report plus explicitly bounded native pilot evidence."""
+    """Run fresh native Harbor trials and grade them up to the requested level."""
     from .runner import source_digest
 
     started = time.monotonic()
     contract = read_harbor_contract(subject.root)
+    semantic = max_level >= Level.SEMANTIC
+    canaries = (
+        canary_scripts(subject.root, contract.canaries)
+        if semantic and contract.canaries is not None
+        else []
+    )
     record = {
-        "schema_version": "1",
+        "schema_version": "2",
         "profile": HARBOR_PROFILE,
         "task_effective_digest": digest_before,
         "original_source_digest": contract.original_source_digest,
         "contract_digest": _digest(contract.model_dump(mode="json")),
         "reward_key": contract.reward_key,
-        "oracle_max": {"passed": False},
-        "floor_gap": {"passed": False},
         "cleanup": {"verified": False},
         "trials": [],
     }
@@ -586,13 +667,34 @@ def validate_harbor(
         CheckStatus.SKIP,
         "unmet dependency: native Harbor trials",
     )
+    determinism = _result(
+        "runtime.episode_determinism",
+        CheckStatus.SKIP,
+        "unmet dependency: native Harbor trials",
+    )
+    evidence = None
+    checks = []
     if not problem:
         if subject.manifest.capabilities.oracle is None:
             startup = _result(
                 "runtime.startup",
-                CheckStatus.FAIL,
-                "native pilot requires solution/solve.sh",
+                CheckStatus.SKIP,
+                "native Harbor trials need solution/solve.sh",
             )
+            if semantic:
+                # RFC 008: a missing oracle is a graded FAIL, never a SKIP.
+                checks.append(
+                    CheckResult(
+                        check_id="semantic.oracle_max",
+                        status=CheckStatus.FAIL,
+                        evidence=["the task has no oracle (solution/solve.sh)"],
+                        remediation=(
+                            "Add solution/solve.sh that drives the task to a "
+                            "correct solution."
+                        ),
+                        duration_s=0,
+                    )
+                )
         else:
             attempted = True
             try:
@@ -606,6 +708,7 @@ def validate_harbor(
                             Path(temp),
                             DockerInspector(),
                             digest_before,
+                            canaries,
                         )
                     )
                 record.update({"daemon": daemon, "trials": trials})
@@ -613,8 +716,18 @@ def validate_harbor(
                     "verified": bool(trials)
                     and all(trial["cleanup"]["verified"] for trial in trials)
                 }
-                failed = [trial for trial in trials if "failure" in trial]
-                if failed or len(trials) != 2:
+                broken = [
+                    trial
+                    for trial in trials
+                    if "failure" in trial and not _reward_only(trial)
+                ]
+                malformed = any(_reward_only(trial) for trial in trials)
+                containers = [trial.get("container_id") for trial in trials]
+                if (
+                    broken
+                    or (not malformed and len(trials) != 3 + len(canaries))
+                    or len(set(containers)) != len(containers)
+                ):
                     startup = _result(
                         "runtime.startup",
                         CheckStatus.ERROR,
@@ -622,81 +735,129 @@ def validate_harbor(
                         {
                             "failures": [
                                 trial.get("reason", trial.get("failure"))
-                                for trial in failed
+                                for trial in broken
                             ]
                         },
                     )
-                    if any(trial.get("reward_error") for trial in failed):
+                    if malformed:
                         reward_result = _result(
                             "runtime.reward_well_formed",
                             CheckStatus.FAIL,
                             "native verifier reward violates the explicit contract",
                         )
                 else:
-                    floor, oracle = (
-                        trial["rewards"][contract.reward_key] for trial in trials
-                    )
-                    maximum = Decimal(str(contract.reward.range[1]))
-                    oracle_pass = Fraction(oracle) >= Fraction(maximum) - Fraction(
-                        str(contract.reward.oracle_tolerance)
-                    )
-                    gap_pass = Fraction(oracle) - Fraction(floor) >= Fraction(
-                        str(contract.reward.floor_margin)
-                    ) and Fraction(maximum) - Fraction(floor) >= Fraction(
-                        str(contract.reward.floor_margin)
-                    )
                     record.update(
                         {
                             "image_ref": trials[0]["image_ref"],
                             "retained_image_tag": trials[0]["retained_image_tag"],
-                            "floor_reward": floor,
-                            "oracle_reward": oracle,
-                            "oracle_max": {
-                                "passed": oracle_pass,
-                                "declared_max": maximum,
-                                "tolerance": contract.reward.oracle_tolerance,
-                            },
-                            "floor_gap": {
-                                "passed": gap_pass,
-                                "comparison": "exact-rational",
-                                "measured_gap": oracle - floor,
-                                "declared_margin": contract.reward.floor_margin,
-                            },
                         }
                     )
-                    distinct = trials[0]["container_id"] != trials[1]["container_id"]
                     startup = _result(
                         "runtime.startup",
-                        CheckStatus.PASS
-                        if oracle_pass and gap_pass and distinct
-                        else CheckStatus.FAIL,
-                        "fresh native Harbor trials with verified cleanup; pilot oracle/floor gates evaluated",
+                        CheckStatus.PASS,
+                        "fresh native Harbor trials ran from one immutable image "
+                        "with verified cleanup",
                         {
-                            key: json.loads(dumps(record[key]))
-                            for key in (
-                                "profile",
-                                "image_ref",
-                                "floor_reward",
-                                "oracle_reward",
-                                "oracle_max",
-                                "floor_gap",
-                                "cleanup",
-                                "task_effective_digest",
-                            )
+                            "profile": HARBOR_PROFILE,
+                            "image_ref": trials[0]["image_ref"],
+                            "roles": [trial["role"] for trial in trials],
+                            "task_effective_digest": digest_before,
                         },
                     )
-                    reward_result = _result(
-                        "runtime.reward_well_formed",
-                        CheckStatus.PASS,
-                        "both raw verifier reward maps match Harbor and satisfy the declared key/range",
-                        {"profile": HARBOR_PROFILE, "reward_key": contract.reward_key},
-                    )
+                    if malformed:
+                        reward_result = _result(
+                            "runtime.reward_well_formed",
+                            CheckStatus.FAIL,
+                            "native verifier reward violates the explicit contract",
+                        )
+                        determinism = _result(
+                            "runtime.episode_determinism",
+                            CheckStatus.SKIP,
+                            "unmet dependency: runtime.reward_well_formed",
+                        )
+                    else:
+                        reward_result = _result(
+                            "runtime.reward_well_formed",
+                            CheckStatus.PASS,
+                            "every raw verifier reward map matches Harbor and "
+                            "satisfies the declared key/range",
+                            {
+                                "profile": HARBOR_PROFILE,
+                                "reward_key": contract.reward_key,
+                            },
+                        )
+                        nop, oracle, replay, *canary_trials = trials
+                        same = (
+                            oracle["rewards"] == replay["rewards"]
+                            and oracle["oracle_exit_code"] == replay["oracle_exit_code"]
+                        )
+                        determinism = _result(
+                            "runtime.episode_determinism",
+                            CheckStatus.PASS if same else CheckStatus.FAIL,
+                            "the oracle replay in a fresh container "
+                            + (
+                                "reproduced every reward and the exit code"
+                                if same
+                                else "produced different rewards or a different exit code"
+                            ),
+                            {
+                                "rewards": [
+                                    json.loads(dumps(trial["rewards"]))
+                                    for trial in (oracle, replay)
+                                ],
+                                "exit_codes": [
+                                    trial["oracle_exit_code"]
+                                    for trial in (oracle, replay)
+                                ],
+                            },
+                        )
+                        key = contract.reward_key
+                        record.update(
+                            {
+                                "floor_reward": nop["rewards"][key],
+                                "oracle_reward": oracle["rewards"][key],
+                            }
+                        )
+                        evidence = OracleEvidence(
+                            floor=Fraction(nop["rewards"][key]),
+                            oracle=tuple(
+                                Fraction(trial["rewards"][key])
+                                for trial in (oracle, replay)
+                            ),
+                            oracle_exit_codes=tuple(
+                                trial["oracle_exit_code"] for trial in (oracle, replay)
+                            ),
+                            canaries=tuple(
+                                (
+                                    trial["task_overlay"]["solution/solve.sh"][
+                                        "canary"
+                                    ],
+                                    Fraction(trial["rewards"][key]),
+                                )
+                                for trial in canary_trials
+                            ),
+                        )
             except (Exception, KeyboardInterrupt) as exc:
                 record["failure"] = type(exc).__name__
                 startup = _result(
                     "runtime.startup",
                     CheckStatus.ERROR,
                     f"native Harbor collection failed ({type(exc).__name__})",
+                )
+            if semantic:
+                registry = GraderRegistry()
+                for grader in (
+                    OracleMaxGrader(),
+                    FloorGapGrader(),
+                    CanaryFloorGrader(),
+                ):
+                    registry.register(grader)
+                checks.extend(
+                    execute_graders(
+                        registry.select(subject.manifest, max_level),
+                        replace(subject, oracle_evidence=evidence),
+                        prior=[startup, reward_result, determinism],
+                    )
                 )
     try:
         unchanged = source_digest(subject.root) == digest_before
@@ -709,16 +870,19 @@ def validate_harbor(
             CheckStatus.ERROR,
             "task source changed during native validation",
         )
-        reward_result = _result(
-            "runtime.reward_well_formed",
-            CheckStatus.SKIP,
-            "unmet dependency: unchanged native task source",
+        reward_result, determinism, *checks = (
+            _result(
+                check.check_id,
+                CheckStatus.SKIP,
+                "unmet dependency: unchanged native task source",
+            )
+            for check in (reward_result, determinism, *checks)
         )
     startup.duration_s = time.monotonic() - started
     record["cleanup"].update(
         {"required": attempted, "completed": record["cleanup"]["verified"]}
     )
-    results = [*results, startup, reward_result]
+    results = [*results, startup, reward_result, determinism, *checks]
     present = {result.check_id for result in results}
     for entry in policy.entries_for_lane(Lane.LOCAL).values():
         if entry.level <= max_level and entry.check_id not in present:
@@ -726,9 +890,14 @@ def validate_harbor(
                 _result(
                     entry.check_id,
                     CheckStatus.SKIP,
-                    f"out of profile: {HARBOR_PROFILE}; native process binding has no implemented evidence for this check",
+                    _skip_reason(entry, contract),
                 )
             )
+    levels = [Level.STATIC]
+    if attempted:
+        levels.append(Level.RUNTIME)
+        if semantic:
+            levels.append(Level.SEMANTIC)
     report = ValidationReportV2(
         report_schema_version="2",
         target=str(subject.root),
@@ -737,7 +906,7 @@ def validate_harbor(
         manifest=subject.manifest,
         policy_version=policy.policy_version,
         lane=Lane.LOCAL,
-        levels_run=[Level.STATIC, Level.RUNTIME] if attempted else [Level.STATIC],
+        levels_run=levels,
         results=results,
         verdict=apply_policy(results, policy, Lane.LOCAL),
     )

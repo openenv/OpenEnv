@@ -381,13 +381,13 @@ class ExecutionDeclaration(BaseModel):
 
 
 class HarborExecutionDeclaration(BaseModel):
-    """Native process execution for the bounded Harbor oracle/floor pilot."""
+    """Native process execution of a Harbor task through fresh Docker trials."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: Literal["harbor_task"]
     agent_boundary: Literal["process"] = "process"
-    profile: Literal["harbor-oracle-floor-v1"] = "harbor-oracle-floor-v1"
+    profile: Literal["harbor-semantic-v1"] = "harbor-semantic-v1"
     contract_path: Literal["validation/openenv.json"] = "validation/openenv.json"
     requires_credentials: bool = Field(default=False, strict=True)
 
