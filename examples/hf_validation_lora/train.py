@@ -846,9 +846,7 @@ def main():
                     )
                 self.group_std = report["training_groups"][self.group_start]["std"]
                 self.before_steps = {
-                    id(parameter): int(s["step"].item())
-                    if hasattr(s["step"], "item")
-                    else int(s["step"])
+                    id(parameter): int(s["step"])
                     for parameter, s in kwargs["optimizer"].state.items()
                     if "step" in s
                 }
@@ -871,9 +869,7 @@ def main():
             def on_optimizer_step(self, args, state, control, **kwargs):
                 optimizer = kwargs["optimizer"]
                 steps = {
-                    id(parameter): int(s["step"].item())
-                    if hasattr(s["step"], "item")
-                    else int(s["step"])
+                    id(parameter): int(s["step"])
                     for parameter, s in optimizer.state.items()
                     if "step" in s
                 }
@@ -890,7 +886,7 @@ def main():
                         "optimizer_step": max(steps.values(), default=0),
                         **optimizer_observation(
                             self.grad_norm,
-                            bool(getattr(optimizer, "step_was_skipped", False)),
+                            optimizer.step_was_skipped,
                             counters_advanced(self.before_steps, steps),
                             changed,
                         ),
