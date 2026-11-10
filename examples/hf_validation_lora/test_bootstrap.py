@@ -296,6 +296,19 @@ class BootstrapLifetimeTests(unittest.TestCase):
         self.assertEqual(self.state()["training_final_stage"], "COMPLETED")
         self.assertEqual(self.canceled, ["sandbox"])
 
+    def test_training_job_id_is_saved_before_first_poll(self):
+        states = []
+
+        def inspect(job_id):
+            if job_id == "gpu":
+                states.append(json.loads((self.output / "state.json").read_text()))
+            return self.inspect(job_id)
+
+        self.api.inspect_job.side_effect = inspect
+        bootstrap.main()
+        self.assertEqual(states[0].get("training_job_id"), "gpu")
+        self.assertEqual(states[0]["sandbox_job_id"], "sandbox")
+
     def test_idle_watchdog_control_without_background_work(self):
         self.sandbox.run("true")
         self.advance(20 * 60 + 5)

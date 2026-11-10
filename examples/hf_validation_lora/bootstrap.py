@@ -228,6 +228,7 @@ def main():
                 labels={"name": "oe-scottwu-lora", "experiment": "oe-fineenvs-e2e"},
             )
             record["training_job_id"] = training.id
+            (args.output / "state.json").write_text(json.dumps(record, indent=2))
             print("Training Job:", training.id, flush=True)
             deadline = time.monotonic() + 3900
             while time.monotonic() < deadline:
