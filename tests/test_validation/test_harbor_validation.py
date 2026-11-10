@@ -657,6 +657,14 @@ def test_static_and_skip_build_do_not_start_trials(task, boundary):
     assert not boundary.trials
 
 
+def test_harbor_report_preserves_resolved_space_target(task, boundary, tmp_path):
+    target = "spaces/openenv/example@" + "d" * 40
+    artifacts = tmp_path / "space-report"
+    report = run_validation(task, report_target=target, artifacts_dir=artifacts)
+    assert report.target == target
+    assert json.loads((artifacts / "report.json").read_text())["target"] == target
+
+
 def test_separate_verifier_is_named_unsupported(task, boundary):
     (task / "task.toml").write_text('[verifier]\nenvironment_mode="separate"\n')
     report = run_validation(task)

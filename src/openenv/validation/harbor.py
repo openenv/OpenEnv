@@ -664,6 +664,7 @@ def validate_harbor(
     results,
     digest_before,
     artifacts_dir,
+    report_target=None,
     skip_build=False,
     provider=None,
 ):
@@ -982,7 +983,7 @@ def validate_harbor(
         levels.append(Level.SEMANTIC)
     report = ValidationReportV2(
         report_schema_version="2",
-        target=str(subject.root),
+        target=str(subject.root) if report_target is None else report_target,
         source_digest=digest_before,
         signature=subject.manifest.signature,
         manifest=subject.manifest,
