@@ -560,7 +560,7 @@ def test_harbor_archive_must_match_bounded_inventory(monkeypatch, tmp_path, case
         member = tarfile.TarInfo("unexpected")
         if case == "link":
             member.type = tarfile.SYMTYPE
-            member.linkname = "/tmp/outside"
+            member.linkname = "/outside"
         client.extra_members = [(member, b"")]
     else:
         original = client.get_task_version_files.side_effect
