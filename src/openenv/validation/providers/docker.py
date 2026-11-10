@@ -2,7 +2,8 @@
 
 Public and no-network modes are enforced; allowlists are refused. No-network subjects
 are reached through a trusted helper sharing only their network namespace. Runtime
-hardening is an execution baseline; it does not certify containment.
+hardening is an execution baseline; `runtime.host_containment` judges its measured
+effect.
 """
 
 import json
@@ -18,12 +19,24 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..manifest import ExecutionDeclaration
-from ..runtime.contracts import LaunchSpec, NetworkEvidence
+from ..runtime.contracts import (
+    ContainmentEvidence,
+    LaunchSpec,
+    NetworkEvidence,
+    ResourceEvidence,
+)
 from ..types import ProviderCapability
-from . import ExecResult, ProviderError, StartupError, UnsupportedCapability
+from . import (
+    CleanupError,
+    ExecResult,
+    ProviderError,
+    StartupError,
+    UnsupportedCapability,
+)
 from ._netns import (
     ExecRelayBridge,
     HARDENING,
@@ -32,9 +45,18 @@ from ._netns import (
     SINK_SCRIPT,
     WAIT_READY_SCRIPT,
 )
+from ._pidns import (
+    COUNTERS_SCRIPT,
+    DESCENDANTS_SCRIPT,
+    LIMITS_SCRIPT,
+    PROBE_SCRIPT as PIDNS_PROBE_SCRIPT,
+    QUALIFY_SCRIPT,
+)
 
 
 _LABEL = "org.openenv.validation.run"
+# Writable roots granted to every subject; everything else is read-only.
+_ALLOTTED = ("/tmp", "/dev/shm")
 _MAX_OUTPUT = 65536
 _EXCLUDED = {
     ".git",
@@ -74,6 +96,12 @@ def _safe_text(value: str, secrets: tuple[str, ...] = ()) -> str:
         .encode("utf-8")[-_MAX_OUTPUT:]
         .decode("utf-8", "ignore")
     )
+
+
+class _OperationTimeout(ProviderError):
+    def __init__(self, stdout: str):
+        super().__init__("Docker operation exceeded its deadline")
+        self.stdout = stdout
 
 
 def _command(
@@ -118,7 +146,9 @@ def _command(
             # The process group can exit between wait() and killpg().
             pass
         process.wait()
-        raise ProviderError("Docker operation exceeded its deadline") from None
+        for thread in threads:
+            thread.join(timeout=1)
+        raise _OperationTimeout(buffers[0].decode("utf-8", "replace")) from None
     except BaseException:
         try:
             os.killpg(process.pid, signal.SIGKILL)
@@ -250,7 +280,10 @@ class DockerValidationProvider:
         {
             ProviderCapability.IMAGE_BUILD,
             ProviderCapability.EXEC,
+            ProviderCapability.FRESH_CONTAINER,
             ProviderCapability.NETWORK_POLICY,
+            ProviderCapability.INSPECTED_ISOLATION,
+            ProviderCapability.RESOURCE_ENFORCEMENT,
         }
     )
     supported_network_modes = frozenset({"public", "no-network"})
@@ -261,6 +294,7 @@ class DockerValidationProvider:
         build_timeout_s: float = 600,
         max_context_bytes: int = 2**30,
         helper_image: str = HELPER_IMAGE,
+        cleanup_subjects: list["DockerRunningSubject"] | None = None,
     ):
         if not math.isfinite(build_timeout_s) or build_timeout_s <= 0:
             raise ValueError("build_timeout_s must be positive and finite")
@@ -271,6 +305,7 @@ class DockerValidationProvider:
         self.build_timeout_s = build_timeout_s
         self.max_context_bytes = max_context_bytes
         self.helper_image = helper_image
+        self._cleanup_subjects = cleanup_subjects
 
     def build(self, root: Path, execution: ExecutionDeclaration) -> str:
         deadline = time.monotonic() + self.build_timeout_s
@@ -327,6 +362,8 @@ class DockerValidationProvider:
             _ensure_image(self.helper_image)
         name = f"openenv-validation-{spec.run_id}-{uuid.uuid4().hex[:12]}"
         subject = DockerRunningSubject(name, spec, helper_image=self.helper_image)
+        if self._cleanup_subjects is not None:
+            self._cleanup_subjects.append(subject)
         # tmpfs and /dev/shm share the declared aggregate writable-byte allowance.
         budget = spec.resources.disk_mb * 1024 * 1024
         shm_bytes = min(64 * 1024 * 1024, budget // 2)
@@ -342,6 +379,9 @@ class DockerValidationProvider:
             "--stop-timeout",
             "0",
             "--init",
+            # cgroup v1 daemons default to the host cgroup namespace.
+            "--cgroupns",
+            "private",
             "--user",
             "65532:65532",
             "--read-only",
@@ -433,6 +473,10 @@ class DockerValidationProvider:
             try:
                 subject.stop()
             except ProviderError as cleanup:
+                if self._cleanup_subjects is not None:
+                    raise CleanupError(
+                        "Disposable startup and teardown failed"
+                    ) from cleanup
                 raise StartupError(
                     f"Startup failed; cleanup also failed: {cleanup}"
                 ) from None
@@ -450,12 +494,14 @@ class DockerRunningSubject:
         self.base_url = ""
         self._stopped = False
         self._secrets = tuple(spec.env_vars.values())
+        self._spec = spec
         self._mode = spec.network.mode
         self._helper_image = helper_image
         self._helper: str | None = None
         self._bridge: ExecRelayBridge | None = None
         # Run-owned helper, sink and control containers, removed before the subject.
         self._auxiliary: list[str] = []
+        self._disposables: list[DockerRunningSubject] = []
 
     def _owned_create(self, name: str, argv: list[str], timeout_s: float) -> None:
         self._auxiliary.append(name)
@@ -581,6 +627,338 @@ class DockerRunningSubject:
             self._remove_owned(sink)
         return evidence.model_dump(mode="json")
 
+    def _pidns_probe(
+        self, suffix: str, script: str, args: list[str], user: str, timeout_s: float
+    ) -> str:
+        """Run a validator-image probe joined only to the subject's PID namespace."""
+        probe = f"{self.name}-{suffix}"
+        self._auxiliary.append(probe)
+        code, out, _ = _command(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                probe,
+                "--label",
+                f"{_LABEL}={self.run_id}",
+                "--pid",
+                f"container:{self.name}",
+                "--network",
+                "none",
+                *HARDENING,
+                # The last --user wins: probes act as the subject's own user.
+                "--user",
+                user,
+                self._helper_image,
+                "python3",
+                "-c",
+                script,
+                *args,
+            ],
+            timeout_s,
+        )
+        if code:
+            raise ProviderError(f"The {suffix} probe failed")
+        return out
+
+    def _measure_exec_timeout(
+        self, argv: list[str], nonce: str, user: str, timeout_s: float
+    ) -> dict:
+        """Witness the stimulus's fork before timing out and removing its container."""
+        deadline = time.monotonic() + min(2.0, timeout_s)
+        witness = {}
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            # The caller must latch the witness before removal can destroy /proc.
+            stimulus = executor.submit(
+                _command,
+                ["docker", "exec", "--", self.name, *argv],
+                deadline - time.monotonic(),
+            )
+            try:
+                reading = json.loads(
+                    self._pidns_probe(
+                        "descendants",
+                        DESCENDANTS_SCRIPT,
+                        [nonce, "1"],
+                        user,
+                        deadline - time.monotonic(),
+                    )
+                )
+                if not stimulus.done() and isinstance(reading, dict):
+                    witness = reading
+            except CleanupError:
+                raise
+            except (ProviderError, ValueError):
+                # Witness collection is best effort; preserve timeout and cleanup.
+                pass
+            try:
+                stimulus.result()
+            except _OperationTimeout as exc:
+                try:
+                    self.stop()
+                except ProviderError as cleanup:
+                    raise CleanupError(
+                        "Subject exec teardown failed: " + str(cleanup)
+                    ) from exc
+                parent, child = witness.get("parent_pid"), witness.get("descendant_pid")
+                if (
+                    isinstance(parent, int)
+                    and isinstance(child, int)
+                    and parent > 0
+                    and child > 0
+                    and parent != child
+                ):
+                    return dict(
+                        started=True,
+                        result="contained",
+                        reason="exec_timeout",
+                        removed=True,
+                        parent_pid=parent,
+                        descendant_pid=child,
+                    )
+                return {"removed": True}
+        return {}
+
+    def measure_containment(self, timeout_s: float = 60) -> dict:
+        """
+        Measure the subject's isolation from its inspected launch and its processes.
+
+        A probe from the validator's image joins only the subject's PID namespace and
+        runs as the subject's user, so its writes stand for what the subject can write.
+
+        Args:
+            timeout_s (`float`, *optional*, defaults to `60`):
+                Budget for inspection and the probe.
+
+        Returns:
+            `dict`: a validated [`~openenv.validation.runtime.contracts.ContainmentEvidence`].
+        """
+        _ensure_image(self._helper_image)
+        deadline = time.monotonic() + timeout_s
+        details = self._raw_inspect(deadline - time.monotonic())
+        host = details.get("HostConfig", {})
+        out = self._pidns_probe(
+            "containment",
+            PIDNS_PROBE_SCRIPT,
+            list(_ALLOTTED),
+            details["Config"].get("User") or "0",
+            deadline - time.monotonic(),
+        )
+        namespaces = {
+            "pid": "PidMode",
+            "ipc": "IpcMode",
+            "network": "NetworkMode",
+            "uts": "UTSMode",
+            "user": "UsernsMode",
+            "cgroup": "CgroupnsMode",
+        }
+        try:
+            evidence = ContainmentEvidence.model_validate(
+                {
+                    **json.loads(out),
+                    "allotted": list(_ALLOTTED),
+                    "launch": {
+                        "privileged": bool(host.get("Privileged")),
+                        "host_namespaces": [
+                            ns
+                            for ns, key in namespaces.items()
+                            if host.get(key) == "host"
+                        ],
+                        "cap_add": host.get("CapAdd") or [],
+                        "devices": [
+                            device.get("PathOnHost", "")
+                            for device in host.get("Devices") or []
+                        ],
+                        "unconfined": [
+                            option
+                            for option in host.get("SecurityOpt") or []
+                            if option.replace(":", "=")
+                            in {
+                                "seccomp=unconfined",
+                                "apparmor=unconfined",
+                                "label=disable",
+                            }
+                        ],
+                    },
+                }
+            )
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ProviderError("Containment probe returned invalid evidence") from exc
+        return evidence.model_dump(mode="json")
+
+    def measure_resources(self, timeout_s: float = 180) -> dict:
+        """
+        Read effective limits and qualify storage, memory, PIDs and exec cleanup.
+
+        Each destructive probe has a fresh disposable subject registered for outer
+        cleanup. Exec cleanup does not qualify the declared episode deadline.
+
+        Args:
+            timeout_s (`float`, *optional*, defaults to `180`):
+                Budget for measurement, disposable launches and probes.
+
+        Returns:
+            `dict`: validated resource evidence with complete storage inventory.
+        """
+        _ensure_image(self._helper_image)
+        deadline = time.monotonic() + timeout_s
+
+        def remaining():
+            return deadline - time.monotonic()
+
+        user = self._raw_inspect(remaining())["Config"].get("User") or "0"
+        try:
+            measured = json.loads(
+                self._pidns_probe("limits", LIMITS_SCRIPT, [], user, remaining())
+            )
+        except ValueError as exc:
+            raise ProviderError("Limits probe returned invalid evidence") from exc
+        try:
+            containment = self.measure_containment(remaining())
+        except CleanupError:
+            raise
+        except ProviderError:
+            containment = None
+        # Keep the original capacities and the full inventory that establishes coverage.
+        measured["containment"] = containment
+        measured["writable"] = [
+            {"path": mount["mount_point"], "size_bytes": mount["size_bytes"]}
+            for mount in (containment["mounts"] if containment is not None else [])
+            if mount["mount_point"] in _ALLOTTED and mount["size_bytes"] is not None
+        ]
+        resources = self._spec.resources
+        budgets = {
+            "pids": (measured.get("cgroup") or {}).get("pids_max") or 0,
+            "disk": resources.disk_mb * 1024 * 1024,
+            "memory": resources.memory_mb * 1024 * 1024,
+            "exec_timeout": 1,
+        }
+        qualification = []
+        for kind, budget in budgets.items():
+            probe = {"kind": kind, "result": "inconclusive", "started": False}
+            qualification.append(probe)
+            if not budget:
+                continue
+            sibling = None
+            try:
+                sibling = DockerValidationProvider(
+                    helper_image=self._helper_image, cleanup_subjects=self._disposables
+                ).start(
+                    self._spec.model_copy(
+                        update={
+                            "startup_timeout_s": min(
+                                self._spec.startup_timeout_s, remaining()
+                            )
+                        }
+                    )
+                )
+                python = next(
+                    (
+                        name
+                        for name in ("python3", "python")
+                        if sibling.exec([name, "-c", "pass"], remaining()).exit_code
+                        == 0
+                    ),
+                    None,
+                )
+                if python is None:
+                    continue
+
+                def counters():
+                    return json.loads(
+                        sibling._pidns_probe(
+                            "counters",
+                            COUNTERS_SCRIPT,
+                            list(_ALLOTTED),
+                            user,
+                            remaining(),
+                        )
+                    )
+
+                nonce = uuid.uuid4().hex
+                argv = [
+                    python,
+                    "-c",
+                    QUALIFY_SCRIPT,
+                    kind,
+                    str(budget),
+                    nonce,
+                    *_ALLOTTED,
+                ]
+                if kind == "exec_timeout":
+                    probe.update(
+                        sibling._measure_exec_timeout(argv, nonce, user, remaining())
+                    )
+                    continue
+                before = counters()
+                result = sibling.exec(argv, remaining())
+                probe["started"] = (
+                    "openenv-probe-start:" + nonce in result.stdout.splitlines()
+                )
+                if not probe["started"]:
+                    continue
+                state = sibling._raw_inspect(remaining())["State"]
+                after = counters() if state["Running"] else {}
+                if kind == "memory":
+                    previous, current = before.get("oom_kill"), after.get("oom_kill")
+                    probe.update(
+                        counter_before=previous,
+                        counter_after=current,
+                        oom_killed=bool(state.get("OOMKilled")),
+                    )
+                    if state.get("OOMKilled") or (
+                        previous is not None
+                        and current is not None
+                        and current > previous
+                    ):
+                        probe.update(result="contained", reason="cgroup_oom_kill")
+                elif kind == "pids":
+                    previous, current = before.get("pids_max"), after.get("pids_max")
+                    probe.update(counter_before=previous, counter_after=current)
+                    if (
+                        result.exit_code == 0
+                        and result.stdout.splitlines()[-1:] == ["contained"]
+                        and previous is not None
+                        and current is not None
+                        and current > previous
+                    ):
+                        probe.update(result="contained", reason="cgroup_pids_max")
+                elif kind == "disk":
+                    free = after.get("free_bytes", {})
+                    probe["free_bytes"] = free
+                    probe["free_bytes_before"] = before.get("free_bytes", {})
+                    if (
+                        result.exit_code == 0
+                        and result.stdout.splitlines()[-1:] == ["contained"]
+                        and all(
+                            free.get(path) == 0
+                            and (probe["free_bytes_before"].get(path) or 0) > 0
+                            for path in _ALLOTTED
+                        )
+                    ):
+                        probe.update(result="contained", reason="filesystem_full")
+            except CleanupError:
+                raise
+            except (ProviderError, ValueError):
+                # A failed stimulus cannot establish enforcement, or erase other probes.
+                pass
+            finally:
+                try:
+                    if sibling is not None:
+                        sibling.stop()
+                except ProviderError as exc:
+                    raise CleanupError(
+                        "Disposable resource subject teardown failed"
+                    ) from exc
+        try:
+            evidence = ResourceEvidence.model_validate(
+                {**measured, "qualification": qualification}
+            )
+        except ValueError as exc:
+            raise ProviderError("Resource probes returned invalid evidence") from exc
+        return evidence.model_dump(mode="json")
+
     def _run(self, argv: list[str], timeout_s: float, max_bytes: int = _MAX_OUTPUT):
         code, stdout, stderr = _command(argv, timeout_s, max_bytes)
         if code:
@@ -666,7 +1044,9 @@ class DockerRunningSubject:
             try:
                 self.stop()
             except ProviderError as cleanup:
-                raise cleanup from exc
+                raise CleanupError(
+                    "Subject exec teardown failed: " + str(cleanup)
+                ) from exc
             raise
         return ExecResult(
             code,
@@ -720,6 +1100,12 @@ class DockerRunningSubject:
     def stop(self) -> None:
         if self._stopped:
             return
+        disposable_cleanup_failed = False
+        for disposable in reversed(self._disposables):
+            try:
+                disposable.stop()
+            except ProviderError:
+                disposable_cleanup_failed = True
         if self._bridge is not None:
             self._bridge.close()
             self._bridge = None
@@ -761,5 +1147,7 @@ class DockerRunningSubject:
                     "Container removal could not be independently verified"
                 )
         if auxiliary_cleanup_failed:
-            raise ProviderError("Could not verify network helper cleanup")
+            raise CleanupError("Could not verify network helper cleanup")
+        if disposable_cleanup_failed:
+            raise CleanupError("Could not verify disposable resource subject cleanup")
         self._stopped = True
