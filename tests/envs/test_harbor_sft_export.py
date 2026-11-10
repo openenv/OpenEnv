@@ -237,7 +237,12 @@ def test_cli_writes_rows_from_a_results_directory(tmp_path):
     assert len(rows) == 1 and rows[0]["messages"][-1]["content"] == "There are 42 rows."
 
 
-def test_cli_reads_reward_key_skips_other_json_and_pushes(tmp_path, monkeypatch):
+# Without --private the namespace's default visibility applies, as with `hf upload`: passing
+# False would make a dataset public in an organization whose repos are private by default.
+@pytest.mark.parametrize("flag, private", [(["--private"], True), ([], None)])
+def test_cli_reads_reward_key_skips_other_json_and_pushes(
+    tmp_path, monkeypatch, flag, private
+):
     typer_testing = pytest.importorskip("typer.testing")
     harbor_cli = pytest.importorskip("openenv.cli.commands.harbor")
     hub = pytest.importorskip("huggingface_hub")
@@ -266,13 +271,13 @@ def test_cli_reads_reward_key_skips_other_json_and_pushes(tmp_path, monkeypatch)
         "correctness,reward",
         "--push-to",
         "me/traces",
-        "--private",
+        *flag,
     ]
     outcome = typer_testing.CliRunner().invoke(harbor_cli.app, args)
     assert outcome.exit_code == 0, outcome.output
     assert len(out.read_text().splitlines()) == 1
     assert calls == [
-        ("create_repo", "me/traces", True),
+        ("create_repo", "me/traces", private),
         ("upload_file", "me/traces", "data/rows.jsonl"),
     ]
 

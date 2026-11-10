@@ -379,8 +379,12 @@ def export_sft_command(
         typer.Option("--push-to", help="Hub dataset repo to upload the rows to."),
     ] = "",
     private: Annotated[
-        bool, typer.Option("--private", help="Create --push-to as a private dataset.")
-    ] = False,
+        Optional[bool],
+        typer.Option(
+            "--private",
+            help="Create --push-to as a private dataset. Unset, the namespace's default visibility applies.",
+        ),
+    ] = None,
 ) -> None:
     """Turn rollouts into conversational SFT rows (`messages` + `tools`), one per rollout.
 

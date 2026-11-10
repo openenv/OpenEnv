@@ -34,7 +34,7 @@ The trace of an evaluation rollout is also supervised data. Point `--llm-url` at
 
 ```bash
 openenv harbor rollout \
-  --llm-url https://router.huggingface.co/v1 --model <teacher> \
+  --llm-url https://router.huggingface.co/v1 --api-key $HF_TOKEN --model <teacher> \
   --dataset FineEnvs/SmolDataEnvs-harbor-train \
   --task-index 0 -n 50 --harness opencode --sandbox hf-sandbox \
   --reward-key correctness,reward --out results.json
