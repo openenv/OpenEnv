@@ -335,7 +335,16 @@ class RemoteEnvironment:
         return json.loads(result.stdout)
 
     def _client(self):
+        from openenv.core import env_client
         from openenv.core.generic_client import GenericEnvClient
+        from websockets.asyncio.client import connect
+
+        class NoRedirectConnect(connect):
+            def process_redirect(self, exc):
+                # Refuse redirects: websockets replays additional_headers to their targets.
+                return exc
+
+        env_client.ws_connect = NoRedirectConnect
 
         return GenericEnvClient(
             base_url=self.sandbox.proxy_url_for(self.port, "/"),

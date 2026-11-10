@@ -2,15 +2,20 @@
 """CPU-only contract tests: python -B -m unittest discover -s examples/hf_validation_lora."""
 
 import ast
+import asyncio
 import importlib.util
 import io
 import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from http import HTTPStatus
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+from openenv.core import env_client
+from websockets.asyncio.server import serve
 
 SPEC = importlib.util.spec_from_file_location(
     "scottwu_train", Path(__file__).with_name("train.py")
@@ -71,6 +76,7 @@ class ResetSensitiveClient:
 
 class DirectResetTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.object(env_client, "ws_connect", env_client.ws_connect))
         self.clients = []
 
         def new_client(**kwargs):
@@ -196,6 +202,75 @@ class DirectResetTests(unittest.TestCase):
                             self.remote.tasks("test", [3])
                         else:
                             self.remote.score("test", [3], [""])
+
+
+class DirectRedirectTests(unittest.IsolatedAsyncioTestCase):
+    async def test_handshake_redirect_does_not_replay_sandbox_credentials(self):
+        self.enterContext(patch.object(env_client, "ws_connect", env_client.ws_connect))
+        headers = {
+            "Authorization": "Bearer synthetic-hf-token",
+            "X-Sandbox-Token": "synthetic-sandbox-token",
+        }
+        for cross_origin in (True, False):
+            with self.subTest(cross_origin=cross_origin):
+                initial_headers, redirected_headers = [], []
+
+                async def close(websocket):
+                    await websocket.close()
+
+                def collect(connection, request):
+                    redirected_headers.append(
+                        (
+                            request.headers.get("x-sandbox-token"),
+                            request.headers.get("authorization"),
+                        )
+                    )
+                    return connection.respond(HTTPStatus.FORBIDDEN, "rejected")
+
+                def redirect(connection, request):
+                    if request.path == "/destination":
+                        return collect(connection, request)
+                    initial_headers.append(
+                        (
+                            request.headers.get("x-sandbox-token"),
+                            request.headers.get("authorization"),
+                        )
+                    )
+                    response = connection.respond(
+                        HTTPStatus.TEMPORARY_REDIRECT, "redirect"
+                    )
+                    response.headers["Location"] = location
+                    return response
+
+                async with serve(
+                    close, "127.0.0.1", 0, process_request=collect
+                ) as destination:
+                    port = destination.sockets[0].getsockname()[1]
+                    location = (
+                        f"ws://127.0.0.1:{port}/destination"
+                        if cross_origin
+                        else "/destination"
+                    )
+                    async with serve(
+                        close, "127.0.0.1", 0, process_request=redirect
+                    ) as upstream:
+                        port = upstream.sockets[0].getsockname()[1]
+                        url = f"http://127.0.0.1:{port}"
+                        sandbox = SimpleNamespace(
+                            proxy_url_for=lambda port, path: url + path,
+                            proxy_headers=headers,
+                        )
+                        with self.assertRaises(ConnectionError):
+                            await asyncio.to_thread(
+                                train.RemoteEnvironment(sandbox, "direct").tasks,
+                                "train",
+                                [0],
+                            )
+                self.assertEqual(
+                    initial_headers,
+                    [("synthetic-sandbox-token", "Bearer synthetic-hf-token")],
+                )
+                self.assertEqual(redirected_headers, [])
 
 
 class OptimizerWindowTests(unittest.TestCase):
