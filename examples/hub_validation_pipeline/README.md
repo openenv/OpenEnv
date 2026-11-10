@@ -103,7 +103,15 @@ shared assets; the runnable profile requires self-contained tasks.
 The example uses the HF SDK's `repo_type`, `revision`, `local_dir` and selection
 arguments, corresponding to `hf download --repo-type dataset --revision ...
 --local-dir ...`. It deliberately resolves mutable source aliases before execution,
-uses anonymous public reads (`token=False`) and applies explicit byte/task limits.
+uses anonymous public reads (`token=False`) and applies the native acquisition
+limits: 128 files, 2 MiB per file and 8 MiB total across selected tasks and shared
+assets. Size-bearing metadata is required before downloads. HF inputs must be
+regular Git files (no LFS); each downloaded blob is checked against the pinned
+tree. Harbor requires complete per-file size/hash inventories, caps compressed
+transfers and expanded tar bytes at 8 MiB, and rejects links, sparse files and
+uninventoried members. Archive directory entries count toward the 128-member cap.
+Legacy packages without these inventories are refused. Verified task hashes follow
+the captured bytes into cloud plans; a remote revision alone is insufficient.
 Uploads use ordinary SDK commits with explicit additions; they do not mirror-delete
 remote files. As with `hf upload`, deletion requires a separate explicit operation.
 

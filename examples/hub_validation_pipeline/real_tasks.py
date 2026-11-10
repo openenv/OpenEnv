@@ -19,10 +19,8 @@ from huggingface_hub import hf_hub_download, HfApi, RepoFile, RepoFolder
 from openenv.validation.runner import source_digest
 
 from . import cloud, sources
+from .sources import MAX_FILE_BYTES, MAX_FILES, MAX_TOTAL_BYTES
 
-MAX_FILES = 128
-MAX_FILE_BYTES = 2 * 1024 * 1024
-MAX_TOTAL_BYTES = 8 * 1024 * 1024
 _REQUIRED = {"task.toml", "instruction.md", "solution/solve.sh", "tests/test.sh"}
 
 

@@ -1,15 +1,22 @@
 """Discover public Hub bundles and acquire pinned task files without executing them."""
 
 import asyncio
+import gzip
 import hashlib
+import io
 import json
 import re
-import shutil
+import stat
+import tarfile
 import tempfile
 from importlib.metadata import distribution, PackageNotFoundError
 from pathlib import Path, PurePosixPath
 
-from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub import HfApi, RepoFile, RepoFolder, snapshot_download
+
+MAX_FILES = 128
+MAX_FILE_BYTES = 2 * 1024 * 1024
+MAX_TOTAL_BYTES = 8 * 1024 * 1024
 
 HARBOR_GIT_REVISION = "9c7a39b991d7e2205019f6be0598cbd22d84bfc3"
 HARBOR_INSTALL = (
@@ -65,14 +72,14 @@ def _harbor_api():
                 f"native Hub listing requires official Git {HARBOR_GIT_REVISION}. "
                 f"Install: {HARBOR_INSTALL}"
             )
+        from harbor.db.client import RegistryDB
         from harbor.models.task.id import PackageTaskId
         from harbor.registry.client.package import PackageDatasetClient
-        from harbor.tasks.client import TaskClient
     except (ImportError, PackageNotFoundError) as error:
         raise RuntimeError(
             f"Pinned Harbor Hub package APIs unavailable. Install: {HARBOR_INSTALL}"
         ) from error
-    return PackageDatasetClient, PackageTaskId, TaskClient
+    return PackageDatasetClient, PackageTaskId, RegistryDB
 
 
 def discover_harbor(limit: int) -> list[dict]:
@@ -158,26 +165,6 @@ def _fresh(cache_dir: Path, source: str, identity: str, revision: str) -> Path:
     return Path(tempfile.mkdtemp(prefix="selection-", dir=parent)).resolve()
 
 
-def _real_files(root: Path) -> None:
-    """Reject escaping links and materialize contained links as real files."""
-    has_links = False
-    for path in root.rglob("*"):
-        if path.is_symlink():
-            target = path.resolve(strict=True)
-            if not target.is_relative_to(root):
-                raise ValueError(f"Unsafe task symlink: {path}")
-            has_links = True
-        elif not path.is_dir() and not path.is_file():
-            raise ValueError(f"Unsupported task file: {path}")
-    if has_links:
-        # copytree also rejects dangling links and directory-link cycles.
-        with tempfile.TemporaryDirectory(dir=root.parent) as temporary:
-            materialized = Path(temporary) / "files"
-            shutil.copytree(root, materialized, symlinks=False)
-            shutil.rmtree(root)
-            materialized.rename(root)
-
-
 def _record(source, identity, revision, root, task_path, metadata, **extra):
     return {
         "task_id": f"{source}:{identity}@{revision}:{task_path}",
@@ -216,21 +203,27 @@ def _acquire_hf(candidate, cache_dir, revision, max_tasks):
         raise ValueError("HF revision resolution disagrees with the selected commit")
     if info.gated or info.disabled:
         raise PermissionError(f"HF source is gated or disabled: {candidate['id']}")
-    files = sorted(
-        {
-            _relative(name).as_posix()
-            for name in api.list_repo_files(
-                candidate["id"], repo_type="dataset", revision=revision
-            )
-        }
-    )
+    files = {}
+    for item in api.list_repo_tree(
+        candidate["id"],
+        repo_type="dataset",
+        revision=revision,
+        recursive=True,
+        token=False,
+    ):
+        name = _relative(item.path).as_posix()
+        if isinstance(item, RepoFolder):
+            continue
+        if not isinstance(item, RepoFile) or name in files:
+            raise ValueError("HF source requires distinct regular files")
+        files[name] = item
     roots = set(task_roots(files))
     selected = sorted(roots)[:max_tasks]
     if not selected:
         raise ValueError(f"No task.toml files in {candidate['id']}@{revision}")
     # Retain shared repository assets while excluding every unselected task tree.
     selected_files = []
-    for name in files:
+    for name in sorted(files):
         owner = next(
             (
                 str(parent)
@@ -246,20 +239,44 @@ def _acquire_hf(candidate, cache_dir, revision, max_tasks):
         "".join({"[": "[[]", "?": "[?]", "*": "[*]"}.get(char, char) for char in name)
         for name in selected_files
     ]
+    _check_sizes([files[name].size for name in selected_files])
+    if any(files[name].lfs for name in selected_files):
+        raise ValueError("Only native regular Git source files are supported")
+    hashes = {}
+    payloads = {}
+    with tempfile.TemporaryDirectory(prefix="openenv-hf-acquisition-") as temporary:
+        staging = Path(temporary).resolve()
+        snapshot_download(
+            candidate["id"],
+            repo_type="dataset",
+            revision=revision,
+            local_dir=staging,
+            allow_patterns=patterns,
+            token=False,
+            force_download=True,
+        )
+        for name in selected_files:
+            path = staging / name
+            if path.resolve() != path or not stat.S_ISREG(path.lstat().st_mode):
+                raise ValueError(
+                    "HF download must materialize a contained regular file"
+                )
+            if path.stat().st_size != files[name].size:
+                raise ValueError("HF source size disagrees with pinned tree")
+            with path.open("rb") as stream:
+                data = stream.read(MAX_FILE_BYTES + 1)
+            if len(data) != files[name].size:
+                raise ValueError("HF source byte cap or size mismatch")
+            blob = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+            if blob != files[name].blob_id:
+                raise ValueError("HF source Git blob hash mismatch")
+            payloads[name] = data
+            hashes[name] = hashlib.sha256(data).hexdigest()
     root = _fresh(cache_dir, "hf", candidate["id"], revision)
-    snapshot_download(
-        candidate["id"],
-        repo_type="dataset",
-        revision=revision,
-        local_dir=root,
-        allow_patterns=patterns,
-        token=False,
-        force_download=True,
-    )
-    _real_files(root)
-    for name in selected_files:
-        if not (root / name).is_file():
-            raise FileNotFoundError(f"HF download did not materialize {name}")
+    for name, data in payloads.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
     return [
         _record(
             "hf",
@@ -269,13 +286,100 @@ def _acquire_hf(candidate, cache_dir, revision, max_tasks):
             task_path,
             metadata,
             download_patterns=patterns,
+            task_file_hashes={
+                PurePosixPath(name).relative_to(task_path).as_posix(): digest
+                for name, digest in hashes.items()
+                if PurePosixPath(name).is_relative_to(task_path)
+            },
         )
         for task_path in selected
     ]
 
 
+def _check_sizes(sizes):
+    if (
+        len(sizes) > MAX_FILES
+        or any(
+            type(size) is not int or not 0 <= size <= MAX_FILE_BYTES for size in sizes
+        )
+        or sum(sizes) > MAX_TOTAL_BYTES
+    ):
+        raise ValueError("Source file count or byte cap exceeded")
+
+
+async def _download_harbor_file(remote_path, destination, byte_limit):
+    import httpx
+    from harbor.auth.client import create_authenticated_client
+    from harbor.storage.supabase import BUCKET
+
+    client = await create_authenticated_client()
+    signed = await client.storage.from_(BUCKET).create_signed_url(remote_path, 300)
+    async with httpx.AsyncClient(timeout=120, follow_redirects=False) as http:
+        async with http.stream("GET", signed["signedURL"]) as response:
+            response.raise_for_status()
+            if int(response.headers.get("content-length", "0")) > byte_limit:
+                raise ValueError("Harbor download byte cap exceeded")
+            total = 0
+            with destination.open("xb") as stream:
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    total += len(chunk)
+                    if total > byte_limit:
+                        raise ValueError("Harbor download byte cap exceeded")
+                    stream.write(chunk)
+    return total
+
+
+def _harbor_inventory(rows):
+    files = {}
+    for row in rows:
+        name = _relative(row["path"]).as_posix()
+        digest = row["content_hash"].removeprefix("sha256:")
+        if name.casefold() in {key.casefold() for key in files} or not re.fullmatch(
+            r"[0-9a-f]{64}", digest
+        ):
+            raise ValueError("Invalid Harbor file inventory")
+        files[name] = dict(row, sha256=digest)
+    _check_sizes([row["size_bytes"] for row in files.values()])
+    return files
+
+
+def _read_harbor_archive(archive_path, inventory):
+    payloads = {}
+    names = set()
+    with gzip.open(archive_path, "rb") as stream:
+        data = stream.read(MAX_TOTAL_BYTES + 1)
+    if len(data) > MAX_TOTAL_BYTES:
+        raise ValueError("Harbor archive expanded byte cap exceeded")
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+        for member in archive:
+            name = _relative(member.name).as_posix()
+            if name in names or len(names) >= MAX_FILES:
+                raise ValueError(
+                    "Harbor archive path collision or file count cap exceeded"
+                )
+            names.add(name)
+            if member.isdir():
+                continue
+            if not member.isfile() or member.issparse() or name not in inventory:
+                raise ValueError("Harbor archive must match its regular file inventory")
+            row = inventory[name]
+            if member.size != row["size_bytes"]:
+                raise ValueError("Harbor archive byte cap or size mismatch")
+            with archive.extractfile(member) as stream:
+                data = stream.read(MAX_FILE_BYTES + 1)
+            if (
+                len(data) != member.size
+                or hashlib.sha256(data).hexdigest() != row["sha256"]
+            ):
+                raise ValueError("Harbor archive file hash or size mismatch")
+            payloads[name] = (data, member.mode & 0o777)
+    if set(payloads) != set(inventory):
+        raise ValueError("Harbor archive file inventory is incomplete")
+    return payloads
+
+
 async def _acquire_harbor(candidate, cache_dir, revision, max_tasks):
-    registry_type, task_id_type, task_client_type = _harbor_api()
+    registry_type, task_id_type, db_type = _harbor_api()
     _package_name(candidate["id"])
     registry = registry_type()
     metadata = candidate.get("metadata", {})
@@ -300,44 +404,74 @@ async def _acquire_harbor(candidate, cache_dir, revision, max_tasks):
             raise ValueError("Current Harbor Hub acquisition requires package task IDs")
         _package_name(f"{task.org}/{task.name}")
         _pin(task.ref, "harbor")
-    root = _fresh(cache_dir, "harbor", candidate["id"], revision)
-    dataset_files = {}
-    if bundle is not None:
-        for file in bundle.files:
-            _relative(file.path)
-        dataset_files = await registry.download_dataset_files(
-            bundle, output_dir=root / "dataset", overwrite=True
+    db = db_type()
+    shared = {}
+    if bundle is not None and bundle.files:
+        shared = _harbor_inventory(
+            await db.get_dataset_version_files(bundle.dataset_version_id)
         )
-    downloaded = await task_client_type().download_tasks(
-        task_ids=tasks, output_dir=root / "tasks", overwrite=True, export=False
-    )
-    _real_files(root)
-    records = []
-    for task, result in zip(tasks, downloaded.results, strict=True):
-        if result.content_hash != task.ref.removeprefix("sha256:"):
+        if set(shared) != {file.path for file in bundle.files}:
+            raise ValueError("Harbor shared file inventory is incomplete")
+    packages = []
+    sizes = [row["size_bytes"] for row in shared.values()]
+    for task in tasks:
+        resolved = await db.resolve_task_version(task.org, task.name, task.ref)
+        if resolved.content_hash != task.ref.removeprefix("sha256:"):
             raise ValueError("Harbor task resolution disagrees with its digest")
-        task_root = result.path.resolve(strict=True)
-        if not task_root.is_relative_to(root):
-            raise ValueError("Harbor downloaded a task outside the selected cache")
-        if not (task_root / "task.toml").is_file():
-            raise ValueError(
-                f"Harbor package contains no root task.toml: {task.org}/{task.name}"
+        inventory = _harbor_inventory(await db.get_task_version_files(resolved.id))
+        if "task.toml" not in inventory:
+            raise ValueError("Harbor package contains no root task.toml")
+        sizes.extend(row["size_bytes"] for row in inventory.values())
+        _check_sizes(sizes)
+        packages.append((task, resolved, inventory))
+    root = _fresh(cache_dir, "harbor", candidate["id"], revision)
+    dataset_files, records = {}, []
+    remaining = MAX_TOTAL_BYTES
+    with tempfile.TemporaryDirectory(prefix="openenv-harbor-acquisition-") as temporary:
+        staging = Path(temporary)
+        for index, (name, row) in enumerate(shared.items()):
+            path = staging / f"shared-{index}"
+            remaining -= await _download_harbor_file(
+                row["storage_path"], path, row["size_bytes"]
             )
-        records.append(
-            _record(
-                "harbor",
-                f"{task.org}/{task.name}",
-                task.ref,
-                task_root,
-                ".",
-                {
-                    **metadata,
-                    "candidate_id": candidate["id"],
-                    "candidate_revision": revision,
-                    "dataset_files": {
-                        name: str(path) for name, path in dataset_files.items()
+            data = path.read_bytes()
+            if (
+                len(data) != row["size_bytes"]
+                or hashlib.sha256(data).hexdigest() != row["sha256"]
+            ):
+                raise ValueError("Harbor shared file hash or size mismatch")
+            destination = root / "dataset" / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+            dataset_files[name] = str(destination)
+        for index, (task, resolved, inventory) in enumerate(packages):
+            archive = staging / f"task-{index}.tar.gz"
+            remaining -= await _download_harbor_file(
+                resolved.archive_path, archive, remaining
+            )
+            payloads = _read_harbor_archive(archive, inventory)
+            task_root = root / "tasks" / task.org / task.name / resolved.content_hash
+            for name, (data, mode) in payloads.items():
+                path = task_root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                path.chmod(mode)
+            records.append(
+                _record(
+                    "harbor",
+                    f"{task.org}/{task.name}",
+                    task.ref,
+                    task_root,
+                    ".",
+                    {
+                        **metadata,
+                        "candidate_id": candidate["id"],
+                        "candidate_revision": revision,
+                        "dataset_files": dataset_files,
                     },
-                },
+                    task_file_hashes={
+                        name: row["sha256"] for name, row in inventory.items()
+                    },
+                )
             )
-        )
-    return records[:max_tasks]
+    return records
