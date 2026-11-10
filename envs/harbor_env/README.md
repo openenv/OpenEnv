@@ -587,13 +587,17 @@ Name any Harbor agent class by import path, `--harness my_package.agent:MyAgent`
 import paths its operator lists with `--allow-harness my_package.agent:MyAgent`. How the class is
 pointed at the proxy depends on what it is:
 
+Install the module in the process that runs the agent: the CLI process for `rollout`, or the
+server's environment/image for `serve` and remote trainers. Installing it only in a trainer is insufficient.
+
 | the class | what it gets |
 |---|---|
 | a subclass of an agent above (its `name()` is a known harness) | that agent's wiring. If OpenEnv runs that agent through its own subclass, such as `openenv.harbor.install_fixes:InterceptPi` for pi, subclass that one instead: the error names it |
 | a host-side agent (a `BaseAgent` that calls the model from the server process) | `api_base` (the proxy's `/v1` URL, on localhost) and `api_key` (the rollout's session id) as constructor kwargs |
 | any other agent installed into the sandbox | refused: add a seam for it in `openenv/harbor/seams.py` |
 
-A host-side agent declares both kwargs in its options and sends every model call to `api_base` with
+A host-side agent declares both kwargs as constructor parameters or options fields; otherwise
+OpenEnv refuses it before starting a trial. It sends every model call to `api_base` with
 `api_key` as the bearer token; capture, reward and training traces then work as for any other
 harness. Nothing reaches the sandbox or the verifier. Options the server has no way to pass, such as
 provider extras, are best read from the agent's own environment variables.

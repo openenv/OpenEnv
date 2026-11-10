@@ -448,6 +448,18 @@ def test_host_side_seams():
     assert not seams.get("opencode").host_side
 
 
+@pytest.mark.parametrize("mounted", [False, True])
+def test_capture_loopback_is_used_only_when_the_service_owns_its_port(mounted):
+    from types import SimpleNamespace
+
+    from openenv.harbor.serving import HarborService
+
+    service = object.__new__(HarborService)
+    service.mounted = mounted
+    service.capture = SimpleNamespace(port=8100)
+    assert service.local_url == ("" if mounted else "http://127.0.0.1:8100")
+
+
 @pytest.mark.parametrize("strict", [True, False], ids=["train", "look"])
 def test_ambiguous_rewards_fail_training_but_not_a_rollout_to_look_at(
     monkeypatch, tmp_path, strict

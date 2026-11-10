@@ -190,7 +190,6 @@ def _hub_not_found(exc: Exception) -> bool:
 
 def _check_harness(harness: str, model: str) -> dict[str, Any]:
     """Construct the rollout's agent with dummy capture credentials, without setup or run."""
-    import inspect
     import io
 
     result: dict[str, Any] = {"name": harness, "ok": False}
@@ -218,21 +217,7 @@ def _check_harness(harness: str, model: str) -> dict[str, Any]:
                 trials_dir=tmp,
             )
             with process_env(harness, proc_env):
-                agent = AgentFactory.create_agent_from_config(
-                    config.agent, logs_dir=Path(tmp)
-                )
-            if seam.host_side and agent.name() not in seams.SEAMS:
-                accepted = set(inspect.signature(type(agent).__init__).parameters)
-                # Harbor 0.22 predates options models; constructor parameters still work.
-                options = getattr(agent, "options", None)
-                if options is not None:
-                    accepted.update(type(options).model_fields)
-                missing = {"api_base", "api_key"} - accepted
-                if missing:
-                    raise ValueError(
-                        f"{harness} must declare {', '.join(sorted(missing))} as constructor "
-                        "parameters or options fields; Harbor can silently ignore these kwargs."
-                    )
+                AgentFactory.create_agent_from_config(config.agent, logs_dir=Path(tmp))
         result.update(
             ok=True,
             import_path=seam.import_path,

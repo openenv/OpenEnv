@@ -136,9 +136,18 @@ def custom_agents(monkeypatch):
     module = types.ModuleType("custom_agents_for_test")
 
     class HostSideAgent(BaseAgent):
+        def __init__(self, *, api_base, api_key, **kwargs):
+            super().__init__(**kwargs)
+            self.api_base, self.api_key = api_base, api_key
+
         @staticmethod
         def name() -> str:
             return "my-host-side-agent"
+
+    class SilentHostSideAgent(BaseAgent):
+        @staticmethod
+        def name() -> str:
+            return "silent-host-side-agent"
 
     class MyOpenCode(OpenCode):
         pass
@@ -154,7 +163,14 @@ def custom_agents(monkeypatch):
     class MyInterceptPi(InterceptPi):
         pass
 
-    for cls in (HostSideAgent, MyOpenCode, UnknownInstalledAgent, MyPi, MyInterceptPi):
+    for cls in (
+        HostSideAgent,
+        SilentHostSideAgent,
+        MyOpenCode,
+        UnknownInstalledAgent,
+        MyPi,
+        MyInterceptPi,
+    ):
         setattr(module, cls.__name__, cls)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     return module.__name__
@@ -168,6 +184,7 @@ def test_a_host_side_agent_of_your_own_gets_the_proxy_as_kwargs(custom_agents):
         base_url="https://capture.test", session="session-key", model="Qwen/Qwen3.5-9B"
     )
     assert seam.import_path == name
+    assert seam.host_side is True
     assert seam.status == "untested"
     assert model == "Qwen3.5-9B"
     assert kwargs == {"api_base": "https://capture.test/v1", "api_key": "session-key"}
@@ -209,6 +226,17 @@ def test_a_bad_import_path_says_why():
     pytest.importorskip("harbor.agents.base")
     with pytest.raises(KeyError, match="cannot import harness"):
         seams.get("no_such_module_xyz:Agent")
+
+
+def test_a_non_agent_class_is_refused():
+    pytest.importorskip("harbor.agents.base")
+    with pytest.raises(KeyError, match="must subclass harbor.agents.base.BaseAgent"):
+        seams.get("collections:OrderedDict")
+
+
+def test_runtime_refuses_host_side_agents_that_drop_capture_kwargs(custom_agents):
+    with pytest.raises(ValueError, match="must declare api_base, api_key"):
+        seams.get(f"{custom_agents}:SilentHostSideAgent")
 
 
 async def test_serve_imports_only_the_harnesses_its_operator_allowed(

@@ -482,10 +482,8 @@ async def run_rollout(
             # public forward is one more hop that can cut a long completion: a gradio share link
             # answers 502 after about a minute while the upstream is still generating, the agent
             # retries, and the capture records the same prompt again as a new root.
-            if (
-                local_intercept_url
-                and seams.get(harness, profile=harness_profile).host_side
-            ):
+            seam = seams.get(harness, profile=harness_profile)
+            if local_intercept_url and seam.host_side:
                 intercept_url = local_intercept_url
 
             config_kwargs = dict(
@@ -511,7 +509,6 @@ async def run_rollout(
             # I/O worth speaking of: the sandbox is booted later, by `trial.run()`, outside the lock.
             # Harbor's wrappers read `os.environ` while constructing the agent, so the seam's
             # process-level vars have to be in place across `Trial.create` and are put back after.
-            seam = seams.get(harness, profile=harness_profile)
             *_, proc_env = seam.resolve(
                 base_url=intercept_url, session=session.session_id, model=model
             )

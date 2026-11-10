@@ -969,8 +969,10 @@ def custom(import_path: str) -> Seam:
     The status is "untested" in every case: OpenEnv has no evidence about an agent it has not run.
     """
     import importlib
+    import inspect
     from dataclasses import replace
 
+    from harbor.agents.base import BaseAgent
     from harbor.agents.installed.base import BaseInstalledAgent
 
     module, _, attr = import_path.partition(":")
@@ -978,6 +980,8 @@ def custom(import_path: str) -> Seam:
         cls = getattr(importlib.import_module(module), attr)
         if not isinstance(cls, type):
             raise TypeError(f"{attr} is not a class")
+        if not issubclass(cls, BaseAgent):
+            raise TypeError(f"{import_path} must subclass harbor.agents.base.BaseAgent")
     except Exception as exc:  # noqa: BLE001 - surface why, whatever the import raised
         raise KeyError(
             f"cannot import harness {import_path!r}: {type(exc).__name__}: {exc}"
@@ -1009,6 +1013,17 @@ def custom(import_path: str) -> Seam:
             f"{import_path} is installed into the sandbox, and OpenEnv cannot tell how to point it "
             "at the capture proxy. Subclass an agent that has a seam, or add a Seam for it to "
             f"openenv.harbor.seams.SEAMS. Known: {sorted(SEAMS)}"
+        )
+    accepted = set(inspect.signature(cls.__init__).parameters)
+    # Harbor 0.22 predates options models; constructor parameters still work.
+    options_model = getattr(cls, "options_model", None)
+    if options_model is not None:
+        accepted.update(options_model.model_fields)
+    missing = {"api_base", "api_key"} - accepted
+    if missing:
+        raise ValueError(
+            f"{import_path} must declare {', '.join(sorted(missing))} as constructor "
+            "parameters or options fields; Harbor can silently ignore these kwargs."
         )
     return Seam(
         name=import_path,

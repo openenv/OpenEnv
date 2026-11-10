@@ -48,8 +48,8 @@ def agents(monkeypatch):
             module.constructed.append((api_base, api_key, self.logs_dir))
 
     class BrokenAgent(DeclaredAgent):
-        def __init__(self, *, required_setting, **kwargs):
-            super().__init__(**kwargs)
+        def __init__(self, *, api_base, api_key, required_setting, **kwargs):
+            super().__init__(api_base=api_base, api_key=api_key, **kwargs)
 
     class WrongPi(Pi):
         pass
