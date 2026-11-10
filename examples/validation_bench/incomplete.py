@@ -735,11 +735,17 @@ def verify_bundle(bundle, report):
         checksums.append(
             {"file": filename, "match": sha((bundle / filename).read_bytes()) == digest}
         )
+    files = {
+        path.relative_to(bundle).as_posix()
+        for path in bundle.rglob("*")
+        if path.is_file() and path != bundle / "SHA256SUMS"
+    }
     text = "".join(path.read_text() for path in bundle.iterdir() if path.is_file())
     probes = loads((bundle / "oracle-http.json").read_text())
     return {
         "files": checksums,
-        "all_checksums_match": all(c["match"] for c in checksums),
+        "all_checksums_match": {c["file"] for c in checksums} == files
+        and all(c["match"] for c in checksums),
         "synthetic_credential_absent": SECRET not in text,
         # Report durations are binary floats, unlike exact subject JSON numbers.
         # Pydantic and stdlib can emit distinct shortest decimal spellings of the
