@@ -21,7 +21,7 @@ from importlib.metadata import version
 from pathlib import Path, PurePosixPath
 
 from huggingface_hub import HfApi, InferenceClient, Sandbox
-from huggingface_hub.errors import SandboxError
+from huggingface_hub.errors import HfHubHTTPError, SandboxError
 
 from .runner import _candidate_context_paths
 
@@ -364,6 +364,8 @@ class HFTaskBackend:
 
     @staticmethod
     def _error(exc):
+        if isinstance(exc, HfHubHTTPError):
+            return f"HF backend operation failed ({type(exc).__name__}; HTTP {exc.response.status_code})"
         return (
             str(exc)
             if isinstance(exc, HFBackendError)

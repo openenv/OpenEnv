@@ -1732,3 +1732,48 @@ def test_empty_or_non_bash_fence_does_not_create_a_candidate(harness, raw):
     h.inference.responses = [response(raw)]
     record = h.backend.generate_candidate(MODEL, 0)
     assert record["error"] and record["script"] == "" and not h.factory.created
+
+
+@pytest.mark.parametrize("phase", ["target", "candidate"])
+@pytest.mark.parametrize("status", [400, 401, 403, 429, 502, 503])
+def test_http_failure_retains_only_numeric_status_without_retry(
+    harness, monkeypatch, phase, status
+):
+    from unittest.mock import Mock
+
+    from huggingface_hub.errors import HfHubHTTPError
+
+    request = httpx.Request(
+        "POST",
+        "https://router.invalid/chat?private=url-sentinel",
+        headers={"Authorization": "Bearer inference-token-secret"},
+    )
+    response = httpx.Response(status, request=request, text="private-body-sentinel")
+    failure = HfHubHTTPError(
+        "private-body-sentinel inference-token-secret url-sentinel", response=response
+    )
+    call = Mock(side_effect=failure)
+    monkeypatch.setattr(harness.inference, "chat_completion", call)
+    record = (
+        harness.backend.solve(MODEL, 0)
+        if phase == "target"
+        else harness.backend.generate_candidate(MODEL, 0)
+    )
+    assert (
+        record["error"]
+        == f"HF backend operation failed (HfHubHTTPError; HTTP {status})"
+    )
+    assert len(record["model_metadata"]["requests"]) == 1 and call.call_count == 1
+    assert not record.get("files") and record.get("reward") is None
+    assert record["usage"] == {"input_tokens": 0, "output_tokens": 0}
+    assert "private-body-sentinel" not in json.dumps(record)
+    assert "url-sentinel" not in json.dumps(record)
+    assert "inference-token-secret" not in json.dumps(record)
+    if phase == "target":
+        assert record["cleanup_verified"]
+        assert (
+            len(harness.factory.created) == 1
+            and not harness.factory.created[0].commands
+        )
+    else:
+        assert not harness.factory.created

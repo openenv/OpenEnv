@@ -62,6 +62,8 @@ serving-tokenizer measurement or a guarantee about remote billing. Evidence reco
 the reservation, actual per-response usage, request hashes and dispatch decisions.
 Reported input above the reservation, output above the request cap, inconsistent
 usage, or cumulative usage above the configured total remains an error.
+HTTP failures retain their numeric status without response bodies, URLs or headers.
+They are not retried automatically; failed-request billing remains unknown.
 
 After a valid interaction prefix, a pre-dispatch budget stop collects only the
 allowlisted files actually saved, then uses the normal fresh verifier. A funded,
