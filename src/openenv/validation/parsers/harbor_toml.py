@@ -141,7 +141,7 @@ def read_harbor_task(package_root: Path):
     """Use the pinned Harbor data loader; constructing a Trial is runtime-only."""
     try:
         if version("harbor") != "0.25.0":
-            raise ValueError("the native pilot requires Harbor 0.25.0")
+            raise ValueError("Harbor task validation requires Harbor 0.25.0")
         from harbor.models.task.task import Task
 
         return Task(package_root)

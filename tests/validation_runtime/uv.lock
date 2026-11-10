@@ -952,7 +952,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.116.0" },
     { name = "fastmcp", specifier = ">=3.0.0,<4.0.0" },
     { name = "gradio", specifier = ">=4.0.0" },
-    { name = "harbor", extras = ["e2b", "modal", "daytona", "gke", "ec2", "runloop", "novita", "blaxel", "beam", "islo", "opensandbox", "cwsandbox", "use-computer", "cua"], marker = "python_full_version >= '3.12' and extra == 'harbor'", specifier = "==0.25.0" },
+    { name = "harbor", extras = ["e2b", "modal", "daytona", "gke", "ec2", "runloop", "novita", "blaxel", "beam", "islo", "opensandbox", "cwsandbox", "use-computer", "cua"], marker = "python_full_version >= '3.12' and extra == 'harbor'", specifier = ">=0.22.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "huggingface-hub", specifier = ">=1.29.0" },
     { name = "inspect-ai", marker = "extra == 'inspect'", specifier = ">=0.3.0" },

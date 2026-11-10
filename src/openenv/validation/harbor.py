@@ -701,8 +701,7 @@ def validate_harbor(
             attempted = True
             try:
                 with tempfile.TemporaryDirectory(
-                    prefix="openenv-harbor-validation-",
-                    ignore_cleanup_errors=True,
+                    prefix="openenv-harbor-validation-"
                 ) as temp:
                     daemon, trials, files = asyncio.run(
                         _collect(

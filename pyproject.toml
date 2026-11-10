@@ -72,7 +72,7 @@ harbor = [
     # (websockets>=15) and `tensorlake` (websockets>=13,<14) together.
     #
     # Harbor requires Python >= 3.12, so this extra is excluded from the 3.11 CI leg.
-    "harbor[e2b,modal,daytona,gke,ec2,runloop,novita,blaxel,beam,islo,opensandbox,cwsandbox,use-computer,cua]==0.25.0; python_version >= '3.12'",
+    "harbor[e2b,modal,daytona,gke,ec2,runloop,novita,blaxel,beam,islo,opensandbox,cwsandbox,use-computer,cua]>=0.22.0; python_version >= '3.12'",
 ]
 
 [project.scripts]
