@@ -54,6 +54,29 @@ and `size`, bound to the frozen task and checksummed evidence. This option does
 not enumerate task directories or include verifier, reference or specification
 files.
 
+
+Target requests reserve their prompt as well as completion allowance before dispatch.
+The frozen policy uses encoded controller-request bytes plus an 8,192-token framing
+allowance. This conservative scheduling assumption can stop early; it is not a
+serving-tokenizer measurement or a guarantee about remote billing. Evidence records
+the reservation, actual per-response usage, request hashes and dispatch decisions.
+Reported input above the reservation, output above the request cap, inconsistent
+usage, or cumulative usage above the configured total remains an error.
+
+After a valid interaction prefix, a pre-dispatch budget stop collects only the
+allowlisted files actually saved, then uses the normal fresh verifier. A funded,
+validated API response ending in `length` is an explicit truncated target attempt:
+its partial calls are discarded and existing files are graded. An initial prompt
+that cannot fit remains unmeasured. Generator responses still require complete
+`stop` output. No failed API, cleanup or grading operation becomes a synthetic
+zero reward.
+
+A bindable target tool request with an unknown function name or invalid JSON
+argument content gets bounded tool-error feedback and can be repaired within the
+same call and token limits. It never executes an unknown method. Malformed call
+identities/types, duplicate IDs in one response and backend failures remain errors;
+ambiguous batches are rejected before any command executes.
+
 The HF backend launches paid services when invoked without a supplied test
 backend. Use reviewed tasks and distinct execution and inference credentials.
 The Hub pipeline's cloud worker packages these production example modules with

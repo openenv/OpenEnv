@@ -1368,9 +1368,11 @@ def test_invalid_tool_name_is_not_executed(harness):
     h = harness
     call = terminal()
     call["function"]["name"] = "provider_request"
-    h.inference.responses = [response(None, calls=[call])]
+    h.inference.responses = [response(None, calls=[call]), response("cannot proceed")]
     record = h.backend.solve(MODEL, 0)
-    assert "invalid terminal" in record["error"] and not h.factory.created[0].commands
+    assert record["error"] is None and not h.factory.created[0].commands
+    assert record["model_metadata"]["tool_error_count"] == 1
+    assert json.loads(h.inference.requests[1]["messages"][-1]["content"])["error"]
 
 
 def test_output_and_token_limits_are_fail_closed(harness):
