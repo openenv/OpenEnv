@@ -31,6 +31,9 @@ LINT_HOOK = REPO_ROOT / ".claude" / "hooks" / "lint.sh"
 # formatter that modifies files in place. PIPELINE_STABLE models a file that
 # usort changes but ruff returns to its original formatting.
 STUB_UV = """#!/bin/bash
+if [ "$2 $3" = "usort format" ]; then
+    [ -d "$4/../.git" ] || exit 1
+fi
 mode=report
 for a in "$@"; do
     if [ "$a" = "--check" ] || [ "$a" = "check" ]; then mode=check; fi
@@ -109,12 +112,16 @@ def repo(tmp_path: pathlib.Path) -> pathlib.Path:
 
 
 def _run_hook(
-    repo: pathlib.Path, hook: pathlib.Path = LINT_HOOK, stdin: str | None = None
+    repo: pathlib.Path,
+    hook: pathlib.Path = LINT_HOOK,
+    stdin: str | None = None,
+    **extra_env: str,
 ) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{repo.parent / 'stubbin'}:/usr/bin:/bin:/usr/sbin:/sbin",
         "HOME": str(repo.parent),
     }
+    env.update(extra_env)
     return subprocess.run(
         ["bash", str(hook)],
         cwd=repo,
@@ -153,6 +160,32 @@ def test_hook_preserves_uncommitted_python_edits(repo: pathlib.Path) -> None:
         "and then runs `git checkout --` on every changed file, which restores "
         "from HEAD and takes the author's work with the formatting."
     )
+
+
+@pytest.mark.parametrize(
+    "git_vars", [("GIT_DIR",), ("GIT_WORK_TREE",), ("GIT_DIR", "GIT_WORK_TREE")]
+)
+def test_hook_isolates_temporary_git_repository(
+    repo: pathlib.Path, git_vars: tuple[str, ...]
+) -> None:
+    """Inherited Git paths must not redirect initialization to the author's repo."""
+    (repo / "src" / "mod.py").write_text("x = 1\n\n" + MARKER)
+    # Include .git/config and all other metadata alongside uncommitted files.
+    before = {
+        path.relative_to(repo): path.read_bytes()
+        for path in repo.rglob("*")
+        if path.is_file()
+    }
+    git_env = {"GIT_DIR": str(repo / ".git"), "GIT_WORK_TREE": str(repo)}
+
+    result = _run_hook(repo, **{name: git_env[name] for name in git_vars})
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert {
+        path.relative_to(repo): path.read_bytes()
+        for path in repo.rglob("*")
+        if path.is_file()
+    } == before
 
 
 def test_hook_leaves_no_files_modified(repo: pathlib.Path) -> None:
