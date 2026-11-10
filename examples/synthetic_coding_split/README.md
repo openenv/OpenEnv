@@ -107,7 +107,8 @@ registry contents or establish cloud qualification.
 preparer from another checkout. It is not supplied or required by this example.
 Select that checkout explicitly with `--pipeline-root`. The adapter must accept
 `source.task_file_hashes`, validate captured acquisition files, and expose
-`_read_plan`; older or incompatible adapters fail closed. Select only trusted
+`_read_plan(..., expected_sha256=...)` to bind the exact parsed plan bytes; older
+or incompatible adapters fail closed. Select only trusted
 pipeline code, because preparation imports and executes it.
 
 Set `PIPELINE_ROOT`, `IMAGE_LOCK`, and `RESULTS_REPO` for that integration:
@@ -125,7 +126,9 @@ The image lock maps exactly the inventory's task IDs to real solver image names
 pinned as `REGISTRY/IMAGE@sha256:DIGEST`. The generic verifier base is rejected as
 a solver image. Preparation forwards the exact external file hashes and verifies
 both the returned plan binding and captured bundle inventory before writing its
-summary. Keep trusted image build receipts separately: a registry pin alone does
+summary. Each recorded plan SHA is the hash passed to the reader; submission
+callers can forward it as `expected_plan_sha256` to `stage_inputs` or `submit`.
+Keep trusted image build receipts separately: a registry pin alone does
 not prove which source was built. This command does not submit work; the external
 adapter and any later provider execution are outside the offline checks here.
 

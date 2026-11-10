@@ -10,7 +10,7 @@ import textwrap
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import create_autospec, Mock, patch
 
 import container_check
 import split
@@ -130,8 +130,15 @@ class SplitTests(unittest.TestCase):
         def prepare(task, config, output, repo_root, source=None):
             split.write_json(output / "plan.json", plan)
 
+        def read_plan(path, *, expected_sha256=None):
+            if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256:
+                raise ValueError("prepared plan changed before parsing")
+            return cloud._read_plan.return_value
+
         cloud.prepare = Mock(side_effect=prepare)
-        cloud._read_plan = Mock(return_value=(plan, {}, b"", manifest))
+        cloud._read_plan = create_autospec(
+            read_plan, side_effect=read_plan, return_value=(plan, {}, b"", manifest)
+        )
         return cloud
 
     def prepare(self, cloud, output):
@@ -414,13 +421,16 @@ class SplitTests(unittest.TestCase):
         self.assert_config(config)
         self.assertEqual(config["cloud"]["results_repo"], "example/private-results")
         self.assertEqual(config["execution"]["agent_image"], self.image)
-        cloud._read_plan.assert_called_once_with(output / self.task_id / "plan.json")
+        plan_path = output / self.task_id / "plan.json"
+        plan_sha256 = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+        cloud._read_plan.assert_called_once_with(plan_path, expected_sha256=plan_sha256)
         record = json.loads((output / "preparation-manifest.json").read_text())[
             "tasks"
         ][0]
         self.assertEqual(
             record["native_inventory_revision"], self.inventory["revision"]
         )
+        self.assertEqual(record["plan_sha256"], plan_sha256)
         for field, value in (
             ("config_source_sha256", config),
             ("task_file_hashes_sha256", self.expected),
@@ -431,6 +441,32 @@ class SplitTests(unittest.TestCase):
                     json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest(),
             )
+
+    def test_preparation_rejects_plan_drift_during_or_after_parsing(self):
+        for boundary in ("during", "after"):
+            cloud = self.cloud()
+            reader = cloud._read_plan.side_effect
+
+            def changed_reader(path, *, expected_sha256=None):
+                original = path.read_bytes()
+                if boundary == "during":
+                    path.write_bytes(original + b"\n")
+                    try:
+                        return reader(path, expected_sha256=expected_sha256)
+                    finally:
+                        path.write_bytes(original)
+                parsed = reader(path, expected_sha256=expected_sha256)
+                path.write_bytes(original + b"\n")
+                return parsed
+
+            cloud._read_plan.side_effect = changed_reader
+            output = self.root / boundary
+            with (
+                self.subTest(boundary=boundary),
+                self.assertRaisesRegex(ValueError, "plan changed"),
+            ):
+                self.prepare(cloud, output)
+            self.assertFalse((output / "preparation-manifest.json").exists())
 
     def test_inventory_and_bundle_path_or_hash_mismatches_fail_closed(self):
         for boundary in ("inventory", "bundle"):
@@ -493,6 +529,10 @@ class SplitTests(unittest.TestCase):
         cloud.prepare = lambda task, config, output, repo_root: None
         original_path = sys.path[:]
         with patch.object(split.importlib, "import_module", return_value=cloud):
+            with self.assertRaisesRegex(ValueError, "binding support"):
+                split.pipeline_adapter(pipeline)
+            cloud.prepare = lambda task, config, output, repo_root, source=None: None
+            cloud._read_plan = lambda path: None
             with self.assertRaisesRegex(ValueError, "binding support"):
                 split.pipeline_adapter(pipeline)
             cloud.__file__ = str(self.root / "other/cloud.py")

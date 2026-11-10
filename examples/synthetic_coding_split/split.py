@@ -539,10 +539,14 @@ def pipeline_adapter(pipeline_root):
         cloud = importlib.import_module("examples.hub_validation_pipeline.cloud")
         if Path(cloud.__file__).resolve() != adapter_path:
             raise ValueError("loaded adapter is outside the selected pipeline root")
-        if "source" not in inspect.signature(cloud.prepare).parameters or not callable(
-            cloud._read_plan
+        if (
+            "source" not in inspect.signature(cloud.prepare).parameters
+            or not callable(cloud._read_plan)
+            or "expected_sha256" not in inspect.signature(cloud._read_plan).parameters
         ):
-            raise ValueError("adapter lacks acquisition-file binding support")
+            raise ValueError(
+                "adapter lacks acquisition-file and plan-byte binding support"
+            )
         return cloud
     finally:
         sys.path[:] = original_path
@@ -591,7 +595,13 @@ def prepare(image_lock, pipeline_root, output, task_root, inventory_path, result
                 },
             )
             plan_path = output / task_id / "plan.json"
-            plan, _, _, manifest = cloud._read_plan(plan_path)
+            plan_bytes = plan_path.read_bytes()
+            plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
+            plan, _, _, manifest = cloud._read_plan(
+                plan_path, expected_sha256=plan_sha256
+            )
+            if plan_path.read_bytes() != plan_bytes:
+                raise ValueError("prepared plan changed during verification")
             if (
                 plan["task_source"].get("task_file_hashes") != expected
                 or {
@@ -629,7 +639,7 @@ def prepare(image_lock, pipeline_root, output, task_root, inventory_path, result
                     "agent_image": lock[task_id],
                     "verifier_image": BASE_IMAGE,
                     "plan_path": f"{task_id}/plan.json",
-                    "plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+                    "plan_sha256": plan_sha256,
                 }
             )
     write_json(
