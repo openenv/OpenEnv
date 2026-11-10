@@ -4,6 +4,8 @@ version = "0.1.0"
 requires-python = "==3.12.*"
 dependencies = [
     "openenv",
+    # The Harbor task binding's tests import Harbor; a skip fails --require-complete.
+    "harbor==0.25.0",
     "pytest==8.4.2",
     "pytest-asyncio==1.2.0",
     "jsonschema==4.25.1",
