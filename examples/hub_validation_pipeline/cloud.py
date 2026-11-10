@@ -250,8 +250,10 @@ def _positive(value, name, *, maximum=10000, minimum=1):
 
 
 def _check_acquisition_files(source, task_files):
-    """Bind a captured task to optional hashes verified during acquisition."""
+    """Bind remote source identities to hashes verified during acquisition."""
     if "task_file_hashes" not in source:
+        if source.get("kind", source.get("source")) in {"hf", "harbor"}:
+            raise ValueError("Remote source requires verified acquisition file hashes")
         return
     expected = source["task_file_hashes"]
     if (
@@ -515,6 +517,7 @@ def prepare(task_root, config, output_dir, *, repo_root=None, source=None):
         raise ValueError("Output directory must be outside the task")
     config, budget = _config(config)
     from examples.coding_audit.runner import validate_coding_task
+    from openenv.validation.runner import source_digest
 
     validate_coding_task(task_root, config)
     files = {}
@@ -565,6 +568,7 @@ def prepare(task_root, config, output_dir, *, repo_root=None, source=None):
             path.write_bytes(content)
             path.chmod(mode)
         validate_coding_task(frozen, config)
+        captured_digest = source_digest(frozen)
     files.update({"task/" + name: value for name, value in task_files.items()})
     files["coding-config.json"] = (_json_bytes(config), 0o644)
     if source is None:
@@ -603,11 +607,8 @@ def prepare(task_root, config, output_dir, *, repo_root=None, source=None):
             raise ValueError("Dataset source requires its full immutable revision")
         if source.get("task_path") != ".":
             _safe_name(source["task_path"])
-        if kind == "local":
-            from openenv.validation.runner import source_digest
-
-            if source_digest(task_root) != revision:
-                raise ValueError("Local source revision differs from the prepared task")
+        if kind == "local" and captured_digest != revision:
+            raise ValueError("Local source revision differs from the prepared task")
         source["kind"] = kind
     _check_acquisition_files(
         source, {name: value[0] for name, value in task_files.items()}

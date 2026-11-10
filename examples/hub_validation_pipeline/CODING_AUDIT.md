@@ -145,7 +145,9 @@ Each task declares:
 The panel's exact bytes are read once. Manifests record its path, byte length and
 SHA256; each prepared bundle's source provenance includes the same panel SHA256.
 Native task/verifier bytes remain unchanged and bind to the original acquired
-file inventory. Configuration and annotations come from the operator input.
+file inventory. Remote source identities require a complete, verified acquisition
+hash inventory; a revision string alone cannot authorize a bundle. Local revisions
+are checked against the captured bundle bytes, including the verifier. Configuration and annotations come from the operator input.
 
 ```bash
 uv run --no-sync python -m examples.hub_validation_pipeline.real_tasks \

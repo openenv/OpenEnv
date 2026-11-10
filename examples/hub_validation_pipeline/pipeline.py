@@ -647,21 +647,19 @@ def run(args):
                 from examples.hub_validation_pipeline.cloud import prepare
 
                 plan_dir = output / "plans" / key
-                plan = prepare(
-                    subject,
-                    coding_config,
-                    plan_dir,
-                    source={
-                        name: task[name]
-                        for name in (
-                            "source",
-                            "source_id",
-                            "revision",
-                            "task_path",
-                            "task_id",
-                        )
-                    },
-                )
+                provenance = {
+                    name: task[name]
+                    for name in (
+                        "source",
+                        "source_id",
+                        "revision",
+                        "task_path",
+                        "task_id",
+                    )
+                }
+                if "task_file_hashes" in task:
+                    provenance["task_file_hashes"] = task["task_file_hashes"]
+                plan = prepare(subject, coding_config, plan_dir, source=provenance)
                 row = {
                     "task_id": task["task_id"],
                     "run_id": plan["run_id"],

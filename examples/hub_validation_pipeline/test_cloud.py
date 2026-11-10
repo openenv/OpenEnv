@@ -554,6 +554,10 @@ def test_pinned_discovery_sources_bind_into_cloud_bundle(inputs, tmp_path, kind)
         "revision": revision,
         "task_path": ".",
     }
+    source["task_file_hashes"] = {
+        name: hashlib.sha256(data).hexdigest()
+        for name, (data, _) in cloud._tree(task).items()
+    }
     plan = cloud.prepare(task, config, tmp_path / kind, repo_root=repo, source=source)
     assert plan["task_source"]["kind"] == kind
     assert plan["task_source"]["revision"] == revision
@@ -750,14 +754,30 @@ def test_bundle_retains_available_full_run_reproduction_helpers(inputs, tmp_path
         assert files[relative] == (repo / relative).read_bytes()
 
 
+@pytest.mark.parametrize("source_kind", ["local", "hf", "harbor"])
 def test_hub_driver_prepares_coding_audits_without_admitting_or_running_docker(
-    inputs, tmp_path, monkeypatch
+    inputs, tmp_path, monkeypatch, source_kind
 ):
     from argparse import Namespace
 
     from examples.hub_validation_pipeline import cloud, pipeline
 
-    _, task, raw_config = inputs
+    repo, task, raw_config = inputs
+    hashes = {
+        name: hashlib.sha256(data).hexdigest()
+        for name, (data, _) in cloud._tree(task).items()
+    }
+    if source_kind != "local":
+        record = dict(
+            task_id="remote-test-task",
+            path=str(task),
+            source=source_kind,
+            source_id="org/tasks",
+            task_path=".",
+            task_file_hashes=hashes,
+            revision=SHA if source_kind == "hf" else "sha256:" + "b" * 64,
+        )
+        monkeypatch.setattr(pipeline.sources, "acquire", lambda *args: [record])
     config = tmp_path / "coding.json"
     config.write_text(json.dumps(raw_config))
     calls = []
@@ -766,7 +786,9 @@ def test_hub_driver_prepares_coding_audits_without_admitting_or_running_docker(
     def prepare(subject, config, output, *, source):
         calls.append((subject, source))
         assert (subject / "task.toml").is_file()
-        return real_prepare(subject, config, output, source=source)
+        if source_kind != "local":
+            assert source["task_file_hashes"] == hashes
+        return real_prepare(subject, config, output, repo_root=repo, source=source)
 
     monkeypatch.setattr(cloud, "prepare", prepare)
     monkeypatch.setattr(
@@ -779,9 +801,11 @@ def test_hub_driver_prepares_coding_audits_without_admitting_or_running_docker(
         contract=None,
         coding_config=config,
         submit_hf_jobs=False,
-        hf_dataset=[],
-        harbor_dataset=[],
-        local_dataset=[task],
+        hf_dataset=["org/tasks@" + SHA] if source_kind == "hf" else [],
+        harbor_dataset=["org/tasks@sha256:" + "b" * 64]
+        if source_kind == "harbor"
+        else [],
+        local_dataset=[task] if source_kind == "local" else [],
         source="both",
         dataset_limit=0,
         tasks_per_dataset=1,
@@ -904,3 +928,48 @@ def test_submit_rechecks_reserved_plan_cost_and_status(inputs, tmp_path, case):
     api.run_job.assert_not_called()
     api.create_commit.assert_not_called()
     assert not (output / "submission.json").exists()
+
+
+def test_local_revision_checks_captured_verifier_not_restored_live_tree(
+    inputs, tmp_path, monkeypatch
+):
+    from openenv.validation.runner import source_digest
+
+    repo, task, config = inputs
+    revision = source_digest(task)
+    original_tree = cloud._tree
+    verifier = task / "tests/test.sh"
+    original = verifier.read_bytes()
+    captured = []
+
+    def mutate_during_capture(root, **kwargs):
+        if root != task:
+            return original_tree(root, **kwargs)
+        verifier.write_bytes(b"echo 1 > /logs/verifier/reward.txt\n")
+        try:
+            files = original_tree(root, **kwargs)
+            captured.append(files["tests/test.sh"][0])
+            return files
+        finally:
+            verifier.write_bytes(original)
+
+    monkeypatch.setattr(cloud, "_tree", mutate_during_capture)
+    source = {"kind": "local", "revision": revision, "task_path": "."}
+    with pytest.raises(ValueError, match="Local source revision"):
+        cloud.prepare(task, config, tmp_path / "race", repo_root=repo, source=source)
+    assert source_digest(task) == revision
+    assert captured == [b"echo 1 > /logs/verifier/reward.txt\n"]
+    assert not (tmp_path / "race").exists()
+
+
+@pytest.mark.parametrize("kind", ["hf", "harbor"])
+def test_remote_identity_requires_verified_acquisition_hashes(inputs, tmp_path, kind):
+    repo, task, config = inputs
+    source = dict(
+        kind=kind,
+        revision="a" * 40 if kind == "hf" else "sha256:" + "b" * 64,
+        task_path=".",
+    )
+    with pytest.raises(ValueError, match="verified acquisition"):
+        cloud.prepare(task, config, tmp_path / kind, repo_root=repo, source=source)
+    assert not (tmp_path / kind).exists()
