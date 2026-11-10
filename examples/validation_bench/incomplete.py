@@ -839,6 +839,14 @@ def run_case(base, name, seed, variant):
         mismatches.append(
             {"field": "zero_jobs_and_pinned_source", "observed": observations}
         )
+    if observations.get("direct_start_gate") == "UNEXPECTED_START":
+        mismatches.append(
+            {
+                "field": "direct_start_gate",
+                "expected": "ProviderError",
+                "observed": observations["direct_start_gate"],
+            }
+        )
     if not all(
         item["count_matches"] and item["failure_metadata_matches"]
         for item in observations.get("prefix_integrity", [])
