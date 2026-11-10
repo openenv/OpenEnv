@@ -360,6 +360,32 @@ def test_cleanup_failure_blocks(task, boundary, tmp_path):
     ]
 
 
+def test_temp_cleanup_failure_does_not_discard_successful_trials(
+    task, boundary, monkeypatch
+):
+    temporary_directory = harbor.tempfile.TemporaryDirectory
+
+    class CleanupSensitiveTemporaryDirectory:
+        def __init__(self, *args, ignore_cleanup_errors=False, **kwargs):
+            self.directory = temporary_directory(*args, **kwargs)
+            self.ignore_cleanup_errors = ignore_cleanup_errors
+
+        def __enter__(self):
+            return self.directory.__enter__()
+
+        def __exit__(self, *args):
+            self.directory.__exit__(*args)
+            if not self.ignore_cleanup_errors:
+                raise PermissionError("container-owned trial file")
+
+    monkeypatch.setattr(
+        harbor.tempfile, "TemporaryDirectory", CleanupSensitiveTemporaryDirectory
+    )
+    report = run_validation(task)
+    assert result(report, "runtime.startup").status is CheckStatus.PASS
+    assert result(report, "semantic.oracle_max").status is CheckStatus.PASS
+
+
 def test_oracle_nonzero_exit_fails_oracle_max_and_retains_marker(
     task, boundary, tmp_path
 ):
@@ -439,6 +465,7 @@ def test_missing_oracle_fails_oracle_max_without_starting_trial(task, boundary):
     (task / "solution/solve.sh").unlink()
     report = run_validation(task)
     assert report.verdict is Verdict.FAIL
+    assert report.levels_run == [Level.STATIC, Level.SEMANTIC]
     # RFC 008: no oracle is a graded FAIL, not a SKIP.
     assert result(report, "semantic.oracle_max").status is CheckStatus.FAIL
     assert result(report, "runtime.startup").status is CheckStatus.SKIP

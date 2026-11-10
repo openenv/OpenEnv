@@ -674,6 +674,7 @@ def validate_harbor(
     )
     evidence = None
     checks = []
+    semantic_graded = False
     if not problem:
         if subject.manifest.capabilities.oracle is None:
             startup = _result(
@@ -683,6 +684,7 @@ def validate_harbor(
             )
             if semantic:
                 # RFC 008: a missing oracle is a graded FAIL, never a SKIP.
+                semantic_graded = True
                 checks.append(
                     CheckResult(
                         check_id="semantic.oracle_max",
@@ -699,7 +701,8 @@ def validate_harbor(
             attempted = True
             try:
                 with tempfile.TemporaryDirectory(
-                    prefix="openenv-harbor-validation-"
+                    prefix="openenv-harbor-validation-",
+                    ignore_cleanup_errors=True,
                 ) as temp:
                     daemon, trials, files = asyncio.run(
                         _collect(
@@ -896,8 +899,8 @@ def validate_harbor(
     levels = [Level.STATIC]
     if attempted:
         levels.append(Level.RUNTIME)
-        if semantic:
-            levels.append(Level.SEMANTIC)
+    if semantic and (attempted or semantic_graded):
+        levels.append(Level.SEMANTIC)
     report = ValidationReportV2(
         report_schema_version="2",
         target=str(subject.root),
