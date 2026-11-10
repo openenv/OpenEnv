@@ -123,26 +123,50 @@ def test_flat_reply_tool_calls_are_nested_and_parsed():
     ]
 
 
-def test_auxiliary_and_discarded_turns_are_never_the_row():
-    late = [
+def test_discarded_retry_is_never_the_row():
+    result = rollout()
+    result["turns"].append(  # after the real last agent turn
         {
             "turn": 2,
-            "role": "auxiliary",
-            "request_messages": [TASK],
-            "text": "Title: row count",
-        },
-        {
-            "turn": 3,
             "role": "agent",
             "discarded": True,
             "request_messages": [TASK],
             "text": "retry",
-        },
-    ]
-    result = rollout()
-    result["turns"] += late  # after the real last agent turn
+        }
+    )
     row = sft.to_sft_row(models.HarborRolloutResult.model_validate(result))
     assert row["messages"][-1]["content"] == "There are 42 rows."
+
+
+def test_unusable_capture_is_skipped_but_a_nonzero_exit_is_not():
+    fatal, mismatch, exited = rollout(), rollout(), rollout()
+    fatal["findings"] = ["[FATAL] no model calls captured"]
+    mismatch["atif"] = "MISMATCH"
+    # older OpenEnv marked graded OpenCode runs not ok because OpenCode exits 1: the conversation is sound
+    exited.update(ok=False, exception_type="NonZeroAgentExitCodeError")
+    rows, stats = sft.export_sft([fatal, mismatch, exited], min_reward=1.0)
+    assert stats.capture_failed == 2 and len(rows) == 1
+
+
+def test_empty_reply_and_malformed_tool_calls_are_skipped():
+    empty = rollout(last_reply="")
+    bad_json, not_object = rollout(), rollout()
+    for r, raw in ((bad_json, "{not json"), (not_object, "[1, 2]")):
+        # the earlier assistant turn, as the last request carries it
+        r["turns"][-1]["request_messages"][2] = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": raw},
+                }
+            ],
+        }
+    rows, stats = sft.export_sft([empty, bad_json, not_object])
+    assert rows == []
+    assert (stats.empty_reply, stats.malformed_tool_call) == (1, 2)
 
 
 def test_no_filter_by_default():
@@ -211,3 +235,52 @@ def test_cli_writes_rows_from_a_results_directory(tmp_path):
     assert outcome.exit_code == 0, outcome.output
     rows = [json.loads(line) for line in out.read_text().splitlines()]
     assert len(rows) == 1 and rows[0]["messages"][-1]["content"] == "There are 42 rows."
+
+
+def test_cli_reads_reward_key_skips_other_json_and_pushes(tmp_path, monkeypatch):
+    typer_testing = pytest.importorskip("typer.testing")
+    harbor_cli = pytest.importorskip("openenv.cli.commands.harbor")
+    hub = pytest.importorskip("huggingface_hub")
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "a.json").write_text(
+        json.dumps(
+            rollout(reward=None, rewards={"correctness": 1.0, "submission": 1.0})
+        )
+    )
+    (results / "summary.json").write_text(json.dumps({"solved": 1}))
+    calls = []
+
+    class FakeApi:
+        def create_repo(self, repo_id, **kwargs):
+            calls.append(("create_repo", repo_id, kwargs.get("private")))
+
+        def upload_file(self, **kwargs):
+            calls.append(("upload_file", kwargs["repo_id"], kwargs["path_in_repo"]))
+
+    monkeypatch.setattr(hub, "HfApi", FakeApi)
+    out = tmp_path / "rows.jsonl"
+    args = ["export-sft", str(results), "--out", str(out), "--min-reward", "1"]
+    args += [
+        "--reward-key",
+        "correctness,reward",
+        "--push-to",
+        "me/traces",
+        "--private",
+    ]
+    outcome = typer_testing.CliRunner().invoke(harbor_cli.app, args)
+    assert outcome.exit_code == 0, outcome.output
+    assert len(out.read_text().splitlines()) == 1
+    assert calls == [
+        ("create_repo", "me/traces", True),
+        ("upload_file", "me/traces", "data/rows.jsonl"),
+    ]
+
+
+def test_cli_rejects_a_missing_path(tmp_path):
+    typer_testing = pytest.importorskip("typer.testing")
+    harbor_cli = pytest.importorskip("openenv.cli.commands.harbor")
+    outcome = typer_testing.CliRunner().invoke(
+        harbor_cli.app, ["export-sft", str(tmp_path / "nope.json")]
+    )
+    assert outcome.exit_code == 2  # a usage error, not a traceback

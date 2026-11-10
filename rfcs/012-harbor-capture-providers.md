@@ -45,7 +45,7 @@ A versioned external evidence report supplies stable, experimental and unstable 
 
 The training contract above is token-level and refuses evaluation rollouts. A second export is text-level: `openenv.harbor.sft.export_sft` (and `openenv harbor export-sft`) turns a rollout into one conversational row, the agent's last request (`request_messages`, `request_tools`) plus its reply. Supervised fine-tuning needs that conversation, not engine tokens, so this export accepts `eval` rollouts against hosted providers as well as `train` ones, and never reads token fields. It does not weaken the token contract: an `eval` rollout still cannot produce a `TrainingTrace`.
 
-The row comes from the capture graph's labels. Auxiliary calls and discarded retries are never the row, as in `to_trace_entries`. Tool-call arguments are parsed into dicts, since chat templates iterate over them. Each row keeps the rollout's reward and named rewards. Filtering stays the caller's decision (`min_reward`), in line with RFC 006: the recorder labels and exports, it doesn't decide which rollouts train.
+The row comes from the capture graph's labels. Discarded retries are never the row, and neither are auxiliary calls the capture gives a sequence of their own. An auxiliary node inside an agent sequence is masked at token level for training, a label a text row can't carry, so it stays in the turn list. Rollouts with an unusable capture (a `[FATAL]` finding or a trace mismatch) are skipped. Tool-call arguments are parsed into dicts, since chat templates iterate over them. Each row keeps the rollout's reward and named rewards. Filtering stays the caller's decision (`min_reward`), in line with RFC 006: the recorder labels and exports, it doesn't decide which rollouts train.
 
 ## Examples
 

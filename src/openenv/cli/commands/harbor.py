@@ -337,11 +337,15 @@ def _read_results(paths: list[str]) -> list[dict[str, Any]]:
     files: list[Path] = []
     for spec in paths:
         path = Path(spec)
+        if not path.exists():
+            raise typer.BadParameter(f"{spec} does not exist")
         files.extend(sorted(path.glob("*.json")) if path.is_dir() else [path])
     results: list[dict[str, Any]] = []
     for file in files:
         data = json.loads(file.read_text())
-        results.extend(data if isinstance(data, list) else [data])
+        items = data if isinstance(data, list) else [data]
+        # a directory can hold other JSON (a run summary): keep what looks like a rollout
+        results.extend(i for i in items if isinstance(i, dict) and "turns" in i)
     return results
 
 
@@ -380,8 +384,9 @@ def export_sft_command(
 ) -> None:
     """Turn rollouts into conversational SFT rows (`messages` + `tools`), one per rollout.
 
-    Works on evaluation rollouts against a hosted model: SFT needs the conversation, not token ids. Load the rows
-    with `datasets.load_dataset("json", ...)`, which keeps each tool call's arguments as they are.
+    Works on evaluation rollouts against a hosted model: SFT needs the conversation, not token ids. To train on the
+    rows, type `messages` and `tools` with the `Json` feature of `datasets`: a schema inferred from the rows gives
+    every tool call the argument names of every other tool, as `None`.
     """
     from openenv.harbor.sft import export_sft
 
@@ -395,8 +400,15 @@ def export_sft_command(
         print(
             f"  dropped: {stats.below_min_reward} below --min-reward, {stats.ungraded} ungraded"
         )
-    if stats.no_agent_turn:
-        print(f"  {stats.no_agent_turn} rollouts had no agent turn")
+    skipped = {
+        "had no agent turn": stats.no_agent_turn,
+        "had an unusable capture": stats.capture_failed,
+        "ended on an empty reply": stats.empty_reply,
+        "held a tool call whose arguments aren't a JSON object": stats.malformed_tool_call,
+    }
+    for reason, count in skipped.items():
+        if count:
+            print(f"  {count} rollouts {reason}, skipped")
     if stats.ended_on_tool_call:
         print(
             f"  {len(stats.ended_on_tool_call)} rollouts ended right after a tool call, usually a failed model call"
