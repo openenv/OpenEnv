@@ -373,6 +373,7 @@ async def _trial(
     }
     raw_files = {}
     trial = None
+    phase = "trial creation"
     # Register and verify ownership before Trial.create can allocate anything.
     if any(inspector.inventory(project).values()):
         raise NativeEvidenceError("run-owned project was not empty before allocation")
@@ -437,7 +438,13 @@ async def _trial(
         async with asyncio.timeout(budget):
             trial = await _create_trial(config)
 
+            async def environment_start(_event):
+                nonlocal phase
+                phase = "environment build/start"
+
             async def capture(_event):
+                nonlocal phase
+                phase = "agent"
                 if trial.agent_environment.session_id != project:
                     raise NativeEvidenceError(
                         "Harbor sandbox identity differs from the registered project"
@@ -467,14 +474,46 @@ async def _trial(
                     if marker is not None:
                         raw_files["oracle-exit-code.txt"] = marker
 
+            async def verification_start(_event):
+                nonlocal phase
+                phase = "verifier"
+
+            trial.add_hook(TrialEvent.ENVIRONMENT_START, environment_start)
             trial.add_hook(TrialEvent.AGENT_START, capture)
             trial.add_hook(TrialEvent.AGENT_END, capture_exit)
+            trial.add_hook(TrialEvent.VERIFICATION_START, verification_start)
             result = await trial.run()
         if source_digest(task_copy) != digest_before:
             raise NativeEvidenceError(
                 "private execution task changed during validation"
             )
         if result.exception_info is not None:
+            failure = result.exception_info.exception_type
+            if failure in {
+                "RewardFileNotFoundError",
+                "RewardFileEmptyError",
+                "VerifierOutputParseError",
+            }:
+                if "container_id" not in record:
+                    raise NativeEvidenceError(
+                        "Harbor reward failure has no container identity"
+                    )
+                record["reward_error"] = True
+                raise NativeEvidenceError(f"Harbor verifier reward failed ({failure})")
+            subject_phase = {
+                "EnvironmentStartTimeoutError": "environment build/start",
+                "SandboxBuildFailedError": "environment build/start",
+                "AgentSetupTimeoutError": "agent setup",
+                "AgentTimeoutError": "agent",
+                "VerifierTimeoutError": "verifier",
+            }.get(failure)
+            if failure == "RuntimeError" and phase == "environment build/start":
+                subject_phase = phase
+            if subject_phase:
+                record["subject_error"] = subject_phase
+                raise NativeEvidenceError(
+                    f"Harbor subject failed during {subject_phase} ({failure})"
+                )
             raise NativeEvidenceError("Harbor Trial returned exception_info")
         if "container_id" not in record:
             raise NativeEvidenceError("Harbor Trial has no actual AGENT_START identity")
@@ -501,6 +540,9 @@ async def _trial(
         record.pop("reward_error")
     except (Exception, KeyboardInterrupt) as exc:
         record["failure"] = type(exc).__name__
+        if isinstance(exc, TimeoutError):
+            record["subject_error"] = phase
+            record["reason"] = f"Harbor subject timed out during {phase}"
         # Error categories are safe; task-authored exception messages/logs are not.
         if isinstance(exc, NativeEvidenceError):
             record["reason"] = str(exc)
@@ -735,10 +777,20 @@ def validate_harbor(
                     or (not malformed and len(trials) != 3 + len(canaries))
                     or len(set(containers)) != len(containers)
                 ):
+                    subject_failures = broken and all(
+                        trial.get("subject_error")
+                        and trial["failure"] not in _HOST_FAILURES
+                        for trial in broken
+                    )
                     startup = _result(
                         "runtime.startup",
-                        CheckStatus.ERROR,
-                        "native Harbor trial, binding or cleanup failed",
+                        CheckStatus.FAIL if subject_failures else CheckStatus.ERROR,
+                        "native Harbor subject failed during "
+                        + ", ".join(
+                            sorted({trial["subject_error"] for trial in broken})
+                        )
+                        if subject_failures
+                        else "native Harbor trial, binding or cleanup failed",
                         {
                             "failures": [
                                 trial.get("reason", trial.get("failure"))

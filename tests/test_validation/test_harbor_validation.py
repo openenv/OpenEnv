@@ -61,6 +61,7 @@ def boundary(monkeypatch, task):
         config_drift=False,
         oracle_exit=None,
         exception=False,
+        exception_type=None,
         no_identity=False,
         timeout=False,
         retained=True,
@@ -132,6 +133,13 @@ def boundary(monkeypatch, task):
             self.hooks.setdefault(event.value, []).append(callback)
 
         async def run(self):
+            for hook in self.hooks.get("environment-start", []):
+                await hook(None)
+            if state.exception_type in ("RuntimeError", "EnvironmentStartTimeoutError"):
+                return SimpleNamespace(
+                    exception_info=SimpleNamespace(exception_type=state.exception_type),
+                    verifier_result=None,
+                )
             if not state.no_identity:
                 for hook in self.hooks.get("agent-start", []):
                     await hook(None)
@@ -156,13 +164,24 @@ def boundary(monkeypatch, task):
                 (self.config.task.path / "instruction.md").write_text(
                     "changed execution source"
                 )
+            for hook in self.hooks.get("verification-start", []):
+                await hook(None)
             try:
                 rewards = json.loads(raw) if raw else None
             except ValueError:
                 rewards = None
+            exception_type = state.exception_type
+            if raw is None:
+                exception_type = "RewardFileNotFoundError"
+            elif raw == b"":
+                exception_type = "RewardFileEmptyError"
+            elif raw in (b'{"reward":NaN}', b'{"reward":Infinity}', b'{"reward":"0"}'):
+                exception_type = "VerifierOutputParseError"
+            if state.exception:
+                exception_type = "TestError"
             return SimpleNamespace(
-                exception_info={"exception_type": "TestError"}
-                if state.exception
+                exception_info=SimpleNamespace(exception_type=exception_type)
+                if exception_type
                 else None,
                 verifier_result=SimpleNamespace(rewards=rewards),
             )
@@ -273,6 +292,7 @@ def test_success_grades_semantic_checks_with_native_raw_evidence(
     "raw",
     [
         None,
+        b"",
         b"{}",
         b'{"other":0}',
         b'{"reward":true}',
@@ -347,7 +367,28 @@ def test_source_identity_exception_timeout_fail_closed(task, boundary, flag):
     setattr(boundary, flag, True)
     report = run_validation(task)
     assert report.verdict is Verdict.FAIL
-    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.startup").status is (
+        CheckStatus.FAIL if flag == "timeout" else CheckStatus.ERROR
+    )
+
+
+@pytest.mark.parametrize(
+    "exception_type,phase",
+    [
+        ("RuntimeError", "environment"),
+        ("EnvironmentStartTimeoutError", "environment"),
+        ("AgentTimeoutError", "agent"),
+        ("AgentSetupTimeoutError", "agent setup"),
+        ("VerifierTimeoutError", "verifier"),
+    ],
+)
+def test_subject_failures_name_the_phase(task, boundary, exception_type, phase):
+    boundary.exception_type = exception_type
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.FAIL
+    assert phase in startup.evidence[0]
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
 
 
 def test_cleanup_failure_blocks(task, boundary, tmp_path):
