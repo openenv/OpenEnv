@@ -61,7 +61,10 @@ def estimate(configs):
             != RATEBOOK["child_lifetime_seconds"]
         ):
             raise ValueError("A different child lifetime requires a different ratebook")
-        if any(config[key]["flavor"] != "cpu-basic" for key in ("cloud", "execution")):
+        if any(
+            config[key].get("flavor", "cpu-basic") != "cpu-basic"
+            for key in ("cloud", "execution")
+        ):
             raise ValueError("A different flavor requires a different ratebook")
         for key in ("target", "generator"):
             model = config[key]
@@ -260,7 +263,7 @@ def run(
         manifest["stage"] = "budget"
         manifest["estimate"] = estimate(configs)
         manifest["within_budget"] = (
-            Fraction(manifest["estimate"]["reservation_usd_exact"]) <= cap
+            Fraction(manifest["estimate"]["reservation_usd_rounded_up"]) <= cap
         )
         manifest["status"] = "prepared"
         _write(manifest_path, manifest)

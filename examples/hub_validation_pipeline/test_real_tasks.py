@@ -575,3 +575,49 @@ def test_recipe_hashes_exact_panel_bytes_and_loads_only_once(tmp_path, monkeypat
     assert Path(manifest["tasks"][0]["config_path"]).read_bytes() == cloud._json_bytes(
         toy_config()
     )
+
+
+def test_dockerfile_only_recipe_preserves_native_manifest(tmp_path):
+    name = TOY_NAMES[0]
+    files = source_files(name)
+    files["task.toml"] = b'version = "1.0"\n[environment]\ncpus = 1\n'
+    api, download = hf_fakes({f"fixtures/{name}/{p}": raw for p, raw in files.items()})
+    result = real_tasks.prepare(
+        tmp_path / "recipe",
+        panel_path=write_panel(tmp_path, [name]),
+        api=api,
+        download=download,
+    )
+    row = result["tasks"][0]
+    assert row["source_image"] is None
+    assert row["execution_image"] == toy_config(name)["execution"]["agent_image"]
+    assert (Path(row["task_root"]) / "task.toml").read_bytes() == files["task.toml"]
+
+
+def test_root_task_panel_acquires_and_bundles_exact_root_files(tmp_path):
+    name = TOY_NAMES[0]
+    files = source_files(name)
+    api, download = hf_fakes(files)
+
+    def listing(repo_id, **kwargs):
+        assert kwargs["path_in_repo"] is None
+        for path, data in files.items():
+            yield RepoFile(
+                path=path,
+                size=len(data),
+                oid=hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest(),
+            )
+
+    api.list_repo_tree.side_effect = listing
+    panel = write_panel(tmp_path, [name])
+    value = cloud._loads(panel.read_bytes())
+    value["tasks"][0]["task_path"] = "."
+    panel.write_bytes(cloud._json_bytes(value))
+    result = real_tasks.prepare(
+        tmp_path / "recipe", panel_path=panel, api=api, download=download
+    )
+    row = result["tasks"][0]
+    assert row["source"]["task_path"] == "."
+    assert set(row["files"]) == set(files)
+    for path, content in files.items():
+        assert (Path(row["task_root"]) / path).read_bytes() == content

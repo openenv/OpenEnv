@@ -54,9 +54,12 @@ def _status(task, spec, owner, deadline, api, secrets, clock):
         or job.owner.name != owner
     ):
         raise ValueError("Controller identity mismatch")
+    stage = job.status.stage
+    if stage in {"COMPLETED", "ERROR", "CANCELED", "DELETED"}:
+        return stage
     if clock() >= deadline:
         return "TIMEOUT"
-    return job.status.stage if job.status.stage in STAGES else "UNKNOWN"
+    return stage if stage in STAGES else "UNKNOWN"
 
 
 def run(

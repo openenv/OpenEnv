@@ -973,3 +973,37 @@ def test_remote_identity_requires_verified_acquisition_hashes(inputs, tmp_path, 
     with pytest.raises(ValueError, match="verified acquisition"):
         cloud.prepare(task, config, tmp_path / kind, repo_root=repo, source=source)
     assert not (tmp_path / kind).exists()
+
+
+def test_receipt_is_synced_before_and_after_atomic_publication(tmp_path, monkeypatch):
+    import os
+
+    path = tmp_path / "submission.json"
+    events = []
+    fsync, replace = os.fsync, Path.replace
+
+    def sync(fd):
+        events.append("directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        fsync(fd)
+
+    def publish(source, target):
+        events.append("replace")
+        return replace(source, target)
+
+    monkeypatch.setattr(os, "fsync", sync)
+    monkeypatch.setattr(Path, "replace", publish)
+    cloud._write_receipt(path, {"job_id": "owned-job"})
+    assert events == ["file", "replace", "directory"]
+    assert cloud._loads(path.read_bytes()) == {"job_id": "owned-job"}
+
+
+def test_receipt_sync_failure_preserves_previous_receipt(tmp_path, monkeypatch):
+    import os
+
+    path = tmp_path / "submission.json"
+    path.write_text('{"status":"launch_pending"}\n')
+    previous = path.read_bytes()
+    monkeypatch.setattr(os, "fsync", Mock(side_effect=OSError("disk failure")))
+    with pytest.raises(OSError, match="disk failure"):
+        cloud._write_receipt(path, {"status": "submitted", "job_id": "owned-job"})
+    assert path.read_bytes() == previous

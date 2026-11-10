@@ -691,3 +691,26 @@ def test_malformed_controller_owner_url_never_bypasses_identity(cohort, url):
         prepared_batch.run(**cohort.arguments, submit=True)
     cohort.api.inspect_job.assert_not_called()
     assert cohort.launch.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "stage", ["COMPLETED", "ERROR", "CANCELED", "DELETED", "RUNNING"]
+)
+def test_status_preserves_terminal_observation_at_deadline(stage):
+    job = SimpleNamespace(
+        id="job",
+        docker_image=cloud.WORKER_IMAGE,
+        owner=SimpleNamespace(name="owner"),
+        status=SimpleNamespace(stage=stage),
+    )
+    clock = iter([0.0, 0.1, 1.1])
+    result = prepared_batch._status(
+        {"job_id": "job"},
+        {"image": cloud.WORKER_IMAGE},
+        "owner",
+        1,
+        SimpleNamespace(inspect_job=lambda **kwargs: job),
+        SECRETS,
+        lambda: next(clock),
+    )
+    assert result == ("TIMEOUT" if stage == "RUNNING" else stage)

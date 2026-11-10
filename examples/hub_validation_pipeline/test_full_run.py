@@ -821,3 +821,28 @@ def test_full_run_requires_explicit_panel_before_preparation(local_run):
     assert not output.exists()
     prepare.assert_not_called()
     submit.assert_not_called()
+
+
+def test_missing_execution_flavor_uses_backend_cpu_basic_default():
+    config = toy_config()
+    expected = full_run.estimate([config])
+    config["execution"].pop("flavor", None)
+    assert full_run.estimate([config]) == expected
+
+
+def test_budget_gate_compares_actual_rounded_reservation(local_run, monkeypatch):
+    from decimal import Decimal
+
+    output, hf, harbor, _, submit, _ = local_run
+    monkeypatch.setitem(full_run.RATEBOOK, "cpu_basic_usd_per_hour", "0.010000000001")
+    estimated = full_run.estimate([toy_config(name) for name in TOY_NAMES])
+    exact = Fraction(estimated["reservation_usd_exact"])
+    rounded = Fraction(estimated["reservation_usd_rounded_up"])
+    assert exact < rounded
+    halfway = (exact + rounded) / 2
+    cap = str(Decimal(halfway.numerator) / Decimal(halfway.denominator))
+    result = full_run.run(
+        output, hf, harbor, cap, panel_path=output.parent / "panel.json"
+    )
+    assert result["within_budget"] is False
+    submit.assert_not_called()

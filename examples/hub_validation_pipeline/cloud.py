@@ -769,8 +769,16 @@ def _private_repo(api, repo, token):
 
 def _write_receipt(path, value):
     temporary = path.with_suffix(".tmp")
-    temporary.write_bytes(_json_bytes(value))
+    with temporary.open("wb") as stream:
+        stream.write(_json_bytes(value))
+        stream.flush()
+        os.fsync(stream.fileno())
     temporary.replace(path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def stage_inputs(plan_path, *, api=None, secrets=None, expected_plan_sha256=None):
