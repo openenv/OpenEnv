@@ -742,6 +742,10 @@ class HFTaskBackend:
             raise HFBackendError("model output exceeded byte limit")
         if choices[0].get("finish_reason") not in {"stop", "tool_calls"}:
             raise HFBackendError("model response was incomplete")
+        if choices[0]["finish_reason"] == "tool_calls" and (
+            not isinstance(message.get("tool_calls"), list) or not message["tool_calls"]
+        ):
+            raise HFBackendError("invalid terminal function calls")
         return message
 
     def _candidate_response(self, client, request, allowed, limits, record):

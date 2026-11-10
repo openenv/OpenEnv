@@ -62,5 +62,5 @@ its frozen source and task bundle; its tests stay outside the bundle.
 Run the offline suite with:
 
 ```bash
-PYTHONPATH=src:envs uv run pytest examples/coding_audit -q
+PYTHONPATH=.:src:envs uv run pytest examples/coding_audit -q
 ```

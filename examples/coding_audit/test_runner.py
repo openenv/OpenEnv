@@ -463,9 +463,66 @@ def test_in_task_output_rejected_before_inference(task):
     assert not (task / "audit.artifacts").exists()
 
 
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "environment/source/api.py",
+        "instruction.md",
+        "tests/test.sh",
+        "solution/solve.sh",
+    ],
+)
+def test_snapshot_rejects_hardlinked_artifacts_before_inference(
+    task, tmp_path, monkeypatch, artifact
+):
+    import huggingface_hub
+    from examples.coding_audit import hf
+
+    m = SimpleNamespace(**runpy.run_path(str(Path(__file__).with_name("test_hf.py"))))
+    api, inference = m.API(), m.InferenceFactory()
+    factory = m.Factory(api)
+    api.model_info = lambda *args, **kwargs: SimpleNamespace(
+        sha=m.MODEL["revision"],
+        inference_provider_mapping={
+            "deepinfra": {"provider_id": m.MODEL["model_id"], "status": "live"}
+        },
+    )
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda **kwargs: api)
+    monkeypatch.setattr(hf, "HfApi", lambda **kwargs: api)
+    monkeypatch.setattr(hf.Sandbox, "create", factory)
+    monkeypatch.setattr(hf, "InferenceClient", inference)
+    for name in ("HF_TOKEN", "HF_INFERENCE_TOKEN", "HF_SANDBOX_TOKEN"):
+        monkeypatch.setenv(name, "synthetic-test-" + name)
+    context_path = "environment/source/api.py"
+    source = task / context_path
+    source.parent.mkdir(parents=True)
+    if artifact == context_path:
+        source.hardlink_to(task / "solution/solve.sh")
+    else:
+        source.write_text("def public_answer(): return 42\n")
+        (tmp_path / "linked-artifact").hardlink_to(task / artifact)
+    assert (task / artifact).stat().st_nlink == 2
+    config = configuration()
+    config["generator"] = {**config["target"], "context_paths": [context_path]}
+    config["execution"].update(
+        agent_image=m.AGENT, verifier_image=m.VERIFIER, namespace="owner"
+    )
+    inference.responses = [m.response("true")]
+    output = tmp_path / "audit"
+    report = run_coding_validation(task, config, output)
+    assert not inference.requests and not inference.kwargs
+    assert not factory.created
+    assert not report["accepted"]
+    evidence = json.loads((output / "evidence.json").read_text())
+    assert evidence["collection_error"] == "HFBackendError"
+
+
 @pytest.mark.parametrize("with_context", [False, True])
+@pytest.mark.parametrize(
+    "completion", ["stop", "null_calls", "missing_calls", "empty_calls"]
+)
 def test_real_backend_contract_reaches_difficulty_with_sdk_fakes(
-    task, tmp_path, monkeypatch, with_context
+    task, tmp_path, monkeypatch, with_context, completion
 ):
     """Join the actual collector/backend/scorer, not just each seam in isolation."""
     from examples.coding_audit.hf import HFTaskBackend
@@ -501,12 +558,22 @@ def test_real_backend_contract_reaches_difficulty_with_sdk_fakes(
     config["execution"].update(
         agent_image=m.AGENT, verifier_image=m.VERIFIER, namespace="owner"
     )
+    completions = [m.response("done"), m.response("done")]
+    if completion != "stop":
+        for reply in completions:
+            choice = reply["choices"][0]
+            choice["finish_reason"] = "tool_calls"
+            choice["message"]["content"] = None
+            if completion == "missing_calls":
+                del choice["message"]["tool_calls"]
+            elif completion == "empty_calls":
+                choice["message"]["tool_calls"] = []
     inference.responses = [
         m.response('printf "42\\n" > /app/answer.txt'),
         m.response(None, calls=[m.terminal('printf "41\\n" > /app/answer.txt')]),
-        m.response("done"),
+        completions[0],
         m.response(None, calls=[m.terminal('printf "42\\n" > /app/answer.txt')]),
-        m.response("done"),
+        completions[1],
     ]
     backend = HFTaskBackend(
         task.resolve(),
@@ -519,11 +586,25 @@ def test_real_backend_contract_reaches_difficulty_with_sdk_fakes(
     )
     output = tmp_path / "audit"
     report = run_coding_validation(task, config, output, backend=backend)
-    assert report["accepted"], report
-    assert report["checks"]["target_difficulty"]["solve_rate"] == 0.5
+    assert report["accepted"] is (completion == "stop"), report
+    if completion == "stop":
+        assert report["checks"]["target_difficulty"]["solve_rate"] == 0.5
+    else:
+        assert report["checks"]["target_difficulty"]["status"] == "error"
     assert len(inference.requests) == 5
     evidence_path = output / "evidence.json"
-    generated = json.loads(evidence_path.read_text())["generation"][0]
+    evidence = json.loads(evidence_path.read_text())
+    if completion != "stop":
+        targets = [row for row in evidence["trials"] if row["role"] == "target"]
+        assert len(targets) == 2
+        assert all(
+            row["error"] == "invalid terminal function calls"
+            and row["cleanup_verified"]
+            and "grade_sandbox_id" not in row
+            and row.get("reward") is None
+            for row in targets
+        )
+    generated = evidence["generation"][0]
     if with_context:
         assert generated["candidate_context"] == [
             {
