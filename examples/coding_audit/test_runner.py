@@ -518,8 +518,11 @@ def test_snapshot_rejects_hardlinked_artifacts_before_inference(
 
 
 @pytest.mark.parametrize("with_context", [False, True])
+@pytest.mark.parametrize(
+    "completion", ["stop", "null_calls", "missing_calls", "empty_calls"]
+)
 def test_real_backend_contract_reaches_difficulty_with_sdk_fakes(
-    task, tmp_path, monkeypatch, with_context
+    task, tmp_path, monkeypatch, with_context, completion
 ):
     """Join the actual collector/backend/scorer, not just each seam in isolation."""
     from examples.coding_audit.hf import HFTaskBackend
@@ -555,12 +558,22 @@ def test_real_backend_contract_reaches_difficulty_with_sdk_fakes(
     config["execution"].update(
         agent_image=m.AGENT, verifier_image=m.VERIFIER, namespace="owner"
     )
+    completions = [m.response("done"), m.response("done")]
+    if completion != "stop":
+        for reply in completions:
+            choice = reply["choices"][0]
+            choice["finish_reason"] = "tool_calls"
+            choice["message"]["content"] = None
+            if completion == "missing_calls":
+                del choice["message"]["tool_calls"]
+            elif completion == "empty_calls":
+                choice["message"]["tool_calls"] = []
     inference.responses = [
         m.response('printf "42\\n" > /app/answer.txt'),
         m.response(None, calls=[m.terminal('printf "41\\n" > /app/answer.txt')]),
-        m.response("done"),
+        completions[0],
         m.response(None, calls=[m.terminal('printf "42\\n" > /app/answer.txt')]),
-        m.response("done"),
+        completions[1],
     ]
     backend = HFTaskBackend(
         task.resolve(),
@@ -573,11 +586,25 @@ def test_real_backend_contract_reaches_difficulty_with_sdk_fakes(
     )
     output = tmp_path / "audit"
     report = run_coding_validation(task, config, output, backend=backend)
-    assert report["accepted"], report
-    assert report["checks"]["target_difficulty"]["solve_rate"] == 0.5
+    assert report["accepted"] is (completion == "stop"), report
+    if completion == "stop":
+        assert report["checks"]["target_difficulty"]["solve_rate"] == 0.5
+    else:
+        assert report["checks"]["target_difficulty"]["status"] == "error"
     assert len(inference.requests) == 5
     evidence_path = output / "evidence.json"
-    generated = json.loads(evidence_path.read_text())["generation"][0]
+    evidence = json.loads(evidence_path.read_text())
+    if completion != "stop":
+        targets = [row for row in evidence["trials"] if row["role"] == "target"]
+        assert len(targets) == 2
+        assert all(
+            row["error"] == "invalid terminal function calls"
+            and row["cleanup_verified"]
+            and "grade_sandbox_id" not in row
+            and row.get("reward") is None
+            for row in targets
+        )
+    generated = evidence["generation"][0]
     if with_context:
         assert generated["candidate_context"] == [
             {
