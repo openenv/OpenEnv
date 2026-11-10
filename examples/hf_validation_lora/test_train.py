@@ -166,6 +166,37 @@ class DirectResetTests(unittest.TestCase):
                 self.assertTrue(self.clients[-1].closed)
                 self.assertIs(self.clients[-1].error, error.exception)
 
+    def test_direct_applies_the_bridge_reset_contract(self):
+        original_reset = ResetSensitiveClient.reset
+
+        def broken_reset(change):
+            def reset(client, **kwargs):
+                result = original_reset(client, **kwargs)
+                result.done = change.get("done", False)
+                client.observation.update(
+                    {k: v for k, v in change.items() if k != "done"}
+                )
+                return result
+
+            return reset
+
+        for change in ({"done": True}, {"level": "year"}, {"solution": "10+13-3+4"}):
+            for operation in ("tasks", "score"):
+                payload = dict(
+                    operation=operation, split="test", indices=[3], expressions=[""]
+                )
+                with (
+                    self.subTest(change=change, operation=operation),
+                    patch.object(ResetSensitiveClient, "reset", broken_reset(change)),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "(?i)reset contract"):
+                        self.bridge_output(payload)
+                    with self.assertRaisesRegex(RuntimeError, "(?i)reset contract"):
+                        if operation == "tasks":
+                            self.remote.tasks("test", [3])
+                        else:
+                            self.remote.score("test", [3], [""])
+
 
 class OptimizerWindowTests(unittest.TestCase):
     def setUp(self):

@@ -344,6 +344,20 @@ class RemoteEnvironment:
             message_timeout_s=30,
         ).sync()
 
+    def _reset(self, client, split, index):
+        """Reset with the same arguments and contract as score_batch.py."""
+        result = client.reset(
+            split=split,
+            index=index,
+            seed=20261104,
+            episode_id=f"{split}-{index}",
+            reward_mode="shaped",
+        )
+        obs = result.observation
+        if result.done or obs["level"] != "24" or obs["solution"] is not None:
+            raise RuntimeError("Reset contract failed")
+        return obs
+
     def tasks(self, split, indices):
         if self.transport == "exec":
             rows = self._bridge(
@@ -353,20 +367,10 @@ class RemoteEnvironment:
             rows = []
             with self._client() as client:
                 for index in indices:
-                    result = client.reset(
-                        split=split,
-                        index=index,
-                        seed=20261104,
-                        episode_id=f"{split}-{index}",
-                        reward_mode="shaped",
-                    )
-                    if result.done:
-                        raise RuntimeError("Reset was terminal")
-                    if result.observation["task_id"] != f"{split}-24-{index:04d}":
+                    observation = self._reset(client, split, index)
+                    if observation["task_id"] != f"{split}-24-{index:04d}":
                         raise RuntimeError("Unexpected task identity")
-                    rows.append(
-                        {"index": index, "prompt": policy_prompt(result.observation)}
-                    )
+                    rows.append({"index": index, "prompt": policy_prompt(observation)})
         if [r["index"] for r in rows] != indices:
             raise RuntimeError("Task batch alignment failed")
         # Return only public prompts + controller metadata; ignore arbitrary bridge fields.
@@ -396,25 +400,12 @@ class RemoteEnvironment:
             payload = {"rewards": [], "task_ids": [], "valid": []}
             with self._client() as client:
                 for index, expression in zip(indices, expressions, strict=True):
-                    result = client.reset(
-                        split=split,
-                        index=index,
-                        seed=20261104,
-                        episode_id=f"{split}-{index}",
-                        reward_mode="shaped",
-                    )
-                    obs = result.observation
-                    if (
-                        result.done
-                        or obs["level"] != "24"
-                        or obs["solution"] is not None
-                    ):
-                        raise RuntimeError("reset contract failed")
+                    observation = self._reset(client, split, index)
                     result = client.step({"expression": expression})
                     if not result.done or result.reward is None:
                         raise RuntimeError("Expected one terminal environment reward")
                     payload["rewards"].append(result.reward)
-                    payload["task_ids"].append(obs["task_id"])
+                    payload["task_ids"].append(observation["task_id"])
                     payload["valid"].append(result.observation["result"]["valid"])
         expected_ids = [f"{split}-24-{i:04d}" for i in indices]
         if payload["task_ids"] != expected_ids:
