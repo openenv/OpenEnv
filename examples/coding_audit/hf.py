@@ -108,6 +108,28 @@ def _under(path, parent):
     return path == parent or path.startswith(parent + "/")
 
 
+def _candidate_script(raw):
+    lines = raw.lstrip().splitlines(keepends=True)
+    opening = lines[0].strip()
+    if not opening.startswith("```"):
+        return raw, None
+    if opening not in {"```bash", "```sh", "```shell"}:
+        raise HFBackendError("candidate code fence must declare Bash or sh")
+    end = len(lines)
+    while end > 1 and not lines[end - 1].strip():
+        end -= 1
+    closed = end > 1 and lines[end - 1].strip() == "```"
+    script = "".join(lines[1 : end - 1] if closed else lines[1:])
+    if not script.strip():
+        raise HFBackendError("candidate response must contain a shell script")
+    return script, {
+        "wrapper": "markdown_bash",
+        "closing_fence_present": closed,
+        "raw_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+        "script_sha256": hashlib.sha256(script.encode()).hexdigest(),
+    }
+
+
 def submission_digest(files):
     """Hash sorted relative paths, NUL, content, NUL as source_digest does."""
     digest = hashlib.sha256()
@@ -984,6 +1006,9 @@ class HFTaskBackend:
                     )
                 if len(script.encode()) > self.max_script:
                     raise HFBackendError("candidate script exceeds byte limit")
+                script, formatting = _candidate_script(script)
+                if formatting is not None:
+                    record["script_format"] = formatting
                 record["script"] = script
         except Exception as exc:
             record["error"] = self._error(exc)

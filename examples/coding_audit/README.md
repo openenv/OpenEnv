@@ -35,6 +35,8 @@ alongside request parameters. Support depends on the selected provider/model.
 Candidate generation streams bounded content and reasoning; only a complete
 `stop` response with validated usage can produce an executable candidate. A
 `length` response remains rejected even when its terminal usage is retained.
+Recognized Bash/sh Markdown fences are parsed before execution; the raw response
+and both raw/script hashes are retained. Other language fences are rejected.
 
 Candidate generation can opt into public task API context by adding
 `"context_paths": ["environment/source/package/api.py"]` to the `generator`

@@ -1696,3 +1696,37 @@ def test_thinking_flag_requires_an_explicit_boolean(harness, value):
     record = h.backend.generate_candidate({**MODEL, "enable_thinking": value}, 0)
     assert "enable_thinking must be a boolean" in record["error"]
     assert not h.inference.requests and record["script"] == ""
+
+
+@pytest.mark.parametrize("language", ["bash", "sh", "shell"])
+@pytest.mark.parametrize("closed", [False, True])
+def test_fenced_candidate_keeps_raw_response_and_executes_only_bash(
+    harness, language, closed
+):
+    h = harness
+    body = "printf answer > /app/answer.txt\n"
+    raw = "```" + language + "\n" + body + ("```\n" if closed else "")
+    h.inference.responses = [response(raw)]
+    record = h.backend.generate_candidate(MODEL, 0)
+    assert record["error"] is None and record["script"] == body
+    assert record["transcript"][-1]["content"] == raw
+    metadata = record["script_format"]
+    assert metadata["raw_sha256"] == hashlib.sha256(raw.encode()).hexdigest()
+    assert (
+        metadata["script_sha256"]
+        == hashlib.sha256(record["script"].encode()).hexdigest()
+    )
+    assert metadata["closing_fence_present"] is closed
+    submission = h.backend.execute_script(record["script"], "generated")
+    assert submission["error"] is None
+    assert h.factory.created[0].commands[-1][0] == ["/bin/bash", "-c", record["script"]]
+
+
+@pytest.mark.parametrize(
+    "raw", ["```bash\n```", "```python\nprint('wrong language')\n```"]
+)
+def test_empty_or_non_bash_fence_does_not_create_a_candidate(harness, raw):
+    h = harness
+    h.inference.responses = [response(raw)]
+    record = h.backend.generate_candidate(MODEL, 0)
+    assert record["error"] and record["script"] == "" and not h.factory.created
