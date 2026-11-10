@@ -278,6 +278,10 @@ def run(
                 manifest["estimate"]["reservation_usd_rounded_up"],
                 "Reviewed native Hub audit cohort",
                 evidence=str(manifest_path),
+                plan_costs={
+                    task["plan_sha256"]: estimate([config])["reservation_usd_exact"]
+                    for task, config in zip(manifest["tasks"], configs, strict=True)
+                },
             )
             manifest["shared_spend"] = {
                 "ledger": str(Path(spend_ledger).absolute()),
@@ -295,7 +299,10 @@ def run(
                 }
                 _write(manifest_path, manifest)
                 receipt = cloud.submit(
-                    task["plan"], expected_plan_sha256=task["plan_sha256"]
+                    task["plan"],
+                    expected_plan_sha256=task["plan_sha256"],
+                    spend_ledger=spend_ledger,
+                    reservation_id=identifier,
                 )
                 task["submission"].update(
                     {

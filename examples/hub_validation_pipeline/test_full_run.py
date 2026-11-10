@@ -300,7 +300,10 @@ def test_selection_budgets_and_submits_only_selected_task(local_run):
     )
     assert task["submission"]["status"] == "submitted"
     submit.assert_called_once_with(
-        task["plan"], expected_plan_sha256=task["plan_sha256"]
+        task["plan"],
+        expected_plan_sha256=task["plan_sha256"],
+        spend_ledger=ledger,
+        reservation_id=manifest["shared_spend"]["reservation_id"],
     )
     assert not (output / "recipes/toy-beta").exists()
     assert "toy-beta" not in (output / "manifest.json").read_text()
@@ -459,7 +462,7 @@ def test_partial_ambiguous_submission_is_durable_safe_and_never_resumed(
     output, hf, harbor, prepare, submit, _ = local_run
     observed = []
 
-    def launch(path, *, expected_plan_sha256):
+    def launch(path, *, expected_plan_sha256, spend_ledger, reservation_id):
         assert full_run._hash(Path(path))["sha256"] == expected_plan_sha256
         durable = cloud._loads((output / "manifest.json").read_bytes())
         assert durable["shared_spend"]["ledger"] == str(
@@ -468,6 +471,8 @@ def test_partial_ambiguous_submission_is_durable_safe_and_never_resumed(
         assert Fraction(
             spend.summary(paid_reservation["spend_ledger"])["reserved_usd_exact"]
         ) == Fraction(durable["estimate"]["reservation_usd_rounded_up"])
+        assert spend_ledger == paid_reservation["spend_ledger"]
+        assert reservation_id == durable["shared_spend"]["reservation_id"]
         index = len(observed)
         observed.append(path)
         assert durable["tasks"][index]["submission"]["status"] == "pending_or_unknown"

@@ -200,15 +200,13 @@ release them merely because a controller stopped. Jobs are never automatically
 resumed or blindly retried.
 
 `prepared_batch` provides shared reservation and bounded controller concurrency
-for an already reviewed preparation manifest. A direct single-plan submission is:
-
-```bash
-uv run --no-sync python -m examples.hub_validation_pipeline.cloud submit \
-  --plan outputs/audit-plan/plan.json
-```
-
-Before using that lower-level command, reserve its reviewed cost in the shared
-ledger. Its per-plan workload checks do not replace aggregate spending control.
+for an already reviewed preparation manifest. Use these guarded cohort launchers
+for paid work; the cloud CLI and discovery pipeline only prepare inputs.
+`cloud.submit()` requires a ledger, reservation ID and expected plan SHA256.
+Each reservation binds the reviewed plan hashes to their modeled cost allocations;
+allocations must fit the reserved total. Submission rechecks the active hold,
+budget block and parsed plan bytes while holding the shared ledger lock through
+launch. Unbound legacy reservations cannot authorize a launch.
 The submitter verifies private dataset access, stages immutable inputs, claims the
 run identity and persists the returned Job identifier and receipt. `prepare` never
 makes model calls or launches paid Jobs.

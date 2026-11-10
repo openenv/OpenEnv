@@ -159,6 +159,12 @@ def run(
             amount,
             "Frozen prepared cohort",
             evidence=str(destination),
+            plan_costs={
+                task["plan_sha256"]: full_run.estimate([config])[
+                    "reservation_usd_exact"
+                ]
+                for task, config in zip(manifest["tasks"], configs, strict=True)
+            },
         )
         manifest["shared_spend"]["status"] = "reserved"
         save()
@@ -190,6 +196,8 @@ def run(
                         api=api,
                         secrets=secrets,
                         expected_plan_sha256=task["plan_sha256"],
+                        spend_ledger=spend_ledger,
+                        reservation_id=manifest["shared_spend"]["reservation_id"],
                     )
                 except BaseException:
                     local = path.parent / "submission.json"

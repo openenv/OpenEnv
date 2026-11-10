@@ -68,6 +68,18 @@ def _report(data):
     statuses = {}
     for identifier, row in data["reservations"].items():
         amount = _amount(row["reserved_usd"])
+        costs = row.get("plan_costs", {})
+        if (
+            not isinstance(costs, dict)
+            or any(
+                not re.fullmatch(r"[0-9a-f]{64}", key)
+                or not isinstance(value, str)
+                or Fraction(value) < 0
+                for key, value in costs.items()
+            )
+            or sum((Fraction(value) for value in costs.values()), Fraction(0)) > amount
+        ):
+            raise ValueError("Invalid reserved plan costs")
         statuses[identifier] = row["status"]
         if row["status"] == "reserved" and row["spent_usd"] is None:
             reserved += amount
@@ -192,7 +204,7 @@ def set_limit(path, limit_usd, evidence):
         return _report(data)
 
 
-def reserve(path, id, amount_usd, purpose, evidence=None):
+def reserve(path, id, amount_usd, purpose, evidence=None, *, plan_costs=None):
     """Reserve before paid work; settled IDs cannot be reused."""
     amount = _amount(amount_usd)
     _text(id), _text(purpose)
@@ -205,6 +217,7 @@ def reserve(path, id, amount_usd, purpose, evidence=None):
             if (
                 rows[id]["status"] == "reserved"
                 and _amount(rows[id]["reserved_usd"]) == amount
+                and rows[id].get("plan_costs") == plan_costs
             ):
                 return report
             raise ValueError("Reservation ID already used; use a fresh ID")
@@ -217,6 +230,8 @@ def reserve(path, id, amount_usd, purpose, evidence=None):
             purpose=purpose,
             evidence=evidence,
         )
+        if plan_costs is not None:
+            rows[id]["plan_costs"] = plan_costs
         return _report(data)
 
 

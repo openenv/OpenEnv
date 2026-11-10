@@ -586,6 +586,8 @@ def local_tasks(root, limit):
 
 
 def run(args):
+    if vars(args).get("submit_hf_jobs", False):
+        raise ValueError("Use prepared_batch with a reviewed shared reservation")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     coding_config = getattr(args, "coding_config", None)
@@ -642,7 +644,7 @@ def run(args):
             if subject not in resolve_task_dirs(str(subject.parent), refresh=True):
                 raise ValueError("OpenEnv did not load the acquired task")
             if coding_config is not None:
-                from examples.hub_validation_pipeline.cloud import prepare, submit
+                from examples.hub_validation_pipeline.cloud import prepare
 
                 plan_dir = output / "plans" / key
                 plan = prepare(
@@ -667,13 +669,6 @@ def run(args):
                     "state": "prepared",
                     "accepted": False,
                 }
-                if getattr(args, "submit_hf_jobs", False):
-                    receipt = submit(plan_dir / "plan.json")
-                    row.update(
-                        state=receipt["status"],
-                        job_id=receipt.get("job_id"),
-                        job_url=receipt.get("job_url"),
-                    )
                 plans.append(row)
                 write_rows(output / "planned.jsonl", plans)
                 continue
@@ -783,11 +778,6 @@ def main():
         type=Path,
         help="Prepare the supplemental coding audit on HF Jobs instead of local Docker validation",
     )
-    parser.add_argument(
-        "--submit-hf-jobs",
-        action="store_true",
-        help="Submit prepared coding audits; incurs cloud/inference charges",
-    )
     parser.add_argument("--profile", choices=["full", PILOT], default="full")
     parser.add_argument("--source", choices=["hf", "harbor", "both"], default="both")
     parser.add_argument("--dataset-limit", type=int, default=2)
@@ -807,8 +797,6 @@ def main():
     args = parser.parse_args()
     if args.coding_config is None and args.contract is None:
         parser.error("--contract or --coding-config is required")
-    if args.submit_hf_jobs and args.coding_config is None:
-        parser.error("--submit-hf-jobs requires --coding-config")
     if args.coding_config is not None and (args.contract is not None or args.llm_url):
         parser.error(
             "--coding-config selects its own contract/model and cannot combine --contract or --llm-url"

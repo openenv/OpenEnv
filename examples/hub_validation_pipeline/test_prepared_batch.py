@@ -89,10 +89,14 @@ def cohort(tmp_path, monkeypatch):
 
     actual_submit = cloud.submit
 
-    def submit(path, *, api, secrets, expected_plan_sha256):
+    def submit(
+        path, *, api, secrets, expected_plan_sha256, spend_ledger, reservation_id
+    ):
         assert secrets == SECRETS
         assert full_run._hash(path)["sha256"] == expected_plan_sha256
         durable = cloud._loads((output / "manifest.json").read_bytes())
+        assert spend_ledger == ledger
+        assert reservation_id == durable["shared_spend"]["reservation_id"]
         index = plans.index(path)
         assert durable["tasks"][index]["status"] == "pending_or_unknown"
         if index:

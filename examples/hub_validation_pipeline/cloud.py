@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+from fractions import Fraction
 from pathlib import Path, PurePosixPath
 
 WORKER_IMAGE = "docker.io/library/python@sha256:48d884813cf44e927cf64c5529dd630dd3b18338c6dc727991eef9b71e934a20"
@@ -856,31 +857,56 @@ def stage_inputs(plan_path, *, api=None, secrets=None, expected_plan_sha256=None
     return receipt
 
 
-def submit(plan_path, *, api=None, secrets=None, expected_plan_sha256=None):
-    """Upload/claim immutable inputs and launch once, resolving actual secrets."""
+def submit(
+    plan_path,
+    *,
+    api=None,
+    secrets=None,
+    expected_plan_sha256=None,
+    spend_ledger=None,
+    reservation_id=None,
+):
+    """Launch once under an active shared reservation bound to the reviewed plan."""
     from huggingface_hub import HfApi
 
+    from . import full_run, spend
+
+    if not spend_ledger or not reservation_id or expected_plan_sha256 is None:
+        raise ValueError("Submission requires a reservation and reviewed plan SHA256")
+    _, config, _, _ = _read_plan(plan_path, expected_sha256=expected_plan_sha256)
+    cost = Fraction(full_run.estimate([config])["reservation_usd_exact"])
     secrets = _runtime_secrets(secrets)
     api = api or HfApi(token=secrets["HF_TOKEN"])
-    receipt = stage_inputs(
-        plan_path,
-        api=api,
-        secrets=secrets,
-        expected_plan_sha256=expected_plan_sha256,
-    )
-    receipt_path = Path(plan_path).parent / "submission.json"
-    receipt["status"] = "launch_pending"
-    _write_receipt(receipt_path, receipt)
-    try:
-        job = api.run_job(
-            **receipt["launch_spec"], secrets=secrets, token=secrets["HF_SANDBOX_TOKEN"]
+    # Keep settlement and budget changes outside the claim/launch boundary.
+    with spend._ledger(spend_ledger) as ledger:
+        row = ledger["reservations"].get(reservation_id, {})
+        if (
+            spend._report(ledger)["over_budget"]
+            or row.get("status") != "reserved"
+            or Fraction(row.get("plan_costs", {}).get(expected_plan_sha256, "0")) < cost
+        ):
+            raise ValueError("Shared reservation is blocked, insufficient or unbound")
+        receipt = stage_inputs(
+            plan_path,
+            api=api,
+            secrets=secrets,
+            expected_plan_sha256=expected_plan_sha256,
         )
-    except Exception as error:
-        receipt.update(status="launch_unknown", error_type=type(error).__name__)
+        receipt_path = Path(plan_path).parent / "submission.json"
+        receipt["status"] = "launch_pending"
         _write_receipt(receipt_path, receipt)
-        raise RuntimeError(
-            "Job launch outcome unknown; inspect the submission receipt and HF Jobs before any manual retry"
-        ) from None
+        try:
+            job = api.run_job(
+                **receipt["launch_spec"],
+                secrets=secrets,
+                token=secrets["HF_SANDBOX_TOKEN"],
+            )
+        except Exception as error:
+            receipt.update(status="launch_unknown", error_type=type(error).__name__)
+            _write_receipt(receipt_path, receipt)
+            raise RuntimeError(
+                "Job launch outcome unknown; inspect the submission receipt and HF Jobs before any manual retry"
+            ) from None
     receipt.update(status="submitted", job_id=job.id, job_url=job.url)
     _write_receipt(receipt_path, receipt)
     try:
@@ -1028,18 +1054,12 @@ def main(argv=None):
     local.add_argument("--task", type=Path, required=True)
     local.add_argument("--config", type=Path, required=True)
     local.add_argument("--output", type=Path, required=True)
-    launch = commands.add_parser(
-        "submit", help="Upload private inputs and launch one paid HF Job"
-    )
-    launch.add_argument("--plan", type=Path, required=True)
     internal = commands.add_parser("worker", help=argparse.SUPPRESS)
     internal.add_argument("--root", type=Path, required=True)
     internal.add_argument("--bundle-sha", required=True)
     args = parser.parse_args(argv)
     if args.command == "prepare":
         result = prepare(args.task, _loads(args.config.read_bytes()), args.output)
-    elif args.command == "submit":
-        result = submit(args.plan)
     else:
         result = worker(args.root, bundle_sha=args.bundle_sha)
     print(_json_bytes(result).decode(), end="")

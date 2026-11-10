@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from examples.hub_validation_pipeline import cloud
+from examples.hub_validation_pipeline import cloud, full_run, spend
 
 SHA = "a" * 40
 UPLOAD_SHA = "b" * 40
@@ -55,12 +55,13 @@ def inputs(tmp_path, monkeypatch):
     config = {
         "schema_version": 1,
         "target": {
-            "model_id": "org/model",
-            "revision": SHA,
-            "provider": "example-provider",
+            "model_id": full_run.MODEL_SOURCE[0],
+            "revision": full_run.MODEL_SOURCE[1],
+            "provider": full_run.MODEL_SOURCE[2],
             "max_steps": 3,
         },
         "execution": {
+            "flavor": "cpu-basic",
             "agent_image": "registry/agent@sha256:" + "c" * 64,
             "verifier_image": "registry/verifier@sha256:" + "d" * 64,
             "submission_paths": ["/app/answer"],
@@ -95,6 +96,23 @@ def prepared(inputs, tmp_path, name="prepared"):
     output = tmp_path / name
     plan = cloud.prepare(task, config, output, repo_root=repo)
     return output, plan
+
+
+def launch_options(output, config):
+    ledger = output.parent / "spend.json"
+    spend.init(ledger, "1000")
+    digest = hashlib.sha256((output / "plan.json").read_bytes()).hexdigest()
+    cost = full_run.estimate([config])
+    spend.reserve(
+        ledger,
+        output.name,
+        cost["reservation_usd_rounded_up"],
+        "Reviewed test plan",
+        plan_costs={digest: cost["reservation_usd_exact"]},
+    )
+    return dict(
+        spend_ledger=ledger, reservation_id=output.name, expected_plan_sha256=digest
+    )
 
 
 def fake_api():
@@ -159,7 +177,7 @@ def test_prepare_is_deterministic_offline_and_complete(inputs, tmp_path, monkeyp
     } <= files.keys()
     assert "examples/coding_audit/test_excluded.py" not in files
     assert manifest["git"] == {"commit": SHA, "dirty": True}
-    assert manifest["target_source"]["revision"] == SHA
+    assert manifest["target_source"]["revision"] == full_run.MODEL_SOURCE[1]
     assert manifest["task_source"]["identity"].startswith("sha256:")
     assert manifest["files"]["task/solution/solve.sh"]["mode"] == 0o755
     assert not any(
@@ -323,9 +341,7 @@ def test_submit_real_runtime_secrets_pins_and_one_shot_receipt(inputs, tmp_path)
         output / "plan.json",
         api=api,
         secrets=SECRETS,
-        expected_plan_sha256=hashlib.sha256(
-            (output / "plan.json").read_bytes()
-        ).hexdigest(),
+        **launch_options(output, inputs[2]),
     )
     assert receipt["job_id"] == "job-123"
     launch = api.run_job.call_args.kwargs
@@ -346,7 +362,12 @@ def test_submit_real_runtime_secrets_pins_and_one_shot_receipt(inputs, tmp_path)
         for value in SECRETS.values():
             assert value.encode() not in path.read_bytes()
     with pytest.raises(FileExistsError, match="receipt"):
-        cloud.submit(output / "plan.json", api=api, secrets=SECRETS)
+        cloud.submit(
+            output / "plan.json",
+            api=api,
+            secrets=SECRETS,
+            **launch_options(output, inputs[2]),
+        )
     assert api.run_job.call_count == 1
 
 
@@ -363,7 +384,12 @@ def test_no_launch_until_private_repo_and_exclusive_claim(inputs, tmp_path, case
     else:
         api.create_commit.side_effect = RuntimeError("parent conflict")
     with pytest.raises((ValueError, RuntimeError, FileExistsError)):
-        cloud.submit(output / "plan.json", api=api, secrets=SECRETS)
+        cloud.submit(
+            output / "plan.json",
+            api=api,
+            secrets=SECRETS,
+            **launch_options(output, inputs[2]),
+        )
     api.run_job.assert_not_called()
     if case in ("public", "missing", "duplicate"):
         api.create_commit.assert_not_called()
@@ -374,12 +400,22 @@ def test_uncertain_launch_never_retries_or_leaks_exception(inputs, tmp_path):
     api = fake_api()
     api.run_job.side_effect = RuntimeError(SECRETS["HF_TOKEN"])
     with pytest.raises(RuntimeError, match="unknown") as caught:
-        cloud.submit(output / "plan.json", api=api, secrets=SECRETS)
+        cloud.submit(
+            output / "plan.json",
+            api=api,
+            secrets=SECRETS,
+            **launch_options(output, inputs[2]),
+        )
     assert SECRETS["HF_TOKEN"] not in str(caught.value)
     receipt = json.loads((output / "submission.json").read_text())
     assert receipt["status"] == "launch_unknown"
     with pytest.raises(FileExistsError):
-        cloud.submit(output / "plan.json", api=api, secrets=SECRETS)
+        cloud.submit(
+            output / "plan.json",
+            api=api,
+            secrets=SECRETS,
+            **launch_options(output, inputs[2]),
+        )
     assert api.run_job.call_count == 1
 
 
@@ -395,7 +431,12 @@ def test_secret_values_required_and_distinct(inputs, tmp_path, values):
     output, _ = prepared(inputs, tmp_path)
     api = fake_api()
     with pytest.raises(ValueError):
-        cloud.submit(output / "plan.json", api=api, secrets=values)
+        cloud.submit(
+            output / "plan.json",
+            api=api,
+            secrets=values,
+            **launch_options(output, inputs[2]),
+        )
     api.dataset_info.assert_not_called()
     api.run_job.assert_not_called()
 
@@ -414,7 +455,9 @@ def test_plan_tampering_stops_before_hub(inputs, tmp_path, section):
     path.write_text(json.dumps(plan))
     api = fake_api()
     with pytest.raises(ValueError, match="immutable"):
-        cloud.submit(path, api=api, secrets=SECRETS)
+        cloud.submit(
+            path, api=api, secrets=SECRETS, **launch_options(output, inputs[2])
+        )
     api.dataset_info.assert_not_called()
 
 
@@ -752,3 +795,112 @@ def test_hub_driver_prepares_coding_audits_without_admitting_or_running_docker(
     assert planned["accepted"] is False and planned["state"] == "prepared"
     assert (args.output / "accepted.jsonl").read_text() == ""
     assert calls[0][1]["revision"]
+
+
+@pytest.mark.parametrize("ledger_state", ["missing", "exhausted", "blocked"])
+@pytest.mark.parametrize("entry", ["cloud_cli", "pipeline", "submit"])
+def test_public_launch_paths_require_spending_gates(
+    inputs, tmp_path, monkeypatch, ledger_state, entry
+):
+    from argparse import Namespace
+
+    import huggingface_hub
+    from examples.hub_validation_pipeline import pipeline, spend
+
+    repo, task, config = inputs
+    ledger = tmp_path / "spend.json"
+    if ledger_state != "missing":
+        spend.init(ledger, "1")
+        spend.reserve(ledger, "prior", "1", "Prior work")
+        if ledger_state == "blocked":
+            spend.settle(ledger, "prior", "2", "Overrun")
+    api = fake_api()
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda **kwargs: api)
+    for name, value in SECRETS.items():
+        monkeypatch.setenv(name, value)
+    output, _ = prepared(inputs, tmp_path)
+    if entry == "cloud_cli":
+        with pytest.raises(SystemExit):
+            cloud.main(["submit", "--plan", str(output / "plan.json")])
+    elif entry == "pipeline":
+        config_path = tmp_path / "coding.json"
+        config_path.write_bytes(cloud._json_bytes(config))
+        real_prepare = cloud.prepare
+        monkeypatch.setattr(
+            cloud,
+            "prepare",
+            lambda *args, **kwargs: real_prepare(*args, repo_root=repo, **kwargs),
+        )
+        args = Namespace(
+            output=tmp_path / "run",
+            contract=None,
+            coding_config=config_path,
+            submit_hf_jobs=True,
+            hf_dataset=[],
+            harbor_dataset=[],
+            local_dataset=[task],
+            source="both",
+            dataset_limit=0,
+            tasks_per_dataset=1,
+        )
+        with pytest.raises(ValueError, match="prepared_batch"):
+            pipeline.run(args)
+    else:
+        with pytest.raises(ValueError, match="reservation"):
+            cloud.submit(output / "plan.json", api=api, secrets=SECRETS)
+    api.run_job.assert_not_called()
+    api.create_commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "missing_ledger",
+        "unknown",
+        "blocked",
+        "settled",
+        "unbound",
+        "underpriced",
+        "missing_hash",
+        "wrong_hash",
+        "overallocated",
+        "exhausted",
+    ],
+)
+def test_submit_rechecks_reserved_plan_cost_and_status(inputs, tmp_path, case):
+    output, _ = prepared(inputs, tmp_path)
+    options = launch_options(output, inputs[2])
+    ledger, identifier = options["spend_ledger"], options["reservation_id"]
+    if case == "missing_ledger":
+        ledger.unlink()
+    elif case == "unknown":
+        options["reservation_id"] = "unreserved"
+    elif case == "blocked":
+        spend.reserve(ledger, "other", "1", "Other work")
+        spend.settle(ledger, "other", "2", "Overrun")
+    elif case == "settled":
+        spend.settle(ledger, identifier, "0", "Completed work")
+    elif case == "missing_hash":
+        del options["expected_plan_sha256"]
+    elif case == "wrong_hash":
+        options["expected_plan_sha256"] = "0" * 64
+    else:
+        data = json.loads(ledger.read_bytes())
+        row = data["reservations"][identifier]
+        if case == "exhausted":
+            data["reservations"] = {}
+        elif case == "unbound":
+            del row["plan_costs"]
+        else:
+            row["plan_costs"][options["expected_plan_sha256"]] = (
+                "0" if case == "underpriced" else "1001"
+            )
+        ledger.write_text(json.dumps(data))
+        if case == "exhausted":
+            spend.reserve(ledger, "other", "1000", "Other work")
+    api = fake_api()
+    with pytest.raises(ValueError):
+        cloud.submit(output / "plan.json", api=api, secrets=SECRETS, **options)
+    api.run_job.assert_not_called()
+    api.create_commit.assert_not_called()
+    assert not (output / "submission.json").exists()
