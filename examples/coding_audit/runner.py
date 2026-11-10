@@ -489,12 +489,20 @@ def run_coding_validation(task_root, config, output_dir, *, backend=None):
         _write(output_dir / "evidence.json", sanitize(evidence))
 
     try:
+        from .hf import _local_file
+
+        def copy_artifact(source, destination):
+            raw, _ = _local_file(source, Path(source).stat().st_size)
+            Path(destination).write_bytes(raw)
+            shutil.copystat(source, destination)
+
         with tempfile.TemporaryDirectory(prefix="openenv-coding-frozen-") as temporary:
             frozen = (Path(temporary) / "task").resolve()
             shutil.copytree(
                 task_root,
                 frozen,
                 symlinks=True,
+                copy_function=copy_artifact,
                 ignore=shutil.ignore_patterns(*_DIGEST_EXCLUDED_DIRS),
             )
             if source_digest(frozen) != original_digest:

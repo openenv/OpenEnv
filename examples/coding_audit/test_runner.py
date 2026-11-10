@@ -463,6 +463,60 @@ def test_in_task_output_rejected_before_inference(task):
     assert not (task / "audit.artifacts").exists()
 
 
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "environment/source/api.py",
+        "instruction.md",
+        "tests/test.sh",
+        "solution/solve.sh",
+    ],
+)
+def test_snapshot_rejects_hardlinked_artifacts_before_inference(
+    task, tmp_path, monkeypatch, artifact
+):
+    import huggingface_hub
+    from examples.coding_audit import hf
+
+    m = SimpleNamespace(**runpy.run_path(str(Path(__file__).with_name("test_hf.py"))))
+    api, inference = m.API(), m.InferenceFactory()
+    factory = m.Factory(api)
+    api.model_info = lambda *args, **kwargs: SimpleNamespace(
+        sha=m.MODEL["revision"],
+        inference_provider_mapping={
+            "deepinfra": {"provider_id": m.MODEL["model_id"], "status": "live"}
+        },
+    )
+    monkeypatch.setattr(huggingface_hub, "HfApi", lambda **kwargs: api)
+    monkeypatch.setattr(hf, "HfApi", lambda **kwargs: api)
+    monkeypatch.setattr(hf.Sandbox, "create", factory)
+    monkeypatch.setattr(hf, "InferenceClient", inference)
+    for name in ("HF_TOKEN", "HF_INFERENCE_TOKEN", "HF_SANDBOX_TOKEN"):
+        monkeypatch.setenv(name, "synthetic-test-" + name)
+    context_path = "environment/source/api.py"
+    source = task / context_path
+    source.parent.mkdir(parents=True)
+    if artifact == context_path:
+        source.hardlink_to(task / "solution/solve.sh")
+    else:
+        source.write_text("def public_answer(): return 42\n")
+        (tmp_path / "linked-artifact").hardlink_to(task / artifact)
+    assert (task / artifact).stat().st_nlink == 2
+    config = configuration()
+    config["generator"] = {**config["target"], "context_paths": [context_path]}
+    config["execution"].update(
+        agent_image=m.AGENT, verifier_image=m.VERIFIER, namespace="owner"
+    )
+    inference.responses = [m.response("true")]
+    output = tmp_path / "audit"
+    report = run_coding_validation(task, config, output)
+    assert not inference.requests and not inference.kwargs
+    assert not factory.created
+    assert not report["accepted"]
+    evidence = json.loads((output / "evidence.json").read_text())
+    assert evidence["collection_error"] == "HFBackendError"
+
+
 @pytest.mark.parametrize("with_context", [False, True])
 def test_real_backend_contract_reaches_difficulty_with_sdk_fakes(
     task, tmp_path, monkeypatch, with_context
