@@ -89,16 +89,24 @@ def test_registered_runtime_graders_use_metadata_throughout_run(
             ]
 
 
-def test_valid_package_passes_static_level():
+def test_valid_package_names_unimplemented_static_checks():
     report = run_validation(
         FIXTURES / "served_min_pass", max_level=Level.STATIC, skip_build=True
     )
-    assert report.verdict is Verdict.PASS
+    # A PASS on static.manifest alone must not read as full static coverage.
+    assert report.verdict is Verdict.WARN
     assert report.lane is Lane.LOCAL
     assert report.levels_run == [Level.STATIC]
     assert report.manifest is not None and report.manifest.name == "served-min-pass"
     by_id = {r.check_id: r for r in report.results}
-    assert by_id["static.manifest"].status is CheckStatus.PASS
+    assert by_id.pop("static.manifest").status is CheckStatus.PASS
+    assert len(by_id) == 9
+    assert all(
+        r.check_id.startswith("static.")
+        and r.status is CheckStatus.SKIP
+        and r.evidence == ["grader not implemented in this build"]
+        for r in by_id.values()
+    )
 
 
 def test_report_round_trips_through_its_schema():
@@ -114,10 +122,11 @@ def test_broken_manifest_fails_static_manifest_with_evidence():
     )
     assert report.verdict is Verdict.FAIL
     assert report.manifest is None
-    (result,) = report.results
+    result, *others = report.results
     assert result.check_id == "static.manifest"
     assert result.status is CheckStatus.FAIL
     assert result.evidence, "schema errors must surface as evidence"
+    assert all(r.evidence == ["unmet dependency: valid manifest"] for r in others)
 
 
 def test_out_of_bounds_declaration_fails_static_manifest(tmp_path):
@@ -127,7 +136,7 @@ def test_out_of_bounds_declaration_fails_static_manifest(tmp_path):
     )
     report = run_validation(tmp_path, max_level=Level.STATIC, skip_build=True)
     assert report.verdict is Verdict.FAIL
-    (result,) = report.results
+    result = next(r for r in report.results if r.check_id == "static.manifest")
     assert result.status is CheckStatus.FAIL
     assert "floor_margin" in "\n".join(result.evidence)
 
@@ -192,7 +201,9 @@ def test_initial_source_digest_failure_is_reported(monkeypatch, failure):
     )
     report = run_validation(FIXTURES / "served_min_pass", max_level=Level.STATIC)
 
-    (result,) = report.results
+    result, *others = report.results
+    assert result.check_id == "static.manifest"
+    assert all(r.status is CheckStatus.SKIP for r in others)
     assert report.source_digest == ""
     assert result.status is CheckStatus.ERROR
     assert (
