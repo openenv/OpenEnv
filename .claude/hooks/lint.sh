@@ -20,7 +20,7 @@ if [ -f .gitignore ]; then
     cp .gitignore "$FORMAT_DIR/"
 fi
 # Ruff only respects .gitignore inside a Git repository.
-git -C "$FORMAT_DIR" init -q
+env -u GIT_DIR -u GIT_WORK_TREE git -C "$FORMAT_DIR" init -q
 uv run usort format "$FORMAT_DIR/src/" "$FORMAT_DIR/tests/"
 uv run ruff format "$FORMAT_DIR/src/" "$FORMAT_DIR/tests/"
 
