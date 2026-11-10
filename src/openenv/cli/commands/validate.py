@@ -236,8 +236,9 @@ def validate(
     applies the severity policy, and emits a report.
 
     Native Harbor tasks require the optional Harbor dependency and an explicit
-    `validation/openenv.json` contract. The oracle/floor pilot preserves unsupported
-    checks as SKIP; its WARN report does not establish full RFC 008 qualification.
+    `validation/openenv.json` contract. Fresh Docker trials grade the oracle, the
+    do-nothing floor and any declared canaries under the semantic check ids. Checks
+    without an implementation are named SKIPs, so the report is WARN at best.
 
     Exit codes: 0 pass/warn · 1 fail · 2 unrecognized/unsupported package · 3
     internal or policy error.

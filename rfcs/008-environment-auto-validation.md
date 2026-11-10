@@ -718,41 +718,65 @@ findings: a WARN exit 0 does not prove completeness. Product publish gating and
 operator certification remain outside this feature; the test workflow only proves
 the implementation's own acceptance cases.
 
-### Native Harbor pilot binding
+### Harbor task binding
 
-`task.toml` packages may opt into the explicit `harbor-oracle-floor-v1` pilot
-through an operator-supplied `validation/openenv.json` contract. The contract
-declares the selected reward key, range, oracle tolerance, floor margin and finite
-resource budgets; Harbor metadata and observed rewards do not supply these
-declarations. The normalized schema-2 execution kind is `harbor_task`, with a
-`process` agent boundary. Parsing uses Harbor's data-only Task loader and never
-creates a Trial or executes package code.
+`task.toml` packages opt into the `harbor-semantic-v1` profile through an
+operator-supplied `validation/openenv.json` contract. The contract declares the
+reward key, range, oracle tolerance, floor margin, finite resource budgets and,
+optionally, a directory of canaries. Harbor metadata and observed rewards never
+supply these declarations. The normalized schema-2 execution kind is `harbor_task`,
+with a `process` agent boundary. Parsing uses Harbor's data-only Task loader and
+never creates a Trial or executes package code.
 
-This initial profile supports single-step Linux tasks, one Dockerfile, one main
-Docker service, a shared verifier, public network policies and no accelerators,
-external MCP services or credentials. Native execution runs fresh NOP and oracle
-Harbor Trials, inspects the actual agent container at `AGENT_START`, retains its
-immutable image under a run-owned tag, and pins the oracle to that image. Source,
-explicit execution overlays and effective container configuration are bound to
-the evidence. Supported `delete=False` and `keep_containers=True` trial settings
-leave image retention and resource removal to the native supervisor. Cleanup
-independently enumerates the exact run-owned Compose projects, registers anonymous
-volumes from those containers' actual mounts, removes only those owned resources,
-and verifies their absence. The trusted oracle exit marker is captured at
-`AGENT_END`, before later sandbox log synchronization can overwrite host logs.
+The profile supports single-step Linux tasks with one Dockerfile, one main Docker
+service, a shared verifier and public networking. Accelerators, external MCP
+services, task environment variables, credentials and Harbor extensions such as
+healthchecks or artifacts are refused with the reason named.
 
-`harbor-evidence.json` and preserved raw reward/exit files are checksummed bundle
-artifacts. The pilot requires finite nonboolean in-range rewards, an oracle
-without a nonzero exit marker or Trial exception, oracle reward at least the
-declared maximum minus tolerance, and oracle-minus-NOP and maximum-minus-NOP gaps
-at least the declared floor margin. Failures or unverifiable cleanup block the
-normal report. `static.manifest`, `runtime.startup` and
-`runtime.reward_well_formed` may PASS with actual evidence; other requested checks
-remain named SKIPs. In particular this binding supplies no synthetic WebSocket
-exchange, generic semantic PASS, containment qualification or measured resource
-enforcement. A WARN report is admissible only to a driver explicitly choosing this
-pilot and checking its native gates; full RFC validation still rejects required
-SKIPs.
+Execution runs fresh Harbor Trials in a fixed order: a do-nothing (NOP) trial, the
+oracle (`solution/solve.sh`), an oracle replay, and one trial per declared canary.
+The NOP trial builds the image. The validator inspects the actual agent container
+at `AGENT_START`, retains its immutable image under a run-owned tag, and pins every
+later trial to that image and its effective container configuration. Each trial
+runs on a private copy of the task whose digest must equal the validated source
+digest before any overlay. A canary trial replaces `solution/solve.sh` in its copy
+with the canary script and records the script's digest. Trials run with
+`delete=False` and `keep_containers=True`, so the validator removes the exact
+run-owned Compose projects, including anonymous volumes registered from the
+containers' actual mounts, and verifies their absence. The oracle's exit code is
+read at `AGENT_END`, before sandbox log synchronization can overwrite it, and a
+later change fails the run.
+
+Results map to RFC check ids:
+
+| Check | Evidence |
+|---|---|
+| `runtime.startup` | Every trial ran from the pinned image in a fresh container, and cleanup was verified. |
+| `runtime.reward_well_formed` | Every raw reward map matches Harbor's result and is finite, nonboolean and in range. |
+| `runtime.episode_determinism` | The oracle replay reproduces every reward and the exit code. |
+| `semantic.oracle_max` | Both oracle runs exit 0 and earn at least `max - oracle_tolerance`. A task without `solution/solve.sh` fails. |
+| `semantic.floor_gap` | `max - floor >= floor_margin`, and `oracle - floor >= floor_margin` because the oracle may sit up to the tolerance below the maximum. |
+| `semantic.canary_floor` | Every declared canary earns no more than the measured floor. Selected only when canaries are declared. |
+
+The semantic ids depend on `runtime.episode_determinism`, so a diverging replay
+SKIPs them with the dependency named. Reward comparisons use exact rationals parsed
+from the raw verifier output. Every other local check is a named SKIP for this
+binding. It produces no WebSocket exchange, containment or resource measurement,
+second verification of one final state, or leakage scan. A passing run is therefore
+WARN, and full RFC qualification still rejects these SKIPs.
+
+Canaries are operator-declared, known-wrong `solve.sh` replacements, at most eight
+per task. They give local validation the package-shipped form of test #28.
+Generating wrong answers, for example by mutating the oracle, belongs to the
+adversarial panel of test #26, which remains unspecified.
+
+`harbor-evidence.json` records the contract digest, the Harbor version, and each
+trial's role, image identity, private-copy digests, overlays, raw reward file hashes
+and cleanup outcome. It and the raw reward and exit files are checksummed bundle
+artifacts beside the report.
+
+Served `openenv_ws` packages have no oracle execution contract yet, so their
+semantic checks are named SKIPs.
 
 ## Explicitly out of scope
 

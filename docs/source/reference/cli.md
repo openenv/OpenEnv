@@ -69,13 +69,17 @@ supports that capability. Docker validation uses two containers concurrently
 during the fresh-container replay. Both use the same immutable image and are
 removed even if a check fails.
 
-Native Harbor `task.toml` directories are also recognized. Supply an explicit
-`validation/openenv.json` reward/resource contract and the optional Harbor
-dependency. The `harbor-oracle-floor-v1` binding runs fresh native NOP and oracle
-trials in Docker, verifies raw rewards, actual task image/configuration and cleanup,
-and retains `harbor-evidence.json` in the report bundle. Other standard checks
-remain named SKIPs, so a passing pilot still produces WARN. This does not qualify
-the outer `harbor_env` server or claim full RFC 008 admission.
+Harbor `task.toml` directories are also recognized. Install the `harbor` extra
+and add a `validation/openenv.json` contract that declares the reward key, range,
+oracle tolerance, floor margin and resources. The `harbor-semantic-v1` binding runs
+fresh Harbor trials in Docker: a do-nothing agent, the oracle (`solution/solve.sh`),
+an oracle replay and any canaries declared in the contract. A canary is a known-wrong
+`solve.sh` replacement. The results report under `runtime.startup`,
+`runtime.reward_well_formed`, `runtime.episode_determinism`, `semantic.oracle_max`,
+`semantic.floor_gap` and `semantic.canary_floor`, and `harbor-evidence.json` keeps
+the raw trial evidence in the report bundle. Other checks are named SKIPs, so a
+passing task still reports WARN. This validates task packages, not the outer
+`harbor_env` server.
 
 The 16 implemented runtime checks cover startup, rewards, observation schemas,
 state continuity, network policy, host containment, resource bounds, episode isolation,
@@ -85,7 +89,8 @@ with unsupported capabilities or incomplete evidence appear as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
-includes the available lower-level checks but does not claim semantic execution.
+runs the semantic checks for Harbor tasks. Served packages have no oracle execution
+yet, so their semantic checks are named SKIPs.
 `--skip-build` runs declaration checks and skips runtime execution entirely.
 The Docker provider supports CPU workloads in `public` and `no-network` modes;
 `allowlist` and GPU requirements skip runtime before building. A `no-network`
