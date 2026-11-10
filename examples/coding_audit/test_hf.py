@@ -1219,17 +1219,18 @@ def test_candidate_context_binds_only_declared_public_bytes_to_prompt(
     assert "context_paths" not in h.inference.requests[0]
 
 
-def test_default_candidate_prompt_and_target_protocol_are_unchanged(harness):
+def test_candidate_contract_names_outputs_without_changing_target_instruction(harness):
     h = harness
     h.inference.responses = [response("true"), response("done")]
     generated = h.backend.generate_candidate(MODEL, 0)
     solved = h.backend.solve(MODEL, 1)
     assert generated["error"] is None and solved["error"] is None
     assert "candidate_context" not in generated
-    assert all(
-        request["messages"][1]["content"] == (h.root / "instruction.md").read_text()
-        for request in h.inference.requests
+    instruction = (h.root / "instruction.md").read_text()
+    assert h.inference.requests[0]["messages"][1]["content"] == (
+        instruction + '\n\nRequired submission files: ["/app/answer.txt"]'
     )
+    assert h.inference.requests[1]["messages"][1]["content"] == instruction
 
 
 @pytest.mark.parametrize(
