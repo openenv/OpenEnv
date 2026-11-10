@@ -396,7 +396,7 @@ Exit codes:
 | code | meaning |
 |---|---|
 | `0` | success |
-| `1` | ran, but failed. `rollout` returns this if **any** rollout in the batch was unusable |
+| `1` | ran, but failed. `rollout` returns this if **any** rollout in the batch was unusable; `info --harness` returns it if construction or wiring checks fail |
 | `2` | usage error: a missing or invalid flag. Nothing ran |
 
 The `1` and `2` split matters if you are scripting this: `2` means the command never started, so
@@ -404,7 +404,9 @@ retrying it unchanged will fail the same way.
 
 ### `openenv harbor info`
 
-Report what this machine can run. Read-only: boots no sandbox, starts no server, makes no rollout.
+Report what this machine can run. Boots no sandbox, starts no server, makes no rollout.
+With `--harness`, imports and constructs that agent locally using dummy capture credentials and
+temporary logs. Only check code you trust; its constructor runs, but its setup and run methods do not.
 
 | flag | type | default | meaning |
 |---|---|---|---|
@@ -412,11 +414,13 @@ Report what this machine can run. Read-only: boots no sandbox, starts no server,
 | `--model` | str | `""` | Served model id. Auto-detected when the endpoint serves exactly one |
 | `--dataset` | str | none | Dataset spec. Repeatable, or comma-separated |
 | `--env-file` | path | `""` | dotenv with provider credentials, loaded before the checks |
+| `--harness` | str | `""` | Check a seam name or trusted `module:Class`; show its capture wiring and try constructing it |
 | `--verbose` | flag | off | List all 30 harnesses, not only the 16 validated |
 | `--json` | flag | off | Emit machine-readable JSON instead of the text report |
 
 ```bash
 openenv harbor info --llm-url $LLM --dataset org/tasks --json
+openenv harbor info --harness my_package.agent:MyAgent --model org/model --json
 ```
 
 The JSON has four top-level keys: `llm`, `sandboxes`, `datasets`, `harnesses`. Each sandbox entry is
@@ -426,6 +430,12 @@ The JSON has four top-level keys: `llm`, `sandboxes`, `datasets`, `harnesses`. E
 openenv harbor info --llm-url $LLM --json \
   | jq -r '.sandboxes[] | select(.available) | .name'
 ```
+
+`--harness` adds a `harness` object with `ok` and either the dummy wiring or an error in `detail`.
+It catches import errors, incorrect subclasses, constructor failures, and host-side agents that
+declare neither `api_base` nor `api_key` as constructor parameters or options fields. A successful
+check confirms construction only; it does not validate model calls, capture or sandbox installation.
+Without `--model` or an endpoint's detected model, the check uses `preflight-model`.
 
 ### `openenv harbor rollout`
 
