@@ -101,7 +101,9 @@ or GPU time. Owners are suggestions for discussion.
 
 `semantic.oracle_max` and `semantic.floor_gap` now grade Harbor tasks. The graders
 read a format-neutral `OracleEvidence`, so another binding only has to measure the
-rewards.
+rewards. Oracle tolerance and floor margin are fractions of the declared reward
+range. Both the maximum and every oracle reward must exceed the measured floor
+by at least the declared margin times the range width.
 
 **Remaining.** Served packages need an oracle execution contract first: the RFC
 names injected state and executable scripts, but not how either drives a served
@@ -120,7 +122,12 @@ Validation core.
 Done. Harbor `task.toml` packages validate through the `harbor-semantic-v1`
 profile and an operator-supplied `validation/openenv.json` contract. Fresh Docker
 trials run a do-nothing agent, the oracle, an oracle replay and declared canaries,
-all pinned to one immutable image.
+all pinned to one immutable image. The binding requires Python 3.12 or newer and
+`harbor==0.25.0` alongside `openenv[harbor]`. It refuses task-declared `docker_image`
+values, so the NOP trial builds from the task's Dockerfile. The validator keeps
+`openenv-validation:<run id>` only when the run has no FAIL or ERROR and was not
+interrupted. It records the tag in `runtime.startup.measured` as
+`retained_image_tag`. Otherwise it removes the tag.
 
 **Remaining.** Decide which runtime ids apply to one-shot tasks. Containment,
 network policy, resource bounds and oracle containment could apply. Observation
@@ -155,8 +162,11 @@ writes the amendment, and the Hub pipeline team implements the operator panel.
 
 `semantic.verifier_determinism`, `semantic.verifier_portability`,
 `semantic.replayability` and `semantic.no_solution_leakage` have no graders.
-Harbor tasks now establish `runtime.episode_determinism` with an oracle replay in a
-fresh container, which these checks depend on.
+Harbor tasks now establish `runtime.episode_determinism` when an oracle replay in a
+fresh container reproduces every reward and the oracle exit code. Each trial is a
+one-shot episode with no per-step observations. Served environments retain the
+general comparison of observation, reward, done, tool output and state. The semantic
+checks depend on the determinism finding.
 
 **Approach.** Verifier determinism runs the verifier on one final state several
 times and requires identical rewards. For `llm_judged` environments it requires

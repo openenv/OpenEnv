@@ -183,7 +183,9 @@ The core promise is #778's verifier-sanity test, made precise:
   state — the declared range minimum may sit below it (an agent that deletes the repo earns a
   legal sub-floor reward, not a validation anomaly). The contract is a **gap check**:
   `reward(oracle) >= max - tolerance * width`, `reward(reset) = floor`,
-  `max - floor >= margin * width`, where `width = max - min`.
+  `max - floor >= margin * width`, and
+  `reward(oracle) - floor >= margin * width`, where `width = max - min`.
+  Both floor gaps must hold for every oracle run.
 - **Oracle containment is required.** The oracle (state or script) must be withheld from or
   isolated against the agent at serve time, and validation checks that it is.
 - **Reward range is declared** in the manifest, defaulting to `[0, 1]`; graders normalize against
@@ -194,8 +196,9 @@ The core promise is #778's verifier-sanity test, made precise:
 
 **LLM-as-judge is an allowed reward.** Judged environments declare `llm_judged` and pin the judge
 configuration (model, version, params) in the manifest; the oracle check becomes
-`>= max - declared tolerance * width` and determinism becomes variance-within-declared-bound rather than
-bit-exact. RFC 004 rubrics are **leveraged, not required**: the contract stays spec-neutral
+`>= max - declared tolerance * width`. Determinism becomes variance within the
+declared bound rather than bit-exact. RFC 004 rubrics are optional. The contract stays
+spec-neutral
 (graders read the manifest), but for the served OpenEnv format the rubric tree is the native
 satisfaction path — `LLMJudge` is the in-repo `llm_judged` implementation, and the
 introspectability and reward-attribution graders read `named_rubrics()`, explicit
@@ -619,9 +622,10 @@ parsing these declarations does not claim they are enforced.
 
 Seed acceptance and empirical determinism are separate findings. A reset that
 silently drops its seed does not establish seed control, while a deterministic
-environment may legitimately behave identically under different seeds. Replay
-comparison includes observation, reward, done, tool output and state; only
-policy-owned volatile metadata can be excluded. Authors cannot exclude fields.
+environment may legitimately behave identically under different seeds. For served
+environments, replay comparison includes observation, reward, done, tool output and
+state. Only policy-owned volatile metadata can be excluded. Authors cannot exclude
+fields. The one-shot Harbor comparison is specified in the Harbor task binding below.
 For `llm_judged`, the bounded variance path uses 20 completed identical-input fresh
 replays and population reward variance in reward-squared units, compared to the
 declared bound. The total run budget bounds all samples; fewer than 20 is incomplete.
@@ -737,24 +741,40 @@ supply these declarations. The normalized schema-2 execution kind is `harbor_tas
 with a `process` agent boundary. Parsing uses Harbor's data-only Task loader and
 never creates a Trial or executes package code.
 
+The profile requires Python 3.12 or newer and `harbor==0.25.0` alongside
+`openenv[harbor]`. A missing or mismatched Harbor installation is a validator
+environment error, not a package failure.
+
 The profile supports single-step Linux tasks with one Dockerfile, one main Docker
-service, a shared verifier and public networking. Accelerators, external MCP
-services, task environment variables, credentials and Harbor extensions such as
-healthchecks or artifacts are refused with the reason named.
+service, a shared verifier and public networking. Task-declared `docker_image`
+values are refused. The NOP trial must build from the task's Dockerfile.
+Accelerators, external MCP services, task environment variables, credentials and
+Harbor extensions such as healthchecks or artifacts are refused with the reason named.
 
 Execution runs fresh Harbor Trials in a fixed order: a do-nothing (NOP) trial, the
 oracle (`solution/solve.sh`), an oracle replay, and one trial per declared canary.
 The NOP trial builds the image. The validator inspects the actual agent container
 at `AGENT_START`, retains its immutable image under a run-owned tag, and pins every
-later trial to that image and its effective container configuration. Each trial
-runs on a private copy of the task whose digest must equal the validated source
-digest before any overlay. A canary trial replaces `solution/solve.sh` in its copy
-with the canary script and records the script's digest. Trials run with
+later trial to that image and its effective container configuration.
+
+The validator keeps `openenv-validation:<run id>` only when the run has no FAIL or
+ERROR and was not interrupted. It records the tag in `runtime.startup.measured`
+as `retained_image_tag`. Otherwise it removes the tag.
+
+Each trial runs on a private copy of the task whose digest must equal the validated
+source digest before any overlay. A canary trial replaces `solution/solve.sh` in its
+copy with the canary script and records the script's digest. Trials run with
 `delete=False` and `keep_containers=True`, so the validator removes the exact
 run-owned Compose projects, including anonymous volumes registered from the
 containers' actual mounts, and verifies their absence. The oracle's exit code is
 read at `AGENT_END`, before sandbox log synchronization can overwrite it, and a
 later change fails the run.
+
+For `harbor-semantic-v1`, one trial is a one-shot episode with no per-step
+observations. A fresh oracle replay that reproduces every reward and the oracle
+exit code establishes `runtime.episode_determinism`. This rule is specific to the
+Harbor binding. Served environments retain the general replay comparison of
+observation, reward, done, tool output and state.
 
 Results map to RFC check ids:
 
@@ -763,16 +783,16 @@ Results map to RFC check ids:
 | `runtime.startup` | Every trial ran from the pinned image in a fresh container, and cleanup was verified. |
 | `runtime.reward_well_formed` | Every raw reward map matches Harbor's result and is finite, nonboolean and in range. |
 | `runtime.episode_determinism` | The oracle replay reproduces every reward and the exit code. |
-| `semantic.oracle_max` | Both oracle runs exit 0 and earn at least `max - oracle_tolerance * width`. A task without `solution/solve.sh` fails. |
-| `semantic.floor_gap` | `max - floor >= floor_margin * width`, and `oracle - floor >= floor_margin * width` because the oracle may sit up to the tolerance below the maximum. |
+| `semantic.oracle_max` | Both oracle runs exit 0 and meet the oracle bound in the semantic contract above. A task without `solution/solve.sh` fails. |
+| `semantic.floor_gap` | Both floor-gap conditions in the semantic contract above hold for every oracle run. |
 | `semantic.canary_floor` | Every declared canary earns no more than the measured floor. Selected only when canaries are declared. |
 
 The semantic ids depend on `runtime.episode_determinism`, so a diverging replay
 SKIPs them with the dependency named. Oracle tolerance and floor margin are fractions
 of the declared range, with `width = max - min`. Reward comparisons use exact
-rationals parsed from the raw verifier output. Every other local check is a named SKIP for this
-binding. It produces no WebSocket exchange, containment or resource measurement,
-second verification of one final state, or leakage scan. A passing run is therefore
+rationals parsed from the raw verifier output. Every other local check is a named
+SKIP for this binding. It produces no WebSocket exchange, containment or resource
+measurement, second verification of one final state, or leakage scan. A passing run is therefore
 WARN, and full RFC qualification still rejects these SKIPs.
 
 Canaries are operator-declared, known-wrong `solve.sh` replacements, at most eight

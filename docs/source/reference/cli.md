@@ -110,6 +110,11 @@ the raw trial evidence in the report bundle. Other checks are named SKIPs, so a
 passing task still reports WARN. This validates task packages, not the outer
 `harbor_env` server.
 
+Task-declared `docker_image` values are refused. The do-nothing trial builds from
+the task's Dockerfile. The validator keeps `openenv-validation:<run id>` only when
+the run has no FAIL or ERROR and was not interrupted. It records the tag in
+`runtime.startup.measured` as `retained_image_tag`. Otherwise it removes the tag.
+
 The 16 implemented runtime checks cover startup, rewards, observation schemas,
 state continuity, network policy, host containment, resource bounds, episode isolation,
 oracle containment, seed forwarding, determinism, emitted trajectory records, tool

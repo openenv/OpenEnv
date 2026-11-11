@@ -58,8 +58,9 @@ class RewardDeclaration(BaseModel):
             The oracle check requires `reward(oracle) >= max - oracle_tolerance * width`,
             where `width = max - min`.
         floor_margin (`float`):
-            Fraction of the declared range required between the maximum and the floor.
-            The gap check requires `max - measured_floor >= floor_margin * width`.
+            Fraction of the declared range required below the maximum and every oracle.
+            Both `max - measured_floor` and `reward(oracle) - measured_floor` must be
+            at least `floor_margin * width`.
         variance_tolerance (`float`, *optional*):
             Required iff the environment declares `llm_judged`; bounds reward variance
             for variance-mode determinism checks.
