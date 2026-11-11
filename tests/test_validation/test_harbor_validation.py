@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from openenv.validation import harbor
+from openenv.validation.harbor import DockerInspector
 from openenv.validation.manifest import ManifestError
 from openenv.validation.parsers.harbor_toml import (
     HarborTaskParser,
@@ -77,6 +78,7 @@ def boundary(monkeypatch, task):
         inventory_problem=None,
         cleanup_calls=[],
         preflight_error=None,
+        interrupt_role=None,
     )
 
     class Inspector:
@@ -119,6 +121,9 @@ def boundary(monkeypatch, task):
                     "volumes": [],
                 },
             }
+
+        def remove_image(self):
+            pass
 
         def verify_image(self, tag, image_ref):
             if state.retained_error:
@@ -190,6 +195,8 @@ def boundary(monkeypatch, task):
             if not state.no_identity:
                 for hook in self.hooks.get("agent-start", []):
                     await hook(None)
+            if self.role == state.interrupt_role:
+                raise KeyboardInterrupt
             await asyncio.wait_for(
                 asyncio.sleep(state.agent_delay),
                 timeout=self.config.agent.override_timeout_sec,
@@ -242,6 +249,68 @@ def boundary(monkeypatch, task):
 
     monkeypatch.setattr(harbor, "DockerInspector", Inspector)
     monkeypatch.setattr(harbor, "_create_trial", create)
+    return state
+
+
+@pytest.fixture
+def image_docker(boundary, monkeypatch):
+    state = SimpleNamespace(
+        images={"unrelated:tag": IMAGE}, removed=set(), commands=[], image_os="linux"
+    )
+
+    def docker(self, *args):
+        state.commands.append(args)
+        if args == ("info", "--format", "{{json .}}"):
+            return json.dumps({"OSType": "linux", "ID": "fake", "ServerVersion": "29"})
+        if args == ("compose", "version"):
+            return "Docker Compose"
+        if args[0] == "ps":
+            project = args[-1].removeprefix("label=com.docker.compose.project=")
+            return "\n".join(
+                trial.role + "-container"
+                for trial in boundary.trials
+                if trial.agent_environment.session_id == project
+                and trial.role not in state.removed
+            )
+        if args[:2] in (("network", "ls"), ("volume", "ls")):
+            return ""
+        if args[0] == "inspect":
+            trial = next(t for t in boundary.trials if t.role + "-container" == args[1])
+            project = trial.agent_environment.session_id
+            return json.dumps(
+                [
+                    {
+                        "Id": args[1],
+                        "Image": IMAGE,
+                        "State": {"Running": True},
+                        "Config": {
+                            "Labels": {
+                                "com.docker.compose.project": project,
+                                "com.docker.compose.service": "main",
+                            },
+                            "User": "1000",
+                            "WorkingDir": "/app",
+                        },
+                        "HostConfig": {"NetworkMode": project + "_default"},
+                        "Mounts": [],
+                    }
+                ]
+            )
+        if args[:2] == ("image", "tag"):
+            state.images[args[3]] = args[2]
+            return ""
+        if args[:2] == ("image", "inspect"):
+            return json.dumps([{"Id": state.images[args[2]], "Os": state.image_os}])
+        if args[:3] == ("image", "rm", "--no-prune"):
+            del state.images[args[3]]
+            return ""
+        if args[:3] == ("rm", "-f", "-v"):
+            state.removed.add(args[3].removesuffix("-container"))
+            return ""
+        pytest.fail(f"unexpected Docker command: {args}")
+
+    monkeypatch.setattr(DockerInspector, "_docker", docker)
+    monkeypatch.setattr(harbor, "DockerInspector", DockerInspector)
     return state
 
 
@@ -356,6 +425,66 @@ def test_trial_does_not_share_phase_timeout(task, boundary, monkeypatch):
         and trial.config.verifier.override_timeout_sec == 10
         for trial in boundary.trials
     )
+
+
+@pytest.mark.parametrize(
+    "outcome", ["kept", "fail", "error", "interrupted", "capture_error"]
+)
+def test_retained_image_policy(task, boundary, image_docker, tmp_path, outcome):
+    if outcome == "fail":
+        boundary.rewards["nop"] = b'{"reward":1}'
+    elif outcome == "error":
+        boundary.exception = True
+    elif outcome == "interrupted":
+        boundary.interrupt_role = "oracle"
+    elif outcome == "capture_error":
+        image_docker.image_os = "windows"
+    artifacts = tmp_path / "image-policy"
+    report = run_validation(task, artifacts_dir=artifacts)
+    tag = "openenv-validation:" + boundary.trials[0].config.trial_name.split("-")[2]
+    measured = result(report, "runtime.startup").measured
+    removals = [cmd for cmd in image_docker.commands if cmd[:2] == ("image", "rm")]
+    if outcome == "kept":
+        assert report.verdict is Verdict.WARN
+        assert measured["retained_image_tag"] == tag
+        assert image_docker.images == {"unrelated:tag": IMAGE, tag: IMAGE}
+        assert not removals
+    else:
+        assert report.verdict is Verdict.FAIL
+        if outcome == "fail":
+            assert result(report, "semantic.floor_gap").status is CheckStatus.FAIL
+        else:
+            assert result(report, "runtime.startup").status is CheckStatus.ERROR
+        assert "retained_image_tag" not in measured
+        assert image_docker.images == {"unrelated:tag": IMAGE}
+        assert removals == [("image", "rm", "--no-prune", tag)]
+    assert json.loads((artifacts / "report.json").read_text()) == json.loads(
+        report.model_dump_json()
+    )
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt, OSError])
+def test_retained_image_removed_when_reporting_does_not_complete(
+    task, boundary, image_docker, tmp_path, monkeypatch, error
+):
+    def interrupted(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(harbor, "write_runtime_bundle", interrupted)
+    with pytest.raises(error):
+        run_validation(task, artifacts_dir=tmp_path / "interrupted-report")
+    assert image_docker.images == {"unrelated:tag": IMAGE}
+    assert len(boundary.trials) == 3
+
+
+def test_build_failure_has_no_retained_tag_to_remove(task, boundary, image_docker):
+    boundary.exception_type = "RuntimeError"
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.FAIL
+    assert "retained_image_tag" not in startup.measured
+    assert image_docker.images == {"unrelated:tag": IMAGE}
+    assert not any(cmd[:2] == ("image", "rm") for cmd in image_docker.commands)
 
 
 @pytest.mark.parametrize(

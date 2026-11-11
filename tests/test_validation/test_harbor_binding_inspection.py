@@ -67,6 +67,8 @@ def inspection(monkeypatch):
             return ""
         if args == ("image", "inspect", TAG):
             return json.dumps([retained])
+        if args == ("image", "rm", "--no-prune", TAG):
+            return ""
         pytest.fail(f"unexpected Docker command: {args}")
 
     monkeypatch.setattr(inspector, "_docker", docker)
@@ -216,6 +218,45 @@ def test_verify_image_checks_the_retained_tag(inspection, matches):
     retained["Id"] = IMAGE if matches else "sha256:" + "b" * 64
     assert inspector.verify_image(TAG, IMAGE) is matches
     assert commands == [("image", "inspect", TAG)]
+
+
+@pytest.mark.parametrize("tag", ["unrelated:tag", "openenv-validation:" + "e" * 32])
+def test_capture_refuses_a_tag_outside_its_run(inspection, tag):
+    inspector, _, _, _, commands = inspection
+    with pytest.raises(NativeEvidenceError, match="run-owned project"):
+        inspector.capture(PROJECT, tag)
+    assert not any(cmd[:2] == ("image", "tag") for cmd in commands)
+
+
+def test_image_removal_requires_a_tag_created_by_this_inspector(inspection):
+    inspector, _, _, _, commands = inspection
+    inspector.capture(PROJECT, TAG, retain=False)
+    commands.clear()
+    inspector.remove_image()
+    assert not commands
+
+
+@pytest.mark.parametrize("drift", [False, True])
+def test_image_removal_verifies_ownership_and_removes_only_the_run_tag(
+    inspection, drift
+):
+    inspector, _, retained, _, commands = inspection
+    inspector.capture(PROJECT, TAG)
+    commands.clear()
+    if drift:
+        retained["Id"] = "sha256:" + "b" * 64
+        with pytest.raises(NativeEvidenceError, match="ownership changed"):
+            inspector.remove_image()
+        assert commands == [("image", "inspect", TAG)]
+    else:
+        inspector.remove_image()
+        assert commands == [
+            ("image", "inspect", TAG),
+            ("image", "rm", "--no-prune", TAG),
+        ]
+        commands.clear()
+        inspector.remove_image()
+        assert not commands
 
 
 @pytest.mark.parametrize("kind", ["file", "parent", "broken"])

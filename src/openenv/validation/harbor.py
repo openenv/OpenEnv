@@ -77,10 +77,11 @@ def _digest(value):
 
 
 class DockerInspector:
-    """Trusted host inspection and removal limited to exact run-owned projects."""
+    """Trusted host inspection and removal limited to run-owned resources."""
 
     def __init__(self):
         self._owned_volumes = {}
+        self._retained_image = None
 
     def _docker(self, *args):
         result = subprocess.run(
@@ -119,6 +120,10 @@ class DockerInspector:
 
     def capture(self, project, retained_tag, *, retain=True):
         inventory = self.inventory(project)
+        if retained_tag != "openenv-validation:" + project.split("-", 3)[2]:
+            raise NativeEvidenceError(
+                "retained image tag differs from its run-owned project"
+            )
         if len(inventory["containers"]) != 1:
             raise NativeEvidenceError("Harbor requires exactly one main container")
         item = json.loads(self._docker("inspect", inventory["containers"][0]))[0]
@@ -135,6 +140,7 @@ class DockerInspector:
                 "native container is not running with an immutable image"
             )
         if retain:
+            self._retained_image = (retained_tag, item["Image"])
             self._docker("image", "tag", item["Image"], retained_tag)
         retained = json.loads(self._docker("image", "inspect", retained_tag))[0]
         if (retain and retained["Id"] != item["Image"]) or retained["Os"] != "linux":
@@ -236,6 +242,16 @@ class DockerInspector:
     def verify_image(self, tag, image_ref):
         image = json.loads(self._docker("image", "inspect", tag))[0]
         return image["Id"] == image_ref
+
+    def remove_image(self):
+        if self._retained_image is not None:
+            tag, image_ref = self._retained_image
+            if not self.verify_image(tag, image_ref):
+                raise NativeEvidenceError(
+                    "retained image ownership changed before removal"
+                )
+            self._docker("image", "rm", "--no-prune", tag)
+            self._retained_image = None
 
 
 def _unsupported(task, contract):
@@ -804,321 +820,342 @@ def validate_harbor(
         installed = json.loads(direct_url)
         record["harbor"]["commit_id"] = installed.get("vcs_info", {}).get("commit_id")
     files = {}
-    attempted = False
-    problem = _unsupported(read_harbor_task(subject.root), contract)
-    if skip_build:
-        problem = "image build skipped by --skip-build"
-    if provider is not None:
-        problem = "native Harbor binding requires its own Docker Trial provider"
-    if any(result.status is not CheckStatus.PASS for result in results):
-        problem = "unmet dependency: static.manifest"
-    startup = _result(
-        "runtime.startup",
-        CheckStatus.SKIP,
-        f"unsupported by {HARBOR_PROFILE}: {problem}",
-    )
-    reward_result = _result(
-        "runtime.reward_well_formed",
-        CheckStatus.SKIP,
-        "unmet dependency: native Harbor trials",
-    )
-    determinism = _result(
-        "runtime.episode_determinism",
-        CheckStatus.SKIP,
-        "unmet dependency: native Harbor trials",
-    )
-    evidence = None
-    checks = []
-    semantic_graded = False
-    if (
-        semantic
-        and subject.manifest.capabilities.oracle is None
-        and all(result.status is CheckStatus.PASS for result in results)
-    ):
-        # RFC 008: a missing oracle is a graded FAIL, never a SKIP.
-        semantic_graded = True
-        checks.append(
-            CheckResult(
-                check_id="semantic.oracle_max",
-                status=CheckStatus.FAIL,
-                evidence=["the task has no oracle (solution/solve.sh)"],
-                remediation=(
-                    "Add solution/solve.sh that drives the task to a correct solution."
-                ),
-                duration_s=0,
-            )
+    inspector = DockerInspector()
+    completed = False
+    try:
+        attempted = False
+        problem = _unsupported(read_harbor_task(subject.root), contract)
+        if skip_build:
+            problem = "image build skipped by --skip-build"
+        if provider is not None:
+            problem = "native Harbor binding requires its own Docker Trial provider"
+        if any(result.status is not CheckStatus.PASS for result in results):
+            problem = "unmet dependency: static.manifest"
+        startup = _result(
+            "runtime.startup",
+            CheckStatus.SKIP,
+            f"unsupported by {HARBOR_PROFILE}: {problem}",
         )
-    if not problem:
-        if subject.manifest.capabilities.oracle is None:
-            startup = _result(
-                "runtime.startup",
-                CheckStatus.SKIP,
-                "native Harbor trials need solution/solve.sh",
+        reward_result = _result(
+            "runtime.reward_well_formed",
+            CheckStatus.SKIP,
+            "unmet dependency: native Harbor trials",
+        )
+        determinism = _result(
+            "runtime.episode_determinism",
+            CheckStatus.SKIP,
+            "unmet dependency: native Harbor trials",
+        )
+        evidence = None
+        checks = []
+        semantic_graded = False
+        if (
+            semantic
+            and subject.manifest.capabilities.oracle is None
+            and all(result.status is CheckStatus.PASS for result in results)
+        ):
+            # RFC 008: a missing oracle is a graded FAIL, never a SKIP.
+            semantic_graded = True
+            checks.append(
+                CheckResult(
+                    check_id="semantic.oracle_max",
+                    status=CheckStatus.FAIL,
+                    evidence=["the task has no oracle (solution/solve.sh)"],
+                    remediation=(
+                        "Add solution/solve.sh that drives the task to a correct solution."
+                    ),
+                    duration_s=0,
+                )
             )
-        else:
-            attempted = True
-            try:
-                with tempfile.TemporaryDirectory(
-                    prefix="openenv-harbor-validation-"
-                ) as temp:
-                    daemon, trials, files = asyncio.run(
-                        _collect(
-                            subject.root,
-                            contract,
-                            Path(temp),
-                            DockerInspector(),
-                            digest_before,
-                            canaries,
+        if not problem:
+            if subject.manifest.capabilities.oracle is None:
+                startup = _result(
+                    "runtime.startup",
+                    CheckStatus.SKIP,
+                    "native Harbor trials need solution/solve.sh",
+                )
+            else:
+                attempted = True
+                try:
+                    with tempfile.TemporaryDirectory(
+                        prefix="openenv-harbor-validation-"
+                    ) as temp:
+                        daemon, trials, files = asyncio.run(
+                            _collect(
+                                subject.root,
+                                contract,
+                                Path(temp),
+                                inspector,
+                                digest_before,
+                                canaries,
+                            )
                         )
-                    )
-                record.update({"daemon": daemon, "trials": trials})
-                record["cleanup"] = {
-                    "verified": bool(trials)
-                    and all(trial["cleanup"]["verified"] for trial in trials)
-                }
-                broken = [
-                    trial
-                    for trial in trials
-                    if "failure" in trial and not _reward_only(trial)
-                ]
-                malformed = any(_reward_only(trial) for trial in trials)
-                containers = [trial.get("container_id") for trial in trials]
-                if (
-                    broken
-                    or (not malformed and len(trials) != 3 + len(canaries))
-                    or len(set(containers)) != len(containers)
-                ):
-                    subject_failures = broken and all(
-                        trial.get("subject_error")
-                        and trial["failure"] not in _HOST_FAILURES
-                        for trial in broken
-                    )
-                    startup = _result(
-                        "runtime.startup",
-                        CheckStatus.FAIL if subject_failures else CheckStatus.ERROR,
-                        "native Harbor subject failed during "
-                        + ", ".join(
-                            sorted({trial["subject_error"] for trial in broken})
+                    record.update({"daemon": daemon, "trials": trials})
+                    record["cleanup"] = {
+                        "verified": bool(trials)
+                        and all(trial["cleanup"]["verified"] for trial in trials)
+                    }
+                    broken = [
+                        trial
+                        for trial in trials
+                        if "failure" in trial and not _reward_only(trial)
+                    ]
+                    malformed = any(_reward_only(trial) for trial in trials)
+                    containers = [trial.get("container_id") for trial in trials]
+                    if (
+                        broken
+                        or (not malformed and len(trials) != 3 + len(canaries))
+                        or len(set(containers)) != len(containers)
+                    ):
+                        subject_failures = broken and all(
+                            trial.get("subject_error")
+                            and trial["failure"] not in _HOST_FAILURES
+                            for trial in broken
                         )
-                        if subject_failures
-                        else "native Harbor trial, binding or cleanup failed",
-                        {
-                            "failures": [
-                                trial.get("reason", trial.get("failure"))
-                                for trial in broken
-                            ]
-                        },
-                    )
-                    if malformed:
-                        reward_result = _result(
-                            "runtime.reward_well_formed",
-                            CheckStatus.FAIL,
-                            "native verifier reward violates the explicit contract",
+                        startup = _result(
+                            "runtime.startup",
+                            CheckStatus.FAIL if subject_failures else CheckStatus.ERROR,
+                            "native Harbor subject failed during "
+                            + ", ".join(
+                                sorted({trial["subject_error"] for trial in broken})
+                            )
+                            if subject_failures
+                            else "native Harbor trial, binding or cleanup failed",
+                            {
+                                "failures": [
+                                    trial.get("reason", trial.get("failure"))
+                                    for trial in broken
+                                ]
+                            },
                         )
-                else:
-                    record.update(
-                        {
-                            "image_ref": trials[0]["image_ref"],
-                            "retained_image_tag": trials[0]["retained_image_tag"],
-                        }
+                        if malformed:
+                            reward_result = _result(
+                                "runtime.reward_well_formed",
+                                CheckStatus.FAIL,
+                                "native verifier reward violates the explicit contract",
+                            )
+                    else:
+                        record["image_ref"] = trials[0]["image_ref"]
+                        startup = _result(
+                            "runtime.startup",
+                            CheckStatus.PASS,
+                            "fresh native Harbor trials ran from one immutable image "
+                            "with verified cleanup",
+                            {
+                                "profile": HARBOR_PROFILE,
+                                "image_ref": trials[0]["image_ref"],
+                                "roles": [trial["role"] for trial in trials],
+                                "task_effective_digest": digest_before,
+                            },
+                        )
+                        if malformed:
+                            reward_result = _result(
+                                "runtime.reward_well_formed",
+                                CheckStatus.FAIL,
+                                "native verifier reward violates the explicit contract",
+                            )
+                            determinism = _result(
+                                "runtime.episode_determinism",
+                                CheckStatus.SKIP,
+                                "unmet dependency: runtime.reward_well_formed",
+                            )
+                        else:
+                            reward_result = _result(
+                                "runtime.reward_well_formed",
+                                CheckStatus.PASS,
+                                "every raw verifier reward map matches Harbor and "
+                                "satisfies the declared key/range",
+                                {
+                                    "profile": HARBOR_PROFILE,
+                                    "reward_key": contract.reward_key,
+                                },
+                            )
+                    complete_baseline = (
+                        len(trials) >= 3
+                        and all(
+                            "failure" not in trial and trial["cleanup"]["verified"]
+                            for trial in trials[:3]
+                        )
+                        and len(set(containers[:3])) == 3
                     )
-                    startup = _result(
-                        "runtime.startup",
-                        CheckStatus.PASS,
-                        "fresh native Harbor trials ran from one immutable image "
-                        "with verified cleanup",
-                        {
-                            "profile": HARBOR_PROFILE,
-                            "image_ref": trials[0]["image_ref"],
-                            "roles": [trial["role"] for trial in trials],
-                            "task_effective_digest": digest_before,
-                        },
-                    )
-                    if malformed:
-                        reward_result = _result(
-                            "runtime.reward_well_formed",
-                            CheckStatus.FAIL,
-                            "native verifier reward violates the explicit contract",
+                    if complete_baseline:
+                        nop, oracle, replay, *canary_trials = trials
+                        same = (
+                            oracle["rewards"] == replay["rewards"]
+                            and oracle["oracle_exit_code"] == replay["oracle_exit_code"]
                         )
                         determinism = _result(
                             "runtime.episode_determinism",
-                            CheckStatus.SKIP,
-                            "unmet dependency: runtime.reward_well_formed",
-                        )
-                    else:
-                        reward_result = _result(
-                            "runtime.reward_well_formed",
-                            CheckStatus.PASS,
-                            "every raw verifier reward map matches Harbor and "
-                            "satisfies the declared key/range",
+                            CheckStatus.PASS if same else CheckStatus.FAIL,
+                            "the oracle replay in a fresh container "
+                            + (
+                                "reproduced every reward and the exit code"
+                                if same
+                                else "produced different rewards or a different exit code"
+                            ),
                             {
-                                "profile": HARBOR_PROFILE,
-                                "reward_key": contract.reward_key,
+                                "rewards": [
+                                    json.loads(dumps(trial["rewards"]))
+                                    for trial in (oracle, replay)
+                                ],
+                                "exit_codes": [
+                                    trial["oracle_exit_code"]
+                                    for trial in (oracle, replay)
+                                ],
                             },
                         )
-                complete_baseline = (
-                    len(trials) >= 3
-                    and all(
-                        "failure" not in trial and trial["cleanup"]["verified"]
-                        for trial in trials[:3]
-                    )
-                    and len(set(containers[:3])) == 3
-                )
-                if complete_baseline:
-                    nop, oracle, replay, *canary_trials = trials
-                    same = (
-                        oracle["rewards"] == replay["rewards"]
-                        and oracle["oracle_exit_code"] == replay["oracle_exit_code"]
-                    )
-                    determinism = _result(
-                        "runtime.episode_determinism",
-                        CheckStatus.PASS if same else CheckStatus.FAIL,
-                        "the oracle replay in a fresh container "
-                        + (
-                            "reproduced every reward and the exit code"
-                            if same
-                            else "produced different rewards or a different exit code"
-                        ),
-                        {
-                            "rewards": [
-                                json.loads(dumps(trial["rewards"]))
+                        key = contract.reward_key
+                        record.update(
+                            {
+                                "floor_reward": nop["rewards"][key],
+                                "oracle_reward": oracle["rewards"][key],
+                            }
+                        )
+                        evidence = OracleEvidence(
+                            floor=Fraction(nop["rewards"][key]),
+                            oracle=tuple(
+                                Fraction(trial["rewards"][key])
                                 for trial in (oracle, replay)
-                            ],
-                            "exit_codes": [
+                            ),
+                            oracle_exit_codes=tuple(
                                 trial["oracle_exit_code"] for trial in (oracle, replay)
-                            ],
-                        },
+                            ),
+                            canaries=tuple(
+                                (
+                                    trial["task_overlay"]["solution/solve.sh"][
+                                        "canary"
+                                    ],
+                                    Fraction(trial["rewards"][key]),
+                                )
+                                for trial in canary_trials
+                                if "failure" not in trial
+                                and trial["cleanup"]["verified"]
+                            ),
+                        )
+                except (Exception, KeyboardInterrupt) as exc:
+                    record["failure"] = type(exc).__name__
+                    reason = f"native Harbor collection failed ({type(exc).__name__})"
+                    if isinstance(exc, NativeEvidenceError):
+                        record["reason"] = str(exc)
+                        reason += ": " + str(exc)
+                    startup = _result(
+                        "runtime.startup",
+                        CheckStatus.ERROR,
+                        reason,
                     )
-                    key = contract.reward_key
-                    record.update(
-                        {
-                            "floor_reward": nop["rewards"][key],
-                            "oracle_reward": oracle["rewards"][key],
-                        }
-                    )
-                    evidence = OracleEvidence(
-                        floor=Fraction(nop["rewards"][key]),
-                        oracle=tuple(
-                            Fraction(trial["rewards"][key])
-                            for trial in (oracle, replay)
-                        ),
-                        oracle_exit_codes=tuple(
-                            trial["oracle_exit_code"] for trial in (oracle, replay)
-                        ),
-                        canaries=tuple(
-                            (
-                                trial["task_overlay"]["solution/solve.sh"]["canary"],
-                                Fraction(trial["rewards"][key]),
+                if semantic:
+                    registry = GraderRegistry()
+                    for grader in (
+                        OracleMaxGrader(),
+                        FloorGapGrader(),
+                        CanaryFloorGrader(),
+                    ):
+                        registry.register(grader)
+                    selected = registry.select(subject.manifest, max_level)
+                    if evidence is not None and len(evidence.canaries) != len(canaries):
+                        selected = [
+                            grader
+                            for grader in selected
+                            if grader.check_id != "semantic.canary_floor"
+                        ]
+                        checks.append(
+                            _result(
+                                "semantic.canary_floor",
+                                CheckStatus.SKIP,
+                                "unmet dependency: complete canary trials with verified cleanup",
                             )
-                            for trial in canary_trials
-                            if "failure" not in trial and trial["cleanup"]["verified"]
-                        ),
-                    )
-            except (Exception, KeyboardInterrupt) as exc:
-                record["failure"] = type(exc).__name__
-                reason = f"native Harbor collection failed ({type(exc).__name__})"
-                if isinstance(exc, NativeEvidenceError):
-                    record["reason"] = str(exc)
-                    reason += ": " + str(exc)
-                startup = _result(
-                    "runtime.startup",
-                    CheckStatus.ERROR,
-                    reason,
-                )
-            if semantic:
-                registry = GraderRegistry()
-                for grader in (
-                    OracleMaxGrader(),
-                    FloorGapGrader(),
-                    CanaryFloorGrader(),
-                ):
-                    registry.register(grader)
-                selected = registry.select(subject.manifest, max_level)
-                if evidence is not None and len(evidence.canaries) != len(canaries):
-                    selected = [
-                        grader
-                        for grader in selected
-                        if grader.check_id != "semantic.canary_floor"
-                    ]
-                    checks.append(
-                        _result(
-                            "semantic.canary_floor",
-                            CheckStatus.SKIP,
-                            "unmet dependency: complete canary trials with verified cleanup",
+                        )
+                    checks.extend(
+                        execute_graders(
+                            selected,
+                            replace(subject, oracle_evidence=evidence),
+                            prior=[startup, reward_result, determinism],
                         )
                     )
-                checks.extend(
-                    execute_graders(
-                        selected,
-                        replace(subject, oracle_evidence=evidence),
-                        prior=[startup, reward_result, determinism],
+        try:
+            unchanged = source_digest(subject.root) == digest_before
+        except (ValueError, OSError):
+            unchanged = False
+        if not unchanged:
+            record["failure"] = "SourceDrift"
+            startup = _result(
+                "runtime.startup",
+                CheckStatus.ERROR,
+                "task source changed during native validation",
+            )
+            reward_result, determinism, *checks = (
+                _result(
+                    check.check_id,
+                    CheckStatus.SKIP,
+                    "unmet dependency: unchanged native task source",
+                )
+                for check in (reward_result, determinism, *checks)
+            )
+        startup.duration_s = time.monotonic() - started
+        record["cleanup"].update(
+            {"required": attempted, "completed": record["cleanup"]["verified"]}
+        )
+        results = [*results, startup, reward_result, determinism, *checks]
+        present = {result.check_id for result in results}
+        for entry in policy.entries_for_lane(Lane.LOCAL).values():
+            if entry.level <= max_level and entry.check_id not in present:
+                results.append(
+                    _result(
+                        entry.check_id,
+                        CheckStatus.SKIP,
+                        _skip_reason(entry, contract),
                     )
                 )
-    try:
-        unchanged = source_digest(subject.root) == digest_before
-    except (ValueError, OSError):
-        unchanged = False
-    if not unchanged:
-        record["failure"] = "SourceDrift"
-        startup = _result(
-            "runtime.startup",
-            CheckStatus.ERROR,
-            "task source changed during native validation",
-        )
-        reward_result, determinism, *checks = (
-            _result(
-                check.check_id,
-                CheckStatus.SKIP,
-                "unmet dependency: unchanged native task source",
-            )
-            for check in (reward_result, determinism, *checks)
-        )
-    startup.duration_s = time.monotonic() - started
-    record["cleanup"].update(
-        {"required": attempted, "completed": record["cleanup"]["verified"]}
-    )
-    results = [*results, startup, reward_result, determinism, *checks]
-    present = {result.check_id for result in results}
-    for entry in policy.entries_for_lane(Lane.LOCAL).values():
-        if entry.level <= max_level and entry.check_id not in present:
-            results.append(
-                _result(
-                    entry.check_id,
-                    CheckStatus.SKIP,
-                    _skip_reason(entry, contract),
+        if any(
+            check.status in {CheckStatus.FAIL, CheckStatus.ERROR} for check in results
+        ):
+            try:
+                inspector.remove_image()
+            except (Exception, KeyboardInterrupt) as exc:
+                startup.status = CheckStatus.ERROR
+                startup.evidence.append(
+                    f"retained image removal failed ({type(exc).__name__})"
                 )
-            )
-    levels = [Level.STATIC]
-    if attempted:
-        levels.append(Level.RUNTIME)
-    if semantic and (attempted or semantic_graded):
-        levels.append(Level.SEMANTIC)
-    report = ValidationReportV2(
-        report_schema_version="2",
-        target=str(subject.root) if report_target is None else report_target,
-        source_digest=digest_before,
-        signature=subject.manifest.signature,
-        manifest=subject.manifest,
-        policy_version=policy.policy_version,
-        lane=Lane.LOCAL,
-        levels_run=levels,
-        results=results,
-        verdict=apply_policy(results, policy, Lane.LOCAL),
-    )
-    if artifacts_dir is not None:
-        write_runtime_bundle(
-            artifacts_dir,
-            report,
-            cleanup=record["cleanup"],
-            provider={"binding": "harbor_task", "profile": HARBOR_PROFILE},
+                record["cleanup"].update(verified=False, completed=False)
+        elif "image_ref" in record:
+            tag = trials[0]["retained_image_tag"]
+            startup.measured["retained_image_tag"] = tag
+            record["retained_image_tag"] = tag
+        levels = [Level.STATIC]
+        if attempted:
+            levels.append(Level.RUNTIME)
+        if semantic and (attempted or semantic_graded):
+            levels.append(Level.SEMANTIC)
+        report = ValidationReportV2(
+            report_schema_version="2",
+            target=str(subject.root) if report_target is None else report_target,
+            source_digest=digest_before,
+            signature=subject.manifest.signature,
+            manifest=subject.manifest,
+            policy_version=policy.policy_version,
+            lane=Lane.LOCAL,
+            levels_run=levels,
+            results=results,
+            verdict=apply_policy(results, policy, Lane.LOCAL),
         )
-        files["harbor-evidence.json"] = (dumps(record) + "\n").encode()
-        checksums = (artifacts_dir / "SHA256SUMS").read_text()
-        for name, raw in sorted(files.items()):
-            path = artifacts_dir / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(raw)
-            path.chmod(0o600)
-            checksums += f"{hashlib.sha256(raw).hexdigest()}  {name}\n"
-        (artifacts_dir / "SHA256SUMS").write_text(checksums)
-    return report
+        if artifacts_dir is not None:
+            write_runtime_bundle(
+                artifacts_dir,
+                report,
+                cleanup=record["cleanup"],
+                provider={"binding": "harbor_task", "profile": HARBOR_PROFILE},
+            )
+            files["harbor-evidence.json"] = (dumps(record) + "\n").encode()
+            checksums = (artifacts_dir / "SHA256SUMS").read_text()
+            for name, raw in sorted(files.items()):
+                path = artifacts_dir / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(raw)
+                path.chmod(0o600)
+                checksums += f"{hashlib.sha256(raw).hexdigest()}  {name}\n"
+            (artifacts_dir / "SHA256SUMS").write_text(checksums)
+        completed = True
+        return report
+    finally:
+        if not completed:
+            inspector.remove_image()
