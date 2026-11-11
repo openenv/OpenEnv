@@ -69,9 +69,37 @@ supports that capability. Docker validation uses two containers concurrently
 during the fresh-container replay. Both use the same immutable image and are
 removed even if a check fails.
 
-Harbor `task.toml` directories are also recognized. Install the `harbor` extra
-and add a `validation/openenv.json` contract that declares the reward key, range,
-oracle tolerance, floor margin and resources. The `harbor-semantic-v1` binding runs
+Harbor `task.toml` directories are also recognized. Validation requires Python 3.12 or newer
+and `harbor==0.25.0` installed alongside `openenv[harbor]`:
+
+```bash
+pip install "openenv[harbor]" "harbor==0.25.0"
+```
+
+Add a `validation/openenv.json` contract with `profile: "harbor-semantic-v1"`,
+`reward_key`, `reward`, `resources` and `types`. The reward range, oracle tolerance
+and floor margin must be explicit. This is a minimal complete contract:
+
+```json
+{
+  "profile": "harbor-semantic-v1",
+  "reward_key": "reward",
+  "reward": {
+    "range": [0, 1],
+    "oracle_tolerance": 0,
+    "floor_margin": 0.1
+  },
+  "resources": {
+    "cpu": 1,
+    "memory_mb": 512,
+    "disk_mb": 1024,
+    "episode_timeout_s": 300
+  },
+  "types": {"tags": ["swe"]}
+}
+```
+
+The `harbor-semantic-v1` binding runs
 fresh Harbor trials in Docker: a do-nothing agent, the oracle (`solution/solve.sh`),
 an oracle replay and any canaries declared in the contract. A canary is a known-wrong
 `solve.sh` replacement. The results report under `runtime.startup`,

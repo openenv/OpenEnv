@@ -1,7 +1,9 @@
 """The trusted Harbor contract accepts explicit numeric JSON declarations."""
 
 import json
+import re
 from importlib.metadata import PackageNotFoundError
+from pathlib import Path
 
 import pytest
 from openenv.cli.__main__ import app
@@ -109,3 +111,22 @@ def test_missing_harbor_is_a_validator_error(contract_package, monkeypatch):
     assert result.exit_code == 3, result.output
     assert "harbor==0.25.0" in result.output
     assert "static.manifest" not in result.output
+
+
+def test_cli_reference_contract_loads(tmp_path):
+    reference = Path(__file__).resolve().parents[2] / "docs/source/reference/cli.md"
+    section = reference.read_text().split("Harbor `task.toml` directories", 1)[1]
+    section = section.split("\n## ", 1)[0]
+    example = re.search(r"```json\n(.*?)\n```", section, re.DOTALL)
+    assert example is not None, "document a complete validation/openenv.json contract"
+    assert "Python 3.12 or newer" in section
+    assert "harbor==0.25.0" in section
+    assert "openenv[harbor]" in section
+    (tmp_path / "validation").mkdir()
+    (tmp_path / "validation/openenv.json").write_text(example[1])
+
+    contract = read_harbor_contract(tmp_path)
+
+    assert contract.profile == "harbor-semantic-v1"
+    assert contract.reward_key == "reward"
+    assert contract.types.tags == ["swe"]
