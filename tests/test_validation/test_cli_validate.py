@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from conftest import FIXTURES
-from openenv.validation.report import ValidationReport
+from openenv.validation.report import ValidationReport, ValidationReportV2
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 
@@ -132,3 +132,19 @@ def test_unpinned_judge_fails_static_manifest():
     )
     assert result.returncode == 1
     assert "judge pin" in result.stdout
+
+
+def test_served_package_cannot_claim_harbor_execution(tmp_path):
+    source = (FIXTURES / "served_min_pass/openenv.yaml").read_text()
+    (tmp_path / "openenv.yaml").write_text(
+        source + "  execution:\n    kind: harbor_task\n    agent_boundary: process\n"
+    )
+
+    result = _validate(str(tmp_path), "--json")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    report = ValidationReportV2.model_validate_json(result.stdout)
+    manifest_result = next(r for r in report.results if r.check_id == "static.manifest")
+    assert manifest_result.status.value == "fail"
+    assert "openenv_ws" in " ".join(manifest_result.evidence)
+    assert "Internal error" not in result.stderr

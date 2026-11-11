@@ -97,6 +97,12 @@ def test_trial_hook_precedes_execution(
 
     class Trial:
         guarded = False
+        _close_logger_handler = trial_module.Trial._close_logger_handler
+
+        def __init__(self):
+            self.config = SimpleNamespace(trial_name=tmp_path.name)
+            self.paths = SimpleNamespace(log_path=tmp_path / "trial.log")
+            trial_module.Trial._init_logger(self)
 
         @classmethod
         async def create(cls, trial_config):
@@ -110,11 +116,14 @@ def test_trial_hook_precedes_execution(
             assert hook_mode == "omitted" or self.guarded
             events.append("run")
             await agent_run()
+            self._close_logger_handler()
             return SimpleNamespace(
                 verifier_result=SimpleNamespace(rewards={"reward": 1.0})
             )
 
     trial = Trial()
+    handler = trial._log_handler
+    stream = handler.stream
     monkeypatch.setattr(trial_module, "Trial", Trial)
 
     def on_trial_created(created):
@@ -151,6 +160,13 @@ def test_trial_hook_precedes_execution(
             **options,
         )
     )
+
+    try:
+        assert stream.closed
+        assert handler not in trial.logger.handlers
+        assert trial._log_handler is None
+    finally:
+        trial._close_logger_handler()
 
     assert build.call_args.kwargs["agent_timeout_sec"] == 12.5
     assert build.call_args.kwargs["agent_step_limit"] == 3

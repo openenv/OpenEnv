@@ -1,11 +1,13 @@
 """Native Harbor checks mock only the Trial boundary and trusted host inspector."""
 
+import asyncio
 import hashlib
 import json
 from types import SimpleNamespace
 
 import pytest
 from openenv.validation import harbor
+from openenv.validation.harbor import DockerInspector
 from openenv.validation.manifest import ManifestError
 from openenv.validation.parsers.harbor_toml import (
     HarborTaskParser,
@@ -55,24 +57,41 @@ def boundary(monkeypatch, task):
         rewards={"nop": b'{"reward":0}', "oracle": b'{"reward":1}'},
         trials=[],
         cleanup_ok=True,
+        cleanup_fail_role=None,
+        teardown_defect=None,
         mutate=False,
         private_mutate=False,
         image_drift=False,
         config_drift=False,
         oracle_exit=None,
         exception=False,
+        exception_type=None,
         no_identity=False,
         timeout=False,
         retained=True,
+        retained_error=False,
         overwrite_exit=False,
         excluded_copied=[],
+        start_delay=0,
+        agent_delay=0,
+        pending_compose=False,
+        inventory_problem=None,
+        cleanup_calls=[],
+        preflight_error=None,
+        interrupt_role=None,
     )
 
     class Inspector:
         def preflight(self):
+            if state.preflight_error is not None:
+                raise state.preflight_error
             return {"os": "linux", "daemon_id": "mock-host"}
 
         def inventory(self, project):
+            if state.inventory_problem and "canary-1__env" in project:
+                if state.inventory_problem == "error":
+                    raise OSError("Docker inventory failed")
+                return {"containers": ["preexisting"], "networks": [], "volumes": []}
             return {"containers": [], "networks": [], "volumes": []}
 
         def capture(self, project, retained_tag, *, retain=True):
@@ -89,16 +108,26 @@ def boundary(monkeypatch, task):
             }
 
         def cleanup(self, project):
+            state.cleanup_calls.append(project)
+            verified = (
+                state.cleanup_ok
+                and _role(project.removesuffix("__env")) != state.cleanup_fail_role
+            )
             return {
-                "verified": state.cleanup_ok,
+                "verified": verified,
                 "after": {
-                    "containers": [] if state.cleanup_ok else ["leftover"],
+                    "containers": [] if verified else ["leftover"],
                     "networks": [],
                     "volumes": [],
                 },
             }
 
+        def remove_image(self):
+            pass
+
         def verify_image(self, tag, image_ref):
+            if state.retained_error:
+                raise OSError("inspect failed")
             return state.retained
 
     class Trial:
@@ -117,9 +146,10 @@ def boundary(monkeypatch, task):
                 agent_dir=directory / "agent",
             )
             self.agent_environment = SimpleNamespace(
-                session_id=config.trial_name + "__env", stop=self.stop
+                session_id=config.trial_name + "__env", start=self.start, stop=self.stop
             )
             self.hooks = {}
+            self._openenv_cancelled_compose = []
             state.excluded_copied.append(
                 (config.task.path / "environment/.worktrees").exists()
             )
@@ -127,14 +157,50 @@ def boundary(monkeypatch, task):
 
         async def stop(self, *, delete):
             assert not delete
+            if state.teardown_defect == "error":
+                raise OSError("Harbor teardown failed")
+            if state.teardown_defect == "drift":
+                self.paths.reward_json_path.write_bytes(b'{"reward":0}')
+            if state.teardown_defect == "unsafe":
+                self.paths.reward_json_path.unlink()
+                self.paths.reward_json_path.symlink_to("outside-reward.json")
+
+        async def start(self, *, force_build):
+            if state.pending_compose:
+                self._openenv_cancelled_compose.append(
+                    {
+                        "command": "build",
+                        "project": self.agent_environment.session_id,
+                        "client_group_killed": True,
+                        "client_reaped": True,
+                        "daemon_completion_verified": False,
+                    }
+                )
+                raise TimeoutError()
+            if self.role == "nop":
+                await asyncio.sleep(state.start_delay)
 
         def add_hook(self, event, callback):
             self.hooks.setdefault(event.value, []).append(callback)
 
         async def run(self):
+            for hook in self.hooks.get("environment-start", []):
+                await hook(None)
+            if state.exception_type in ("RuntimeError", "EnvironmentStartTimeoutError"):
+                return SimpleNamespace(
+                    exception_info=SimpleNamespace(exception_type=state.exception_type),
+                    verifier_result=None,
+                )
+            await self.agent_environment.start(force_build=False)
             if not state.no_identity:
                 for hook in self.hooks.get("agent-start", []):
                     await hook(None)
+            if self.role == state.interrupt_role:
+                raise KeyboardInterrupt
+            await asyncio.wait_for(
+                asyncio.sleep(state.agent_delay),
+                timeout=self.config.agent.override_timeout_sec,
+            )
             if state.timeout:
                 raise TimeoutError()
             raw = state.rewards.get(self.role, state.rewards[self.agent])
@@ -156,13 +222,24 @@ def boundary(monkeypatch, task):
                 (self.config.task.path / "instruction.md").write_text(
                     "changed execution source"
                 )
+            for hook in self.hooks.get("verification-start", []):
+                await hook(None)
             try:
                 rewards = json.loads(raw) if raw else None
             except ValueError:
                 rewards = None
+            exception_type = state.exception_type
+            if raw is None:
+                exception_type = "RewardFileNotFoundError"
+            elif raw == b"":
+                exception_type = "RewardFileEmptyError"
+            elif raw in (b'{"reward":NaN}', b'{"reward":Infinity}', b'{"reward":"0"}'):
+                exception_type = "VerifierOutputParseError"
+            if state.exception:
+                exception_type = "TestError"
             return SimpleNamespace(
-                exception_info={"exception_type": "TestError"}
-                if state.exception
+                exception_info=SimpleNamespace(exception_type=exception_type)
+                if exception_type
                 else None,
                 verifier_result=SimpleNamespace(rewards=rewards),
             )
@@ -172,6 +249,68 @@ def boundary(monkeypatch, task):
 
     monkeypatch.setattr(harbor, "DockerInspector", Inspector)
     monkeypatch.setattr(harbor, "_create_trial", create)
+    return state
+
+
+@pytest.fixture
+def image_docker(boundary, monkeypatch):
+    state = SimpleNamespace(
+        images={"unrelated:tag": IMAGE}, removed=set(), commands=[], image_os="linux"
+    )
+
+    def docker(self, *args):
+        state.commands.append(args)
+        if args == ("info", "--format", "{{json .}}"):
+            return json.dumps({"OSType": "linux", "ID": "fake", "ServerVersion": "29"})
+        if args == ("compose", "version"):
+            return "Docker Compose"
+        if args[0] == "ps":
+            project = args[-1].removeprefix("label=com.docker.compose.project=")
+            return "\n".join(
+                trial.role + "-container"
+                for trial in boundary.trials
+                if trial.agent_environment.session_id == project
+                and trial.role not in state.removed
+            )
+        if args[:2] in (("network", "ls"), ("volume", "ls")):
+            return ""
+        if args[0] == "inspect":
+            trial = next(t for t in boundary.trials if t.role + "-container" == args[1])
+            project = trial.agent_environment.session_id
+            return json.dumps(
+                [
+                    {
+                        "Id": args[1],
+                        "Image": IMAGE,
+                        "State": {"Running": True},
+                        "Config": {
+                            "Labels": {
+                                "com.docker.compose.project": project,
+                                "com.docker.compose.service": "main",
+                            },
+                            "User": "1000",
+                            "WorkingDir": "/app",
+                        },
+                        "HostConfig": {"NetworkMode": project + "_default"},
+                        "Mounts": [],
+                    }
+                ]
+            )
+        if args[:2] == ("image", "tag"):
+            state.images[args[3]] = args[2]
+            return ""
+        if args[:2] == ("image", "inspect"):
+            return json.dumps([{"Id": state.images[args[2]], "Os": state.image_os}])
+        if args[:3] == ("image", "rm", "--no-prune"):
+            del state.images[args[3]]
+            return ""
+        if args[:3] == ("rm", "-f", "-v"):
+            state.removed.add(args[3].removesuffix("-container"))
+            return ""
+        pytest.fail(f"unexpected Docker command: {args}")
+
+    monkeypatch.setattr(DockerInspector, "_docker", docker)
+    monkeypatch.setattr(harbor, "DockerInspector", DockerInspector)
     return state
 
 
@@ -279,7 +418,7 @@ def test_trial_does_not_share_phase_timeout(task, boundary, monkeypatch):
 
     monkeypatch.setattr(harbor.asyncio, "timeout", record_timeout)
     assert run_validation(task).verdict is Verdict.WARN
-    assert timeouts == [30, 30, 30]
+    assert timeouts == [600, 30, 30, 30]
     assert all(
         trial.config.agent.override_timeout_sec == 10
         and trial.config.agent.override_setup_timeout_sec == 10
@@ -289,9 +428,70 @@ def test_trial_does_not_share_phase_timeout(task, boundary, monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "outcome", ["kept", "fail", "error", "interrupted", "capture_error"]
+)
+def test_retained_image_policy(task, boundary, image_docker, tmp_path, outcome):
+    if outcome == "fail":
+        boundary.rewards["nop"] = b'{"reward":1}'
+    elif outcome == "error":
+        boundary.exception = True
+    elif outcome == "interrupted":
+        boundary.interrupt_role = "oracle"
+    elif outcome == "capture_error":
+        image_docker.image_os = "windows"
+    artifacts = tmp_path / "image-policy"
+    report = run_validation(task, artifacts_dir=artifacts)
+    tag = "openenv-validation:" + boundary.trials[0].config.trial_name.split("-")[2]
+    measured = result(report, "runtime.startup").measured
+    removals = [cmd for cmd in image_docker.commands if cmd[:2] == ("image", "rm")]
+    if outcome == "kept":
+        assert report.verdict is Verdict.WARN
+        assert measured["retained_image_tag"] == tag
+        assert image_docker.images == {"unrelated:tag": IMAGE, tag: IMAGE}
+        assert not removals
+    else:
+        assert report.verdict is Verdict.FAIL
+        if outcome == "fail":
+            assert result(report, "semantic.floor_gap").status is CheckStatus.FAIL
+        else:
+            assert result(report, "runtime.startup").status is CheckStatus.ERROR
+        assert "retained_image_tag" not in measured
+        assert image_docker.images == {"unrelated:tag": IMAGE}
+        assert removals == [("image", "rm", "--no-prune", tag)]
+    assert json.loads((artifacts / "report.json").read_text()) == json.loads(
+        report.model_dump_json()
+    )
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt, OSError])
+def test_retained_image_removed_when_reporting_does_not_complete(
+    task, boundary, image_docker, tmp_path, monkeypatch, error
+):
+    def interrupted(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(harbor, "write_runtime_bundle", interrupted)
+    with pytest.raises(error):
+        run_validation(task, artifacts_dir=tmp_path / "interrupted-report")
+    assert image_docker.images == {"unrelated:tag": IMAGE}
+    assert len(boundary.trials) == 3
+
+
+def test_build_failure_has_no_retained_tag_to_remove(task, boundary, image_docker):
+    boundary.exception_type = "RuntimeError"
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.FAIL
+    assert "retained_image_tag" not in startup.measured
+    assert image_docker.images == {"unrelated:tag": IMAGE}
+    assert not any(cmd[:2] == ("image", "rm") for cmd in image_docker.commands)
+
+
+@pytest.mark.parametrize(
     "raw",
     [
         None,
+        b"",
         b"{}",
         b'{"other":0}',
         b'{"reward":true}',
@@ -366,7 +566,28 @@ def test_source_identity_exception_timeout_fail_closed(task, boundary, flag):
     setattr(boundary, flag, True)
     report = run_validation(task)
     assert report.verdict is Verdict.FAIL
-    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.startup").status is (
+        CheckStatus.FAIL if flag == "timeout" else CheckStatus.ERROR
+    )
+
+
+@pytest.mark.parametrize(
+    "exception_type,phase",
+    [
+        ("RuntimeError", "environment"),
+        ("EnvironmentStartTimeoutError", "environment"),
+        ("AgentTimeoutError", "agent"),
+        ("AgentSetupTimeoutError", "agent setup"),
+        ("VerifierTimeoutError", "verifier"),
+    ],
+)
+def test_subject_failures_name_the_phase(task, boundary, exception_type, phase):
+    boundary.exception_type = exception_type
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.FAIL
+    assert phase in startup.evidence[0]
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
 
 
 def test_cleanup_failure_blocks(task, boundary, tmp_path):
@@ -377,6 +598,28 @@ def test_cleanup_failure_blocks(task, boundary, tmp_path):
     assert not json.loads((artifacts / "harbor-evidence.json").read_text())["cleanup"][
         "verified"
     ]
+
+
+@pytest.mark.parametrize(
+    "defect,failure",
+    [
+        ("error", "HarborTeardownError"),
+        ("cleanup", "CleanupNotVerified"),
+        ("drift", "RewardArtifactDrift"),
+        ("unsafe", "UnsafeRewardArtifact"),
+    ],
+)
+def test_host_failure_overrides_reward_error(task, boundary, tmp_path, defect, failure):
+    boundary.rewards["nop"] = b'{"reward":true}'
+    boundary.teardown_defect = defect
+    boundary.cleanup_ok = defect != "cleanup"
+    artifacts = tmp_path / "host-over-reward"
+    report = run_validation(task, artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
+    trial = json.loads((artifacts / "harbor-evidence.json").read_text())["trials"][0]
+    assert trial["failure"] == failure
+    assert trial["reward_error"]
 
 
 def test_oracle_nonzero_exit_fails_oracle_max_and_retains_marker(
@@ -454,9 +697,18 @@ def test_copy_change_and_restore_cannot_escape_source_binding(
     assert "validated source digest" in native["trials"][1]["reason"]
 
 
-def test_missing_oracle_fails_oracle_max_without_starting_trial(task, boundary):
+@pytest.mark.parametrize("blocked", [None, "skip-build", "unsupported", "provider"])
+def test_missing_oracle_fails_oracle_max_without_starting_trial(
+    task, boundary, blocked
+):
     (task / "solution/solve.sh").unlink()
-    report = run_validation(task)
+    if blocked == "unsupported":
+        (task / "task.toml").write_text('[environment]\ndocker_image="prebuilt"\n')
+    report = run_validation(
+        task,
+        skip_build=blocked == "skip-build",
+        provider=object() if blocked == "provider" else None,
+    )
     assert report.verdict is Verdict.FAIL
     assert report.levels_run == [Level.STATIC, Level.SEMANTIC]
     # RFC 008: no oracle is a graded FAIL, not a SKIP.
@@ -468,6 +720,18 @@ def test_missing_oracle_fails_oracle_max_without_starting_trial(task, boundary):
 def test_retained_image_drift_blocks(task, boundary):
     boundary.retained = False
     assert run_validation(task).verdict is Verdict.FAIL
+
+
+@pytest.mark.parametrize("inspect_error", [False, True])
+def test_retained_image_failure_is_not_hidden_by_bad_reward(
+    task, boundary, inspect_error
+):
+    boundary.rewards["nop"] = b'{"reward":true}'
+    boundary.retained = False
+    boundary.retained_error = inspect_error
+    report = run_validation(task)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
 
 
 def test_host_inspector_scopes_inventory_and_cleanup_to_owned_project(monkeypatch):
@@ -606,11 +870,80 @@ def test_static_and_skip_build_do_not_start_trials(task, boundary):
     assert not boundary.trials
 
 
+@pytest.mark.parametrize("timeout_phase", [None, "build", "agent"])
+def test_nop_build_has_a_separate_supervisor_budget(
+    task, boundary, monkeypatch, tmp_path, timeout_phase
+):
+    from openenv.validation.providers import docker
+
+    path = task / "validation/openenv.json"
+    contract = json.loads(path.read_text())
+    contract["resources"]["episode_timeout_s"] = 0.1
+    path.write_text(json.dumps(contract))
+    build_budget = 0.02 if timeout_phase == "build" else 0.5
+    monkeypatch.setattr(
+        docker,
+        "DockerValidationProvider",
+        lambda: SimpleNamespace(build_timeout_s=build_budget),
+    )
+    boundary.start_delay = 0.2
+    boundary.agent_delay = 0.2 if timeout_phase == "agent" else 0
+    artifacts = tmp_path / "build-budget"
+    report = run_validation(task, artifacts_dir=artifacts)
+    startup = result(report, "runtime.startup")
+    assert startup.status is (CheckStatus.FAIL if timeout_phase else CheckStatus.PASS)
+    if timeout_phase:
+        assert len(boundary.trials) == 1
+        phase = "environment" if timeout_phase == "build" else "agent"
+        assert phase in startup.evidence[0]
+        assert (
+            result(report, "runtime.episode_determinism").status is not CheckStatus.PASS
+        )
+    else:
+        assert result(report, "semantic.oracle_max").status is CheckStatus.PASS
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert native["cleanup"]["verified"]
+    assert native["trials"][0]["build_timeout_s"] == build_budget
+
+
+def test_harbor_report_preserves_resolved_space_target(task, boundary, tmp_path):
+    target = "spaces/openenv/example@" + "d" * 40
+    artifacts = tmp_path / "space-report"
+    report = run_validation(task, report_target=target, artifacts_dir=artifacts)
+    assert report.target == target
+    assert json.loads((artifacts / "report.json").read_text())["target"] == target
+
+
+def test_cancelled_compose_keeps_daemon_cleanup_unverified(task, boundary, tmp_path):
+    boundary.pending_compose = True
+    artifacts = tmp_path / "pending-compose"
+    report = run_validation(task, artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    cleanup = native["trials"][0]["cleanup"]
+    assert not cleanup["verified"]
+    assert not any(cleanup["after"].values())
+    (pending,) = cleanup["pending_operations"]
+    assert pending["command"] == "build"
+    assert pending["project"] == boundary.trials[0].agent_environment.session_id
+    assert pending["client_reaped"] and not pending["daemon_completion_verified"]
+
+
 def test_separate_verifier_is_named_unsupported(task, boundary):
     (task / "task.toml").write_text('[verifier]\nenvironment_mode="separate"\n')
     report = run_validation(task)
     assert result(report, "runtime.startup").status is CheckStatus.SKIP
     assert "separate" in result(report, "runtime.startup").evidence[0]
+    assert not boundary.trials
+
+
+def test_task_declared_image_is_refused_before_trials(task, boundary):
+    with (task / "task.toml").open("a") as stream:
+        stream.write('[environment]\ndocker_image="registry.example/image:latest"\n')
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.SKIP
+    assert "docker_image" in startup.evidence[0]
     assert not boundary.trials
 
 
@@ -702,6 +1035,69 @@ def test_canaries_at_the_floor_pass(task, boundary, canaries):
     boundary.rewards.update({"canary-1": b'{"reward":0}', "canary-2": b'{"reward":0}'})
     report = run_validation(task)
     assert result(report, "semantic.canary_floor").status is CheckStatus.PASS
+
+
+@pytest.mark.parametrize("floor,oracle", [(1, 1), (0, 0.8)])
+def test_canary_cleanup_failure_preserves_completed_semantics(
+    task, boundary, canaries, tmp_path, floor, oracle
+):
+    boundary.rewards["nop"] = json.dumps({"reward": floor}).encode()
+    boundary.rewards["oracle"] = json.dumps({"reward": oracle}).encode()
+    boundary.cleanup_fail_role = "canary-2"
+    artifacts = tmp_path / "partial-semantics"
+    report = run_validation(task, artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
+    assert result(report, "runtime.episode_determinism").status is CheckStatus.PASS
+    assert result(report, "semantic.floor_gap").status is (
+        CheckStatus.FAIL if floor else CheckStatus.PASS
+    )
+    assert result(report, "semantic.oracle_max").status is (
+        CheckStatus.PASS if oracle == 1 else CheckStatus.FAIL
+    )
+    assert result(report, "semantic.canary_floor").status is CheckStatus.SKIP
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert len(native["trials"]) == 5
+    assert not native["cleanup"]["verified"]
+    assert native["floor_reward"] == floor
+
+
+@pytest.mark.parametrize("problem", ["error", "collision"])
+def test_preallocation_inventory_failure_preserves_completed_trials(
+    task, boundary, canaries, tmp_path, problem
+):
+    boundary.inventory_problem = problem
+    boundary.rewards["nop"] = b'{"reward":1}'
+    artifacts = tmp_path / "inventory-error"
+    report = run_validation(task, artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.episode_determinism").status is CheckStatus.PASS
+    assert result(report, "semantic.floor_gap").status is CheckStatus.FAIL
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert len(native["trials"]) == 4
+    assert len(boundary.trials) == len(boundary.cleanup_calls) == 3
+    assert all(trial["cleanup"]["verified"] for trial in native["trials"][:3])
+    assert not native["trials"][-1]["cleanup"]["verified"]
+    assert (
+        artifacts / "harbor-trials/oracle/reward.json"
+    ).read_bytes() == b'{"reward":1}'
+
+
+@pytest.mark.parametrize("safe", [False, True])
+def test_collection_failure_keeps_only_safe_native_reasons(
+    task, boundary, tmp_path, safe
+):
+    reason = "Harbor requires a Linux Docker daemon" if safe else "token=do-not-persist"
+    boundary.preflight_error = (
+        harbor.NativeEvidenceError(reason) if safe else RuntimeError(reason)
+    )
+    artifacts = tmp_path / "preflight"
+    report = run_validation(task, artifacts_dir=artifacts)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert (reason in startup.evidence[0]) is safe
+    native = (artifacts / "harbor-evidence.json").read_text()
+    assert (reason in native) is safe
 
 
 def test_canaries_run_only_at_the_semantic_level(task, boundary, canaries):

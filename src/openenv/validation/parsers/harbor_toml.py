@@ -1,4 +1,4 @@
-"""Pure Harbor task parsing and the explicit, operator-supplied pilot contract."""
+"""Pure Harbor task parsing and the explicit, operator-supplied semantic contract."""
 
 import json
 import math
@@ -80,19 +80,22 @@ def read_harbor_contract(package_root: Path) -> HarborContract:
             raise ValueError(
                 "reward range, oracle_tolerance and floor_margin must be explicit"
             )
-        for section in ("reward", "resources"):
-            pending = [raw.get(section)]
+        for section, fields in (
+            ("reward", RewardDeclaration.model_fields),
+            ("resources", ("cpu", "memory_mb", "disk_mb", "episode_timeout_s", "gpus")),
+        ):
+            pending = [raw.get(section, {}).get(field) for field in fields]
             while pending:
                 item = pending.pop()
                 if isinstance(item, dict):
                     pending.extend(item.values())
                 elif isinstance(item, list):
                     pending.extend(item)
-                elif isinstance(item, bool) or (
+                elif isinstance(item, (bool, str)) or (
                     isinstance(item, float) and not math.isfinite(item)
                 ):
                     raise ValueError(
-                        "numeric declarations must be finite and nonboolean"
+                        "numeric declarations must be finite, nonboolean JSON numbers"
                     )
                 # Graders compare against the stored float, so it must keep the
                 # declared value exactly: 0.100000000000000001 would become 0.1.
@@ -103,7 +106,14 @@ def read_harbor_contract(package_root: Path) -> HarborContract:
                         "numeric declarations must keep their exact value as floats"
                     )
         return HarborContract.model_validate(raw)
-    except (OSError, ValueError, TypeError, AttributeError) as exc:
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        OverflowError,
+        RecursionError,
+    ) as exc:
         raise ManifestError(
             [f"invalid trusted Harbor contract ({type(exc).__name__})"],
             remediation="supply explicit reward/resources in validation/openenv.json",
@@ -140,14 +150,21 @@ def canary_scripts(package_root: Path, directory: str) -> list[str]:
 def read_harbor_task(package_root: Path):
     """Use the pinned Harbor data loader; constructing a Trial is runtime-only."""
     try:
-        if version("harbor") != "0.25.0":
-            raise ValueError("Harbor task validation requires Harbor 0.25.0")
+        installed = version("harbor")
+    except PackageNotFoundError as exc:
+        raise RuntimeError(
+            "Harbor task validation requires harbor==0.25.0; Harbor is not installed"
+        ) from exc
+    if installed != "0.25.0":
+        raise RuntimeError(
+            f"Harbor task validation requires harbor==0.25.0; installed {installed}"
+        )
+    try:
         from harbor.models.task.task import Task
 
         return Task(package_root)
     except (
         ImportError,
-        PackageNotFoundError,
         OSError,
         ValueError,
         RuntimeError,
