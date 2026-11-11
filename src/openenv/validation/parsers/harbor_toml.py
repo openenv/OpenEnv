@@ -80,19 +80,22 @@ def read_harbor_contract(package_root: Path) -> HarborContract:
             raise ValueError(
                 "reward range, oracle_tolerance and floor_margin must be explicit"
             )
-        for section in ("reward", "resources"):
-            pending = [raw.get(section)]
+        for section, fields in (
+            ("reward", RewardDeclaration.model_fields),
+            ("resources", ("cpu", "memory_mb", "disk_mb", "episode_timeout_s", "gpus")),
+        ):
+            pending = [raw.get(section, {}).get(field) for field in fields]
             while pending:
                 item = pending.pop()
                 if isinstance(item, dict):
                     pending.extend(item.values())
                 elif isinstance(item, list):
                     pending.extend(item)
-                elif isinstance(item, bool) or (
+                elif isinstance(item, (bool, str)) or (
                     isinstance(item, float) and not math.isfinite(item)
                 ):
                     raise ValueError(
-                        "numeric declarations must be finite and nonboolean"
+                        "numeric declarations must be finite, nonboolean JSON numbers"
                     )
                 # Graders compare against the stored float, so it must keep the
                 # declared value exactly: 0.100000000000000001 would become 0.1.
