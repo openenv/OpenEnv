@@ -3,12 +3,19 @@
 import asyncio
 import json
 import os
+from pathlib import Path
+from queue import Queue
+from tempfile import TemporaryDirectory
+from threading import Thread
 from typing import Any
 
 import uvicorn
+from fastapi.responses import PlainTextResponse
+from fastmcp import FastMCP
 from openenv.core.env_server.http_server import create_app
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
+from openenv.core.rubrics import Rubric, WeightedSum
 from pydantic import Field
 
 
@@ -20,31 +27,150 @@ class ProbeObservation(Observation):
     counter: int = Field(strict=True)
 
 
+class CounterRubric(Rubric):
+    def __init__(self, public_config=True):
+        super().__init__()
+        self.public_config = public_config
+
+    def forward(self, action, observation):
+        return float(observation.counter >= 2)
+
+    def validation_config(self):
+        return {"threshold": 2} if self.public_config else None
+
+
+class ControlledJudge(Rubric):
+    """A fixed public test judge; this fixture performs no model inference."""
+
+    def __init__(self, score):
+        super().__init__()
+        self.score = score
+
+    def forward(self, action, observation):
+        return self.score
+
+    def validation_config(self):
+        return {"judge": "controlled-test-v1", "score": self.score}
+
+
 class ProbeEnvironment(Environment):
     SUPPORTS_CONCURRENT_SESSIONS = True
+    _reset_ordinal = 0
 
-    def __init__(self):
+    def __init__(self, mode="good"):
         super().__init__()
+        self.mode = mode
+        self.ordinal = 0
         self._state = State(episode_id="uninitialized", step_count=0)
         self.counter = 0
+        if self.mode == "sticky_file":
+            self.files = TemporaryDirectory(prefix="openenv-probe-")
+            self.marker = Path(self.files.name) / "counter"
+        if self.mode == "sticky_background":
+            self.requests = Queue()
+            self.responses = Queue()
+
+            def worker():
+                counter = 0
+                while (increment := self.requests.get()) is not None:
+                    counter += increment
+                    self.responses.put(counter)
+
+            self.worker = Thread(target=worker, daemon=True)
+            self.worker.start()
+
+        public_config = mode != "missing_rubric_config"
+        self.rubric = WeightedSum(
+            [CounterRubric(public_config), CounterRubric(public_config)], [0.5, 0.5]
+        )
+        self.mcp_server = FastMCP("validation_probe")
+        if mode != "empty_tools":
+            self.mcp_server.tool(self.increment)
+            if mode != "missing_tool":
+                self.mcp_server.tool(self.read_counter)
+        if mode == "extra_tool":
+            self.mcp_server.tool(name="unexpected")(self.read_counter)
+
+    def increment(self, amount: int = 1) -> dict:
+        """Advance the probe using its ordinary step implementation."""
+        return self.step(ProbeAction(increment=amount)).model_dump(mode="json")
+
+    def read_counter(self) -> int:
+        """Read the session's current counter without changing it."""
+        return self.counter
+
+    def list_splits(self):
+        return ["train", "test"]
+
+    def num_tasks(self, split):
+        counts = {"train": 4, "test": 2}
+        return counts[split] + int(self.mode == "bad_task_count" and split == "train")
+
+    def get_task(self, split, index):
+        if not 0 <= index < {"train": 4, "test": 2}[split]:
+            raise IndexError(index)
+        return {"id": f"{split}-{index}", "index": index, "split": split}
+
+    def list_tasks(self, split):
+        # Deliberately bounded: listing length is never the authoritative count.
+        return [self.get_task(split, 0)]
 
     def reset(self, seed=None, episode_id=None, **kwargs):
-        self.counter = 0
+        if self.mode != "sticky_episode":
+            self.counter = 0
         self._state = State(episode_id=episode_id or "probe", step_count=0)
-        return ProbeObservation(counter=0, reward=0.0, done=False)
+        observation = ProbeObservation(counter=0, reward=0.0, done=False)
+        if self.mode in {
+            "nondeterministic",
+            "judged_stable",
+            "judged_noisy",
+        }:
+            ProbeEnvironment._reset_ordinal += 1
+            self.ordinal = ProbeEnvironment._reset_ordinal
+        if self.mode == "nondeterministic":
+            observation.metadata["session_ordinal"] = self.ordinal
+        if self.mode in {"judged_stable", "judged_noisy"}:
+            score = 0.5 if self.mode == "judged_stable" else float(self.ordinal % 2)
+            self.rubric = ControlledJudge(score)
+        return observation
 
     def step(self, action, timeout_s=None, **kwargs):
-        self.counter += action.increment
+        if self.mode == "sticky_file":
+            previous = int(self.marker.read_text()) if self.marker.exists() else 0
+            self.counter = previous + action.increment
+            self.marker.write_text(str(self.counter))
+        elif self.mode == "sticky_background":
+            self.requests.put(action.increment)
+            self.counter = self.responses.get(timeout=2)
+        else:
+            self.counter += action.increment
         self._state.step_count += 1
-        return ProbeObservation(
+        observation = ProbeObservation(
             counter=self.counter,
             reward=float(self.counter >= 2),
             done=self._state.step_count >= 2,
         )
+        observation.reward = self.rubric(action, observation)
+        return observation
 
     @property
     def state(self):
         return self._state
+
+    def close(self):
+        if self.mode == "sticky_file":
+            self.files.cleanup()
+        if self.mode == "sticky_background":
+            self.requests.put(None)
+            self.worker.join(timeout=2)
+            if self.worker.is_alive():
+                raise RuntimeError("probe worker did not stop")
+
+
+class IgnoredSeedEnvironment(ProbeEnvironment):
+    # Deliberately exclude seed and **kwargs so framework filtering is observable.
+    def reset(self, episode_id=None):
+        return super().reset(episode_id=episode_id)
 
 
 class WireFault:
@@ -80,7 +206,16 @@ class WireFault:
         async def fault_send(message: dict[str, Any]):
             if message["type"] == "websocket.send" and message.get("text"):
                 data = json.loads(message["text"])
-                if data.get("type") == "observation":
+                if data.get("type") == "mcp" and self.mode == "tool_discovery_error":
+                    data["data"] = {
+                        "jsonrpc": "2.0",
+                        "id": data["data"]["id"],
+                        "error": {
+                            "code": -32603,
+                            "message": "injected discovery failure",
+                        },
+                    }
+                elif data.get("type") == "observation":
                     payload = data["data"]
                     if self.mode == "bad_reward":
                         payload["reward"] = True
@@ -90,6 +225,22 @@ class WireFault:
                         payload.pop("done", None)
                 elif data.get("type") == "state" and self.mode == "bad_state":
                     data["data"]["episode_id"] = "wrong-episode"
+                elif data.get("type") == "validation":
+                    if self.mode == "missing_record":
+                        data["data"].pop("trajectory", None)
+                    elif self.mode == "trace_mismatch":
+                        data["data"]["trajectory"]["records"][0]["response"]["data"][
+                            "observation"
+                        ]["counter"] = 999
+                    elif self.mode == "bad_attribution":
+                        data["data"]["attribution"][0]["rubric"][1]["score"] = 0.25
+                    elif self.mode == "changed_rubric_config":
+                        snapshot = data["data"]
+                        for tree in [snapshot["rubric"]] + [
+                            record["rubric"] for record in snapshot["attribution"]
+                        ]:
+                            tree[1]["config"]["option"] = True
+                        snapshot["attribution"][0]["rubric"][1]["config"]["option"] = 1
                 message = {**message, "text": json.dumps(data)}
             await send(message)
 
@@ -108,19 +259,41 @@ def make_app(mode="good"):
         "missing_done",
         "bad_state",
         "hung_step",
+        "ignored_seed",
+        "nondeterministic",
+        "missing_record",
+        "trace_mismatch",
+        "judged_stable",
+        "judged_noisy",
+        "missing_tool",
+        "extra_tool",
+        "empty_tools",
+        "tool_discovery_error",
+        "bad_task_count",
+        "missing_rubric_config",
+        "bad_attribution",
+        "changed_rubric_config",
         "slow_step",
+        "sticky_episode",
+        "sticky_file",
+        "sticky_background",
+        "exposed_oracle",
     }:
         raise ValueError(f"Unknown fixture mode: {mode}")
-    return WireFault(
-        create_app(
-            ProbeEnvironment,
-            ProbeAction,
-            ProbeObservation,
-            env_name="validation_probe",
-            max_concurrent_envs=2,
-        ),
-        mode,
+    environment = IgnoredSeedEnvironment if mode == "ignored_seed" else ProbeEnvironment
+    application = create_app(
+        lambda: environment(mode),
+        ProbeAction,
+        ProbeObservation,
+        env_name="validation_probe",
+        max_concurrent_envs=2,
     )
+    if mode == "exposed_oracle":
+        oracle = Path(__file__).parent / "oracle" / "solve.sh"
+        application.add_api_route(
+            "/oracle/solve.sh", lambda: PlainTextResponse(oracle.read_text())
+        )
+    return WireFault(application, mode)
 
 
 def main():

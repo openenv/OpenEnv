@@ -958,7 +958,7 @@ requires-dist = [
     { name = "inspect-ai", marker = "extra == 'inspect'", specifier = ">=0.3.0" },
     { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "kubernetes", marker = "extra == 'kubernetes'", specifier = ">=29.0.0" },
-    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.4.0" },
+    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.6.3" },
     { name = "novita-sandbox", marker = "extra == 'novita'", specifier = ">=2.1.1" },
     { name = "openai", specifier = ">=2.7.2" },
     { name = "packaging", specifier = ">=24.2" },

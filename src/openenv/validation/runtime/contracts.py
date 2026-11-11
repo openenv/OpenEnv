@@ -265,15 +265,54 @@ class RuntimeEvidence:
             Collector phase that failed; a truncated transcript cannot pass silently.
         failure_reason (`str`, *optional*):
             Credential-safe explanation of the collection failure.
+        telemetry_json (`str`, *optional*):
+            Subject-emitted session snapshot, independent of the wire transcript.
+        telemetry_error (`str`, *optional*):
+            Bounded telemetry failure without invalidating completed wire evidence.
+        tools_json (`str`, *optional*):
+            Raw tools/list result from the measured WebSocket session.
+        tools_unavailable (`str`, *optional*):
+            Named capability absent from a subject that explicitly rejects discovery.
+        tools_error (`str`, *optional*):
+            Sanitized tool-discovery failure, distinct from a successful empty list.
+        tasks_json (`str`, *optional*):
+            Task split descriptors, counts and bounded item samples.
+        tasks_error (`str`, *optional*):
+            Sanitized task-discovery failure, independent of tool discovery.
+        telemetry_unavailable (`str`, *optional*):
+            Named capability absent from a subject that explicitly rejects telemetry.
         reset_observation_schema_json (`str`, *optional*):
             Explicit `/schema` reset_observation value; absent means use the step schema.
+        schema_response_json (`str`, *optional*):
+            Complete bounded `/schema` response, including action, state and reset inputs.
     """
 
     exchanges: tuple[WireExchange, ...] = ()
     observation_schema_json: str | None = None
     failure_phase: str | None = None
     failure_reason: str | None = None
+    telemetry_json: str | None = None
+    telemetry_error: str | None = None
+    telemetry_unavailable: str | None = None
+    replays: tuple["ReplayEvidence", ...] = ()
+    replay_failure_reason: str | None = None
+    tools_json: str | None = None
+    tools_error: str | None = None
+    tools_unavailable: str | None = None
+    tasks_json: str | None = None
+    tasks_error: str | None = None
     reset_observation_schema_json: str | None = None
+    schema_response_json: str | None = None
+
+
+@dataclass(frozen=True)
+class ReplayEvidence:
+    """A fresh replay and, for containers, inspected identity and cleanup evidence."""
+
+    scope: Literal["session", "container", "seed"]
+    evidence: RuntimeEvidence
+    provider_json: str | None = None
+    cleanup_complete: bool | None = None
 
 
 class ProbeOutcome(BaseModel):
@@ -320,7 +359,7 @@ class NamespaceEvidence(BaseModel):
 
     Attributes:
         interfaces (`list[str]`):
-            Interface names in the namespace.
+            Names of the interfaces that are up in the namespace.
         default_route (`bool`):
             Whether an IPv4 default route exists.
         ipv6_non_loopback (`int`):
@@ -361,3 +400,314 @@ class NetworkEvidence(BaseModel):
     subject_network_mode: str
     namespace: NamespaceEvidence
     probes: list[NetworkProbe]
+
+
+class LaunchIsolation(BaseModel):
+    """
+    Isolation settings inspected from outside the subject.
+
+    Attributes:
+        privileged (`bool`):
+            Whether the subject runs privileged.
+        host_namespaces (`list[str]`):
+            Namespaces shared with the host, e.g. `"pid"` or `"network"`.
+        cap_add (`list[str]`):
+            Linux capabilities added to the launch.
+        devices (`list[str]`):
+            Host devices passed into the subject.
+        unconfined (`list[str]`):
+            Security options that disable a confinement profile.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    privileged: bool
+    host_namespaces: list[str]
+    cap_add: list[str]
+    devices: list[str]
+    unconfined: list[str]
+
+
+class ProcessIdentity(BaseModel):
+    """
+    Identity of one subject process, read from `/proc/<pid>/status`.
+
+    Attributes:
+        pid (`int`):
+            Process ID inside the subject's PID namespace.
+        name (`str`):
+            Process name, for diagnostics only.
+        uids (`list[int]`):
+            Real, effective, saved and filesystem user IDs.
+        cap_eff (`int`):
+            Effective capability bit set.
+        no_new_privs (`bool`):
+            Whether the process can gain no new privileges.
+        seccomp (`int`):
+            Seccomp mode; `0` means disabled.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    pid: int = Field(ge=1)
+    name: str = Field(max_length=64)
+    uids: list[int] = Field(min_length=1, max_length=4)
+    cap_eff: int = Field(ge=0)
+    no_new_privs: bool
+    seccomp: int = Field(ge=0)
+
+
+class MountRecord(BaseModel):
+    """
+    One mount in the subject's mount namespace.
+
+    The mounts that are not read-only are the subject's complete writable-filesystem
+    inventory.
+
+    Attributes:
+        mount_point (`str`):
+            Path inside the subject.
+        fstype (`str`):
+            Filesystem type.
+        device (`str`):
+            `major:minor` of the mounted filesystem; bind mounts of one filesystem
+            share it.
+        read_only (`bool`):
+            Whether the mount or its filesystem is read-only.
+        size_bytes (`int`, *optional*):
+            Capacity of the mounted filesystem from `statvfs`. `None` when unknown,
+            including kernel pseudo-filesystems and unbounded tmpfs, which report no
+            capacity.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    mount_point: str = Field(max_length=4096)
+    fstype: str = Field(max_length=64)
+    device: str = Field(pattern=r"^\d+:\d+$")
+    read_only: bool
+    size_bytes: int | None = Field(ge=1)
+
+
+class DeviceStorage(BaseModel):
+    """
+    Subject storage access on an otherwise exempt device filesystem.
+
+    Attributes:
+        complete (`bool`):
+            Whether all accessible directories and regular files were inventoried.
+        writable (`bool`):
+            Whether the subject could create a file or open a regular file for writing.
+            Positive evidence is retained even when enumeration is incomplete.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    complete: bool
+    writable: bool
+
+
+class ContainmentEvidence(BaseModel):
+    """
+    Provider-neutral evidence for `runtime.host_containment`.
+
+    Attributes:
+        schema_version (`int`):
+            Evidence format version.
+        launch ([`~openenv.validation.runtime.contracts.LaunchIsolation`]):
+            Settings inspected from outside the subject.
+        processes (`list[ProcessIdentity]`):
+            Every process measured in the subject's PID namespace.
+        mounts (`list[MountRecord]`):
+            The subject's complete mount table; empty if it could not be read.
+        allotted (`list[str]`):
+            Writable roots the provider grants the subject.
+        allotted_writable (`list[str]`):
+            Allotted roots the probe could write as the subject's identity.
+        writable (`list[str]`):
+            Bounded diagnostic sample of paths outside the allotted roots where
+            the subject could create a file or open a regular file for writing.
+        device_storage (`dict[str, DeviceStorage]`):
+            Bounded directory and regular-file inventories keyed by device identity.
+            Missing or incomplete inventories cannot establish storage denial.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    launch: LaunchIsolation
+    processes: list[ProcessIdentity] = Field(max_length=1024)
+    mounts: list[MountRecord] = Field(max_length=1024)
+    allotted: list[str]
+    allotted_writable: list[str]
+    writable: list[str] = Field(max_length=1024)
+    device_storage: dict[str, DeviceStorage] = Field(
+        default_factory=dict, max_length=1024
+    )
+
+
+class CgroupLimits(BaseModel):
+    """
+    Effective cgroup v2 limits read from inside the subject.
+
+    `None` means unlimited unless the field is listed in `unavailable`.
+
+    Attributes:
+        memory_max (`int`, *optional*):
+            `memory.max` in bytes.
+        swap_max (`int`, *optional*):
+            `memory.swap.max` in bytes.
+        cpu_quota (`int`, *optional*):
+            CPU time allowed per period, in microseconds.
+        cpu_period (`int`):
+            CPU period in microseconds.
+        pids_max (`int`, *optional*):
+            `pids.max`.
+        unavailable (`list[str]`):
+            Fields whose cgroup files could not be read independently.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    memory_max: int | None = Field(ge=0)
+    swap_max: int | None = Field(ge=0)
+    cpu_quota: int | None = Field(ge=0)
+    cpu_period: int | None = Field(gt=0)
+    pids_max: int | None = Field(ge=0)
+    unavailable: list[str] = Field(default_factory=list)
+
+
+class WritableRoot(BaseModel):
+    """
+    Capacity of one writable root, from `statvfs` inside the subject.
+
+    Attributes:
+        path (`str`):
+            Path inside the subject.
+        size_bytes (`int`):
+            Total capacity of the filesystem mounted there.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    size_bytes: int = Field(ge=0)
+
+
+class QualificationProbe(BaseModel):
+    """
+    One bounded stress probe, run in a disposable subject from the same image.
+
+    Attributes:
+        kind (`str`):
+            `"memory"`, `"pids"`, `"disk"` or `"exec_timeout"`.
+        result (`str`):
+            `"contained"` when the limit stopped the probe, `"escaped"` when it
+            exceeded its budget, `"inconclusive"` otherwise.
+        started (`bool`):
+            Whether the stimulus emitted its fresh start marker, or a trusted observer
+            witnessed the exec-timeout stimulus with a live descendant.
+        reason (`str`, *optional*):
+            Trusted corroboration of the outcome.
+        counter_before (`int`, *optional*):
+            Cgroup event count before the stimulus.
+        counter_after (`int`, *optional*):
+            Cgroup event count after the stimulus.
+        oom_killed (`bool`):
+            Whether Docker recorded a container OOM kill.
+        free_bytes_before (`dict[str, int or None]`):
+            Trusted free capacity before the disk stimulus, per allotted root.
+        free_bytes (`dict[str, int or None]`):
+            Trusted free capacity after the disk stimulus, per allotted root.
+        parent_pid (`int`, *optional*):
+            Stimulus PID observed by the trusted helper before timeout.
+        descendant_pid (`int`, *optional*):
+            Live child whose kernel PPID and nonce-bearing command matched the stimulus.
+        removed (`bool`):
+            Whether timeout cleanup independently verified container removal.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["memory", "pids", "disk", "exec_timeout"]
+    result: Literal["contained", "escaped", "inconclusive"]
+    started: bool = False
+    reason: str | None = Field(default=None, max_length=256)
+    counter_before: int | None = Field(default=None, ge=0)
+    counter_after: int | None = Field(default=None, ge=0)
+    oom_killed: bool = False
+    free_bytes_before: dict[str, int | None] = Field(default_factory=dict)
+    free_bytes: dict[str, int | None] = Field(default_factory=dict)
+    parent_pid: int | None = Field(default=None, gt=0)
+    descendant_pid: int | None = Field(default=None, gt=0)
+    removed: bool = False
+
+
+class ResourceEvidence(BaseModel):
+    """
+    Provider-neutral evidence for `runtime.resource_bounds`.
+
+    Attributes:
+        schema_version (`int`):
+            Evidence format version.
+        cgroup ([`~openenv.validation.runtime.contracts.CgroupLimits`], *optional*):
+            Limits measured in the subject; `None` if they could not be read.
+        writable (`list[WritableRoot]`):
+            Capacity of every writable root.
+        qualification (`list[QualificationProbe]`):
+            Enforcement measured by stress probes.
+        containment ([`~openenv.validation.runtime.contracts.ContainmentEvidence`], *optional*):
+            Complete filesystem inventory and write controls for storage accounting.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    cgroup: CgroupLimits | None
+    writable: list[WritableRoot]
+    qualification: list[QualificationProbe]
+    containment: ContainmentEvidence | None = None
+
+
+@dataclass(frozen=True)
+class IsolationEvidence:
+    """
+    Raw evidence for `runtime.episode_isolation`, collected on the running subject.
+
+    Attributes:
+        sequential ([`~openenv.validation.runtime.contracts.RuntimeEvidence`]):
+            The plan run twice on one session: episode A, then a reset into B.
+        fresh ([`~openenv.validation.runtime.contracts.RuntimeEvidence`]):
+            The plan run once on a new session, as the reference for B.
+    """
+
+    sequential: RuntimeEvidence
+    fresh: RuntimeEvidence
+
+
+@dataclass(frozen=True)
+class HttpProbe:
+    """
+    One bounded HTTP GET against the subject's control endpoint.
+
+    Attributes:
+        path (`str`):
+            Requested path.
+        status (`int`, *optional*):
+            Status of the last response, after same-origin redirects; `None` when no
+            response arrived.
+        body (`bytes`):
+            Bounded body of the final response, whatever its status.
+        failure (`str`, *optional*):
+            Why the probe is incomplete: a transport error, the deadline, a compressed
+            or oversized body, or a redirect that was not followed.
+        redirect_bodies (`tuple[bytes, ...]`):
+            Prior redirect response bodies, each retained separately for JSON decoding.
+            All bodies share the probe byte budget.
+    """
+
+    path: str
+    status: int | None
+    body: bytes = b""
+    failure: str | None = None
+    redirect_bodies: tuple[bytes, ...] = ()
