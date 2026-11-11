@@ -1,4 +1,4 @@
-"""Pure Harbor task parsing and the explicit, operator-supplied pilot contract."""
+"""Pure Harbor task parsing and the explicit, operator-supplied semantic contract."""
 
 import json
 import math

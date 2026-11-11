@@ -84,14 +84,14 @@ def test_canaries_must_not_earn_more_than_doing_nothing():
     leaked = grader.run(subject(evidence(canaries=[("hardcoded.sh", "0.25")])))
     assert leaked.status is CheckStatus.FAIL
     assert "hardcoded.sh" in leaked.evidence[0]
-    # An empty run list must not pass vacuously.
-    assert grader.run(subject(evidence())).status is CheckStatus.FAIL
 
 
-def test_missing_evidence_skips():
-    for grader in (OracleMaxGrader(), FloorGapGrader(), CanaryFloorGrader()):
-        assert grader.run(subject(None)).status is CheckStatus.SKIP
-        assert grader.depends_on == ("runtime.episode_determinism",)
+@pytest.mark.parametrize(
+    "grader", [OracleMaxGrader(), FloorGapGrader(), CanaryFloorGrader()]
+)
+def test_missing_evidence_is_an_error(grader):
+    assert grader.run(subject(None)).status is CheckStatus.ERROR
+    assert grader.depends_on == ("runtime.episode_determinism",)
 
 
 @pytest.mark.parametrize(

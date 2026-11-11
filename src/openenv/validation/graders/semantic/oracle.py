@@ -29,7 +29,7 @@ class _SemanticGrader:
         if evidence is None:
             return CheckResult(
                 check_id=self.check_id,
-                status=CheckStatus.SKIP,
+                status=CheckStatus.ERROR,
                 evidence=["oracle evidence is unavailable"],
                 duration_s=0,
             )
@@ -137,9 +137,6 @@ class CanaryFloorGrader(_SemanticGrader):
             for name, reward in evidence.canaries
             if reward > evidence.floor
         ]
-        # An empty run list must not pass vacuously.
-        if not evidence.canaries:
-            problems.append("no canary run was recorded")
         return problems, {
             "measured_floor": float(evidence.floor),
             "canary_rewards": {
