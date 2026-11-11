@@ -92,3 +92,47 @@ def test_missing_evidence_skips():
     for grader in (OracleMaxGrader(), FloorGapGrader(), CanaryFloorGrader()):
         assert grader.run(subject(None)).status is CheckStatus.SKIP
         assert grader.depends_on == ("runtime.episode_determinism",)
+
+
+@pytest.mark.parametrize(
+    "reward_range,oracle,tolerance,status",
+    [
+        ((0, 100), "95", 0.05, CheckStatus.PASS),
+        ((0, 100), "94.999999999999999999999", 0.05, CheckStatus.FAIL),
+        ((50, 150), "145", 0.05, CheckStatus.PASS),
+        ((0, 0.01), "0.009", 0.05, CheckStatus.FAIL),
+    ],
+)
+def test_oracle_tolerance_is_a_fraction_of_range(
+    reward_range, oracle, tolerance, status
+):
+    found = OracleMaxGrader().run(
+        subject(
+            evidence(oracle=(oracle, oracle)),
+            range=reward_range,
+            oracle_tolerance=tolerance,
+        )
+    )
+    assert found.status is status
+    assert found.measured["oracle_tolerance"] == tolerance
+
+
+@pytest.mark.parametrize(
+    "floor,oracle,status",
+    [
+        ("90", "100", CheckStatus.PASS),
+        ("99.9", "100", CheckStatus.FAIL),
+        ("90", "99", CheckStatus.FAIL),
+        ("90.000000000000000000001", "100", CheckStatus.FAIL),
+    ],
+)
+def test_floor_margin_is_a_fraction_of_range(floor, oracle, status):
+    found = FloorGapGrader().run(
+        subject(
+            evidence(floor=floor, oracle=(oracle, oracle)),
+            range=(0, 100),
+            floor_margin=0.1,
+        )
+    )
+    assert found.status is status
+    assert found.measured["declared_margin"] == 0.1

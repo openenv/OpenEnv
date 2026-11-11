@@ -182,7 +182,8 @@ The core promise is #778's verifier-sanity test, made precise:
 - **Floor is measured, not declared.** The floor is the measured reward of the reset/do-nothing
   state — the declared range minimum may sit below it (an agent that deletes the repo earns a
   legal sub-floor reward, not a validation anomaly). The contract is a **gap check**:
-  `reward(oracle) ≥ max − tolerance`, `reward(reset) = floor`, `max − floor ≥ margin`.
+  `reward(oracle) >= max - tolerance * width`, `reward(reset) = floor`,
+  `max - floor >= margin * width`, where `width = max - min`.
 - **Oracle containment is required.** The oracle (state or script) must be withheld from or
   isolated against the agent at serve time, and validation checks that it is.
 - **Reward range is declared** in the manifest, defaulting to `[0, 1]`; graders normalize against
@@ -193,7 +194,7 @@ The core promise is #778's verifier-sanity test, made precise:
 
 **LLM-as-judge is an allowed reward.** Judged environments declare `llm_judged` and pin the judge
 configuration (model, version, params) in the manifest; the oracle check becomes
-`≥ max − declared tolerance` and determinism becomes variance-within-declared-bound rather than
+`>= max - declared tolerance * width` and determinism becomes variance-within-declared-bound rather than
 bit-exact. RFC 004 rubrics are **leveraged, not required**: the contract stays spec-neutral
 (graders read the manifest), but for the served OpenEnv format the rubric tree is the native
 satisfaction path — `LLMJudge` is the in-repo `llm_judged` implementation, and the
@@ -204,6 +205,14 @@ the rubric object does not serialize model/version/params today.
 
 Tolerances, margins, and variance bounds are author-declared in the manifest, **bounded by the
 versioned severity policy**, and carried verbatim in reports so hubs can apply stricter ceilings.
+Oracle tolerance and floor margin are fractions of the declared reward range.
+Grader comparisons multiply each fraction by `width = max - min` using exact
+rational arithmetic. The declared range must be strictly increasing.
+
+| Semantic declaration | Policy bound | Reward-unit threshold |
+|---|---|---|
+| `oracle_tolerance` | At most 0.1 of the range | `oracle_tolerance * width` below max |
+| `floor_margin` | At least 0.1 of the range | `floor_margin * width` between rewards |
 
 ### Report and severity policy
 
@@ -754,13 +763,14 @@ Results map to RFC check ids:
 | `runtime.startup` | Every trial ran from the pinned image in a fresh container, and cleanup was verified. |
 | `runtime.reward_well_formed` | Every raw reward map matches Harbor's result and is finite, nonboolean and in range. |
 | `runtime.episode_determinism` | The oracle replay reproduces every reward and the exit code. |
-| `semantic.oracle_max` | Both oracle runs exit 0 and earn at least `max - oracle_tolerance`. A task without `solution/solve.sh` fails. |
-| `semantic.floor_gap` | `max - floor >= floor_margin`, and `oracle - floor >= floor_margin` because the oracle may sit up to the tolerance below the maximum. |
+| `semantic.oracle_max` | Both oracle runs exit 0 and earn at least `max - oracle_tolerance * width`. A task without `solution/solve.sh` fails. |
+| `semantic.floor_gap` | `max - floor >= floor_margin * width`, and `oracle - floor >= floor_margin * width` because the oracle may sit up to the tolerance below the maximum. |
 | `semantic.canary_floor` | Every declared canary earns no more than the measured floor. Selected only when canaries are declared. |
 
 The semantic ids depend on `runtime.episode_determinism`, so a diverging replay
-SKIPs them with the dependency named. Reward comparisons use exact rationals parsed
-from the raw verifier output. Every other local check is a named SKIP for this
+SKIPs them with the dependency named. Oracle tolerance and floor margin are fractions
+of the declared range, with `width = max - min`. Reward comparisons use exact
+rationals parsed from the raw verifier output. Every other local check is a named SKIP for this
 binding. It produces no WebSocket exchange, containment or resource measurement,
 second verification of one final state, or leakage scan. A passing run is therefore
 WARN, and full RFC qualification still rejects these SKIPs.

@@ -54,9 +54,12 @@ class RewardDeclaration(BaseModel):
         range (`tuple[float, float]`):
             Declared reward range, defaults to `(0.0, 1.0)`. Must be strictly increasing.
         oracle_tolerance (`float`):
-            The oracle check passes when `reward(oracle) >= max - oracle_tolerance`.
+            Fraction of the declared range allowed below the maximum.
+            The oracle check requires `reward(oracle) >= max - oracle_tolerance * width`,
+            where `width = max - min`.
         floor_margin (`float`):
-            The gap check requires `max - measured_floor >= floor_margin`.
+            Fraction of the declared range required between the maximum and the floor.
+            The gap check requires `max - measured_floor >= floor_margin * width`.
         variance_tolerance (`float`, *optional*):
             Required iff the environment declares `llm_judged`; bounds reward variance
             for variance-mode determinism checks.

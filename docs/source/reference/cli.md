@@ -78,7 +78,8 @@ pip install "openenv[harbor]" "harbor==0.25.0"
 
 Add a `validation/openenv.json` contract with `profile: "harbor-semantic-v1"`,
 `reward_key`, `reward`, `resources` and `types`. The reward range, oracle tolerance
-and floor margin must be explicit. This is a minimal complete contract:
+and floor margin must be explicit. Oracle tolerance and floor margin are fractions
+of the declared reward range. This is a minimal complete contract:
 
 ```json
 {
