@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
@@ -18,12 +19,14 @@ import uuid
 from dataclasses import replace
 from decimal import Decimal
 from fractions import Fraction
+from functools import partial
 from importlib.metadata import distribution
 from pathlib import Path
 
 from .graders import GraderRegistry
 from .graders.semantic import CanaryFloorGrader, FloorGapGrader, OracleMaxGrader
 from .parsers.harbor_toml import (
+    _unique_object,
     canary_scripts,
     HARBOR_PROFILE,
     read_harbor_contract,
@@ -49,6 +52,8 @@ _HOST_FAILURES = {
     "CleanupNotVerified",
     "RewardArtifactDrift",
     "UnsafeRewardArtifact",
+    "RetainedImageDrift",
+    "RetainedImageUnverified",
 }
 # Checks this binding measures; every other local check is a named SKIP.
 _IMPLEMENTED = {
@@ -88,7 +93,7 @@ class DockerInspector:
     def preflight(self):
         info = json.loads(self._docker("info", "--format", "{{json .}}"))
         if info["OSType"] != "linux":
-            raise NativeEvidenceError("the Harbor pilot requires a Linux Docker daemon")
+            raise NativeEvidenceError("Harbor requires a Linux Docker daemon")
         self._docker("compose", "version")
         return {
             "os": info["OSType"],
@@ -115,9 +120,7 @@ class DockerInspector:
     def capture(self, project, retained_tag, *, retain=True):
         inventory = self.inventory(project)
         if len(inventory["containers"]) != 1:
-            raise NativeEvidenceError(
-                "the Harbor pilot requires exactly one main container"
-            )
+            raise NativeEvidenceError("Harbor requires exactly one main container")
         item = json.loads(self._docker("inspect", inventory["containers"][0]))[0]
         labels = item["Config"]["Labels"]
         if (
@@ -242,6 +245,8 @@ def _unsupported(task, contract):
         return "multi-step Harbor tasks"
     if env.os.value != "linux":
         return "non-Linux Harbor tasks"
+    if env.docker_image is not None:
+        return "task-declared environment.docker_image instead of a Dockerfile build"
     if config.verifier.environment is not None or (
         config.verifier.environment_mode is not None
         and config.verifier.environment_mode.value != "shared"
@@ -272,7 +277,85 @@ def _unsupported(task, contract):
 async def _create_trial(config):
     from harbor.trial.trial import Trial
 
-    return await Trial.create(config)
+    trial = await Trial.create(config)
+    environment = trial.agent_environment
+    trial._openenv_cancelled_compose = []
+    environment._run_docker_compose_command = partial(
+        _run_compose, environment, cancelled=trial._openenv_cancelled_compose
+    )
+    return trial
+
+
+async def _run_compose(
+    environment,
+    command,
+    check=True,
+    timeout_sec=None,
+    stdin_data=None,
+    on_output=None,
+    *,
+    cancelled,
+):
+    # Harbor's Compose collector does not reap the client on outer cancellation.
+    runtime = type(environment).runtime()
+    argv = [*runtime.compose, "--project-name", environment.session_id]
+    if runtime.supports_compose_project_directory:
+        argv.extend(["--project-directory", str(environment.environment_dir.resolve())])
+    for path in environment._docker_compose_paths:
+        argv.extend(["-f", str(path.resolve())])
+    spawn = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            *argv,
+            *command,
+            env=environment._compose_env_vars(include_os_env=True),
+            cwd=str(environment.environment_dir.resolve()),
+            stdin=asyncio.subprocess.PIPE
+            if stdin_data is not None
+            else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+    )
+    try:
+        process = await asyncio.shield(spawn)
+        if on_output is not None:
+            result = await environment._collect_streamed_output(
+                process,
+                timeout_sec=timeout_sec,
+                stdin_data=stdin_data,
+                on_output=on_output,
+            )
+        else:
+            result = await environment._collect_buffered_output(
+                process, timeout_sec=timeout_sec, stdin_data=stdin_data
+            )
+        if check and result.return_code != 0:
+            raise RuntimeError("Harbor Compose command failed")
+        return result
+    except BaseException as exc:
+        # Finish spawning before cleanup, even if cancellation raced with exec.
+        process = await spawn
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await process.wait()
+        if isinstance(exc, asyncio.CancelledError) and command[0] in {
+            "build",
+            "pull",
+            "up",
+        }:
+            cancelled.append(
+                {
+                    "command": command[0],
+                    "project": environment.session_id,
+                    "client_group_killed": True,
+                    "client_reaped": True,
+                    "daemon_completion_verified": False,
+                }
+            )
+        raise
 
 
 def _read_output(path, root):
@@ -299,8 +382,6 @@ def _read_output(path, root):
 
 
 def _reward(raw_files, parsed, contract):
-    from .parsers.harbor_toml import _unique_object
-
     if "reward.json" in raw_files:
         raw = json.loads(
             raw_files["reward.json"],
@@ -357,6 +438,7 @@ async def _trial(
     )
     from harbor.trial.hooks import TrialEvent
 
+    from .providers.docker import DockerValidationProvider
     from .runner import _DIGEST_EXCLUDED_DIRS, source_digest
 
     name = f"openenv-validation-{run_id}-{role}"
@@ -371,10 +453,16 @@ async def _trial(
     }
     raw_files = {}
     trial = None
-    # Register and verify ownership before Trial.create can allocate anything.
-    if any(inspector.inventory(project).values()):
-        raise NativeEvidenceError("run-owned project was not empty before allocation")
+    phase = "trial creation"
+    registered = False
     try:
+        # Verify ownership before Trial.create can allocate anything.
+        record["pre_allocation_inventory"] = inspector.inventory(project)
+        if any(record["pre_allocation_inventory"].values()):
+            raise NativeEvidenceError(
+                "run-owned project was not empty before allocation"
+            )
+        registered = True
         task_copy = work / role / "task"
         shutil.copytree(
             root,
@@ -406,6 +494,7 @@ async def _trial(
         record["execution_task_digest"] = digest_before
         record["task_overlay"] = overlay
         budget = contract.resources.episode_timeout_s
+        build_budget = DockerValidationProvider().build_timeout_s
         config = TrialConfig(
             task=TaskConfig(path=task_copy.resolve()),
             agent=AgentConfig(
@@ -433,8 +522,26 @@ async def _trial(
         record["trial_config_digest"] = _digest(effective_config)
         record["resources"] = contract.resources.model_dump()
         trial = await _create_trial(config)
+        trial._environment_build_timeout_sec = build_budget if not expected else budget
+        if not expected:
+            record["build_timeout_s"] = build_budget
+            start_environment = trial.agent_environment.start
+
+            async def build_and_start(*, force_build):
+                nonlocal phase
+                async with asyncio.timeout(build_budget):
+                    await start_environment(force_build=force_build)
+                phase = "agent setup"
+
+            trial.agent_environment.start = build_and_start
+
+        async def environment_start(_event):
+            nonlocal phase
+            phase = "environment build/start"
 
         async def capture(_event):
+            nonlocal phase
+            phase = "agent"
             if trial.agent_environment.session_id != project:
                 raise NativeEvidenceError(
                     "Harbor sandbox identity differs from the registered project"
@@ -461,14 +568,46 @@ async def _trial(
                 if marker is not None:
                     raw_files["oracle-exit-code.txt"] = marker
 
+        async def verification_start(_event):
+            nonlocal phase
+            phase = "verifier"
+
+        trial.add_hook(TrialEvent.ENVIRONMENT_START, environment_start)
         trial.add_hook(TrialEvent.AGENT_START, capture)
         trial.add_hook(TrialEvent.AGENT_END, capture_exit)
+        trial.add_hook(TrialEvent.VERIFICATION_START, verification_start)
         result = await trial.run()
         if source_digest(task_copy) != digest_before:
             raise NativeEvidenceError(
                 "private execution task changed during validation"
             )
         if result.exception_info is not None:
+            failure = result.exception_info.exception_type
+            if failure in {
+                "RewardFileNotFoundError",
+                "RewardFileEmptyError",
+                "VerifierOutputParseError",
+            }:
+                if "container_id" not in record:
+                    raise NativeEvidenceError(
+                        "Harbor reward failure has no container identity"
+                    )
+                record["reward_error"] = True
+                raise NativeEvidenceError(f"Harbor verifier reward failed ({failure})")
+            subject_phase = {
+                "EnvironmentStartTimeoutError": "environment build/start",
+                "SandboxBuildFailedError": "environment build/start",
+                "AgentSetupTimeoutError": "agent setup",
+                "AgentTimeoutError": "agent",
+                "VerifierTimeoutError": "verifier",
+            }.get(failure)
+            if failure == "RuntimeError" and phase == "environment build/start":
+                subject_phase = phase
+            if subject_phase:
+                record["subject_error"] = subject_phase
+                raise NativeEvidenceError(
+                    f"Harbor subject failed during {subject_phase} ({failure})"
+                )
             raise NativeEvidenceError("Harbor Trial returned exception_info")
         if "container_id" not in record:
             raise NativeEvidenceError("Harbor Trial has no actual AGENT_START identity")
@@ -495,6 +634,9 @@ async def _trial(
         record.pop("reward_error")
     except (Exception, KeyboardInterrupt) as exc:
         record["failure"] = type(exc).__name__
+        if isinstance(exc, TimeoutError):
+            record["subject_error"] = phase
+            record["reason"] = f"Harbor subject timed out during {phase}"
         # Error categories are safe; task-authored exception messages/logs are not.
         if isinstance(exc, NativeEvidenceError):
             record["reason"] = str(exc)
@@ -505,13 +647,29 @@ async def _trial(
                     await trial.agent_environment.stop(delete=False)
             except (Exception, KeyboardInterrupt):
                 record["failure"] = "HarborTeardownError"
-        try:
-            record["cleanup"] = inspector.cleanup(project)
-            if not record["cleanup"]["verified"]:
+        if registered:
+            try:
+                record["cleanup"] = inspector.cleanup(project)
+                if trial is not None and trial._openenv_cancelled_compose:
+                    record["cleanup"].update(
+                        {
+                            "verified": False,
+                            "pending_operations": trial._openenv_cancelled_compose,
+                        }
+                    )
+                    record["reason"] = (
+                        "Docker daemon completion after cancelled Compose allocation is unverified"
+                    )
+                if not record["cleanup"]["verified"]:
+                    record["failure"] = "CleanupNotVerified"
+            except (Exception, KeyboardInterrupt) as exc:
+                record["cleanup"] = {"verified": False, "failure": type(exc).__name__}
                 record["failure"] = "CleanupNotVerified"
-        except (Exception, KeyboardInterrupt) as exc:
-            record["cleanup"] = {"verified": False, "failure": type(exc).__name__}
-            record["failure"] = "CleanupNotVerified"
+        else:
+            record["cleanup"] = {
+                "verified": False,
+                "reason": "project ownership was not verified before allocation",
+            }
         if trial is not None:
             # Preserve raw verifier files even when Harbor rejects their values.
             for filename, path in (
@@ -614,6 +772,7 @@ def validate_harbor(
     results,
     digest_before,
     artifacts_dir,
+    report_target=None,
     skip_build=False,
     provider=None,
 ):
@@ -671,6 +830,24 @@ def validate_harbor(
     evidence = None
     checks = []
     semantic_graded = False
+    if (
+        semantic
+        and subject.manifest.capabilities.oracle is None
+        and all(result.status is CheckStatus.PASS for result in results)
+    ):
+        # RFC 008: a missing oracle is a graded FAIL, never a SKIP.
+        semantic_graded = True
+        checks.append(
+            CheckResult(
+                check_id="semantic.oracle_max",
+                status=CheckStatus.FAIL,
+                evidence=["the task has no oracle (solution/solve.sh)"],
+                remediation=(
+                    "Add solution/solve.sh that drives the task to a correct solution."
+                ),
+                duration_s=0,
+            )
+        )
     if not problem:
         if subject.manifest.capabilities.oracle is None:
             startup = _result(
@@ -678,21 +855,6 @@ def validate_harbor(
                 CheckStatus.SKIP,
                 "native Harbor trials need solution/solve.sh",
             )
-            if semantic:
-                # RFC 008: a missing oracle is a graded FAIL, never a SKIP.
-                semantic_graded = True
-                checks.append(
-                    CheckResult(
-                        check_id="semantic.oracle_max",
-                        status=CheckStatus.FAIL,
-                        evidence=["the task has no oracle (solution/solve.sh)"],
-                        remediation=(
-                            "Add solution/solve.sh that drives the task to a "
-                            "correct solution."
-                        ),
-                        duration_s=0,
-                    )
-                )
         else:
             attempted = True
             try:
@@ -726,10 +888,20 @@ def validate_harbor(
                     or (not malformed and len(trials) != 3 + len(canaries))
                     or len(set(containers)) != len(containers)
                 ):
+                    subject_failures = broken and all(
+                        trial.get("subject_error")
+                        and trial["failure"] not in _HOST_FAILURES
+                        for trial in broken
+                    )
                     startup = _result(
                         "runtime.startup",
-                        CheckStatus.ERROR,
-                        "native Harbor trial, binding or cleanup failed",
+                        CheckStatus.FAIL if subject_failures else CheckStatus.ERROR,
+                        "native Harbor subject failed during "
+                        + ", ".join(
+                            sorted({trial["subject_error"] for trial in broken})
+                        )
+                        if subject_failures
+                        else "native Harbor trial, binding or cleanup failed",
                         {
                             "failures": [
                                 trial.get("reason", trial.get("failure"))
@@ -784,63 +956,74 @@ def validate_harbor(
                                 "reward_key": contract.reward_key,
                             },
                         )
-                        nop, oracle, replay, *canary_trials = trials
-                        same = (
-                            oracle["rewards"] == replay["rewards"]
-                            and oracle["oracle_exit_code"] == replay["oracle_exit_code"]
-                        )
-                        determinism = _result(
-                            "runtime.episode_determinism",
-                            CheckStatus.PASS if same else CheckStatus.FAIL,
-                            "the oracle replay in a fresh container "
-                            + (
-                                "reproduced every reward and the exit code"
-                                if same
-                                else "produced different rewards or a different exit code"
-                            ),
-                            {
-                                "rewards": [
-                                    json.loads(dumps(trial["rewards"]))
-                                    for trial in (oracle, replay)
-                                ],
-                                "exit_codes": [
-                                    trial["oracle_exit_code"]
-                                    for trial in (oracle, replay)
-                                ],
-                            },
-                        )
-                        key = contract.reward_key
-                        record.update(
-                            {
-                                "floor_reward": nop["rewards"][key],
-                                "oracle_reward": oracle["rewards"][key],
-                            }
-                        )
-                        evidence = OracleEvidence(
-                            floor=Fraction(nop["rewards"][key]),
-                            oracle=tuple(
-                                Fraction(trial["rewards"][key])
+                complete_baseline = (
+                    len(trials) >= 3
+                    and all(
+                        "failure" not in trial and trial["cleanup"]["verified"]
+                        for trial in trials[:3]
+                    )
+                    and len(set(containers[:3])) == 3
+                )
+                if complete_baseline:
+                    nop, oracle, replay, *canary_trials = trials
+                    same = (
+                        oracle["rewards"] == replay["rewards"]
+                        and oracle["oracle_exit_code"] == replay["oracle_exit_code"]
+                    )
+                    determinism = _result(
+                        "runtime.episode_determinism",
+                        CheckStatus.PASS if same else CheckStatus.FAIL,
+                        "the oracle replay in a fresh container "
+                        + (
+                            "reproduced every reward and the exit code"
+                            if same
+                            else "produced different rewards or a different exit code"
+                        ),
+                        {
+                            "rewards": [
+                                json.loads(dumps(trial["rewards"]))
                                 for trial in (oracle, replay)
-                            ),
-                            oracle_exit_codes=tuple(
+                            ],
+                            "exit_codes": [
                                 trial["oracle_exit_code"] for trial in (oracle, replay)
-                            ),
-                            canaries=tuple(
-                                (
-                                    trial["task_overlay"]["solution/solve.sh"][
-                                        "canary"
-                                    ],
-                                    Fraction(trial["rewards"][key]),
-                                )
-                                for trial in canary_trials
-                            ),
-                        )
+                            ],
+                        },
+                    )
+                    key = contract.reward_key
+                    record.update(
+                        {
+                            "floor_reward": nop["rewards"][key],
+                            "oracle_reward": oracle["rewards"][key],
+                        }
+                    )
+                    evidence = OracleEvidence(
+                        floor=Fraction(nop["rewards"][key]),
+                        oracle=tuple(
+                            Fraction(trial["rewards"][key])
+                            for trial in (oracle, replay)
+                        ),
+                        oracle_exit_codes=tuple(
+                            trial["oracle_exit_code"] for trial in (oracle, replay)
+                        ),
+                        canaries=tuple(
+                            (
+                                trial["task_overlay"]["solution/solve.sh"]["canary"],
+                                Fraction(trial["rewards"][key]),
+                            )
+                            for trial in canary_trials
+                            if "failure" not in trial and trial["cleanup"]["verified"]
+                        ),
+                    )
             except (Exception, KeyboardInterrupt) as exc:
                 record["failure"] = type(exc).__name__
+                reason = f"native Harbor collection failed ({type(exc).__name__})"
+                if isinstance(exc, NativeEvidenceError):
+                    record["reason"] = str(exc)
+                    reason += ": " + str(exc)
                 startup = _result(
                     "runtime.startup",
                     CheckStatus.ERROR,
-                    f"native Harbor collection failed ({type(exc).__name__})",
+                    reason,
                 )
             if semantic:
                 registry = GraderRegistry()
@@ -850,9 +1033,23 @@ def validate_harbor(
                     CanaryFloorGrader(),
                 ):
                     registry.register(grader)
+                selected = registry.select(subject.manifest, max_level)
+                if evidence is not None and len(evidence.canaries) != len(canaries):
+                    selected = [
+                        grader
+                        for grader in selected
+                        if grader.check_id != "semantic.canary_floor"
+                    ]
+                    checks.append(
+                        _result(
+                            "semantic.canary_floor",
+                            CheckStatus.SKIP,
+                            "unmet dependency: complete canary trials with verified cleanup",
+                        )
+                    )
                 checks.extend(
                     execute_graders(
-                        registry.select(subject.manifest, max_level),
+                        selected,
                         replace(subject, oracle_evidence=evidence),
                         prior=[startup, reward_result, determinism],
                     )
@@ -898,7 +1095,7 @@ def validate_harbor(
         levels.append(Level.SEMANTIC)
     report = ValidationReportV2(
         report_schema_version="2",
-        target=str(subject.root),
+        target=str(subject.root) if report_target is None else report_target,
         source_digest=digest_before,
         signature=subject.manifest.signature,
         manifest=subject.manifest,

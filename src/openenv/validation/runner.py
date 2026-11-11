@@ -700,6 +700,7 @@ def run_validation(
                     results=results,
                     digest_before=digest_before,
                     artifacts_dir=artifacts_dir,
+                    report_target=report_target,
                     skip_build=skip_build,
                     provider=provider,
                 )
