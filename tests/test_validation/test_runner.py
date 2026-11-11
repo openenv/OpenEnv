@@ -29,7 +29,7 @@ def test_registered_runtime_graders_use_metadata_throughout_run(
         level = Level.RUNTIME
         requires_provider = frozenset()
         requires_capabilities = (
-            frozenset({"task_api"}) if mode == "capability" else frozenset()
+            frozenset({"set_state"}) if mode == "capability" else frozenset()
         )
 
         def __init__(self, check_id, dependency):
@@ -52,6 +52,8 @@ def test_registered_runtime_graders_use_metadata_throughout_run(
         Probe("runtime.host_containment", "runtime.resource_bounds"),
     ]
     for probe in probes:
+        # Replace any shipped implementation of these IDs with the test probe.
+        registry._graders.pop(probe.check_id, None)
         registry.register(probe)
     monkeypatch.setattr(runner, "default_grader_registry", lambda policy: registry)
 
