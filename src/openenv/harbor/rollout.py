@@ -259,9 +259,7 @@ def build_trial_config(
     kwarg, or a config file written by a subclass. That is the only per-agent knowledge involved;
     everything downstream is identical.
 
-    Args:
-        environment_kwargs (`dict[str, Any]`, *optional*):
-            Backend kwargs passed to Harbor. `None` keeps Harbor's defaults.
+    Backend kwargs in `environment_kwargs` pass to Harbor. `None` keeps Harbor's defaults.
     """
     from harbor.models.trial.config import (
         AgentConfig,
@@ -325,6 +323,17 @@ def build_trial_config(
         trial_name=trial_name,
         trials_dir=Path(str(trials_dir)),
     )
+
+
+async def _run_trial(trial: Any, on_trial_created: Callable[[Any], None] | None) -> Any:
+    """Close Harbor's trial log when a trusted hook prevents execution."""
+    if on_trial_created is not None:
+        try:
+            on_trial_created(trial)
+        except BaseException:
+            trial._close_logger_handler()
+            raise
+    return await trial.run()
 
 
 async def run_rollout(
@@ -519,9 +528,7 @@ async def run_rollout(
             if not proc_env:
                 config = build_trial_config(**config_kwargs)
                 trial = await Trial.create(config)
-                if on_trial_created is not None:
-                    on_trial_created(trial)
-                trial_result = await trial.run()
+                trial_result = await _run_trial(trial, on_trial_created)
             else:
                 # The override has to span `run()`, not just construction. Harbor's goose wrapper reads
                 # `os.environ["OPENAI_API_KEY"]` inside its own `run` (goose.py:653), long after
@@ -553,9 +560,7 @@ async def run_rollout(
                     with ctx_env_overlay(proc_env):
                         config = build_trial_config(**config_kwargs)
                         trial = await Trial.create(config)
-                        if on_trial_created is not None:
-                            on_trial_created(trial)
-                        trial_result = await trial.run()
+                        trial_result = await _run_trial(trial, on_trial_created)
                 else:
                     # Fallback: mutate the real environment under a lock, one rollout at a time.
                     await _acquire_proc_env()
@@ -563,9 +568,7 @@ async def run_rollout(
                         with process_env(seam.name, proc_env):
                             config = build_trial_config(**config_kwargs)
                             trial = await Trial.create(config)
-                            if on_trial_created is not None:
-                                on_trial_created(trial)
-                            trial_result = await trial.run()
+                            trial_result = await _run_trial(trial, on_trial_created)
                     finally:
                         _PROC_ENV_LOCK.release()
         except Exception as exc:  # noqa: BLE001 - a rollout failure is a RESULT, never an exception

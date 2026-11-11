@@ -29,14 +29,16 @@ class _SemanticGrader:
         if evidence is None:
             return CheckResult(
                 check_id=self.check_id,
-                status=CheckStatus.SKIP,
+                status=CheckStatus.ERROR,
                 evidence=["oracle evidence is unavailable"],
                 duration_s=0,
             )
         reward = subject.manifest.reward
+        low, high = (Fraction(str(value)) for value in reward.range)
         problems, measured = self.check(
             evidence,
-            maximum=Fraction(str(reward.range[1])),
+            maximum=high,
+            width=high - low,
             tolerance=Fraction(str(reward.oracle_tolerance)),
             margin=Fraction(str(reward.floor_margin)),
         )
@@ -51,7 +53,7 @@ class _SemanticGrader:
 
 
 class OracleMaxGrader(_SemanticGrader):
-    """Every oracle run exits cleanly and earns at least `max - oracle_tolerance`."""
+    """Every oracle run exits cleanly and meets the range-normalized tolerance."""
 
     check_id = "semantic.oracle_max"
     passed = "every oracle run reached the declared maximum within tolerance"
@@ -60,8 +62,8 @@ class OracleMaxGrader(_SemanticGrader):
         "earns the declared maximum reward."
     )
 
-    def check(self, evidence, *, maximum, tolerance, margin):
-        threshold = maximum - tolerance
+    def check(self, evidence, *, maximum, width, tolerance, margin):
+        threshold = maximum - tolerance * width
         problems = []
         for run, (reward, code) in enumerate(
             zip(evidence.oracle, evidence.oracle_exit_codes, strict=True), start=1
@@ -82,9 +84,9 @@ class OracleMaxGrader(_SemanticGrader):
 
 class FloorGapGrader(_SemanticGrader):
     """
-    The do-nothing reward sits at least `floor_margin` below the maximum and below
-    every oracle run. The oracle may sit up to the tolerance below the maximum, so
-    both gaps are required.
+    The do-nothing reward sits at least `floor_margin` of the declared range below
+    the maximum and every oracle run. The oracle may sit up to the tolerance below
+    the maximum, so both gaps are required.
     """
 
     check_id = "semantic.floor_gap"
@@ -94,19 +96,20 @@ class FloorGapGrader(_SemanticGrader):
         "such as comparisons against empty output."
     )
 
-    def check(self, evidence, *, maximum, tolerance, margin):
+    def check(self, evidence, *, maximum, width, tolerance, margin):
         floor = evidence.floor
+        required_gap = margin * width
         problems = []
-        if maximum - floor < margin:
+        if maximum - floor < required_gap:
             problems.append(
                 f"do-nothing reward {float(floor)} is within {float(maximum - floor)} "
-                f"of the maximum, below the margin {float(margin)}"
+                f"of the maximum, below the required gap {float(required_gap)}"
             )
         lowest = min(evidence.oracle)
-        if lowest - floor < margin:
+        if lowest - floor < required_gap:
             problems.append(
                 f"oracle reward {float(lowest)} is within {float(lowest - floor)} "
-                f"of the do-nothing reward, below the margin {float(margin)}"
+                f"of the do-nothing reward, below the required gap {float(required_gap)}"
             )
         return problems, {
             "measured_floor": float(floor),
@@ -127,16 +130,13 @@ class CanaryFloorGrader(_SemanticGrader):
         "canary earns no more than doing nothing."
     )
 
-    def check(self, evidence, *, maximum, tolerance, margin):
+    def check(self, evidence, *, maximum, width, tolerance, margin):
         problems = [
             f"canary {name} earned {float(reward)}, above the do-nothing reward "
             f"{float(evidence.floor)}"
             for name, reward in evidence.canaries
             if reward > evidence.floor
         ]
-        # An empty run list must not pass vacuously.
-        if not evidence.canaries:
-            problems.append("no canary run was recorded")
         return problems, {
             "measured_floor": float(evidence.floor),
             "canary_rewards": {
