@@ -106,7 +106,14 @@ def read_harbor_contract(package_root: Path) -> HarborContract:
                         "numeric declarations must keep their exact value as floats"
                     )
         return HarborContract.model_validate(raw)
-    except (OSError, ValueError, TypeError, AttributeError) as exc:
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        OverflowError,
+        RecursionError,
+    ) as exc:
         raise ManifestError(
             [f"invalid trusted Harbor contract ({type(exc).__name__})"],
             remediation="supply explicit reward/resources in validation/openenv.json",

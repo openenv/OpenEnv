@@ -59,3 +59,16 @@ def test_gpu_type_strings_are_preserved(contract_package):
     loaded = read_harbor_contract(contract_package)
     assert loaded.resources.gpu_types == ["A100", "H100"]
     assert loaded.resources.gpus == 1
+
+
+@pytest.mark.parametrize("hostile_input", ["huge_integer", "deep_nesting"])
+def test_hostile_json_is_a_manifest_failure(contract_package, hostile_input):
+    path = contract_package / "validation/openenv.json"
+    if hostile_input == "huge_integer":
+        payload = path.read_text().replace('"cpu": 1', '"cpu": ' + "9" * 400)
+    else:
+        payload = "[" * 100_000 + "0" + "]" * 100_000
+    path.write_text(payload)
+
+    with pytest.raises(ManifestError):
+        read_harbor_contract(contract_package)
