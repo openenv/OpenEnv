@@ -57,6 +57,7 @@ def boundary(monkeypatch, task):
         trials=[],
         cleanup_ok=True,
         cleanup_fail_role=None,
+        teardown_defect=None,
         mutate=False,
         private_mutate=False,
         image_drift=False,
@@ -151,6 +152,13 @@ def boundary(monkeypatch, task):
 
         async def stop(self, *, delete):
             assert not delete
+            if state.teardown_defect == "error":
+                raise OSError("Harbor teardown failed")
+            if state.teardown_defect == "drift":
+                self.paths.reward_json_path.write_bytes(b'{"reward":0}')
+            if state.teardown_defect == "unsafe":
+                self.paths.reward_json_path.unlink()
+                self.paths.reward_json_path.symlink_to("outside-reward.json")
 
         async def start(self, *, force_build):
             if state.pending_compose:
@@ -461,6 +469,28 @@ def test_cleanup_failure_blocks(task, boundary, tmp_path):
     assert not json.loads((artifacts / "harbor-evidence.json").read_text())["cleanup"][
         "verified"
     ]
+
+
+@pytest.mark.parametrize(
+    "defect,failure",
+    [
+        ("error", "HarborTeardownError"),
+        ("cleanup", "CleanupNotVerified"),
+        ("drift", "RewardArtifactDrift"),
+        ("unsafe", "UnsafeRewardArtifact"),
+    ],
+)
+def test_host_failure_overrides_reward_error(task, boundary, tmp_path, defect, failure):
+    boundary.rewards["nop"] = b'{"reward":true}'
+    boundary.teardown_defect = defect
+    boundary.cleanup_ok = defect != "cleanup"
+    artifacts = tmp_path / "host-over-reward"
+    report = run_validation(task, artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
+    trial = json.loads((artifacts / "harbor-evidence.json").read_text())["trials"][0]
+    assert trial["failure"] == failure
+    assert trial["reward_error"]
 
 
 def test_oracle_nonzero_exit_fails_oracle_max_and_retains_marker(
