@@ -152,7 +152,7 @@ async def main():
         MAX_ITERATIONS = 5
         TEMPERATURE = 1.0
         MAX_TOKENS = 2048
-        model = os.environ.get("AWM_EXAMPLE_AGENT_MODEL", "gpt-5")
+        model = os.environ.get("AWM_EXAMPLE_AGENT_MODEL", "gpt-5.6-sol")
 
         llm = AsyncOpenAI(
             base_url=os.environ["ENDPOINT_URL"],
