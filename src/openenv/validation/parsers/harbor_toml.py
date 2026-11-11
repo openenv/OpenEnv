@@ -150,14 +150,21 @@ def canary_scripts(package_root: Path, directory: str) -> list[str]:
 def read_harbor_task(package_root: Path):
     """Use the pinned Harbor data loader; constructing a Trial is runtime-only."""
     try:
-        if version("harbor") != "0.25.0":
-            raise ValueError("Harbor task validation requires Harbor 0.25.0")
+        installed = version("harbor")
+    except PackageNotFoundError as exc:
+        raise RuntimeError(
+            "Harbor task validation requires harbor==0.25.0; Harbor is not installed"
+        ) from exc
+    if installed != "0.25.0":
+        raise RuntimeError(
+            f"Harbor task validation requires harbor==0.25.0; installed {installed}"
+        )
+    try:
         from harbor.models.task.task import Task
 
         return Task(package_root)
     except (
         ImportError,
-        PackageNotFoundError,
         OSError,
         ValueError,
         RuntimeError,

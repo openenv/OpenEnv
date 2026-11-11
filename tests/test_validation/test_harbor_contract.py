@@ -1,10 +1,14 @@
 """The trusted Harbor contract accepts explicit numeric JSON declarations."""
 
 import json
+from importlib.metadata import PackageNotFoundError
 
 import pytest
+from openenv.cli.__main__ import app
 from openenv.validation.manifest import ManifestError
+from openenv.validation.parsers import harbor_toml
 from openenv.validation.parsers.harbor_toml import read_harbor_contract
+from typer.testing import CliRunner
 
 
 @pytest.fixture
@@ -72,3 +76,36 @@ def test_hostile_json_is_a_manifest_failure(contract_package, hostile_input):
 
     with pytest.raises(ManifestError):
         read_harbor_contract(contract_package)
+
+
+@pytest.mark.parametrize("installed_version", ["0.22.0", "0.26.0"])
+def test_harbor_version_mismatch_is_a_validator_error(
+    contract_package, monkeypatch, installed_version
+):
+    (contract_package / "task.toml").write_text('schema_version = "1.4"\n')
+    monkeypatch.setattr(harbor_toml, "version", lambda name: installed_version)
+
+    result = CliRunner().invoke(
+        app, ["validate", str(contract_package), "--level", "static", "--skip-build"]
+    )
+
+    assert result.exit_code == 3, result.output
+    assert "harbor==0.25.0" in result.output
+    assert installed_version in result.output
+    assert "static.manifest" not in result.output
+
+
+def test_missing_harbor_is_a_validator_error(contract_package, monkeypatch):
+    (contract_package / "task.toml").write_text('schema_version = "1.4"\n')
+
+    def missing_version(name):
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr(harbor_toml, "version", missing_version)
+    result = CliRunner().invoke(
+        app, ["validate", str(contract_package), "--level", "static", "--skip-build"]
+    )
+
+    assert result.exit_code == 3, result.output
+    assert "harbor==0.25.0" in result.output
+    assert "static.manifest" not in result.output
