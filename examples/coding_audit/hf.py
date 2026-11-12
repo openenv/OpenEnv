@@ -21,18 +21,20 @@ from importlib.metadata import version
 from pathlib import Path, PurePosixPath
 
 from huggingface_hub import HfApi, InferenceClient, Sandbox
-from huggingface_hub.errors import SandboxError
+from huggingface_hub.errors import HfHubHTTPError, SandboxError
 
 from .runner import _candidate_context_paths
 
 _IMAGE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}\Z")
 _REVISION = re.compile(r"[0-9a-f]{40}\Z")
 _TERMINAL = {"COMPLETED", "CANCELED", "ERROR", "DELETED"}
+_PROMPT_FRAMING_ALLOWANCE = 8192
 _LIMITATIONS = [
     "Immutable images are control-plane references, not measured runtime digests.",
     "Sandbox RPC exposes the execution bearer to the workload server; hostile-code credential isolation is not qualified.",
     "The verifier executes submitted code as the same user; verifier integrity against hostile submissions is not qualified.",
     "Inference Providers do not pin served weights to the recorded model source revision.",
+    "Target prompt reservation uses a byte/framing assumption, not a serving-tokenizer or billing guarantee.",
 ]
 _TOOL = {
     "type": "function",
@@ -57,12 +59,21 @@ class _DeadlineExceeded(HFBackendError):
     pass
 
 
+class _TargetBudgetStop(HFBackendError):
+    def __init__(self, reason, *, response_received=False):
+        super().__init__(reason)
+        self.reason = reason
+        self.response_received = response_received
+
+
 @contextmanager
 def _deadline(seconds):
     # SDK control-plane calls have no timeout argument. A controller must run on
     # the main Unix thread so a blocked synchronous SDK call can be interrupted.
     if threading.current_thread() is not threading.main_thread():
         raise HFBackendError("HF coding controller requires the main thread")
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise _DeadlineExceeded("controller deadline exceeded")
     previous_handler = signal.getsignal(signal.SIGALRM)
     previous_timer = signal.getitimer(signal.ITIMER_REAL)
     started = time.monotonic()
@@ -172,6 +183,25 @@ def _local_file(path, limit):
 def _plain(value):
     # HF generated output types derive from dict and preserve extra response fields.
     return json.loads(json.dumps(value))
+
+
+def _retain_usage(receipt, usage):
+    try:
+        encoded = json.dumps(usage, allow_nan=False).encode()
+        if len(encoded) > 65536:
+            raise ValueError("oversized usage")
+    except (TypeError, ValueError):
+        receipt["usage_receipt_error"] = (
+            "nonfinite, non-JSON or oversized usage details"
+        )
+        if isinstance(usage, dict):
+            receipt["usage_counts"] = {
+                key: usage[key]
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                if type(usage.get(key)) is int and usage[key] >= 0
+            }
+    else:
+        receipt["usage"] = usage
 
 
 def _unique_pairs(pairs):
@@ -336,6 +366,8 @@ class HFTaskBackend:
 
     @staticmethod
     def _error(exc):
+        if isinstance(exc, HfHubHTTPError):
+            return f"HF backend operation failed ({type(exc).__name__}; HTTP {exc.response.status_code})"
         return (
             str(exc)
             if isinstance(exc, HFBackendError)
@@ -655,13 +687,15 @@ class HFTaskBackend:
 
     def _chat(self, client, model, allowed, limits, messages, record, seed, *, tools):
         used = record["input_tokens"] + record["output_tokens"]
-        # Bound the request body as well as provider-reported usage. Providers do
-        # not expose a preflight tokenizer through this API.
         message_bytes = len(json.dumps(messages).encode())
         if message_bytes > limits["max_total_tokens"] * 4:
+            if tools:
+                raise _TargetBudgetStop("context_byte_limit")
             raise HFBackendError("chat context exceeds byte budget")
         remaining = limits["max_total_tokens"] - used
         if remaining <= 0:
+            if tools:
+                raise _TargetBudgetStop("total_token_limit")
             raise HFBackendError("model total token budget exhausted")
         request = {
             "messages": self._redact(messages),
@@ -685,32 +719,71 @@ class HFTaskBackend:
             }
         if model.get("supports_seed", False):
             request["seed"] = seed
+        metadata = record["model_metadata"]
+        preflight = None
         if tools:
             request.update(tools=[_TOOL], tool_choice="auto")
-        if not tools:
+            encoded = json.dumps(request, allow_nan=False).encode()
+            reserved_input = len(encoded) + _PROMPT_FRAMING_ALLOWANCE
+            output_allowance = remaining - reserved_input
+            preflight = {
+                "method": "request_utf8_bytes_plus_framing_v1",
+                "reservation_bytes": len(encoded),
+                "request_bytes": len(encoded),
+                "request_sha256": hashlib.sha256(encoded).hexdigest(),
+                "framing_allowance": _PROMPT_FRAMING_ALLOWANCE,
+                "input_token_reservation": reserved_input,
+                "actual_tokens_before": used,
+                "remaining_tokens": remaining,
+                "output_token_cap": max(0, min(limits["max_tokens"], output_allowance)),
+                "dispatched": False,
+            }
+            metadata.setdefault("preflights", []).append(preflight)
+            if output_allowance <= 0:
+                raise _TargetBudgetStop("input_reservation_limit")
+            request["max_tokens"] = preflight["output_token_cap"]
+            encoded = json.dumps(request, allow_nan=False).encode()
+            preflight["request_bytes"] = len(encoded)
+            preflight["request_sha256"] = hashlib.sha256(encoded).hexdigest()
+        else:
             request.update(stream=True, stream_options={"include_usage": True})
-        metadata = record["model_metadata"]
         metadata.setdefault("requests", []).append(
             {key: value for key, value in request.items() if key != "messages"}
         )
         if tools:
-            response = _plain(client.chat_completion(**request))
-            metadata.setdefault("responses", []).append(
+            preflight["dispatched"] = True
+            parsed = client.chat_completion(**request)
+            # Preserve billing evidence before normalizing arbitrary provider
+            # extras: JSON conversion itself can fail after a billed response.
+            receipt = {
+                "seed_sent": request.get("seed"),
+                "response_validated": False,
+                "discarded": True,
+                "tool_calls_processed": 0,
+            }
+            metadata.setdefault("responses", []).append(receipt)
+            _retain_usage(receipt, parsed.usage)
+            response = _plain(parsed)
+            # Access the typed nested value: outer SDK dicts can omit extras.
+            response["usage"] = _plain(parsed.usage)
+            choices = response.get("choices")
+            receipt.update(
                 {
                     "model": response.get("model"),
                     "system_fingerprint": response.get("system_fingerprint"),
                     "id": response.get("id"),
-                    "seed_sent": request.get("seed"),
+                    "finish_reason": choices[0].get("finish_reason")
+                    if isinstance(choices, list)
+                    and len(choices) == 1
+                    and isinstance(choices[0], dict)
+                    else None,
                 }
             )
         else:
             response = self._candidate_response(
                 client, request, allowed, limits, record
             )
-        if response.get("model") not in allowed:
-            raise HFBackendError(
-                "provider response model does not match configured exact identities"
-            )
+            receipt = metadata["responses"][-1]
         usage = response.get("usage")
         if not isinstance(usage, dict):
             raise HFBackendError("provider response omitted token usage")
@@ -725,24 +798,57 @@ class HFTaskBackend:
                 record[target] += value
                 record["usage"][target] += value
         if (
-            usage["completion_tokens"] > request["max_tokens"]
-            or record["input_tokens"] + record["output_tokens"]
+            type(usage.get("total_tokens")) is not int
+            or usage["total_tokens"] < 0
+            or usage["total_tokens"]
+            != usage["prompt_tokens"] + usage["completion_tokens"]
+        ):
+            raise HFBackendError("provider returned inconsistent token usage")
+        if receipt.get("usage_receipt_error"):
+            raise HFBackendError("provider returned invalid usage details")
+        violations = []
+        if usage["completion_tokens"] > request["max_tokens"]:
+            violations.append("response_output_cap")
+        if (
+            record["input_tokens"] + record["output_tokens"]
             > limits["max_total_tokens"]
         ):
-            raise HFBackendError("provider exceeded token budget")
+            violations.append("cumulative_total_cap")
+        if tools and usage["prompt_tokens"] > preflight["input_token_reservation"]:
+            violations.append("input_reservation_contract")
+        if violations:
+            receipt["budget_violations"] = violations
+            raise HFBackendError(
+                "provider exceeded token budget: " + ", ".join(violations)
+            )
+        if response.get("model") not in allowed:
+            raise HFBackendError(
+                "provider response model does not match configured exact identities"
+            )
         choices = response.get("choices", [])
-        if len(choices) != 1 or not isinstance(choices[0].get("message"), dict):
+        if (
+            not isinstance(choices, list)
+            or len(choices) != 1
+            or not isinstance(choices[0].get("message"), dict)
+        ):
             raise HFBackendError("provider must return exactly one assistant message")
         message = choices[0]["message"]
+        if message.get("role") != "assistant":
+            raise HFBackendError("provider must return an assistant message")
         record["transcript"].append(message)
         if len(json.dumps(message).encode()) > limits["max_output_bytes"]:
             raise HFBackendError("model output exceeded byte limit")
-        if choices[0].get("finish_reason") not in {"stop", "tool_calls"}:
+        finish = choices[0].get("finish_reason")
+        if finish == "length" and tools:
+            receipt["response_validated"] = True
+            raise _TargetBudgetStop("response_output_limit", response_received=True)
+        if finish not in {"stop", "tool_calls"}:
             raise HFBackendError("model response was incomplete")
-        if choices[0]["finish_reason"] == "tool_calls" and (
+        if finish == "tool_calls" and (
             not isinstance(message.get("tool_calls"), list) or not message["tool_calls"]
         ):
             raise HFBackendError("invalid terminal function calls")
+        receipt["response_validated"] = True
         return message
 
     def _candidate_response(self, client, request, allowed, limits, record):
@@ -856,6 +962,10 @@ class HFTaskBackend:
                         )
                     event_usage = event.get("usage")
                     if event_usage is not None:
+                        event_usage = _plain(parsed.usage)
+                        _retain_usage(
+                            record["model_metadata"]["responses"][-1], event_usage
+                        )
                         if not stopped:
                             raise HFBackendError("provider returned usage before stop")
                         if not isinstance(event_usage, dict) or any(
@@ -985,12 +1095,22 @@ class HFTaskBackend:
                 instruction = self._candidate_instruction(model, record)
                 model, allowed, limits, client = self._model(model, seed)
                 record["model_metadata"] = self._model_metadata(model, seed)
+                record["model_metadata"]["candidate_output_contract"] = {
+                    "format": "bash_script",
+                    "version": 2,
+                    "submission_paths": list(self.submission_paths),
+                }
                 messages = [
                     {
                         "role": "system",
-                        "content": "Return only a bash script that attempts the task. Do not use Markdown fences.",
+                        "content": "Return only an executable /bin/bash script that creates or edits the required submission files. For source-code solutions, write the source into those files with a quoted heredoc or equivalent; do not return bare Python or other source code. Do not use Markdown fences.",
                     },
-                    {"role": "user", "content": instruction},
+                    {
+                        "role": "user",
+                        "content": instruction
+                        + "\n\nRequired submission files: "
+                        + json.dumps(self.submission_paths),
+                    },
                 ]
                 record["transcript"] = messages
                 message = self._chat(
@@ -1039,20 +1159,34 @@ class HFTaskBackend:
                 record["transcript"] = messages
                 sandbox = self._create(self.execution["agent_image"], record)
                 self._audit_solver(sandbox)
-                calls_used = 0
+                calls_used = validated_responses = 0
+                record["model_metadata"]["completed_response_turns"] = 0
                 for _ in range(limits["max_steps"]):
-                    message = self._chat(
-                        client,
-                        model,
-                        allowed,
-                        limits,
-                        messages,
-                        record,
-                        seed,
-                        tools=True,
-                    )
+                    try:
+                        message = self._chat(
+                            client,
+                            model,
+                            allowed,
+                            limits,
+                            messages,
+                            record,
+                            seed,
+                            tools=True,
+                        )
+                    except _TargetBudgetStop as stop:
+                        if not validated_responses and not stop.response_received:
+                            raise HFBackendError(
+                                "initial target prompt cannot fit token budget"
+                            ) from None
+                        record.update(truncated=True, termination_reason=stop.reason)
+                        break
                     calls = message.get("tool_calls") or []
                     if not calls:
+                        record["model_metadata"]["responses"][-1]["discarded"] = False
+                        validated_responses += 1
+                        record["model_metadata"]["completed_response_turns"] = (
+                            validated_responses
+                        )
                         break
                     if not isinstance(calls, list):
                         raise HFBackendError("invalid terminal function calls")
@@ -1062,42 +1196,73 @@ class HFTaskBackend:
                         )
                         break
                     ids = set()
+                    # Reject ambiguous identities before executing any call in a batch.
                     for call in calls:
                         if (
-                            call.get("type") != "function"
-                            or call.get("function", {}).get("name") != "terminal"
+                            not isinstance(call, dict)
+                            or call.get("type") != "function"
                             or not isinstance(call.get("id"), str)
                             or not call["id"]
                             or call["id"] in ids
+                            or not isinstance(call.get("function"), dict)
+                            or not isinstance(call["function"].get("name"), str)
+                            or not isinstance(call["function"].get("arguments"), str)
                         ):
                             raise HFBackendError("invalid terminal function call")
                         ids.add(call["id"])
-                        arguments = json.loads(
-                            call["function"]["arguments"],
-                            object_pairs_hook=_unique_pairs,
-                        )
-                        if (
-                            not isinstance(arguments, dict)
-                            or set(arguments) != {"command"}
-                            or not isinstance(arguments["command"], str)
-                            or len(arguments["command"].encode()) > self.max_script
-                        ):
-                            raise HFBackendError("invalid terminal function arguments")
+                    for call in calls:
                         calls_used += 1
-                        exit_code, output = self._run(
-                            sandbox,
-                            ["/bin/bash", "-c", arguments["command"]],
-                            started + self.timeout,
-                        )
+                        problem = None
+                        if call["function"]["name"] != "terminal":
+                            problem = "Only the terminal function is available; use terminal(command: string)."
+                        else:
+                            try:
+                                arguments = json.loads(
+                                    call["function"]["arguments"],
+                                    object_pairs_hook=_unique_pairs,
+                                )
+                                if (
+                                    not isinstance(arguments, dict)
+                                    or set(arguments) != {"command"}
+                                    or not isinstance(arguments["command"], str)
+                                    or len(arguments["command"].encode())
+                                    > self.max_script
+                                ):
+                                    problem = "terminal requires exactly one bounded string argument named command."
+                            except (ValueError, TypeError):
+                                problem = "terminal arguments must be a unique JSON object with one command string."
+                        if problem:
+                            content = json.dumps({"error": problem})
+                            if len(content.encode()) > self.max_output:
+                                raise HFBackendError(
+                                    "tool error feedback exceeds byte limit"
+                                )
+                            record["model_metadata"]["tool_error_count"] = (
+                                record["model_metadata"].get("tool_error_count", 0) + 1
+                            )
+                        else:
+                            exit_code, output = self._run(
+                                sandbox,
+                                ["/bin/bash", "-c", arguments["command"]],
+                                started + self.timeout,
+                            )
+                            content = json.dumps(
+                                {"exit_code": exit_code, "output": output}
+                            )
                         messages.append(
                             {
                                 "role": "tool",
                                 "tool_call_id": call["id"],
-                                "content": json.dumps(
-                                    {"exit_code": exit_code, "output": output}
-                                ),
+                                "content": content,
                             }
                         )
+                        receipt = record["model_metadata"]["responses"][-1]
+                        receipt["tool_calls_processed"] += 1
+                        receipt["discarded"] = False
+                    validated_responses += 1
+                    record["model_metadata"]["completed_response_turns"] = (
+                        validated_responses
+                    )
                 else:
                     record.update(truncated=True, termination_reason="step_limit")
                 record["files"] = self._collect(sandbox)
