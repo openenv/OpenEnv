@@ -129,8 +129,9 @@ workspace with `..`, a symlink, a socket, a fifo, a device, or a submission over
 `state.submission_refused`. Files that a shell or a test runner reads before the
 first assertion are left behind even when a declared directory contains them:
 the login files a shell reads (`.bash_profile`, `.bash_login`, `.profile`,
-`.bashrc`), what Python runs before an import (`sitecustomize.py`, `*.pth`,
-`conftest.py`), and every file pytest takes options from (`pytest.ini`,
+`.bashrc`, `.bash_logout`), what Python runs before an import
+(`sitecustomize.py`, `usercustomize.py`, `*.pth`, `conftest.py`), and every
+file pytest takes options from (`pytest.ini`,
 `.pytest.ini`, `pytest.toml`, `.pytest.toml`, `pyproject.toml`, `setup.cfg`,
 `tox.ini`), since any of them can carry `addopts = --co` and report success
 without running a test. Declaring one of those exactly still submits it, since
@@ -138,7 +139,12 @@ naming it is the task author's decision.
 
 Because the submission is no longer in the workspace, a task that opts in writes
 its verify commands against `/submission`. The task's own test files keep coming
-from its `setup` commands, so nothing the agent submits can replace them.
+from its `setup` commands, so the copy cannot replace them.
+
+The boundary covers what the agent leaves in its own sandbox, not the code it
+submits. A verify command that imports or runs the submission runs that code as
+root in the verifier sandbox, where it can do anything root can, including
+ending the test process with status 0 and writing the reward file.
 
 The cost is one extra sandbox per scored rollout, which is why it is opt-in
 rather than the default.

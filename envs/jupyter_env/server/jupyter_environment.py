@@ -431,6 +431,8 @@ class JupyterEnvironment(MCPEnvironment):
         """
         verifier = self._new_sandbox()
         try:
+            # As in reset, so setup finds the same directories in both sandboxes.
+            verifier.run_command("mkdir -p /home/user/logs/verifier")
             setup_results = [
                 _command_result_from_cell_result(command, verifier.run_command(command))
                 for command in self._state.setup_commands

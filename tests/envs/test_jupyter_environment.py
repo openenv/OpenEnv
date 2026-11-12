@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -488,15 +489,19 @@ class _Files:
 
     def read(self, path: str, format: str = "text"):
         data = self._local(path).read_bytes()
-        return data if format == "bytes" else data.decode()
+        # The SDK returns a bytearray for format="bytes".
+        return bytearray(data) if format == "bytes" else data.decode()
 
     def write(self, path: str, content) -> None:
+        # Like the SDK, accepts str or bytes and refuses anything else.
         target = self._local(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, bytes):
             target.write_bytes(content)
-        else:
+        elif isinstance(content, str):
             target.write_text(content)
+        else:
+            raise TypeError(f"Unsupported data type for file {path}")
 
 
 def _sandbox_on(home, sandbox_id="fake-sandbox"):
@@ -769,10 +774,27 @@ def _setup_commands():
 
 def _verify_commands(submission_subdir=""):
     source = f"/submission/{submission_subdir}".rstrip("/")
+    # The interpreter by path: some hosts' /etc/profile resets PATH for the
+    # login shell the stand-in runs.
     return [
         f"cd /home/user/tests && cp {source}/* . 2>/dev/null; "
-        "python -m pytest -q -p no:cacheprovider test_add.py"
+        f"{shlex.quote(sys.executable)} -m pytest -q -p no:cacheprovider test_add.py"
     ]
+
+
+def _find_has_printf() -> bool:
+    done = subprocess.run(
+        ["find", ".", "-maxdepth", "0", "-printf", ""],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+    )
+    return done.returncode == 0
+
+
+# The listing uses GNU find, as E2B's template has; macOS ships BSD find.
+_needs_gnu_find = pytest.mark.skipif(
+    not _find_has_printf(), reason="the submission listing needs GNU find"
+)
 
 
 def _write_cell(path, text):
@@ -798,6 +820,7 @@ def _submission_episode(
     return env, agent_home, verifier_home, verifier_processes
 
 
+@_needs_gnu_find
 def test_a_wrong_answer_scores_zero_in_a_fresh_sandbox(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     agent = tmp_path / "agent"
@@ -811,6 +834,7 @@ def test_a_wrong_answer_scores_zero_in_a_fresh_sandbox(monkeypatch, tmp_path):
     assert env.state.submission_refused == []
 
 
+@_needs_gnu_find
 def test_a_right_answer_scores_one_in_a_fresh_sandbox(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     agent = tmp_path / "agent"
@@ -824,6 +848,7 @@ def test_a_right_answer_scores_one_in_a_fresh_sandbox(monkeypatch, tmp_path):
     assert (verifier_home / "submission/solution.py").read_text() == _RIGHT_ANSWER
 
 
+@_needs_gnu_find
 def test_a_cheating_conftest_under_a_declared_directory_is_left_behind(
     monkeypatch, tmp_path
 ):
@@ -847,6 +872,7 @@ def test_a_cheating_conftest_under_a_declared_directory_is_left_behind(
     assert not (verifier_home / "submission/work/conftest.py").exists()
 
 
+@_needs_gnu_find
 def test_a_rewritten_task_test_does_not_replace_the_one_setup_wrote(
     monkeypatch, tmp_path
 ):
@@ -890,6 +916,7 @@ def test_a_poisoned_login_profile_does_not_reach_a_fresh_sandbox(monkeypatch, tm
     assert env.state.last_reward == 0.0
 
 
+@_needs_gnu_find
 @pytest.mark.parametrize(
     "declared", ["/etc/passwd", "../outside.txt", "work/../../outside.txt"]
 )
@@ -906,6 +933,7 @@ def test_a_path_outside_the_workspace_is_refused(monkeypatch, tmp_path, declared
     assert env.state.last_reward == 1.0
 
 
+@_needs_gnu_find
 def test_a_symlink_is_reported_rather_than_followed(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     agent = tmp_path / "agent"
@@ -920,6 +948,36 @@ def test_a_symlink_is_reported_rather_than_followed(monkeypatch, tmp_path):
 
     assert any("not a regular file" in r for r in env.state.submission_refused)
     assert not (verifier_home / "submission/secrets.txt").exists()
+
+
+def test_a_listed_path_that_leaves_the_workspace_is_refused():
+    """The listing comes from the agent's sandbox, so a path in it gets the
+    same check as a declared one before anything is written to it."""
+    files, refusals = submission.parse_listing("work", "f\t5\t../../outside.txt\n")
+
+    assert files == []
+    assert refusals == ["leaves the workspace: 'work/../../outside.txt'"]
+
+
+def test_setup_in_the_verifier_sandbox_finds_the_verifier_log_directory(
+    monkeypatch, tmp_path
+):
+    """Reset creates it before setup runs, and so does the verifier sandbox."""
+    monkeypatch.chdir(tmp_path)
+    agent_home, verifier_home = tmp_path / "agent", tmp_path / "verifier"
+    agent_home.mkdir()
+    verifier_home.mkdir()
+    env, _, _, _ = _environment_with_a_verifier_sandbox(
+        agent_home,
+        verifier_home,
+        ["true"],
+        ["answer.txt"],
+        setup_commands=["test -d /home/user/logs/verifier"],
+    )
+
+    _submit_answer(env)
+
+    assert [result.success for result in env.state.verify_results] == [True]
 
 
 def test_no_declared_paths_keeps_verification_in_the_agent_sandbox(
@@ -967,7 +1025,9 @@ def test_setup_failing_in_the_verifier_sandbox_is_not_a_reward(monkeypatch, tmp_
         ".bash_login",
         ".profile",
         ".bashrc",
+        ".bash_logout",
         "sitecustomize.py",
+        "usercustomize.py",
         "answer.pth",
         "conftest.py",
         "pytest.ini",

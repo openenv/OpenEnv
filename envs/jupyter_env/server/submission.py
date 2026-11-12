@@ -18,13 +18,16 @@ WORKSPACE = "/home/user"
 # import-time hooks, and a test runner's configuration and fixtures.
 EXCLUDED_NAMES = frozenset(
     {
-        # A login shell reads the first of these that it can.
+        # A login shell reads the first of these that it can, and
+        # `.bash_logout` when it exits.
         ".bash_profile",
         ".bash_login",
         ".profile",
         ".bashrc",
+        ".bash_logout",
         # Python runs these on the way to importing anything.
         "sitecustomize.py",
+        "usercustomize.py",
         "conftest.py",
         # Every one of these can carry `addopts = --co`, which collects the
         # tests without running them and reports success.
@@ -52,11 +55,12 @@ class SubmissionFile:
 
 
 def check_declared_path(path: str) -> Optional[str]:
-    """Refuse a `submit_paths` entry, or return `None` to accept it.
+    """Refuse a `submit_paths` entry or a path listed under one, or return `None`.
 
     Args:
         path (`str`):
-            The entry as the task declared it.
+            The entry as the task declared it, or a path [`parse_listing`] found
+            under it.
 
     Returns:
         `str` or `None`: why the entry was refused, or `None` when it is usable.
@@ -98,6 +102,10 @@ def parse_listing(
 ) -> Tuple[List[SubmissionFile], List[str]]:
     """Turn one [`listing_command`] result into files to copy and refusals.
 
+    The listing runs in the agent's sandbox, through a login shell the agent can
+    rewrite, so its output is the agent's to choose. Each path in it is checked
+    like a declared one before anything is copied to it.
+
     Args:
         declared_path (`str`):
             The entry being expanded, used to build workspace-relative paths.
@@ -119,6 +127,11 @@ def parse_listing(
         # find prints an empty %P for the path it was given, so an empty one
         # means the declared path is itself the file.
         relative = f"{declared_path}/{below}" if below else declared_path
+        # A `..` here would write the copy outside the submission directory.
+        reason = check_declared_path(relative)
+        if reason:
+            refusals.append(reason)
+            continue
         if kind != "f":
             refusals.append(f"not a regular file: {relative!r}")
             continue
