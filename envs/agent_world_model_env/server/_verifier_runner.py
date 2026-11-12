@@ -27,8 +27,17 @@ Protocol:
         For mode == "code":
             {"result": "complete"|"others",
              "execution_status": "success"|"error",
+             "uses_final_answer"?: bool,
              "raw_result"?: <verifier return>,
-             "error_message"?: str}
+             "error_message"?: str,
+             "error_kind"?: "compile"|"not_found"|"execution"|"invalid_return"}
+
+    ``uses_final_answer`` reports the verifier contract: whether the
+    verifier function consumes the final answer (a ``final_answer``
+    parameter, or a positional parameter in that slot). ``error_kind``
+    separates failures raised by the verifier's own code ("execution")
+    from broken verifier code; subprocess/infrastructure failures are
+    produced by the parent process and carry neither field.
 """
 
 from __future__ import annotations
@@ -291,6 +300,20 @@ def _sanitize_for_json(obj: Any) -> Any:
         return str(obj)
 
 
+def _verifier_uses_final_answer(verify_func: Any) -> bool:
+    """Whether calling the verifier passes it the final answer.
+
+    Mirrors the dispatch in _call_verifier_func: the answer is passed
+    when the function declares a ``final_answer`` parameter, or when it
+    is called positionally with at least three parameters.
+    """
+    params = inspect.signature(verify_func).parameters
+    if "final_answer" in params:
+        return True
+    named = {"initial_db_path", "final_db_path"} & params.keys()
+    return not named and len(params) >= 3
+
+
 def _call_verifier_func(
     verify_func: Any,
     initial_db_path: str,
@@ -341,6 +364,7 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 "result": "others",
                 "execution_status": "error",
+                "error_kind": "compile",
                 "error_message": f"Compile error: {e}",
             }
         return {"execution_status": "error", "error_message": f"Compile error: {e}"}
@@ -351,6 +375,7 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 "result": "others",
                 "execution_status": "error",
+                "error_kind": "not_found",
                 "error_message": f"Function '{function_name}' not found",
             }
         return {
@@ -367,6 +392,7 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 "result": "others",
                 "execution_status": "error",
+                "error_kind": "execution",
                 "error_message": f"Execution error: {e}",
             }
         return {"execution_status": "error", "error_message": f"Execution error: {e}"}
@@ -376,6 +402,7 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 "result": "others",
                 "execution_status": "error",
+                "error_kind": "invalid_return",
                 "error_message": f"Invalid return format: {type(result).__name__}",
             }
         result_value = result.get("result", "others")
@@ -384,6 +411,7 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "result": result_value,
             "execution_status": "success",
+            "uses_final_answer": _verifier_uses_final_answer(verify_func),
             "raw_result": _sanitize_for_json(result),
         }
 

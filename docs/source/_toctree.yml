@@ -49,6 +49,8 @@
       title: Train a Reasoning Model
     - local: tutorials/wordle-grpo
       title: Train a Wordle Agent
+    - local: tutorials/sudoku-grpo
+      title: Train a Sudoku Agent
     - local: tutorials/rl-training-2048
       title: Play 2048 with GRPO
     - local: tutorials/sft-warmup
@@ -141,6 +143,8 @@
     title: QED Math
   - local: environments/reasoning_gym
     title: Reasoning Gym
+  - local: environments/spatial_gym
+    title: Spatial-Gym
   - local: environments/tau2
     title: τ²-bench
   - local: environments/tbench2
@@ -159,6 +163,8 @@
     title: Post-training
   - local: environments/sophistry_bench_sprint
     title: Sophistry Bench Sprint
+  - local: environments/ortools
+    title: OR-Tools
   title: Environments
 - isExpanded: false
   sections:

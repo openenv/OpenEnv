@@ -111,6 +111,45 @@
       "title": "ExecutionDeclaration",
       "type": "object"
     },
+    "HarborExecutionDeclaration": {
+      "additionalProperties": false,
+      "description": "Native process execution of a Harbor task through fresh Docker trials.",
+      "properties": {
+        "agent_boundary": {
+          "const": "process",
+          "default": "process",
+          "title": "Agent Boundary",
+          "type": "string"
+        },
+        "contract_path": {
+          "const": "validation/openenv.json",
+          "default": "validation/openenv.json",
+          "title": "Contract Path",
+          "type": "string"
+        },
+        "kind": {
+          "const": "harbor_task",
+          "title": "Kind",
+          "type": "string"
+        },
+        "profile": {
+          "const": "harbor-semantic-v1",
+          "default": "harbor-semantic-v1",
+          "title": "Profile",
+          "type": "string"
+        },
+        "requires_credentials": {
+          "default": false,
+          "title": "Requires Credentials",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "HarborExecutionDeclaration",
+      "type": "object"
+    },
     "JudgePin": {
       "additionalProperties": false,
       "description": "Pinned judge configuration. Required iff `capabilities.llm_judged`.\n\nThe pin lives in the manifest, not the rubric object: `LLMJudge.state_dict()` does\nnot serialize model/version/params, so validation checks the declared pin.",
@@ -234,7 +273,7 @@
     },
     "RewardDeclaration": {
       "additionalProperties": false,
-      "description": "Author-declared reward contract. Graders normalize measurements against it.\n\nDeclared tolerances are bounded by the severity policy; reports carry the declared\nvalues so hubs can apply stricter ceilings.\n\nAttributes:\n    range (`tuple[float, float]`):\n        Declared reward range, defaults to `(0.0, 1.0)`. Must be strictly increasing.\n    oracle_tolerance (`float`):\n        The oracle check passes when `reward(oracle) >= max - oracle_tolerance`.\n    floor_margin (`float`):\n        The gap check requires `max - measured_floor >= floor_margin`.\n    variance_tolerance (`float`, *optional*):\n        Required iff the environment declares `llm_judged`; bounds reward variance\n        for variance-mode determinism checks.",
+      "description": "Author-declared reward contract. Graders normalize measurements against it.\n\nDeclared tolerances are bounded by the severity policy; reports carry the declared\nvalues so hubs can apply stricter ceilings.\n\nAttributes:\n    range (`tuple[float, float]`):\n        Declared reward range, defaults to `(0.0, 1.0)`. Must be strictly increasing.\n    oracle_tolerance (`float`):\n        Fraction of the declared range allowed below the maximum.\n        The oracle check requires `reward(oracle) >= max - oracle_tolerance * width`,\n        where `width = max - min`.\n    floor_margin (`float`):\n        Fraction of the declared range required below the maximum and every oracle.\n        Both `max - measured_floor` and `reward(oracle) - measured_floor` must be\n        at least `floor_margin * width`.\n    variance_tolerance (`float`, *optional*):\n        Required iff the environment declares `llm_judged`; bounds reward variance\n        for variance-mode determinism checks.",
       "properties": {
         "floor_margin": {
           "minimum": 0.0,
@@ -398,7 +437,15 @@
       "$ref": "#/$defs/CapabilitiesSpec"
     },
     "execution": {
-      "$ref": "#/$defs/ExecutionDeclaration"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutionDeclaration"
+        },
+        {
+          "$ref": "#/$defs/HarborExecutionDeclaration"
+        }
+      ],
+      "title": "Execution"
     },
     "judge": {
       "anyOf": [
