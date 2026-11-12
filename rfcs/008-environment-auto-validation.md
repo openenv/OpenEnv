@@ -739,17 +739,26 @@ reward key, range, oracle tolerance, floor margin, finite resource budgets and,
 optionally, a directory of canaries. Harbor metadata and observed rewards never
 supply these declarations. The normalized schema-2 execution kind is `harbor_task`,
 with a `process` agent boundary. Parsing uses Harbor's data-only Task loader and
-never creates a Trial or executes package code.
+never creates a Trial or executes package code. Numeric strings in numeric fields,
+oversized integers and excessive JSON nesting fail `static.manifest`. Reward and
+resource numbers must retain their exact value when stored as floats.
+`resources.gpu_types` remains a list of strings.
 
 The profile requires Python 3.12 or newer and `harbor==0.25.0` alongside
 `openenv[harbor]`. A missing or mismatched Harbor installation is a validator
-environment error, not a package failure.
+environment error. It exits 3 and names `harbor==0.25.0`.
 
 The profile supports single-step Linux tasks with one Dockerfile, one main Docker
-service, a shared verifier and public networking. Task-declared `docker_image`
-values are refused. The NOP trial must build from the task's Dockerfile.
-Accelerators, external MCP services, task environment variables, credentials and
-Harbor extensions such as healthchecks or artifacts are refused with the reason named.
+service, a shared verifier and public networking. Unsupported shapes include
+multi-step or non-Linux tasks, task-declared `environment.docker_image`, missing
+Dockerfiles, task-authored Compose files and separate verifier environments.
+GPU/TPU or external MCP requirements, credentials, non-public or differing phase
+networks, task environment variables, healthchecks, skills, verifier collection and
+artifact extensions are also unsupported. A supplied provider, including `--space`,
+is unsupported. Each case gives `runtime.startup` SKIP with a named reason and runs
+no trials. With valid static declarations and an oracle, the verdict is WARN and
+the exit code is 0. A missing `solution/solve.sh` still FAILs `semantic.oracle_max`
+at the semantic level, including with `--skip-build` or `--space`.
 
 Execution runs fresh Harbor Trials in a fixed order: a do-nothing (NOP) trial, the
 oracle (`solution/solve.sh`), an oracle replay, and one trial per declared canary.
@@ -757,9 +766,19 @@ The NOP trial builds the image. The validator inspects the actual agent containe
 at `AGENT_START`, retains its immutable image under a run-owned tag, and pins every
 later trial to that image and its effective container configuration.
 
+The initial image build and environment start share a separate 600-second validator
+budget. Exceeding it gives `runtime.startup` ERROR. Later environment starts use the
+episode budget. There is no shared outer trial deadline. Harbor bounds setup, agent
+and verifier separately with the declared `resources.episode_timeout_s`. A timeout
+in one of these phases is a package FAIL that names the phase.
+
 The validator keeps `openenv-validation:<run id>` only when the run has no FAIL or
 ERROR and was not interrupted. It records the tag in `runtime.startup.measured`
-as `retained_image_tag`. Otherwise it removes the tag.
+as `retained_image_tag`. Otherwise it removes the tag. The run-owned Compose build
+tag is removed on every run. Tag removal verifies image identity and uses
+`--no-prune`. A removal failure marks cleanup incomplete and gives a startup ERROR.
+During an abort, cleanup preserves the original exception and records the removal
+failure.
 
 Each trial runs on a private copy of the task whose digest must equal the validated
 source digest before any overlay. A canary trial replaces `solution/solve.sh` in its

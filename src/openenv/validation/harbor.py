@@ -116,6 +116,12 @@ class DockerInspector:
             if any(not _RESOURCE_ID.fullmatch(item) for item in ids):
                 raise NativeEvidenceError("invalid Docker resource identity")
             inventory[kind] = ids
+        images = self._docker(
+            "image", "ls", "-q", "--no-trunc", project + "-main:latest"
+        ).split()
+        if len(images) > 1 or any(not _IMAGE_ID.fullmatch(image) for image in images):
+            raise NativeEvidenceError("invalid Compose image identity")
+        inventory["images"] = images
         return inventory
 
     def capture(self, project, retained_tag, *, retain=True):
@@ -231,6 +237,19 @@ class DockerInspector:
                 remaining = [name for name in remaining if name in existing]
             if remaining:
                 self._docker(*args, *remaining)
+        for image_ref in before["images"]:
+            tag = project + "-main:latest"
+            image = json.loads(self._docker("image", "inspect", tag))[0]
+            labels = image["Config"]["Labels"]
+            if (
+                image["Id"] != image_ref
+                or labels.get("com.docker.compose.project") != project
+                or labels.get("com.docker.compose.service") != "main"
+            ):
+                raise NativeEvidenceError(
+                    "Compose image ownership changed before removal"
+                )
+            self._docker("image", "rm", "--no-prune", tag)
         after = self.inventory(project)
         if registered:
             existing = set(self._docker("volume", "ls", "-q").split())
@@ -510,7 +529,9 @@ async def _trial(
         record["execution_task_digest"] = digest_before
         record["task_overlay"] = overlay
         budget = contract.resources.episode_timeout_s
-        build_budget = DockerValidationProvider().build_timeout_s
+        build_budget = (
+            DockerValidationProvider().build_timeout_s if not expected else budget
+        )
         config = TrialConfig(
             task=TaskConfig(path=task_copy.resolve()),
             agent=AgentConfig(
@@ -538,7 +559,8 @@ async def _trial(
         record["trial_config_digest"] = _digest(effective_config)
         record["resources"] = contract.resources.model_dump()
         trial = await _create_trial(config)
-        trial._environment_build_timeout_sec = build_budget if not expected else budget
+        record["harbor_build_timeout_s"] = trial._environment_build_timeout_sec
+        trial._environment_build_timeout_sec = build_budget
         if not expected:
             record["build_timeout_s"] = build_budget
             start_environment = trial.agent_environment.start
@@ -610,8 +632,11 @@ async def _trial(
                     )
                 record["reward_error"] = True
                 raise NativeEvidenceError(f"Harbor verifier reward failed ({failure})")
+            if failure == "EnvironmentStartTimeoutError":
+                raise NativeEvidenceError(
+                    f"validator build/start exceeded its {build_budget:g}-second budget"
+                )
             subject_phase = {
-                "EnvironmentStartTimeoutError": "environment build/start",
                 "SandboxBuildFailedError": "environment build/start",
                 "AgentSetupTimeoutError": "agent setup",
                 "AgentTimeoutError": "agent",
@@ -651,8 +676,11 @@ async def _trial(
     except (Exception, KeyboardInterrupt) as exc:
         record["failure"] = type(exc).__name__
         if isinstance(exc, TimeoutError):
-            record["subject_error"] = phase
-            record["reason"] = f"Harbor subject timed out during {phase}"
+            record["reason"] = (
+                f"validator build/start exceeded its {build_budget:g}-second budget"
+                if phase == "environment build/start"
+                else f"unexpected Harbor timeout during {phase}"
+            )
         # Error categories are safe; task-authored exception messages/logs are not.
         if isinstance(exc, NativeEvidenceError):
             record["reason"] = str(exc)
@@ -821,7 +849,6 @@ def validate_harbor(
         record["harbor"]["commit_id"] = installed.get("vcs_info", {}).get("commit_id")
     files = {}
     inspector = DockerInspector()
-    completed = False
     try:
         attempted = False
         problem = _unsupported(read_harbor_task(subject.root), contract)
@@ -927,6 +954,9 @@ def validate_harbor(
                                     for trial in broken
                                 ]
                             },
+                        )
+                        startup.evidence.extend(
+                            trial["reason"] for trial in broken if "reason" in trial
                         )
                         if malformed:
                             reward_result = _result(
@@ -1154,8 +1184,15 @@ def validate_harbor(
                 path.chmod(0o600)
                 checksums += f"{hashlib.sha256(raw).hexdigest()}  {name}\n"
             (artifacts_dir / "SHA256SUMS").write_text(checksums)
-        completed = True
         return report
-    finally:
-        if not completed:
+    except BaseException as original:
+        try:
             inspector.remove_image()
+        except (Exception, KeyboardInterrupt) as exc:
+            record["cleanup"].update(
+                verified=False, completed=False, failure=type(exc).__name__
+            )
+            original.add_note(
+                f"retained image removal failed ({type(exc).__name__}); cleanup incomplete"
+            )
+        raise

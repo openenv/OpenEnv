@@ -129,6 +129,10 @@ values, so the NOP trial builds from the task's Dockerfile. The validator keeps
 interrupted. It records the tag in `runtime.startup.measured` as
 `retained_image_tag`. Otherwise it removes the tag.
 
+**Follow-up.** Tasks that ship only a prebuilt image cannot run under
+`harbor-semantic-v1`. Some Terminal Bench tasks are affected. Supporting them needs
+a reviewable Dockerfile path or digest-pinned image support.
+
 **Remaining.** Decide which runtime ids apply to one-shot tasks. Containment,
 network policy, resource bounds and oracle containment could apply. Observation
 schema, state contract and tool declaration accuracy do not.

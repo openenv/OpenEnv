@@ -12,6 +12,7 @@ from openenv.validation.manifest import ManifestError
 from openenv.validation.parsers.harbor_toml import (
     HarborTaskParser,
     read_harbor_contract,
+    read_harbor_task,
 )
 from openenv.validation.runner import run_validation, source_digest
 from openenv.validation.types import CheckStatus, Level, SignatureKind, Verdict
@@ -66,6 +67,7 @@ def boundary(monkeypatch, task):
         oracle_exit=None,
         exception=False,
         exception_type=None,
+        exception_phase="environment build/start",
         no_identity=False,
         timeout=False,
         retained=True,
@@ -79,6 +81,7 @@ def boundary(monkeypatch, task):
         cleanup_calls=[],
         preflight_error=None,
         interrupt_role=None,
+        on_build=None,
     )
 
     class Inspector:
@@ -150,6 +153,9 @@ def boundary(monkeypatch, task):
             )
             self.hooks = {}
             self._openenv_cancelled_compose = []
+            self._environment_build_timeout_sec = read_harbor_task(
+                config.task.path
+            ).config.environment.build_timeout_sec
             state.excluded_copied.append(
                 (config.task.path / "environment/.worktrees").exists()
             )
@@ -166,6 +172,8 @@ def boundary(monkeypatch, task):
                 self.paths.reward_json_path.symlink_to("outside-reward.json")
 
         async def start(self, *, force_build):
+            if self.role == "nop" and state.on_build is not None:
+                state.on_build(self.agent_environment.session_id)
             if state.pending_compose:
                 self._openenv_cancelled_compose.append(
                     {
@@ -186,21 +194,43 @@ def boundary(monkeypatch, task):
         async def run(self):
             for hook in self.hooks.get("environment-start", []):
                 await hook(None)
-            if state.exception_type in ("RuntimeError", "EnvironmentStartTimeoutError"):
+            if (
+                state.exception_type in ("RuntimeError", "EnvironmentStartTimeoutError")
+                and state.exception_phase == "environment build/start"
+            ):
                 return SimpleNamespace(
                     exception_info=SimpleNamespace(exception_type=state.exception_type),
                     verifier_result=None,
                 )
-            await self.agent_environment.start(force_build=False)
+            from harbor.trial.trial import (
+                EnvironmentStartTimeoutError,
+                Trial as HarborTrial,
+            )
+
+            try:
+                await HarborTrial._start_agent_environment(self)
+            except EnvironmentStartTimeoutError:
+                return SimpleNamespace(
+                    exception_info=SimpleNamespace(
+                        exception_type="EnvironmentStartTimeoutError"
+                    ),
+                    verifier_result=None,
+                )
             if not state.no_identity:
                 for hook in self.hooks.get("agent-start", []):
                     await hook(None)
             if self.role == state.interrupt_role:
                 raise KeyboardInterrupt
-            await asyncio.wait_for(
-                asyncio.sleep(state.agent_delay),
-                timeout=self.config.agent.override_timeout_sec,
-            )
+            try:
+                await asyncio.wait_for(
+                    asyncio.sleep(state.agent_delay),
+                    timeout=self.config.agent.override_timeout_sec,
+                )
+            except TimeoutError:
+                return SimpleNamespace(
+                    exception_info=SimpleNamespace(exception_type="AgentTimeoutError"),
+                    verifier_result=None,
+                )
             if state.timeout:
                 raise TimeoutError()
             raw = state.rewards.get(self.role, state.rewards[self.agent])
@@ -255,8 +285,22 @@ def boundary(monkeypatch, task):
 @pytest.fixture
 def image_docker(boundary, monkeypatch):
     state = SimpleNamespace(
-        images={"unrelated:tag": IMAGE}, removed=set(), commands=[], image_os="linux"
+        images={"unrelated:tag": IMAGE},
+        removed=set(),
+        commands=[],
+        image_os="linux",
+        remove_error=False,
+        retained_remove_error=False,
+        image_drift=False,
+        foreign_image=False,
     )
+
+    def built(project):
+        state.images[project + "-main:latest"] = (
+            "sha256:" + "e" * 64 if state.foreign_image else IMAGE
+        )
+
+    boundary.on_build = built
 
     def docker(self, *args):
         state.commands.append(args)
@@ -299,9 +343,36 @@ def image_docker(boundary, monkeypatch):
         if args[:2] == ("image", "tag"):
             state.images[args[3]] = args[2]
             return ""
+        if args[:2] == ("image", "ls"):
+            assert args[2:4] == ("-q", "--no-trunc")
+            return state.images.get(args[4], "")
         if args[:2] == ("image", "inspect"):
-            return json.dumps([{"Id": state.images[args[2]], "Os": state.image_os}])
+            image = state.images[args[2]]
+            if state.image_drift and args[2].endswith("-main:latest"):
+                image = "sha256:" + "e" * 64
+            project = args[2].removesuffix("-main:latest")
+            return json.dumps(
+                [
+                    {
+                        "Id": image,
+                        "Os": state.image_os,
+                        "Config": {
+                            "Labels": {
+                                "com.docker.compose.project": "unrelated"
+                                if state.foreign_image
+                                else project,
+                                "com.docker.compose.service": "main",
+                            }
+                        },
+                    }
+                ]
+            )
         if args[:3] == ("image", "rm", "--no-prune"):
+            if (state.remove_error and args[3].endswith("-main:latest")) or (
+                state.retained_remove_error
+                and args[3].startswith("openenv-validation:")
+            ):
+                raise OSError("image removal failed")
             del state.images[args[3]]
             return ""
         if args[:3] == ("rm", "-f", "-v"):
@@ -443,7 +514,12 @@ def test_retained_image_policy(task, boundary, image_docker, tmp_path, outcome):
     report = run_validation(task, artifacts_dir=artifacts)
     tag = "openenv-validation:" + boundary.trials[0].config.trial_name.split("-")[2]
     measured = result(report, "runtime.startup").measured
-    removals = [cmd for cmd in image_docker.commands if cmd[:2] == ("image", "rm")]
+    compose_tag = boundary.trials[0].agent_environment.session_id + "-main:latest"
+    removals = [
+        cmd
+        for cmd in image_docker.commands
+        if cmd[:2] == ("image", "rm") and cmd[3] != compose_tag
+    ]
     if outcome == "kept":
         assert report.verdict is Verdict.WARN
         assert measured["retained_image_tag"] == tag
@@ -463,6 +539,51 @@ def test_retained_image_policy(task, boundary, image_docker, tmp_path, outcome):
     )
 
 
+@pytest.mark.parametrize("keep", [True, False], ids=["kept", "removed"])
+def test_compose_build_tag_is_removed_on_every_run(
+    task, boundary, image_docker, tmp_path, keep
+):
+    if not keep:
+        boundary.rewards["nop"] = b'{"reward":1}'
+    report = run_validation(task, artifacts_dir=tmp_path / "compose-tags")
+    project = boundary.trials[0].agent_environment.session_id
+    compose_tag = project + "-main:latest"
+    retained_tag = "openenv-validation:" + project.split("-")[2]
+    expected = {"unrelated:tag": IMAGE}
+    if keep:
+        expected[retained_tag] = IMAGE
+        assert (
+            result(report, "runtime.startup").measured["retained_image_tag"]
+            == retained_tag
+        )
+    assert image_docker.images == expected
+    removal = ("image", "rm", "--no-prune", compose_tag)
+    index = image_docker.commands.index(removal)
+    assert image_docker.commands[index - 1] == ("image", "inspect", compose_tag)
+    assert image_docker.removed == {trial.role for trial in boundary.trials}
+
+
+@pytest.mark.parametrize("defect", ["remove_error", "image_drift", "foreign_image"])
+def test_compose_tag_cleanup_failure_is_a_startup_error(
+    task, boundary, image_docker, tmp_path, defect
+):
+    setattr(image_docker, defect, True)
+    artifacts = tmp_path / "compose-cleanup"
+    report = run_validation(task, artifacts_dir=artifacts)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert "retained_image_tag" not in startup.measured
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert not native["cleanup"]["verified"]
+    assert native["trials"][0]["failure"] == "CleanupNotVerified"
+    assert "unrelated:tag" in image_docker.images
+    if defect in {"image_drift", "foreign_image"}:
+        assert not any(
+            cmd[:2] == ("image", "rm") and cmd[3].endswith("-main:latest")
+            for cmd in image_docker.commands
+        )
+
+
 @pytest.mark.parametrize("error", [KeyboardInterrupt, OSError])
 def test_retained_image_removed_when_reporting_does_not_complete(
     task, boundary, image_docker, tmp_path, monkeypatch, error
@@ -475,6 +596,31 @@ def test_retained_image_removed_when_reporting_does_not_complete(
         run_validation(task, artifacts_dir=tmp_path / "interrupted-report")
     assert image_docker.images == {"unrelated:tag": IMAGE}
     assert len(boundary.trials) == 3
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt, OSError])
+def test_image_removal_failure_preserves_the_reporting_exception(
+    task, boundary, image_docker, tmp_path, monkeypatch, error
+):
+    original = error()
+    cleanup = {}
+
+    def interrupted(*args, **kwargs):
+        nonlocal cleanup
+        cleanup = kwargs["cleanup"]
+        raise original
+
+    image_docker.retained_remove_error = True
+    monkeypatch.setattr(harbor, "write_runtime_bundle", interrupted)
+    with pytest.raises(error) as caught:
+        run_validation(task, artifacts_dir=tmp_path / "interrupted-report")
+    assert caught.value is original
+    assert not cleanup["verified"] and not cleanup["completed"]
+    assert cleanup["failure"] == "OSError"
+    assert (
+        "retained image removal failed (OSError); cleanup incomplete"
+        in original.__notes__
+    )
 
 
 def test_build_failure_has_no_retained_tag_to_remove(task, boundary, image_docker):
@@ -566,16 +712,13 @@ def test_source_identity_exception_timeout_fail_closed(task, boundary, flag):
     setattr(boundary, flag, True)
     report = run_validation(task)
     assert report.verdict is Verdict.FAIL
-    assert result(report, "runtime.startup").status is (
-        CheckStatus.FAIL if flag == "timeout" else CheckStatus.ERROR
-    )
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
 
 
 @pytest.mark.parametrize(
     "exception_type,phase",
     [
         ("RuntimeError", "environment"),
-        ("EnvironmentStartTimeoutError", "environment"),
         ("AgentTimeoutError", "agent"),
         ("AgentSetupTimeoutError", "agent setup"),
         ("VerifierTimeoutError", "verifier"),
@@ -587,6 +730,16 @@ def test_subject_failures_name_the_phase(task, boundary, exception_type, phase):
     startup = result(report, "runtime.startup")
     assert startup.status is CheckStatus.FAIL
     assert phase in startup.evidence[0]
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
+
+
+def test_runtime_error_outside_build_start_is_a_validator_error(task, boundary):
+    boundary.exception_type = "RuntimeError"
+    boundary.exception_phase = "verifier"
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert startup.measured["failures"] == ["Harbor Trial returned exception_info"]
     assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
 
 
@@ -746,6 +899,9 @@ def test_host_inspector_scopes_inventory_and_cleanup_to_owned_project(monkeypatc
 
     def docker(*args):
         commands.append(args)
+        if args[:2] == ("image", "ls"):
+            assert args == ("image", "ls", "-q", "--no-trunc", project + "-main:latest")
+            return ""
         if args == ("volume", "ls", "-q"):
             return "\n".join(resources["volumes"])
         if args[0] == "inspect":
@@ -786,7 +942,7 @@ def test_host_inspector_scopes_inventory_and_cleanup_to_owned_project(monkeypatc
 
     monkeypatch.setattr(inspector, "_docker", docker)
     assert inspector.cleanup(project)["verified"]
-    assert commands[-3:] == [
+    assert commands[-4:] == [
         (
             "ps",
             "-aq",
@@ -809,6 +965,7 @@ def test_host_inspector_scopes_inventory_and_cleanup_to_owned_project(monkeypatc
             "--filter",
             f"label=com.docker.compose.project={project}",
         ),
+        ("image", "ls", "-q", "--no-trunc", project + "-main:latest"),
     ]
     with pytest.raises(ValueError, match="run-owned"):
         inspector.cleanup("somebody-elses-project")
@@ -827,7 +984,12 @@ def test_anonymous_volumes_are_registered_removed_and_rechecked(
     def inventory(value):
         assert value == project
         # The anonymous volume deliberately has no Compose project label.
-        return {"containers": list(containers), "networks": [], "volumes": []}
+        return {
+            "containers": list(containers),
+            "networks": [],
+            "volumes": [],
+            "images": [],
+        }
 
     def docker(*args):
         if args == ("inspect", "c" * 64):
@@ -891,11 +1053,17 @@ def test_nop_build_has_a_separate_supervisor_budget(
     artifacts = tmp_path / "build-budget"
     report = run_validation(task, artifacts_dir=artifacts)
     startup = result(report, "runtime.startup")
-    assert startup.status is (CheckStatus.FAIL if timeout_phase else CheckStatus.PASS)
+    assert startup.status is (
+        CheckStatus.ERROR
+        if timeout_phase == "build"
+        else CheckStatus.FAIL
+        if timeout_phase == "agent"
+        else CheckStatus.PASS
+    )
     if timeout_phase:
         assert len(boundary.trials) == 1
-        phase = "environment" if timeout_phase == "build" else "agent"
-        assert phase in startup.evidence[0]
+        phase = "build/start" if timeout_phase == "build" else "agent"
+        assert any(phase in reason for reason in startup.evidence)
         assert (
             result(report, "runtime.episode_determinism").status is not CheckStatus.PASS
         )
@@ -904,6 +1072,76 @@ def test_nop_build_has_a_separate_supervisor_budget(
     native = json.loads((artifacts / "harbor-evidence.json").read_text())
     assert native["cleanup"]["verified"]
     assert native["trials"][0]["build_timeout_s"] == build_budget
+
+
+@pytest.mark.parametrize("timeout_source", ["supervisor", "harbor", "unexpected"])
+def test_validator_build_start_timeout_is_an_error(
+    task, boundary, monkeypatch, timeout_source
+):
+    from openenv.validation.providers import docker
+
+    monkeypatch.setattr(
+        docker,
+        "DockerValidationProvider",
+        lambda: SimpleNamespace(build_timeout_s=0.01),
+    )
+    if timeout_source == "supervisor":
+        boundary.start_delay = 0.1
+    elif timeout_source == "harbor":
+        boundary.exception_type = "EnvironmentStartTimeoutError"
+    else:
+        boundary.timeout = True
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    failures = startup.measured["failures"]
+    if timeout_source == "unexpected":
+        assert failures == ["unexpected Harbor timeout during agent"]
+    else:
+        assert failures == ["validator build/start exceeded its 0.01-second budget"]
+        assert failures[0] in startup.evidence
+    assert len(boundary.trials) == 1
+
+
+def test_real_harbor_start_uses_build_budget_then_episode_budgets(
+    task, boundary, monkeypatch
+):
+    timeouts = []
+    wait_for = asyncio.wait_for
+
+    async def record_timeout(awaitable, timeout):
+        timeouts.append(timeout)
+        return await wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", record_timeout)
+    report = run_validation(task)
+    assert result(report, "runtime.startup").status is CheckStatus.PASS
+    # Harbor starts each environment, then runs its agent under a separate budget.
+    assert timeouts == [600, 10, 10, 10, 10, 10]
+    assert [trial.role for trial in boundary.trials] == [
+        "nop",
+        "oracle",
+        "oracle-replay",
+    ]
+
+
+def test_missing_harbor_build_timeout_binding_is_a_startup_error(
+    task, boundary, monkeypatch
+):
+    create = harbor._create_trial
+
+    async def missing_binding(config):
+        trial = await create(config)
+        del trial._environment_build_timeout_sec
+        return trial
+
+    monkeypatch.setattr(harbor, "_create_trial", missing_binding)
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert startup.measured["failures"] == ["AttributeError"]
+    assert "retained_image_tag" not in startup.measured
+    assert len(boundary.trials) == 1
 
 
 def test_harbor_report_preserves_resolved_space_target(task, boundary, tmp_path):
