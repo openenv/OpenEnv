@@ -6,14 +6,27 @@ import time
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
 from ...core.env_server.types import WSErrorCode
 from .contracts import RuntimeEvidence, RuntimePlan, WireExchange
+from .discovery import collect_task_evidence
+from .json_values import dumps, loads
 from .transport import abort_socket, http_deadline
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 MAX_TRACE_BYTES = 8 * 1024 * 1024
+
+
+def _server_error_code(response):
+    if isinstance(response, dict) and response.get("type") == "error":
+        data = response.get("data")
+        code = data.get("code") if isinstance(data, dict) else None
+        # Only protocol constants are safe diagnostics, never subject error text.
+        if isinstance(code, str) and code in {item.value for item in WSErrorCode}:
+            return code
+    return None
 
 
 def _bounded_call(connection, operation, timeout_s):
@@ -54,12 +67,25 @@ class RuntimeCollectionInterrupted(KeyboardInterrupt):
         self.evidence = evidence
 
 
+class RuntimeCollectionUnsupported(RuntimeError):
+    """A validator JSON limit carrying the retained collection prefix."""
+
+    def __init__(self, evidence: RuntimeEvidence, *, capability="json_numeric_range"):
+        super().__init__(f"{capability}: runtime JSON exceeds validator support")
+        self.evidence = evidence
+
+
 def collect_runtime_evidence(
     base_url: str,
     plan: RuntimePlan,
     *,
     episode_timeout_s: float,
     request_timeout_s: float | None = None,
+    episodes: int = 1,
+    validation_token: str | None = None,
+    collect_tools: bool = False,
+    collect_tasks: bool = False,
+    request_telemetry: bool = True,
 ) -> RuntimeEvidence:
     """
     Preserve schema and reset/step/state responses without model coercion.
@@ -74,19 +100,40 @@ def collect_runtime_evidence(
         plan ([`~openenv.validation.runtime.contracts.RuntimePlan`]):
             Validated, bounded reset and action inputs.
         episode_timeout_s (`float`):
-            Deadline for the complete collection, including schema retrieval.
+            Deadline for each episode. The first episode's budget also covers
+            schema retrieval and connecting.
         request_timeout_s (`float`, *optional*):
             Optional per-operation cap. By default, each operation may use the
             remaining declared episode budget.
+        episodes (`int`, *optional*, defaults to `1`):
+            Run the plan this many times on the same session, resetting between
+            episodes. Each later episode gets a fresh deadline and trace budget
+            at its reset, so one episode never spends what another saved and the
+            collection is bounded by `episodes` single-episode budgets.
+        validation_token (`str`, *optional*):
+            Run-scoped credential to omit from evidence; also authorizes optional
+            telemetry when `request_telemetry` is enabled.
+        collect_tools (`bool`, *optional*, defaults to `False`):
+            Discover tools on the measured WebSocket before reset.
+        collect_tasks (`bool`, *optional*, defaults to `False`):
+            Discover the server's environment namespace and sample its task metadata.
+        request_telemetry (`bool`, *optional*, defaults to `True`):
+            Request session telemetry with the provided authorization. Disable
+            for scrub-only collection with the ordinary protocol byte limits.
 
     Returns:
         [`~openenv.validation.runtime.contracts.RuntimeEvidence`]: raw evidence.
     """
     deadline = time.monotonic() + episode_timeout_s
     exchanges = []
-    schema_json = reset_schema_json = None
+    schema_json = reset_schema_json = schema_response_json = None
     phase = "schema"
     trace_bytes = 0
+    telemetry_json = None
+    telemetry_error = None
+    tools_json = tools_error = tasks_json = tasks_error = None
+    tools_unavailable = None
+    telemetry_unavailable = None
     server_code = None
 
     def remaining() -> float:
@@ -124,23 +171,25 @@ def collect_runtime_evidence(
                     if len(payload) + len(chunk) > MAX_MESSAGE_BYTES:
                         raise ValueError("schema exceeds size bound")
                     payload.extend(chunk)
-            schema = json.loads(payload)
+            raw_schema = payload.decode("utf-8")
+            if not validation_token:
+                schema_response_json = raw_schema
+            # Only retain credential-aware schemas after both scans and parsing
+            # succeed. The raw body can include values lost to duplicate keys.
+            if validation_token and validation_token in raw_schema:
+                raise ValueError("schema contains validation credentials")
+            schema = loads(payload)
+            if validation_token and validation_token in dumps(schema):
+                raise ValueError("schema contains validation credentials")
+            schema_response_json = raw_schema
             if not isinstance(schema, dict) or "observation" not in schema:
                 raise ValueError("missing observation schema")
-            schema_json = json.dumps(
-                schema["observation"],
-                allow_nan=False,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+            schema_payload = dumps(schema["observation"])
+            schema_json = schema_payload
 
             if "reset_observation" in schema:
-                reset_schema_json = json.dumps(
-                    schema["reset_observation"],
-                    allow_nan=False,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
+                reset_schema_payload = dumps(schema["reset_observation"])
+                reset_schema_json = reset_schema_payload
 
         endpoint = urlsplit(base_url)
         ws_url = urlunsplit(
@@ -158,12 +207,181 @@ def collect_runtime_evidence(
             proxy=None,
             open_timeout=remaining(),
             close_timeout=1,
-            max_size=MAX_MESSAGE_BYTES,
+            max_size=(
+                MAX_TRACE_BYTES
+                if validation_token and request_telemetry
+                else MAX_MESSAGE_BYTES
+            ),
             max_queue=1,
             compression=None,
         )
         complete = False
         try:
+
+            def receive_response(request):
+                nonlocal server_code
+                try:
+                    _bounded_call(
+                        connection, lambda: connection.send(request), remaining()
+                    )
+                except ConnectionClosed:
+                    # Session creation can fail before the first send. recv() still
+                    # delivers a queued error, but the failed send cannot succeed.
+                    try:
+                        raw = connection.recv(timeout=remaining())
+                        if (
+                            isinstance(raw, str)
+                            and len(raw.encode()) <= MAX_TRACE_BYTES
+                        ):
+                            server_code = _server_error_code(json.loads(raw))
+                    except Exception:
+                        # Preserve the original ConnectionClosed if diagnostics fail.
+                        pass
+                    raise
+                return connection.recv(timeout=remaining())
+
+            def telemetry_request(operation, data, max_bytes=MAX_TRACE_BYTES):
+                request = json.dumps({"type": operation, "data": data})
+                raw = receive_response(request)
+                if not isinstance(raw, str) or len(raw.encode()) > max_bytes:
+                    raise ValueError("invalid telemetry response")
+                response = loads(raw)
+                if not isinstance(response, dict):
+                    raise ValueError("invalid telemetry envelope")
+                return response
+
+            capability = None
+            if validation_token and request_telemetry:
+                phase = "validation_open"
+                try:
+                    response = telemetry_request(
+                        phase, {"schema_version": 1, "token": validation_token}
+                    )
+                except (ValueError, RecursionError) as exc:
+                    # A consumed malformed reply only invalidates optional telemetry.
+                    # Transport failure still aborts this same-session collection.
+                    telemetry_error = f"session telemetry failed ({type(exc).__name__})"
+                else:
+                    code = _server_error_code(response)
+                    if code in {
+                        WSErrorCode.FACTORY_ERROR,
+                        WSErrorCode.CAPACITY_REACHED,
+                        WSErrorCode.SESSION_ERROR,
+                    }:
+                        server_code = code
+                        raise ValueError("server returned a terminal error")
+                    data = response.get("data")
+                    if (
+                        response.get("type") == "validation_open"
+                        and isinstance(data, dict)
+                        and data.get("schema_version") == 1
+                        and isinstance(data.get("capability"), str)
+                        and 16 <= len(data["capability"]) <= 256
+                    ):
+                        capability = data["capability"]
+                    elif code == WSErrorCode.UNKNOWN_TYPE:
+                        telemetry_unavailable = (
+                            "unsupported capability: session_telemetry"
+                        )
+                    else:
+                        telemetry_error = (
+                            "session telemetry unavailable or authorization refused"
+                        )
+
+            def contains_credential(value):
+                pending = [value]
+                while pending:
+                    child = pending.pop()
+                    if isinstance(child, str):
+                        if any(
+                            secret and secret in child
+                            for secret in (validation_token, capability)
+                        ):
+                            return True
+                    elif isinstance(child, dict):
+                        pending.extend(child.keys())
+                        pending.extend(child.values())
+                    elif isinstance(child, list):
+                        pending.extend(child)
+                return False
+
+            if collect_tools:
+                phase = "tools/list"
+                try:
+                    response = telemetry_request(
+                        "mcp",
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "tools/list",
+                            "params": {},
+                        },
+                        MAX_MESSAGE_BYTES,
+                    )
+                    if contains_credential(response):
+                        raise ValueError("discovery contains validation credentials")
+                    rpc = response.get("data")
+                    if _server_error_code(response) == WSErrorCode.UNKNOWN_TYPE:
+                        tools_unavailable = "unsupported capability: tool_discovery"
+                    else:
+                        if (
+                            response.get("type") != "mcp"
+                            or not isinstance(rpc, dict)
+                            or rpc.get("jsonrpc") != "2.0"
+                            or type(rpc.get("id")) is not int
+                            or rpc["id"] != 1
+                        ):
+                            raise ValueError("invalid tool discovery envelope")
+                        error = rpc.get("error")
+                        if (
+                            isinstance(error, dict)
+                            and type(error.get("code")) is int
+                            and isinstance(error.get("message"), str)
+                            and rpc.get("result") is None
+                            and (
+                                error["code"] == -32601
+                                or (
+                                    # Legacy non-MCP tools/list used INTERNAL_ERROR.
+                                    error["code"] == -32603
+                                    and error["message"]
+                                    == "Environment does not support MCP"
+                                    and error.get("data") is None
+                                )
+                            )
+                        ):
+                            tools_unavailable = "unsupported capability: tool_discovery"
+                        else:
+                            if (
+                                error is not None
+                                or not isinstance(rpc.get("result"), dict)
+                                or not isinstance(rpc["result"].get("tools"), list)
+                            ):
+                                raise ValueError("invalid tool discovery response")
+                            discovered = dumps(rpc["result"], ensure_ascii=False)
+                            if len(discovered.encode()) > MAX_MESSAGE_BYTES:
+                                raise ValueError("discovery exceeds size bound")
+                            tools_json = discovered
+                except Exception as exc:
+                    tools_error = f"tool discovery failed ({type(exc).__name__})"
+
+            if collect_tasks:
+                phase = "tasks"
+                try:
+                    discovered, tasks_error = collect_task_evidence(
+                        base_url,
+                        deadline=deadline,
+                        request_timeout_s=request_timeout_s,
+                    )
+                    if discovered is not None:
+                        if contains_credential(discovered) or contains_credential(
+                            json.loads(discovered)
+                        ):
+                            raise ValueError(
+                                "discovery contains validation credentials"
+                            )
+                        tasks_json = discovered
+                except Exception as exc:
+                    tasks_error = f"task discovery failed ({type(exc).__name__})"
 
             def exchange(operation: str, data: dict | None = None) -> dict:
                 nonlocal phase, trace_bytes, server_code
@@ -172,17 +390,29 @@ def collect_runtime_evidence(
                 if data is not None:
                     request["data"] = data
                 request_json = json.dumps(request, allow_nan=False)
-                _bounded_call(
-                    connection, lambda: connection.send(request_json), remaining()
-                )
-                raw = connection.recv(timeout=remaining())
+                raw = receive_response(request_json)
                 if not isinstance(raw, str):
                     raise ValueError("binary response is not the JSON protocol")
+                if len(raw.encode("utf-8")) > MAX_MESSAGE_BYTES:
+                    raise ValueError("response exceeds size bound")
                 trace_bytes += len(raw.encode("utf-8")) + len(
                     request_json.encode("utf-8")
                 )
                 if trace_bytes > MAX_TRACE_BYTES:
-                    raise ValueError("trace exceeds total size bound")
+                    raise ValueError("episode trace exceeds size bound")
+                # Subjects can echo the authorization into arbitrary JSON fields.
+                # Check decoded values as well as raw text (which may be malformed).
+                if contains_credential(raw):
+                    raise ValueError("response contains validation credentials")
+                try:
+                    parsed = json.loads(raw)
+                except (ValueError, RecursionError):
+                    # Malformed JSON cannot be checked for escaped credentials.
+                    if validation_token:
+                        raise
+                    parsed = None
+                if contains_credential(parsed):
+                    raise ValueError("response contains validation credentials")
                 exchanges.append(
                     WireExchange(
                         operation=operation,
@@ -192,14 +422,7 @@ def collect_runtime_evidence(
                 )
                 response = json.loads(raw)
                 if isinstance(response, dict) and response.get("type") == "error":
-                    data = response.get("data")
-                    code = data.get("code") if isinstance(data, dict) else None
-                    # Only protocol constants are safe diagnostics; never echo an
-                    # arbitrary server message or a subject-defined error code.
-                    if isinstance(code, str) and code in {
-                        item.value for item in WSErrorCode
-                    }:
-                        server_code = code
+                    server_code = _server_error_code(response)
                     raise ValueError("server returned an error")
                 expected = "state" if operation == "state" else "observation"
                 if (
@@ -212,13 +435,35 @@ def collect_runtime_evidence(
 
             reset = dict(plan.reset.options)
             reset.update(seed=plan.reset.seed, episode_id=plan.reset.episode_id)
-            observation = exchange("reset", reset)
-            exchange("state")
-            for action in plan.actions:
-                if observation.get("done") is True:
-                    break
-                observation = exchange("step", action)
+            for episode in range(episodes):
+                if episode:
+                    deadline = time.monotonic() + episode_timeout_s
+                    trace_bytes = 0
+                observation = exchange("reset", reset)
                 exchange("state")
+                for action in plan.actions:
+                    if observation.get("done") is True:
+                        break
+                    observation = exchange("step", action)
+                    exchange("state")
+            if capability:
+                phase = "validation_read"
+                try:
+                    response = telemetry_request(
+                        phase, {"schema_version": 1, "capability": capability}
+                    )
+                    if response.get("type") != "validation" or not isinstance(
+                        response.get("data"), dict
+                    ):
+                        raise ValueError("invalid telemetry envelope")
+                    if contains_credential(response["data"]):
+                        raise ValueError("telemetry contains validation credentials")
+                    snapshot = dumps(response["data"], ensure_ascii=False)
+                    if len(snapshot.encode("utf-8")) > MAX_TRACE_BYTES:
+                        raise ValueError("telemetry exceeds size bound")
+                    telemetry_json = snapshot
+                except Exception as exc:
+                    telemetry_error = f"session telemetry failed ({type(exc).__name__})"
             complete = True
         finally:
             # Teardown is best effort and cannot replace an in-episode failure
@@ -239,6 +484,15 @@ def collect_runtime_evidence(
         return RuntimeEvidence(
             exchanges=tuple(exchanges),
             observation_schema_json=schema_json,
+            schema_response_json=schema_response_json,
+            telemetry_json=telemetry_json,
+            telemetry_error=telemetry_error,
+            tools_json=tools_json,
+            tools_error=tools_error,
+            tools_unavailable=tools_unavailable,
+            tasks_json=tasks_json,
+            tasks_error=tasks_error,
+            telemetry_unavailable=telemetry_unavailable,
             reset_observation_schema_json=reset_schema_json,
         )
     except KeyboardInterrupt:
@@ -246,17 +500,58 @@ def collect_runtime_evidence(
             RuntimeEvidence(
                 exchanges=tuple(exchanges),
                 observation_schema_json=schema_json,
+                schema_response_json=schema_response_json,
                 reset_observation_schema_json=reset_schema_json,
                 failure_phase=phase,
                 failure_reason=f"{phase} failed (KeyboardInterrupt)",
+                telemetry_json=telemetry_json,
+                telemetry_error=telemetry_error,
+                tools_json=tools_json,
+                tools_error=tools_error,
+                tools_unavailable=tools_unavailable,
+                tasks_json=tasks_json,
+                tasks_error=tasks_error,
+                telemetry_unavailable=telemetry_unavailable,
             )
+        ) from None
+    except (ArithmeticError, RecursionError) as exc:
+        capability = (
+            "json_numeric_range" if isinstance(exc, ArithmeticError) else "json_depth"
+        )
+        raise RuntimeCollectionUnsupported(
+            RuntimeEvidence(
+                exchanges=tuple(exchanges),
+                observation_schema_json=schema_json,
+                reset_observation_schema_json=reset_schema_json,
+                schema_response_json=schema_response_json,
+                failure_phase=phase,
+                failure_reason=f"{phase} JSON exceeds validator support ({capability})",
+                telemetry_json=telemetry_json,
+                telemetry_error=telemetry_error,
+                tools_json=tools_json,
+                tools_error=tools_error,
+                tools_unavailable=tools_unavailable,
+                tasks_json=tasks_json,
+                tasks_error=tasks_error,
+                telemetry_unavailable=telemetry_unavailable,
+            ),
+            capability=capability,
         ) from None
     except Exception as exc:
         # Exception text may include submitted payloads or URL credentials.
         return RuntimeEvidence(
             exchanges=tuple(exchanges),
             observation_schema_json=schema_json,
+            schema_response_json=schema_response_json,
             reset_observation_schema_json=reset_schema_json,
             failure_phase=phase,
             failure_reason=f"{phase} failed ({server_code or type(exc).__name__})",
+            telemetry_json=telemetry_json,
+            telemetry_error=telemetry_error,
+            tools_json=tools_json,
+            tools_error=tools_error,
+            tools_unavailable=tools_unavailable,
+            tasks_json=tasks_json,
+            tasks_error=tasks_error,
+            telemetry_unavailable=telemetry_unavailable,
         )

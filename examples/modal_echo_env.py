@@ -5,7 +5,7 @@ Boots the echo-env server inside a Modal sandbox via ``ModalProvider``, then
 talks to it through ``EchoEnv`` over the encrypted Modal tunnel (https/wss).
 
 Usage:
-    pip install "modal>=1.4"
+    pip install "modal>=1.6.3"
     modal setup  (one-time auth)
     PYTHONPATH=src:envs uv run python examples/modal_echo_env.py
 

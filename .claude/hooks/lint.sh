@@ -1,13 +1,6 @@
 #!/bin/bash
-# Lint check for OpenEnv
-# Replicates the exact arc f pipeline from fbsource:
-#   1. usort format — sort imports (matches arc f's usort pass)
-#   2. ruff format  — code formatting, line-length 88 (matches arc f's ruff-api pass)
-#   3. ruff check   — lint rules (E, F, W)
-#
-# usort is scoped to src/ and tests/ only. envs/ uses ruff format only
-# because standalone usort and pyfmt's usort disagree on import ordering
-# inside try/except blocks in some env files.
+# Match CI: usort format, then ruff format, then ruff check on src/ and tests/.
+# Format disposable copies so uncommitted edits are never overwritten.
 
 set -e
 
@@ -19,18 +12,30 @@ if ! command -v uv &> /dev/null; then
 fi
 
 echo "=== Running import sort + format check ==="
-# Ask the same tools as arc f whether the tree is formatted, without writing to
-# it. Formatting in place and then running `git checkout --` to undo it also
-# reverts the author's uncommitted edits in those files, and leaves reformatted
-# Markdown behind, because the restore only ever covered *.py.
+# CI checks the combined result: ruff can undo an intermediate usort change.
+FORMAT_DIR=$(mktemp -d)
+trap 'rm -rf "$FORMAT_DIR"' EXIT
+cp -RL src tests pyproject.toml "$FORMAT_DIR/"
+if [ -f .gitignore ]; then
+    cp .gitignore "$FORMAT_DIR/"
+fi
+# Ruff only respects .gitignore inside a Git repository.
+env -u GIT_DIR -u GIT_WORK_TREE git -C "$FORMAT_DIR" init -q
+uv run usort format "$FORMAT_DIR/src/" "$FORMAT_DIR/tests/"
+uv run ruff format "$FORMAT_DIR/src/" "$FORMAT_DIR/tests/"
+
 FORMAT_FAILED=0
-uv run usort check src/ tests/ || FORMAT_FAILED=1
-uv run ruff format --check src/ tests/ envs/ || FORMAT_FAILED=1
+while IFS= read -r -d '' file; do
+    if ! cmp -s "$file" "$FORMAT_DIR/$file"; then
+        echo "$file"
+        FORMAT_FAILED=1
+    fi
+done < <(find -L src tests -type f -name '*.py' -print0)
 
 if [ "$FORMAT_FAILED" -ne 0 ]; then
     echo ""
     echo "ERROR: the files listed above need formatting."
-    echo "Run: uv run usort format src/ tests/ && uv run ruff format src/ tests/ envs/"
+    echo "Run: uv run usort format src/ tests/ && uv run ruff format src/ tests/"
     exit 1
 fi
 echo "Import sort + format check passed!"
