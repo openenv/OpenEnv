@@ -262,7 +262,12 @@ def _prepare(
         if bundle:
             directory = output / "bundles" / name
             cloud.prepare(task_root, config, directory, source=source)
-            row["bundle_plan"] = str(directory / "plan.json")
+            plan_path = directory / "plan.json"
+            row.update(
+                bundle_plan=str(plan_path),
+                plan_path=plan_path.relative_to(output).as_posix(),
+                plan_sha256=hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+            )
         rows.append(row)
     manifest = {
         "schema": "openenv-real-task-recipes-v1",

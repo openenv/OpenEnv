@@ -6,6 +6,7 @@ import json
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import urllib.request
 import zipfile
@@ -302,36 +303,100 @@ def test_archive_rejects_path_collisions_and_nonregular_files(
     assert not (tmp_path / "bad").exists()
 
 
-def test_bootstrap_uses_pinned_download_and_frozen_sync(inputs, tmp_path, monkeypatch):
+@pytest.mark.parametrize("installed_version", ["1.33.0", "1.32.0"])
+def test_bootstrap_installs_and_checks_declared_sdk_before_worker(
+    inputs, tmp_path, monkeypatch, installed_version
+):
     output, plan = prepared(inputs, tmp_path)
     data = (output / "bundle.zip").read_bytes()
-    request = Mock(return_value=io.BytesIO(data))
+
+    def open_request(request, **kwargs):
+        if "/resolve/" in request.full_url:
+            return io.BytesIO(data)
+        return io.BytesIO(b'{"private":true}')
+
+    request = Mock(side_effect=open_request)
     monkeypatch.setattr(
         urllib.request, "build_opener", lambda *args: SimpleNamespace(open=request)
     )
     destination = tmp_path / "bootstrap"
     destination.mkdir()
     monkeypatch.setattr(tempfile, "mkdtemp", lambda **kwargs: str(destination))
-    run = Mock()
+    real_run = subprocess.run
+    metadata = tmp_path / "metadata"
+    metadata.mkdir()
+
+    def run_command(command, **kwargs):
+        if command[:3] == ["uv", "pip", "install"]:
+            assert command[-1] == "huggingface_hub==1.33.0"
+            dist = metadata / f"huggingface_hub-{installed_version}.dist-info"
+            dist.mkdir()
+            (dist / "METADATA").write_text(
+                f"Name: huggingface_hub\nVersion: {installed_version}\n"
+            )
+        elif command[1] == "-c":
+            # Run the production version check over isolated package metadata.
+            return real_run(
+                [sys.executable, "-S", *command[1:]],
+                env={"PYTHONPATH": str(metadata)},
+                **kwargs,
+            )
+
+    run = Mock(side_effect=run_command)
     monkeypatch.setattr(subprocess, "run", run)
     spec = cloud._launch_spec(
         cloud._config(inputs[2])[0], plan["bundle_sha256"], UPLOAD_SHA
     )
     for name, value in {**spec["env"], **SECRETS}.items():
         monkeypatch.setenv(name, value)
-    exec(spec["command"][2], {})
-    assert "/resolve/" + UPLOAD_SHA + "/inputs/" in request.call_args.args[0].full_url
-    assert (
-        request.call_args.args[0].get_header("Authorization")
-        == "Bearer " + SECRETS["HF_TOKEN"]
-    )
+    if installed_version == "1.33.0":
+        exec(spec["command"][2], {})
+    else:
+        with pytest.raises(RuntimeError, match="verify_sdk"):
+            exec(spec["command"][2], {})
+    download = request.call_args_list[0].args[0]
+    assert "/resolve/" + UPLOAD_SHA + "/inputs/" in download.full_url
+    assert download.get_header("Authorization") == "Bearer " + SECRETS["HF_TOKEN"]
     calls = [call.args[0] for call in run.call_args_list]
     assert calls[0][-2:] == ["install", "uv==0.9.3"]
     assert calls[1] == ["uv", "sync", "--frozen", "--no-dev"]
-    assert calls[2][1:4] == ["-m", "examples.hub_validation_pipeline.cloud", "worker"]
+    python = str(destination / "bundle/.venv/bin/python")
+    assert calls[2] == [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        python,
+        "huggingface_hub==1.33.0",
+    ]
+    assert calls[3][:2] == [python, "-c"]
+    if installed_version == "1.33.0":
+        assert calls[4][1:4] == [
+            "-m",
+            "examples.hub_validation_pipeline.cloud",
+            "worker",
+        ]
+    else:
+        assert len(calls) == 4
     assert (
         destination / "bundle/task/instruction.md"
     ).read_bytes() == b"Write an answer\n"
+
+
+def test_runtime_versions_are_bound_to_plan_and_bundle(inputs, tmp_path):
+    output, plan = prepared(inputs, tmp_path)
+    manifest, _ = cloud._checked_archive(
+        (output / "bundle.zip").read_bytes(), plan["bundle_sha256"]
+    )
+    assert (
+        manifest["runtime_versions"]
+        == plan["runtime_versions"]
+        == {"uv": "0.9.3", "huggingface_hub": "1.33.0"}
+    )
+    plan["runtime_versions"]["huggingface_hub"] = "1.32.0"
+    (output / "plan.json").write_text(json.dumps(plan))
+    with pytest.raises(ValueError, match="immutable bundle"):
+        cloud._read_plan(output / "plan.json")
 
 
 def test_submit_real_runtime_secrets_pins_and_one_shot_receipt(inputs, tmp_path):
@@ -682,6 +747,49 @@ def test_task_exclusions_match_runner_source_identity(inputs, tmp_path):
     assert source_digest(destination / "task") == before
     assert not (destination / "task/.worktrees").exists()
     assert not (destination / "task/outputs").exists()
+
+
+@pytest.mark.parametrize("excluded", sorted(cloud._EXCLUDED))
+@pytest.mark.parametrize("copied", [False, True])
+def test_acquired_excluded_assets_are_explicitly_unsupported_before_snapshot(
+    inputs, tmp_path, monkeypatch, excluded, copied
+):
+    from examples.hub_validation_pipeline.pipeline import copy_subject
+    from openenv.validation.runner import source_digest
+
+    repo, task, config = inputs
+    asset = task / "environment" / excluded / "setup.txt"
+    asset.parent.mkdir(parents=True)
+    asset.write_text("Native task setup asset\n")
+    hashes = {
+        path.relative_to(task).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in task.rglob("*")
+        if path.is_file()
+    }
+    source = dict(kind="hf", revision=SHA, task_path=".", task_file_hashes=hashes)
+    if copied:
+        subject = tmp_path / "subject"
+        copy_subject(task, subject, source_digest(task))
+        assert not (subject / "environment" / excluded).exists()
+    else:
+        subject = task
+    original_tree = cloud._tree
+    snapshots = []
+
+    def snapshot(root, **kwargs):
+        if Path(root) == subject:
+            snapshots.append(root)
+        return original_tree(root, **kwargs)
+
+    monkeypatch.setattr(cloud, "_tree", snapshot)
+    with pytest.raises(
+        ValueError, match="Acquired task contains unsupported excluded assets"
+    ):
+        cloud.prepare(subject, config, tmp_path / "plan", repo_root=repo, source=source)
+    assert snapshots == []
+    assert source["task_file_hashes"] == hashes
+    assert f"environment/{excluded}/setup.txt" in hashes
+    assert not (tmp_path / "plan").exists()
 
 
 @pytest.mark.parametrize(

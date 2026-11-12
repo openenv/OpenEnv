@@ -204,6 +204,17 @@ resumed or blindly retried.
 `prepared_batch` provides shared reservation and bounded controller concurrency
 for an already reviewed preparation manifest. Use these guarded cohort launchers
 for paid work; the cloud CLI and discovery pipeline only prepare inputs.
+Both preparation producers emit `plan_path` relative to that manifest's directory
+and `plan_sha256` for the exact generated plan bytes. Historical manifests without
+these fields require fresh preparation and review; the launcher does not infer a
+new digest for an old plan.
+
+Plans bind `runtime_versions` for uv and `huggingface_hub`. The remote bootstrap
+runs the frozen dependency sync, installs the declared `huggingface_hub==1.33.0`
+overlay with that environment's interpreter, then verifies the installed version
+before starting the audit worker. A missing or incompatible runtime pin requires
+fresh preparation; changing the package's general dependency range is unnecessary.
+
 `cloud.submit()` requires a ledger, reservation ID and expected plan SHA256.
 Each reservation binds the reviewed plan hashes to their modeled cost allocations;
 allocations must fit the reserved total. Submission rechecks the active hold,

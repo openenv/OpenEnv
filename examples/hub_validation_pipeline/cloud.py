@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 
 WORKER_IMAGE = "docker.io/library/python@sha256:48d884813cf44e927cf64c5529dd630dd3b18338c6dc727991eef9b71e934a20"
 UV_VERSION = "0.9.3"
+HF_HUB_VERSION = "1.33.0"
 SECRET_NAMES = ("HF_TOKEN", "HF_INFERENCE_TOKEN", "HF_SANDBOX_TOKEN")
 MAX_FILES = 5000
 MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -249,20 +250,32 @@ def _positive(value, name, *, maximum=10000, minimum=1):
     return value
 
 
-def _check_acquisition_files(source, task_files):
-    """Bind remote source identities to hashes verified during acquisition."""
+def _acquisition_hashes(source):
+    """Reject acquired assets that execution would silently omit."""
     if "task_file_hashes" not in source:
         if source.get("kind", source.get("source")) in {"hf", "harbor"}:
             raise ValueError("Remote source requires verified acquisition file hashes")
-        return
+        return None
     expected = source["task_file_hashes"]
-    if (
-        not isinstance(expected, dict)
-        or set(expected) != set(task_files)
-        or any(
-            not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
-            for value in expected.values()
-        )
+    if not isinstance(expected, dict) or any(
+        not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in expected.values()
+    ):
+        raise ValueError("Invalid verified acquisition file hashes")
+    for name in expected:
+        if any(part in _EXCLUDED for part in _safe_name(name).parts):
+            raise ValueError(
+                "Acquired task contains unsupported excluded assets; "
+                "native files under execution exclusions cannot be omitted safely"
+            )
+    return expected
+
+
+def _check_acquisition_files(source, task_files):
+    """Bind remote source identities to hashes verified during acquisition."""
+    expected = _acquisition_hashes(source)
+    if expected is not None and (
+        set(expected) != set(task_files)
         or any(
             hashlib.sha256(data).hexdigest() != expected[name]
             for name, data in task_files.items()
@@ -351,7 +364,7 @@ class _HubRedirect(urllib.request.HTTPRedirectHandler):
         return redirected
 
 
-def _bootstrap_main(uv_version):
+def _bootstrap_main(uv_version, hub_version):
     import base64
     import tempfile
 
@@ -391,10 +404,36 @@ def _bootstrap_main(uv_version):
         )
         stage = "sync"
         subprocess.run(["uv", "sync", "--frozen", "--no-dev"], cwd=root, check=True)
+        python = str(root / ".venv/bin/python")
+        stage = "install_sdk"
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                python,
+                "huggingface_hub==" + hub_version,
+            ],
+            cwd=root,
+            check=True,
+        )
+        stage = "verify_sdk"
+        subprocess.run(
+            [
+                python,
+                "-c",
+                "from importlib.metadata import version\n"
+                f"if version('huggingface_hub') != {hub_version!r}:\n"
+                "    raise RuntimeError('Installed Hugging Face SDK differs from declared pin')\n",
+            ],
+            cwd=root,
+            check=True,
+        )
         stage = "worker"
         subprocess.run(
             [
-                str(root / ".venv/bin/python"),
+                python,
                 "-m",
                 "examples.hub_validation_pipeline.cloud",
                 "worker",
@@ -480,7 +519,7 @@ def _bootstrap_code():
             _bootstrap_main,
         )
     )
-    return header + f"\n_bootstrap_main({UV_VERSION!r})\n"
+    return header + f"\n_bootstrap_main({UV_VERSION!r}, {HF_HUB_VERSION!r})\n"
 
 
 def _launch_spec(config, digest, revision=None):
@@ -515,6 +554,7 @@ def prepare(task_root, config, output_dir, *, repo_root=None, source=None):
         raise FileExistsError("Prepare requires a fresh output directory")
     if output_dir.resolve().is_relative_to(task_root.resolve()):
         raise ValueError("Output directory must be outside the task")
+    _acquisition_hashes(source or {})
     config, budget = _config(config)
     from examples.coding_audit.runner import validate_coding_task
     from openenv.validation.runner import source_digest
@@ -616,6 +656,7 @@ def prepare(task_root, config, output_dir, *, repo_root=None, source=None):
     manifest = {
         "schema": "openenv-coding-bundle-v1",
         "git": _git_provenance(repo_root),
+        "runtime_versions": {"uv": UV_VERSION, "huggingface_hub": HF_HUB_VERSION},
         "task_source": source,
         "target_source": {
             name: config["target"][name]
@@ -650,6 +691,7 @@ def prepare(task_root, config, output_dir, *, repo_root=None, source=None):
         "results_repo": config["cloud"]["results_repo"],
         "manifest_sha256": hashlib.sha256(files[MANIFEST][0]).hexdigest(),
         "git": manifest["git"],
+        "runtime_versions": manifest["runtime_versions"],
         "task_source": source,
         "target_source": manifest["target_source"],
         "budget": budget,
@@ -701,8 +743,10 @@ def _read_plan(plan_path, *, expected_sha256=None):
         or plan["manifest_sha256"] != hashlib.sha256(files[MANIFEST]).hexdigest()
         or any(
             plan.get(name) != manifest.get(name)
-            for name in ("git", "task_source", "target_source")
+            for name in ("git", "runtime_versions", "task_source", "target_source")
         )
+        or manifest.get("runtime_versions")
+        != {"uv": UV_VERSION, "huggingface_hub": HF_HUB_VERSION}
         or manifest["target_source"]
         != {
             name: config["target"][name]

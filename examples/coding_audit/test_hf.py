@@ -1506,6 +1506,43 @@ def test_deadline_interrupts_blocking_controller_and_restores_handler():
     assert signal.getitimer(signal.ITIMER_REAL)[0] == 0
 
 
+@pytest.mark.parametrize("seconds", [0, -0.1, float("inf"), float("nan")])
+def test_expired_deadline_does_not_enter_or_change_parent_alarm(monkeypatch, seconds):
+    timer_calls = []
+    monkeypatch.setattr(signal, "getitimer", lambda *_: (10, 0))
+    monkeypatch.setattr(signal, "setitimer", lambda *args: timer_calls.append(args))
+    handler = signal.getsignal(signal.SIGALRM)
+    entered = []
+    with pytest.raises(HFBackendError, match="deadline"):
+        with _deadline(seconds):
+            entered.append(True)
+    assert not entered and not timer_calls
+    assert signal.getsignal(signal.SIGALRM) == handler
+
+
+def test_target_retains_billed_counts_before_malformed_usage_serialization(harness):
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "provider_extra": object(),
+    }
+    harness.inference.responses = [response(usage=usage)]
+    record = harness.backend.solve(MODEL, 0)
+    assert record["error"] and record["cleanup_verified"]
+    receipts = record["model_metadata"].get("responses", [])
+    assert len(receipts) == 1
+    assert receipts[0]["usage_counts"] == {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+    }
+    assert receipts[0]["usage_receipt_error"]
+    assert receipts[0]["discarded"] and not receipts[0]["response_validated"]
+    assert not harness.factory.created[0].commands
+    json.dumps(record, allow_nan=False)
+
+
 def test_strong_isolation_and_equal_credentials_rejected(harness):
     h = harness
     with pytest.raises(HFBackendError, match="strong"):

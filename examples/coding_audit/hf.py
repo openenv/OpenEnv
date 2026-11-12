@@ -72,6 +72,8 @@ def _deadline(seconds):
     # the main Unix thread so a blocked synchronous SDK call can be interrupted.
     if threading.current_thread() is not threading.main_thread():
         raise HFBackendError("HF coding controller requires the main thread")
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise _DeadlineExceeded("controller deadline exceeded")
     previous_handler = signal.getsignal(signal.SIGALRM)
     previous_timer = signal.getitimer(signal.ITIMER_REAL)
     started = time.monotonic()
@@ -751,26 +753,32 @@ class HFTaskBackend:
         if tools:
             preflight["dispatched"] = True
             parsed = client.chat_completion(**request)
-            response = _plain(parsed)
-            # Access the typed nested value: outer SDK dicts can omit extras.
-            response["usage"] = _plain(parsed.usage)
-            choices = response.get("choices")
+            # Preserve billing evidence before normalizing arbitrary provider
+            # extras: JSON conversion itself can fail after a billed response.
             receipt = {
-                "model": response.get("model"),
-                "system_fingerprint": response.get("system_fingerprint"),
-                "id": response.get("id"),
                 "seed_sent": request.get("seed"),
-                "finish_reason": choices[0].get("finish_reason")
-                if isinstance(choices, list)
-                and len(choices) == 1
-                and isinstance(choices[0], dict)
-                else None,
                 "response_validated": False,
                 "discarded": True,
                 "tool_calls_processed": 0,
             }
             metadata.setdefault("responses", []).append(receipt)
-            _retain_usage(receipt, response["usage"])
+            _retain_usage(receipt, parsed.usage)
+            response = _plain(parsed)
+            # Access the typed nested value: outer SDK dicts can omit extras.
+            response["usage"] = _plain(parsed.usage)
+            choices = response.get("choices")
+            receipt.update(
+                {
+                    "model": response.get("model"),
+                    "system_fingerprint": response.get("system_fingerprint"),
+                    "id": response.get("id"),
+                    "finish_reason": choices[0].get("finish_reason")
+                    if isinstance(choices, list)
+                    and len(choices) == 1
+                    and isinstance(choices[0], dict)
+                    else None,
+                }
+            )
         else:
             response = self._candidate_response(
                 client, request, allowed, limits, record

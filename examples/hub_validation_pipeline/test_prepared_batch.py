@@ -11,8 +11,14 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from examples.hub_validation_pipeline import cloud, full_run, prepared_batch, spend
-from examples.hub_validation_pipeline.test_real_tasks import write_panel
+from examples.hub_validation_pipeline import (
+    cloud,
+    full_run,
+    prepared_batch,
+    real_tasks,
+    spend,
+)
+from examples.hub_validation_pipeline.test_real_tasks import hf_fakes, write_panel
 
 SECRETS = dict(
     HF_TOKEN="local-results",
@@ -174,6 +180,95 @@ def saved(cohort):
 
 def rewrite_manifest(cohort):
     cohort.source.write_bytes(cloud._json_bytes({"tasks": cohort.rows}))
+
+
+@pytest.mark.parametrize("producer", ["recipes", "full-run"])
+def test_producer_manifest_launches_without_rewriting_rows(
+    cohort, monkeypatch, tmp_path, producer
+):
+    source_api, download = hf_fakes()
+    monkeypatch.setattr(real_tasks, "HfApi", Mock(return_value=source_api))
+    monkeypatch.setattr(real_tasks, "hf_hub_download", download)
+    prepare = cloud.prepare
+    monkeypatch.setattr(
+        cloud,
+        "prepare",
+        lambda *args, **kwargs: prepare(*args, repo_root=tmp_path / "repo", **kwargs),
+    )
+    output = tmp_path / producer
+    panel = write_panel(tmp_path)
+    if producer == "recipes":
+        produced = real_tasks.prepare(output, panel_path=panel, bundle=True)
+    else:
+        hf, harbor = tmp_path / "hf.json", tmp_path / "harbor.json"
+        hf.write_bytes(
+            cloud._json_bytes(
+                dict(
+                    scope="fixture",
+                    counts={},
+                    compact_repo_inventory="missing",
+                    compact_identity_inventory="missing",
+                )
+            )
+        )
+        harbor.write_bytes(
+            cloud._json_bytes(
+                dict(
+                    scope="fixture",
+                    counts={},
+                    artifacts={
+                        name: {"path": "missing"}
+                        for name in (
+                            "task_identity_inventory",
+                            "dataset_version_membership_index",
+                        )
+                    },
+                )
+            )
+        )
+        produced = full_run.run(output, hf, harbor, "500", panel_path=panel)
+    source = output / "manifest.json"
+    source_bytes = source.read_bytes()
+    api = Mock()
+    api.dataset_info.return_value = SimpleNamespace(private=True, sha="a" * 40)
+    api.list_repo_files.return_value = []
+    api.create_commit.return_value = SimpleNamespace(oid="b" * 40)
+    api.run_job.side_effect = [
+        SimpleNamespace(
+            id=f"job-{index}", url=f"https://huggingface.co/jobs/owner/job-{index}"
+        )
+        for index in range(len(produced["tasks"]))
+    ]
+    api.inspect_job.side_effect = lambda *, job_id, **kwargs: SimpleNamespace(
+        id=job_id,
+        docker_image=cloud.WORKER_IMAGE,
+        owner=SimpleNamespace(name="owner"),
+        status=SimpleNamespace(stage="COMPLETED"),
+    )
+    monkeypatch.setattr(cloud, "submit", cohort.actual_submit)
+    arguments = dict(
+        cohort.arguments,
+        prepared_manifest=source,
+        output=tmp_path / "launched",
+        api=api,
+    )
+    result = prepared_batch.run(**arguments, submit=True)
+    assert result["status"] == "controllers_completed_unmeasured"
+    assert source.read_bytes() == source_bytes
+    assert result["prepared_manifest"] == full_run._hash(source)
+    assert (
+        api.run_job.call_count == api.inspect_job.call_count == len(produced["tasks"])
+    )
+    for row, task in zip(produced["tasks"], result["tasks"], strict=True):
+        path = source.parent / row["plan_path"]
+        assert not Path(row["plan_path"]).is_absolute()
+        assert full_run._hash(path)["sha256"] == row["plan_sha256"]
+        receipt = cloud._loads((path.parent / "submission.json").read_bytes())
+        assert receipt["status"] == "submitted" and receipt["job_id"] == task["job_id"]
+    launched = api.run_job.call_count
+    with pytest.raises(RuntimeError, match="during plans"):
+        prepared_batch.run(**dict(arguments, output=tmp_path / "retry"), submit=True)
+    assert api.run_job.call_count == launched
 
 
 def test_prepare_only_has_no_credential_network_or_ledger_io(cohort, monkeypatch):
@@ -668,6 +763,25 @@ def test_blocking_inspection_is_interrupted_by_deadline(cohort):
     )
     assert result == "TIMEOUT"
     assert time.monotonic() - start < 1
+
+
+@pytest.mark.parametrize("observed", [1.0, 1.1])
+def test_inspection_is_not_dispatched_when_deadline_expires_between_reads(observed):
+    clock = iter([0.9, observed])
+    api = SimpleNamespace(inspect_job=Mock())
+    assert (
+        prepared_batch._status(
+            {"job_id": "job"},
+            {"image": cloud.WORKER_IMAGE},
+            "owner",
+            1,
+            api,
+            SECRETS,
+            lambda: next(clock),
+        )
+        == "TIMEOUT"
+    )
+    api.inspect_job.assert_not_called()
 
 
 @pytest.mark.parametrize(

@@ -125,6 +125,10 @@ transfers and expanded tar bytes at 8 MiB, and rejects links, sparse files and
 uninventoried members. Archive directory entries count toward the 128-member cap.
 Legacy packages without these inventories are refused. Verified task hashes follow
 the captured bytes into cloud plans; a remote revision alone is insufficient.
+Acquired tasks containing native assets below `.git`, `__pycache__`, `.venv`,
+`.worktrees` or `outputs` are unsupported by this bounded execution profile.
+Preparation rejects their complete acquisition inventory explicitly rather than
+dropping those files or weakening the source/hash comparison.
 Uploads use ordinary SDK commits with explicit additions; they do not mirror-delete
 remote files. As with `hf upload`, deletion requires a separate explicit operation.
 
