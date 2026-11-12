@@ -83,16 +83,19 @@ uv run --no-sync openenv validate inputs/task --level semantic --policy v2 \
   --json --output outputs/task-report.json
 ```
 
-The native adapter supports self-contained single-step Linux tasks with one
-Dockerfile, shared verifier execution, public networking and no GPU, task-defined
+The native adapter supports self-contained single-step Linux tasks with one main
+Docker service, shared verifier execution, public networking and no GPU, task-defined
 environment variables, healthchecks, external MCP/credential requirements or
 task-authored Compose. Unsupported shapes remain explicit SKIPs.
-The native trials must build the reviewed Dockerfile. A task that declares
-`environment.docker_image` is unsupported even when it also contains a Dockerfile;
-`runtime.startup` remains SKIP and the pipeline excludes it before model execution.
-This includes prebuilt-image benchmark tasks. Acquisition leaves their native
-bytes unchanged; the driver does not remove the image declaration to bypass the
-gate. A missing `solution/solve.sh` remains `semantic.oracle_max` FAIL even when
+The first native trial builds the reviewed Dockerfile or pulls the declared
+`environment.docker_image` pinned as `name@sha256:<digest>`. The validator records
+that declared pin as `source_image`; all subsequent trials and model handoff use
+the inspected immutable image kept by the startup-recorded retained tag.
+Mutable image tags and tasks with neither a Dockerfile nor a pinned image remain
+unsupported: `runtime.startup` SKIPs and the pipeline excludes them before model
+execution. Acquisition preserves the native bytes; the driver does not remove an
+image declaration to bypass the gate. A missing `solution/solve.sh` remains
+`semantic.oracle_max` FAIL even when
 startup is unsupported. The supplemental HF Jobs coding audit is a separate
 operator profile and does not waive these native admission requirements.
 

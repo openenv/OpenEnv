@@ -95,13 +95,16 @@ The contract lives at `validation/openenv.json` in the validation subject and
 explicitly declares the reward key/range, tolerance, floor margin, resource
 allocation and optional canary directory. A pipeline-supplied overlay records
 both the original source digest and the effective validation digest. The current
-native adapter supports self-contained, single-step Linux tasks with one
-Dockerfile, shared verifier execution and public networking. Unsupported resource,
+native adapter supports self-contained, single-step Linux tasks with one main
+Docker service, shared verifier execution and public networking. Unsupported resource,
 credential, multi-service and extension contracts stay named SKIPs.
-Tasks declaring `environment.docker_image` are also unsupported, even alongside
-a Dockerfile: native trials must build the reviewed Dockerfile. Their startup
-SKIP excludes them before model handoff; acquisition preserves their original
-bytes. A missing `solution/solve.sh` still produces `semantic.oracle_max` FAIL.
+The first trial builds the reviewed Dockerfile or pulls a task-declared
+`environment.docker_image` pinned as `name@sha256:<digest>`, recorded as
+`source_image`. Later trials and model handoff use the inspected immutable image
+kept by the startup-recorded retained tag. Mutable tags and tasks with neither
+a Dockerfile nor a pinned image remain unsupported; their startup SKIP excludes
+them before model handoff. Acquisition preserves the original bytes. A missing
+`solution/solve.sh` still produces `semantic.oracle_max` FAIL.
 Supplemental cloud audits remain a separate profile and cannot waive this gate.
 
 ```bash

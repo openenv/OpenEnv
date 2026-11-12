@@ -482,7 +482,7 @@ def test_admission_scales_thresholds_by_reward_range(
 
 
 @pytest.mark.parametrize("missing_oracle", [False, True])
-def test_native_prebuilt_task_is_excluded_without_model_or_docker(
+def test_native_unpinned_image_is_excluded_without_model_or_docker(
     tmp_path, monkeypatch, missing_oracle
 ):
     from openenv.validation.harbor import DockerInspector
