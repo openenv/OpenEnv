@@ -511,7 +511,13 @@ async def _start_sandbox(environment, *, force_build, labels, namespace):
     except asyncio.CancelledError:
         # A cancelled worker can still allocate a job. Settle it and preserve its
         # handle before Harbor teardown and the final ownership/terminal checks.
-        environment._sandbox = await creating
+        # Both Harbor and the validator can cancel the same start at its deadline.
+        while not creating.done():
+            try:
+                await asyncio.shield(creating)
+            except asyncio.CancelledError:
+                continue
+        environment._sandbox = creating.result()
         raise
     if workdir := environment.task_env_config.workdir:
         await asyncio.to_thread(environment._sandbox.files.mkdir, workdir)
