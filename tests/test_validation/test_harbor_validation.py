@@ -1610,6 +1610,46 @@ def test_hf_sandbox_failed_setup_registers_the_actual_job_before_teardown(
     assert all(trial["cleanup"]["jobs"] for trial in native["trials"])
 
 
+@pytest.mark.parametrize("visible", [True, False])
+def test_hf_sandbox_creation_without_a_handle_requires_job_recovery(
+    task, boundary, hf_jobs, monkeypatch, tmp_path, visible
+):
+    import huggingface_hub
+
+    start = boundary.on_start
+
+    def failed_creation(trial):
+        start(trial)
+        # The SDK can allocate a job, fail readiness and its best-effort kill,
+        # then raise without returning the handle to Harbor.
+        trial.agent_environment._sandbox = None
+        raise OSError("sandbox readiness failed")
+
+    boundary.on_start = failed_creation
+    hf_jobs.kill_fails = True
+    if not visible:
+        monkeypatch.setattr(
+            huggingface_hub.HfApi, "list_jobs", lambda self, **kwargs: []
+        )
+    monkeypatch.setattr(harbor.time, "sleep", lambda seconds: None)
+    artifacts = tmp_path / "hf-creation-failure"
+    report = run_validation(task, sandbox="hf-sandbox", artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert native["cleanup"]["verified"] is visible
+    assert len(hf_jobs.jobs) == 3
+    if visible:
+        assert sorted(hf_jobs.cancelled) == sorted(hf_jobs.jobs)
+        assert all(job.status.stage == "CANCELED" for job in hf_jobs.jobs.values())
+    else:
+        assert not hf_jobs.cancelled
+        assert all(job.status.stage == "RUNNING" for job in hf_jobs.jobs.values())
+        assert {trial["failure"] for trial in native["trials"]} == {
+            "CleanupNotVerified"
+        }
+        assert all(not trial["cleanup"]["verified"] for trial in native["trials"])
+
+
 @pytest.mark.parametrize("cancel_works", [True, False])
 def test_hf_sandbox_cleanup_cancels_jobs_that_survive_teardown(
     task, boundary, hf_jobs, tmp_path, monkeypatch, cancel_works

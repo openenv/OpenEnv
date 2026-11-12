@@ -792,10 +792,11 @@ async def _trial(
                     async with asyncio.timeout(build_budget):
                         await start_environment(force_build=force_build)
                 finally:
-                    if hf and trial.agent_environment._sandbox is not None:
-                        inspector.register_job(
-                            project, trial.agent_environment._sandbox.id
-                        )
+                    if hf:
+                        sandbox = trial.agent_environment._sandbox
+                        record["job_handle_missing_after_start"] = sandbox is None
+                        if sandbox is not None:
+                            inspector.register_job(project, sandbox.id)
                 phase = "agent setup"
 
             trial.agent_environment.start = build_and_start
@@ -923,6 +924,17 @@ async def _trial(
         if registered:
             try:
                 record["cleanup"] = await asyncio.to_thread(inspector.cleanup, project)
+                if (
+                    hf
+                    and record.get("job_handle_missing_after_start")
+                    and not record["cleanup"]["jobs"]
+                ):
+                    # Sandbox.create can fail after allocation and swallow a failed
+                    # cancellation. An empty listing cannot prove no job was created.
+                    record["cleanup"].update(
+                        verified=False,
+                        reason="sandbox creation returned no handle and no labelled job was recovered",
+                    )
                 if trial is not None and trial._openenv_cancelled_compose:
                     record["cleanup"].update(
                         {
