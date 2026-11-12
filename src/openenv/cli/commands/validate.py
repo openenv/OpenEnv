@@ -223,9 +223,29 @@ def validate(
         str,
         typer.Option(
             "--flavor",
-            help="HF Jobs hardware flavor for --space, e.g. cpu-basic or t4-small",
+            help=(
+                "HF Jobs hardware flavor for --space or --sandbox hf-sandbox, "
+                "e.g. cpu-basic or t4-small"
+            ),
         ),
     ] = "cpu-basic",
+    sandbox: Annotated[
+        str,
+        typer.Option(
+            "--sandbox",
+            help=(
+                "Where Harbor task trials run: docker (local daemon) or "
+                "hf-sandbox (one HF Job per trial)"
+            ),
+        ),
+    ] = "docker",
+    namespace: Annotated[
+        str | None,
+        typer.Option(
+            "--namespace",
+            help="User or organization that owns the --sandbox hf-sandbox jobs",
+        ),
+    ] = None,
 ) -> None:
     """
     Validate a local package or a running OpenEnv server.
@@ -236,9 +256,11 @@ def validate(
     applies the severity policy, and emits a report.
 
     Native Harbor tasks require the optional Harbor dependency and an explicit
-    `validation/openenv.json` contract. Fresh Docker trials grade the oracle, the
-    do-nothing floor and any declared canaries under the semantic check ids. Checks
-    without an implementation are named SKIPs, so the report is WARN at best.
+    `validation/openenv.json` contract. Fresh trials grade the oracle, the
+    do-nothing floor and any declared canaries under the semantic check ids. They
+    run on the local Docker daemon, or with `--sandbox hf-sandbox` as one Hugging
+    Face Job per trial from the task's digest-pinned image. Checks without an
+    implementation are named SKIPs, so the report is WARN at best.
 
     Exit codes: 0 pass/warn · 1 fail · 2 unrecognized/unsupported package · 3
     internal or policy error.
@@ -260,6 +282,9 @@ def validate(
 
     # Validate a Hub Space on HF Jobs GPU hardware
     openenv validate --space openenv/echo_env --level runtime --flavor t4-small
+
+    # Run a Harbor task's trials as HF Jobs instead of local Docker
+    openenv validate path/to/task --sandbox hf-sandbox --flavor cpu-upgrade
     ```
     """
     if space is not None and (target is not None or url is not None or local):
@@ -267,8 +292,28 @@ def validate(
             "Error: --space cannot be combined with a path, --url or --local", err=True
         )
         raise typer.Exit(EXIT_FAIL)
-    if space is None and (revision is not None or flavor != "cpu-basic"):
-        typer.echo("Error: --revision and --flavor require --space", err=True)
+    if sandbox not in ("docker", "hf-sandbox"):
+        typer.echo(
+            f"Error: unknown sandbox {sandbox!r}; expected docker or hf-sandbox",
+            err=True,
+        )
+        raise typer.Exit(EXIT_FAIL)
+    hf_sandbox = sandbox == "hf-sandbox"
+    running_url = url is not None or (target is not None and _looks_like_url(target))
+    if hf_sandbox and (space is not None or running_url):
+        typer.echo(
+            "Error: --sandbox cannot be combined with --space or a running URL",
+            err=True,
+        )
+        raise typer.Exit(EXIT_FAIL)
+    if space is None and revision is not None:
+        typer.echo("Error: --revision requires --space", err=True)
+        raise typer.Exit(EXIT_FAIL)
+    if space is None and not hf_sandbox and flavor != "cpu-basic":
+        typer.echo("Error: --flavor requires --space or --sandbox hf-sandbox", err=True)
+        raise typer.Exit(EXIT_FAIL)
+    if namespace is not None and not hf_sandbox:
+        typer.echo("Error: --namespace requires --sandbox hf-sandbox", err=True)
         raise typer.Exit(EXIT_FAIL)
 
     runtime_target = url
@@ -367,6 +412,9 @@ def validate(
                 report_target=f"spaces/{space}@{revision}"
                 if space is not None
                 else None,
+                sandbox=sandbox,
+                flavor=flavor,
+                namespace=namespace,
             )
         report_json = write_report(validation_report, output)
     except (SignatureError, UnsupportedPackageError) as exc:

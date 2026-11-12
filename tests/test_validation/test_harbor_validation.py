@@ -3,6 +3,8 @@
 import asyncio
 import hashlib
 import json
+import os
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -82,6 +84,9 @@ def boundary(monkeypatch, task):
         preflight_error=None,
         interrupt_role=None,
         on_build=None,
+        on_start=None,
+        on_stop=None,
+        start_barrier=None,
     )
 
     class Inspector:
@@ -162,7 +167,10 @@ def boundary(monkeypatch, task):
             state.trials.append(self)
 
         async def stop(self, *, delete):
-            assert not delete
+            # Docker cleanup removes run-owned resources itself; HF Sandbox is killed.
+            assert delete is (self.config.environment.type == "hf-sandbox")
+            if state.on_stop is not None:
+                state.on_stop(self)
             if state.teardown_defect == "error":
                 raise OSError("Harbor teardown failed")
             if state.teardown_defect == "drift":
@@ -174,6 +182,11 @@ def boundary(monkeypatch, task):
         async def start(self, *, force_build):
             if self.role == "nop" and state.on_build is not None:
                 state.on_build(self.agent_environment.session_id)
+            if state.on_start is not None:
+                state.on_start(self)
+            if state.start_barrier is not None:
+                # Like Sandbox.create, block a worker thread until every trial starts.
+                await asyncio.to_thread(state.start_barrier.wait)
             if state.pending_compose:
                 self._openenv_cancelled_compose.append(
                     {
@@ -1385,3 +1398,241 @@ def test_canaries_directory_holds_only_scripts(task, boundary, canaries):
     report = run_validation(task)
     assert result(report, "static.manifest").status is CheckStatus.FAIL
     assert not boundary.trials
+
+
+PINNED = "registry.example/image@sha256:" + "d" * 64
+
+
+@pytest.fixture
+def hf_jobs(task, boundary, monkeypatch):
+    """A fake HF Jobs control plane; each fake Trial start creates one labelled job."""
+    import huggingface_hub
+
+    with (task / "task.toml").open("a") as stream:
+        stream.write(f'[environment]\ndocker_image="{PINNED}"\n')
+    state = SimpleNamespace(
+        jobs={},
+        by_trial={},
+        cancelled=[],
+        kill_fails=False,
+        cancel_fails=False,
+        image=None,
+        max_running=0,
+    )
+
+    def start(trial):
+        kwargs = trial.config.environment.kwargs
+        job = SimpleNamespace(
+            id=f"job-{len(state.jobs)}",
+            labels={"hf-sandbox": "1", **harbor._job_labels(trial.config.trial_name)},
+            docker_image=state.image or trial.docker_image,
+            flavor=kwargs["flavor"],
+            owner=SimpleNamespace(name=kwargs["namespace"]),
+            status=SimpleNamespace(stage="RUNNING"),
+        )
+        state.jobs[job.id] = state.by_trial[trial.config.trial_name] = job
+        running = [job for job in state.jobs.values() if job.status.stage == "RUNNING"]
+        state.max_running = max(state.max_running, len(running))
+
+    def stop(trial):
+        job = state.by_trial.get(trial.config.trial_name)
+        if job is not None and not state.kill_fails:
+            job.status.stage = "CANCELED"
+
+    class Api:
+        def whoami(self):
+            return {"name": "me"}
+
+        def list_jobs_hardware(self):
+            return [
+                SimpleNamespace(
+                    name="cpu-basic",
+                    cpu="2 vCPU",
+                    ram="16 GB",
+                    ephemeral_storage="50 GB",
+                )
+            ]
+
+        def list_jobs(self, *, labels, namespace):
+            return [
+                job
+                for job in state.jobs.values()
+                if labels.items() <= job.labels.items() and job.owner.name == namespace
+            ]
+
+        def cancel_job(self, *, job_id, namespace):
+            state.cancelled.append(job_id)
+            if not state.cancel_fails:
+                state.jobs[job_id].status.stage = "CANCELED"
+
+    boundary.on_start = start
+    boundary.on_stop = stop
+    monkeypatch.setattr(huggingface_hub, "HfApi", Api)
+    return state
+
+
+def test_hf_sandbox_runs_every_trial_at_once_as_a_labelled_job(
+    task, boundary, hf_jobs, canaries, tmp_path
+):
+    boundary.agent_delay = 0.05
+    boundary.rewards.update({"canary-1": b'{"reward":0}', "canary-2": b'{"reward":0}'})
+    artifacts = tmp_path / "hf"
+    report = run_validation(
+        task, sandbox="hf-sandbox", namespace="org", artifacts_dir=artifacts
+    )
+    assert report.verdict is Verdict.WARN
+    for check_id in (
+        "runtime.startup",
+        "runtime.reward_well_formed",
+        "runtime.episode_determinism",
+        "semantic.oracle_max",
+        "semantic.floor_gap",
+        "semantic.canary_floor",
+    ):
+        assert result(report, check_id).status is CheckStatus.PASS, check_id
+    # Nothing is built, so all five trials overlap.
+    assert hf_jobs.max_running == 5
+    assert all(job.status.stage == "CANCELED" for job in hf_jobs.jobs.values())
+    assert not hf_jobs.cancelled and not boundary.cleanup_calls
+    assert all(
+        trial.config.environment.type == "hf-sandbox"
+        and trial.config.environment.delete
+        and trial.config.environment.kwargs
+        == {"flavor": "cpu-basic", "namespace": "org", "job_timeout": 610}
+        and trial.docker_image == PINNED
+        for trial in boundary.trials
+    )
+    measured = result(report, "runtime.startup").measured
+    assert measured["image_ref"] == measured["source_image"] == PINNED
+    assert (measured["sandbox"], measured["flavor"], measured["namespace"]) == (
+        "hf-sandbox",
+        "cpu-basic",
+        "org",
+    )
+    assert sorted(measured["job_ids"]) == sorted(hf_jobs.jobs)
+    assert "retained_image_tag" not in measured
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert native["sandbox"] == "hf-sandbox"
+    assert native["hf_jobs"]["hardware"]["cpu"] == "2 vCPU"
+    assert native["limitations"] and "daemon" not in native
+    assert [trial["role"] for trial in native["trials"]] == [
+        "nop",
+        "oracle",
+        "oracle-replay",
+        "canary-1",
+        "canary-2",
+    ]
+    assert all(trial["cleanup"]["verified"] for trial in native["trials"])
+    assert measured["job_ids"] == [trial["container_id"] for trial in native["trials"]]
+
+
+@pytest.mark.parametrize(
+    "shape,reason",
+    [("dockerfile", "build and push the image"), ("user", "cannot switch users")],
+)
+def test_hf_sandbox_refuses_tasks_it_cannot_run(task, boundary, shape, reason):
+    if shape == "user":
+        with (task / "task.toml").open("a") as stream:
+            stream.write(
+                f'[environment]\ndocker_image="{PINNED}"\n[agent]\nuser="1000"\n'
+            )
+    report = run_validation(task, sandbox="hf-sandbox")
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.SKIP
+    assert reason in startup.evidence[0]
+    assert not boundary.trials
+
+
+@pytest.mark.parametrize(
+    "flavor,cpu,reason",
+    [
+        ("cpu-basic", 4, "smaller than the contract resources"),
+        ("cpu-unknown", 1, "unknown HF Jobs flavor"),
+    ],
+)
+def test_hf_sandbox_flavor_must_exist_and_cover_the_contract(
+    task, boundary, hf_jobs, flavor, cpu, reason
+):
+    path = task / "validation/openenv.json"
+    contract = json.loads(path.read_text())
+    contract["resources"]["cpu"] = cpu
+    path.write_text(json.dumps(contract))
+    report = run_validation(task, sandbox="hf-sandbox", flavor=flavor)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert reason in startup.evidence[0]
+    assert not boundary.trials and not hf_jobs.jobs
+
+
+def test_hf_sandbox_job_must_run_the_pinned_image(task, boundary, hf_jobs):
+    hf_jobs.image = "registry.example/image@sha256:" + "e" * 64
+    report = run_validation(task, sandbox="hf-sandbox")
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert any("pinned image" in line for line in startup.evidence)
+    assert all(job.status.stage == "CANCELED" for job in hf_jobs.jobs.values())
+
+
+@pytest.mark.parametrize("cancel_works", [True, False])
+def test_hf_sandbox_cleanup_cancels_jobs_that_survive_teardown(
+    task, boundary, hf_jobs, tmp_path, monkeypatch, cancel_works
+):
+    hf_jobs.kill_fails = True
+    hf_jobs.cancel_fails = not cancel_works
+    monkeypatch.setattr(harbor, "_JOB_STOP_TIMEOUT_S", 5 if cancel_works else 0)
+    artifacts = tmp_path / "hf-cleanup"
+    report = run_validation(task, sandbox="hf-sandbox", artifacts_dir=artifacts)
+    assert sorted(hf_jobs.cancelled) == sorted(hf_jobs.jobs)
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert native["cleanup"]["verified"] is cancel_works
+    startup = result(report, "runtime.startup")
+    if cancel_works:
+        assert startup.status is CheckStatus.PASS
+    else:
+        assert startup.status is CheckStatus.ERROR
+        assert {trial["failure"] for trial in native["trials"]} == {
+            "CleanupNotVerified"
+        }
+
+
+@pytest.mark.parametrize(
+    "labels,owner",
+    [
+        # The Hub reports an unlabelled job as labels=None.
+        (None, "me"),
+        (harbor._job_labels("openenv-validation-" + "d" * 32 + "-nop"), "you"),
+    ],
+    ids=["unlabelled", "other-owner"],
+)
+def test_hf_jobs_cleanup_never_cancels_jobs_outside_its_run(labels, owner):
+    # A control plane that ignored the label or namespace filter.
+    cancelled = []
+    inspector = harbor.HFJobsInspector(PINNED, "cpu-basic", "me", None)
+    job = SimpleNamespace(
+        id="someone-elses-job",
+        labels=labels,
+        owner=SimpleNamespace(name=owner),
+        status=SimpleNamespace(stage="RUNNING"),
+    )
+    inspector._api = SimpleNamespace(
+        list_jobs=lambda **kwargs: [job],
+        cancel_job=lambda **kwargs: cancelled.append(kwargs["job_id"]),
+    )
+    with pytest.raises(harbor.NativeEvidenceError, match="outside this run"):
+        inspector.cleanup("openenv-validation-" + "d" * 32 + "-nop__env")
+    assert not cancelled
+
+
+def test_hf_sandbox_gives_every_trial_its_own_worker_thread(
+    task, boundary, hf_jobs, canaries, monkeypatch
+):
+    # Eight canaries make eleven trials, more than the default thread pool of a
+    # two-CPU machine. A trial left waiting for a thread would spend its budget.
+    for index in range(3, 9):
+        (canaries / f"c{index}-empty.sh").write_bytes(b"#!/bin/sh\ntrue\n")
+    monkeypatch.setattr(os, "cpu_count", lambda: 2)
+    monkeypatch.setattr(os, "process_cpu_count", lambda: 2, raising=False)
+    boundary.start_barrier = threading.Barrier(11, timeout=5)
+    report = run_validation(task, sandbox="hf-sandbox")
+    assert result(report, "runtime.startup").status is CheckStatus.PASS
+    assert hf_jobs.max_running == 11

@@ -1,7 +1,9 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from conftest import FIXTURES
 from openenv.validation.report import ValidationReport, ValidationReportV2
 
@@ -148,3 +150,40 @@ def test_served_package_cannot_claim_harbor_execution(tmp_path):
     assert manifest_result.status.value == "fail"
     assert "openenv_ws" in " ".join(manifest_result.evidence)
     assert "Internal error" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (["--sandbox", "nope"], "unknown sandbox"),
+        (["--sandbox", "hf-sandbox", "--space", "org/env"], "--sandbox cannot be"),
+        (["--sandbox", "hf-sandbox", "--url", "http://localhost:8000"], "--sandbox"),
+        (["http://localhost:8000", "--sandbox", "hf-sandbox"], "--sandbox cannot be"),
+        (["--namespace", "org"], "--namespace requires --sandbox hf-sandbox"),
+        (["--flavor", "t4-small"], "--flavor requires --space or --sandbox"),
+        (["--revision", "main"], "--revision requires --space"),
+    ],
+)
+def test_sandbox_flags_must_be_used_together(args, message):
+    result = _validate(*args)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert message in result.stderr
+
+
+def test_hf_sandbox_reports_served_packages_as_unsupported():
+    result = _validate(
+        str(FIXTURES / "served_min_pass"),
+        "--sandbox",
+        "hf-sandbox",
+        "--level",
+        "runtime",
+        "--json",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    startup = next(
+        check
+        for check in json.loads(result.stdout)["results"]
+        if check["check_id"] == "runtime.startup"
+    )
+    assert startup["status"] == "skip"
+    assert "runs native Harbor tasks only" in startup["evidence"][0]

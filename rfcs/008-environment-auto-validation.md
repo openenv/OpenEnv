@@ -756,8 +756,8 @@ an `environment.docker_image` without a digest, tasks with neither a Dockerfile 
 a pinned image, task-authored Compose files and separate verifier environments.
 GPU/TPU or external MCP requirements, credentials, non-public or differing phase
 networks, task environment variables, healthchecks, skills, verifier collection and
-artifact extensions are also unsupported. A supplied provider, including `--space`,
-is unsupported. Each case gives `runtime.startup` SKIP with a named reason and runs
+artifact extensions are also unsupported. A served-package provider, including
+`--space`, is unsupported. Each case gives `runtime.startup` SKIP with a named reason and runs
 no trials. With valid static declarations and an oracle, the verdict is WARN and
 the exit code is 0. A missing `solution/solve.sh` still FAILs `semantic.oracle_max`
 at the semantic level, including with `--skip-build` or `--space`.
@@ -791,6 +791,20 @@ run-owned Compose projects, including anonymous volumes registered from the
 containers' actual mounts, and verifies their absence. The oracle's exit code is
 read at `AGENT_END`, before sandbox log synchronization can overwrite it, and a
 later change fails the run.
+
+With `--sandbox hf-sandbox`, each trial runs as its own Hugging Face Job through
+Harbor's `hf-sandbox` environment, on the flavor and in the namespace the operator
+names. The task must declare a digest-pinned `environment.docker_image`. Tasks that
+only ship a Dockerfile, and tasks that set agent or verifier users, give
+`runtime.startup` SKIP. A flavor smaller than the contract's resources gives
+`runtime.startup` ERROR before any job starts. All trials start at once from the
+pinned image. Every job carries run and role labels. At `AGENT_START` the validator
+reads the job back and requires the pinned image, the requested flavor and a
+`RUNNING` stage. After each trial it cancels any labelled job still running and
+verifies that every one reaches a terminal stage. The image identity is the digest
+requested from HF Jobs and read back from the job, not a digest measured inside the
+sandbox, and the evidence states this limitation. Check ids, graders and thresholds
+are unchanged.
 
 For `harbor-semantic-v1`, one trial is a one-shot episode with no per-step
 observations. A fresh oracle replay that reproduces every reward and the oracle

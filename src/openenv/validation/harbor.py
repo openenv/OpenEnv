@@ -1,13 +1,15 @@
-"""Native Harbor execution: fresh Docker trials graded through RFC 008 check ids.
+"""Native Harbor execution: fresh trials graded through RFC 008 check ids.
 
-No served-protocol evidence is synthesized. A do-nothing trial builds the image, or
-pulls the task's digest-pinned one, and the oracle, its replay and any canaries run
-pinned to that image.
+No served-protocol evidence is synthesized. On local Docker, a do-nothing trial
+builds the image, or pulls the task's digest-pinned one, and the oracle, its replay
+and any canaries run pinned to that image. On `hf-sandbox`, every trial starts at
+once from the task's digest-pinned image, each in its own Hugging Face Job.
 """
 
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -17,6 +19,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
 from fractions import Fraction
@@ -58,6 +61,10 @@ _HOST_FAILURES = {
     "RetainedImageDrift",
     "RetainedImageUnverified",
 }
+_TERMINAL_STAGES = {"COMPLETED", "CANCELED", "ERROR", "DELETED"}
+_JOB_STOP_TIMEOUT_S = 60
+# Inside the 600-second validator start budget, so Sandbox.create finishes first.
+_SANDBOX_START_TIMEOUT_S = 540
 # Checks this binding measures; every other local check is a named SKIP.
 _IMPLEMENTED = {
     "runtime.startup",
@@ -276,7 +283,134 @@ class DockerInspector:
             self._retained_image = None
 
 
-def _unsupported(task, contract):
+def _job_labels(trial_name):
+    # openenv-validation-<run id>-<role>
+    run_id, role = trial_name.split("-", 3)[2:]
+    return {"openenv-validation-run": run_id, "openenv-validation-role": role}
+
+
+class HFJobsInspector:
+    """
+    Trusted HF Jobs checks limited to sandbox jobs labelled with this run.
+
+    The image identity is the digest requested from HF Jobs and read back from the
+    job; no runtime digest is measured inside the sandbox.
+    """
+
+    def __init__(self, image, flavor, namespace, resources):
+        self.image = image
+        self.flavor = flavor
+        self.namespace = namespace
+        self._resources = resources
+        self._api = None
+
+    def preflight(self):
+        from huggingface_hub import HfApi
+
+        self._api = HfApi()
+        if self.namespace is None:
+            self.namespace = self._api.whoami()["name"]
+        hardware = {item.name: item for item in self._api.list_jobs_hardware()}
+        if self.flavor not in hardware:
+            raise NativeEvidenceError(f"unknown HF Jobs flavor {self.flavor}")
+        item = hardware[self.flavor]
+        # The Hub lists specs as "2 vCPU", "16 GB" and "50 GB".
+        cpu, memory_gb, disk_gb = (
+            int(spec.split()[0])
+            for spec in (item.cpu, item.ram, item.ephemeral_storage)
+        )
+        if (
+            cpu < self._resources.cpu
+            or memory_gb * 1000 < self._resources.memory_mb
+            or disk_gb * 1000 < self._resources.disk_mb
+        ):
+            raise NativeEvidenceError(
+                f"HF Jobs flavor {self.flavor} ({item.cpu}, {item.ram} RAM, "
+                + f"{item.ephemeral_storage} disk) is smaller than the contract resources"
+            )
+        return {
+            "flavor": self.flavor,
+            "namespace": self.namespace,
+            "hardware": {
+                "cpu": item.cpu,
+                "ram": item.ram,
+                "disk": item.ephemeral_storage,
+            },
+        }
+
+    def _jobs(self, project):
+        if not _PROJECT.fullmatch(project):
+            raise NativeEvidenceError("not a run-owned Harbor project")
+        labels = _job_labels(project.removesuffix("__env"))
+        jobs = list(self._api.list_jobs(labels=labels, namespace=self.namespace))
+        # Cleanup cancels what this returns, so recheck the server-side filter.
+        if any(
+            not labels.items() <= (job.labels or {}).items()
+            or job.owner.name != self.namespace
+            for job in jobs
+        ):
+            raise NativeEvidenceError("HF Jobs returned a job outside this run")
+        return jobs
+
+    def inventory(self, project):
+        return {"jobs": sorted(job.id for job in self._jobs(project))}
+
+    def capture(self, project, retained_tag, *, retain=True):
+        jobs = self._jobs(project)
+        if len(jobs) != 1:
+            raise NativeEvidenceError("HF Sandbox trial requires exactly one job")
+        job = jobs[0]
+        if (
+            job.status.stage != "RUNNING"
+            or job.docker_image != self.image
+            or job.flavor != self.flavor
+        ):
+            raise NativeEvidenceError(
+                "HF Sandbox job is not running the pinned image on the requested flavor"
+            )
+        configuration = {
+            "image_ref": job.docker_image,
+            "flavor": self.flavor,
+            "namespace": self.namespace,
+        }
+        return {
+            "container_id": job.id,
+            "project": project,
+            "image_ref": job.docker_image,
+            "configuration": configuration,
+            "configuration_digest": _digest(configuration),
+        }
+
+    def cleanup(self, project):
+        # A start abandoned at its deadline can still create a job, so keep looking.
+        deadline = time.monotonic() + _JOB_STOP_TIMEOUT_S
+        cancelled = set()
+        while True:
+            stages = {job.id: job.status.stage for job in self._jobs(project)}
+            running = {
+                job_id
+                for job_id, stage in stages.items()
+                if stage not in _TERMINAL_STAGES
+            }
+            for job_id in running - cancelled:
+                self._api.cancel_job(job_id=job_id, namespace=self.namespace)
+                cancelled.add(job_id)
+            if not running or time.monotonic() > deadline:
+                return {
+                    "verified": not running,
+                    "jobs": stages,
+                    "cancelled": sorted(cancelled),
+                }
+            time.sleep(2)
+
+    def verify_image(self, tag, image_ref):
+        return image_ref == self.image
+
+    def remove_image(self):
+        pass  # Nothing is pulled or tagged on this host.
+
+
+def _unsupported(task, contract, sandbox):
     config = task.config
     env = config.environment
     if task.has_steps:
@@ -312,19 +446,55 @@ def _unsupported(task, contract):
         return "task environment variables (including host credential substitutions)"
     if env.healthcheck or env.skills_dir or config.verifier.collect or config.artifacts:
         return "healthcheck, skills, collect or artifact extensions"
+    if sandbox == "hf-sandbox":
+        if env.docker_image is None:
+            return (
+                "hf-sandbox tasks without environment.docker_image; build and push "
+                + "the image, then pin it as name@sha256:<digest>"
+            )
+        if config.agent.user is not None or config.verifier.user is not None:
+            return "agent or verifier users on hf-sandbox, which cannot switch users"
     return None
 
 
 async def _create_trial(config):
+    from harbor.environments.hf_sandbox import HFSandboxEnvironment
     from harbor.trial.trial import Trial
 
     trial = await Trial.create(config)
     environment = trial.agent_environment
     trial._openenv_cancelled_compose = []
-    environment._run_docker_compose_command = partial(
-        _run_compose, environment, cancelled=trial._openenv_cancelled_compose
-    )
+    if isinstance(environment, HFSandboxEnvironment):
+        environment.start = partial(
+            _start_sandbox,
+            environment,
+            labels=_job_labels(config.trial_name),
+            namespace=config.environment.kwargs["namespace"],
+        )
+    else:
+        environment._run_docker_compose_command = partial(
+            _run_compose, environment, cancelled=trial._openenv_cancelled_compose
+        )
     return trial
+
+
+async def _start_sandbox(environment, *, force_build, labels, namespace):
+    # Harbor's hf-sandbox start, plus labels that let cleanup find every run-owned job.
+    from huggingface_hub import Sandbox
+
+    environment._sandbox = await asyncio.to_thread(
+        Sandbox.create,
+        image=environment.task_env_config.docker_image,
+        flavor=environment._flavor,
+        idle_timeout=environment._idle_timeout,
+        namespace=namespace,
+        labels=labels,
+        start_timeout=_SANDBOX_START_TIMEOUT_S,
+    )
+    if workdir := environment.task_env_config.workdir:
+        await asyncio.to_thread(environment._sandbox.files.mkdir, workdir)
+    await environment.ensure_dirs(environment._mount_targets(writable_only=True))
+    await environment._upload_environment_dir_after_start()
 
 
 async def _run_compose(
@@ -499,9 +669,12 @@ async def _trial(
     trial = None
     phase = "trial creation"
     registered = False
+    hf = isinstance(inspector, HFJobsInspector)
     try:
         # Verify ownership before Trial.create can allocate anything.
-        record["pre_allocation_inventory"] = inspector.inventory(project)
+        record["pre_allocation_inventory"] = await asyncio.to_thread(
+            inspector.inventory, project
+        )
         if any(record["pre_allocation_inventory"].values()):
             raise NativeEvidenceError(
                 "run-owned project was not empty before allocation"
@@ -549,6 +722,17 @@ async def _trial(
                 override_setup_timeout_sec=budget,
             ),
             environment=EnvironmentConfig(
+                type=EnvironmentType.HF_SANDBOX,
+                delete=True,
+                kwargs={
+                    "flavor": inspector.flavor,
+                    "namespace": inspector.namespace,
+                    # Idle shutdown must outlast the longest single command.
+                    "job_timeout": math.ceil(budget) + 600,
+                },
+            )
+            if hf
+            else EnvironmentConfig(
                 type=EnvironmentType.DOCKER,
                 delete=False,
                 force_build=False,
@@ -593,7 +777,9 @@ async def _trial(
                 raise NativeEvidenceError(
                     "Harbor sandbox identity differs from the registered project"
                 )
-            identity = inspector.capture(project, retained_tag, retain=not expected)
+            identity = await asyncio.to_thread(
+                inspector.capture, project, retained_tag, retain=not expected
+            )
             record.update(identity)
             if expected and (
                 identity["image_ref"] != expected["image_ref"]
@@ -697,12 +883,12 @@ async def _trial(
         if trial is not None:
             try:
                 async with asyncio.timeout(30):
-                    await trial.agent_environment.stop(delete=False)
+                    await trial.agent_environment.stop(delete=hf)
             except (Exception, KeyboardInterrupt):
                 record["failure"] = "HarborTeardownError"
         if registered:
             try:
-                record["cleanup"] = inspector.cleanup(project)
+                record["cleanup"] = await asyncio.to_thread(inspector.cleanup, project)
                 if trial is not None and trial._openenv_cancelled_compose:
                     record["cleanup"].update(
                         {
@@ -745,7 +931,6 @@ async def _trial(
 
 async def _collect(root, contract, work, inspector, source_binding, canaries=()):
     run_id = uuid.uuid4().hex
-    daemon = inspector.preflight()
     # The replay makes episode determinism measurable before any semantic check.
     plan = [
         ("nop", "nop", None),
@@ -756,30 +941,46 @@ async def _collect(root, contract, work, inspector, source_binding, canaries=())
             for index, canary in enumerate(canaries, start=1)
         ),
     ]
-    trials, files = [], {}
-    for role, agent, canary in plan:
-        trial, raw = await _trial(
-            root,
-            role,
-            agent,
-            work,
-            contract,
-            inspector,
-            run_id,
-            source_binding,
-            trials[0] if trials else None,
-            canary,
+    if isinstance(inspector, HFJobsInspector):
+        # Each running trial blocks a worker thread for every sandbox command, and
+        # a trial waiting for a free thread would spend its own phase budget.
+        asyncio.get_running_loop().set_default_executor(
+            ThreadPoolExecutor(max_workers=len(plan) + 4)
         )
+    host = await asyncio.to_thread(inspector.preflight)
+    run_trial = partial(
+        _trial,
+        root,
+        work=work,
+        contract=contract,
+        inspector=inspector,
+        run_id=run_id,
+        source_binding=source_binding,
+    )
+    if isinstance(inspector, HFJobsInspector):
+        # A pinned image needs no build, so every trial starts at once.
+        outcomes = await asyncio.gather(
+            *(run_trial(role, agent, canary=canary) for role, agent, canary in plan)
+        )
+    else:
+        outcomes = []
+        for role, agent, canary in plan:
+            expected = outcomes[0][0] if outcomes else None
+            outcomes.append(
+                await run_trial(role, agent, expected=expected, canary=canary)
+            )
+            if "failure" in outcomes[-1][0]:
+                break
+    trials, files = [], {}
+    for trial, raw in outcomes:
         trials.append(trial)
         for name, value in raw.items():
-            relative = f"harbor-trials/{role}/{name}"
+            relative = f"harbor-trials/{trial['role']}/{name}"
             files[relative] = value
             trial["raw_rewards"][name] = {
                 "path": relative,
                 "sha256": hashlib.sha256(value).hexdigest(),
             }
-        if "failure" in trial:
-            break
     if trials and "image_ref" in trials[0]:
         try:
             if not inspector.verify_image(
@@ -788,7 +989,7 @@ async def _collect(root, contract, work, inspector, source_binding, canaries=())
                 trials[-1]["failure"] = "RetainedImageDrift"
         except Exception:
             trials[-1]["failure"] = "RetainedImageUnverified"
-    return daemon, trials, files
+    return host, trials, files
 
 
 def _result(check_id, status, reason, measured=None):
@@ -828,6 +1029,9 @@ def validate_harbor(
     report_target=None,
     skip_build=False,
     provider=None,
+    sandbox="docker",
+    flavor="cpu-basic",
+    namespace=None,
 ):
     """Run fresh native Harbor trials and grade them up to the requested level."""
     from .runner import source_digest
@@ -843,6 +1047,7 @@ def validate_harbor(
     record = {
         "schema_version": "2",
         "profile": HARBOR_PROFILE,
+        "sandbox": sandbox,
         "task_effective_digest": digest_before,
         "original_source_digest": contract.original_source_digest,
         "contract_digest": _digest(contract.model_dump(mode="json")),
@@ -861,11 +1066,21 @@ def validate_harbor(
     try:
         attempted = False
         task = read_harbor_task(subject.root)
-        problem = _unsupported(task, contract)
+        problem = _unsupported(task, contract, sandbox)
+        if sandbox == "hf-sandbox":
+            inspector = HFJobsInspector(
+                task.config.environment.docker_image,
+                flavor,
+                namespace,
+                contract.resources,
+            )
         if skip_build:
             problem = "image build skipped by --skip-build"
         if provider is not None:
-            problem = "native Harbor binding requires its own Docker Trial provider"
+            problem = (
+                "served-package providers, including --space; "
+                + "run Harbor trials on HF Jobs with --sandbox hf-sandbox"
+            )
         if any(result.status is not CheckStatus.PASS for result in results):
             problem = "unmet dependency: static.manifest"
         startup = _result(
@@ -917,7 +1132,7 @@ def validate_harbor(
                     with tempfile.TemporaryDirectory(
                         prefix="openenv-harbor-validation-"
                     ) as temp:
-                        daemon, trials, files = asyncio.run(
+                        host, trials, files = asyncio.run(
                             _collect(
                                 subject.root,
                                 contract,
@@ -927,7 +1142,15 @@ def validate_harbor(
                                 canaries,
                             )
                         )
-                    record.update({"daemon": daemon, "trials": trials})
+                    record["trials"] = trials
+                    if sandbox == "hf-sandbox":
+                        record["hf_jobs"] = host
+                        record["limitations"] = [
+                            "The image is the digest requested from HF Jobs and read "
+                            + "back from each job, not a digest measured at runtime."
+                        ]
+                    else:
+                        record["daemon"] = host
                     record["cleanup"] = {
                         "verified": bool(trials)
                         and all(trial["cleanup"]["verified"] for trial in trials)
@@ -992,6 +1215,13 @@ def validate_harbor(
                         if source_image is not None:
                             record["source_image"] = source_image
                             startup.measured["source_image"] = source_image
+                        if sandbox == "hf-sandbox":
+                            startup.measured.update(
+                                sandbox=sandbox,
+                                flavor=host["flavor"],
+                                namespace=host["namespace"],
+                                job_ids=containers,
+                            )
                         if malformed:
                             reward_result = _result(
                                 "runtime.reward_well_formed",
@@ -1161,7 +1391,7 @@ def validate_harbor(
                     f"retained image removal failed ({type(exc).__name__})"
                 )
                 record["cleanup"].update(verified=False, completed=False)
-        elif "image_ref" in record:
+        elif "image_ref" in record and sandbox == "docker":
             tag = trials[0]["retained_image_tag"]
             startup.measured["retained_image_tag"] = tag
             record["retained_image_tag"] = tag
@@ -1187,7 +1417,11 @@ def validate_harbor(
                 artifacts_dir,
                 report,
                 cleanup=record["cleanup"],
-                provider={"binding": "harbor_task", "profile": HARBOR_PROFILE},
+                provider={
+                    "binding": "harbor_task",
+                    "profile": HARBOR_PROFILE,
+                    "sandbox": sandbox,
+                },
             )
             files["harbor-evidence.json"] = (dumps(record) + "\n").encode()
             checksums = (artifacts_dir / "SHA256SUMS").read_text()
