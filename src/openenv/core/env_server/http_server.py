@@ -14,9 +14,10 @@ import inspect
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AsyncExitStack
 from typing import (
     Any,
@@ -62,6 +63,17 @@ from .mcp_types import (
 )
 from .route_config import GetEndpointConfig, register_get_endpoints
 from .serialization import deserialize_action, serialize_observation
+from .session_telemetry import (
+    rubric_counts,
+    rubric_snapshot,
+    SeedAcceptance,
+    SessionTelemetry,
+    ValidationOpenedData,
+    ValidationOpenedResponse,
+    ValidationOpenMessage,
+    ValidationReadMessage,
+    ValidationResponse,
+)
 from .types import (
     Action,
     ConcurrencyConfig,
@@ -278,8 +290,10 @@ class HTTPEnvServer:
 
         self._requires_single_thread_executor = self._detect_single_thread_requirement()
         self._shared_session_executor: Optional[ThreadPoolExecutor] = None
+        self._shared_session_creation_lock: Optional[asyncio.Lock] = None
         if self._requires_single_thread_executor:
             self._shared_session_executor = ThreadPoolExecutor(max_workers=1)
+            self._shared_session_creation_lock = asyncio.Lock()
 
         # Idle session reaper configuration.
         # Timeout is taken from ConcurrencyConfig.session_timeout;
@@ -411,66 +425,219 @@ class HTTPEnvServer:
             self._session_executors[session_id] = executor
             self._sessions[session_id] = None  # placeholder until env is ready
 
-        try:
-            # Create environment in the executor thread (outside lock)
-            loop = asyncio.get_event_loop()
-            env = await loop.run_in_executor(executor, self._env_factory)
-            mode_val = (
-                mode.value
-                if isinstance(mode, ServerMode)
-                else (str(mode) if mode is not None else None)
-            )
-            if mode_val is not None and hasattr(env, "set_mode"):
-                env.set_mode(mode_val)
-        except Exception as e:
-            async with self._session_lock:
-                if executor is not self._shared_session_executor:
-                    executor.shutdown(wait=False)
-                self._session_executors.pop(session_id, None)
-                self._sessions.pop(session_id, None)
-            factory_name = getattr(
-                self._env_factory, "__name__", str(self._env_factory)
-            )
-            raise EnvironmentFactoryError(factory_name) from e
+        # Every await from here to registration runs with the slot reserved, so
+        # cancellation has to release it. CancelledError is not an Exception, so
+        # the handlers below never see it, and a surviving reservation is
+        # permanent: capacity counts _sessions, while the idle reaper only scans
+        # sessions that reached _session_info.
+        env: Optional[Environment] = None
+        stack: Optional[AsyncExitStack] = None
+        factory_future: Optional[Future[Environment]] = None
+        mcp_entry_task: Optional[asyncio.Task[Any]] = None
+        cleanup_task: Optional[asyncio.Task[None]] = None
+        creation_lock_acquired = False
 
-        # Hold the MCP session open for the lifetime of this session,
-        # matching the WebSocket path's AsyncExitStack pattern.  This
-        # prevents per-request MCP transport teardown/reconnection and
-        # preserves FastMCP session state (ctx.set_state / ctx.get_state)
-        # across HTTP calls within the same OpenEnv session.
-        stack = AsyncExitStack()
+        def start_cleanup() -> asyncio.Task[None]:
+            # Startup failure and cancellation share one cleanup owner. Whoever
+            # gets here first starts the task; a later caller joins the same one
+            # instead of submitting a second env.close().
+            nonlocal cleanup_task
+            if cleanup_task is None:
+                cleanup_task = asyncio.create_task(
+                    self._discard_reserved_session(
+                        session_id,
+                        executor,
+                        env,
+                        stack,
+                        factory_future,
+                        mcp_entry_task,
+                    )
+                )
+            return cleanup_task
+
+        async def drain_cleanup(task: asyncio.Task[None]) -> None:
+            # ASGI cancel scopes may cancel a request repeatedly. Keep awaiting
+            # the shielded cleanup task until it reaches a terminal state so
+            # cancellation cannot escape while the reservation still exists.
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        pass
+                task.result()
+                raise
+
         try:
-            mcp_session_factory = getattr(env, "mcp_session", None)
-            if callable(mcp_session_factory):
-                mcp_session_cm = cast(AsyncContextManager[Any], mcp_session_factory())
-                await stack.enter_async_context(mcp_session_cm)
-        except Exception:
-            # MCP transport failed to start — clean up the reserved slot,
-            # the env, and the executor so they don't leak permanently
-            # against _max_concurrent_envs.
-            await stack.aclose()  # best-effort
+            if self._shared_session_creation_lock is not None:
+                await self._shared_session_creation_lock.acquire()
+                creation_lock_acquired = True
+
+            try:
+                # Create environment in the executor thread (outside lock).
+                # submit() plus wrap_future() is what run_in_executor() does
+                # internally; spelling it out keeps the thread's future, which is
+                # the only handle on an environment still being built when the
+                # await is cancelled.
+                loop = asyncio.get_event_loop()
+                factory_future = executor.submit(self._env_factory)
+                env = await asyncio.wrap_future(factory_future, loop=loop)
+                mode_val = (
+                    mode.value
+                    if isinstance(mode, ServerMode)
+                    else (str(mode) if mode is not None else None)
+                )
+                if mode_val is not None and hasattr(env, "set_mode"):
+                    env.set_mode(mode_val)
+            except Exception as e:
+                async with self._session_lock:
+                    if executor is not self._shared_session_executor:
+                        executor.shutdown(wait=False)
+                    self._session_executors.pop(session_id, None)
+                    self._sessions.pop(session_id, None)
+                factory_name = getattr(
+                    self._env_factory, "__name__", str(self._env_factory)
+                )
+                raise EnvironmentFactoryError(factory_name) from e
+
+            # The factory result is delivered, so the shared executor thread is
+            # free. Release the creation lock before MCP startup: it exists to
+            # order factory calls (and disposal of a factory cancelled
+            # mid-flight) on that one thread, and holding it through an MCP
+            # handshake lets a single stalled connection starve every later
+            # session's constructor. Cancellation during construction keeps the
+            # lock instead, so late-factory disposal still precedes the next
+            # constructor.
+            if creation_lock_acquired:
+                assert self._shared_session_creation_lock is not None
+                self._shared_session_creation_lock.release()
+                creation_lock_acquired = False
+
+            # Hold the MCP session open for the lifetime of this session,
+            # matching the WebSocket path's AsyncExitStack pattern.  This
+            # prevents per-request MCP transport teardown/reconnection and
+            # preserves FastMCP session state (ctx.set_state / ctx.get_state)
+            # across HTTP calls within the same OpenEnv session.
+            stack = AsyncExitStack()
+            try:
+                mcp_session_factory = getattr(env, "mcp_session", None)
+                if callable(mcp_session_factory):
+                    mcp_session_cm = cast(
+                        AsyncContextManager[Any], mcp_session_factory()
+                    )
+                    # Enter in its own task and await it shielded. An entry that
+                    # blocks before yielding may release resources in its own
+                    # finally, and the stack cannot replay that cleanup: it
+                    # registers the exit callback only once __aenter__ returns.
+                    # Shielding keeps repeated cancellation off the entry, so
+                    # the cleanup owner can cancel it exactly once and drain the
+                    # unwind instead of aborting it part-way.
+                    mcp_entry_task = asyncio.create_task(
+                        stack.enter_async_context(mcp_session_cm)
+                    )
+                    await asyncio.shield(mcp_entry_task)
+            except Exception:
+                # MCP transport failed to start — clean up the reserved slot,
+                # the env, and the executor so they don't leak permanently
+                # against _max_concurrent_envs. Cancellation arriving mid-close
+                # joins this same task rather than closing the env twice.
+                await drain_cleanup(start_cleanup())
+                raise
+
             async with self._session_lock:
-                self._sessions.pop(session_id, None)
-                self._session_executors.pop(session_id, None)
-                self._session_info.pop(session_id, None)
-            await self._cleanup_session_resources(env, executor)
+                self._sessions[session_id] = env
+                self._session_stacks[session_id] = stack
+                if mode is not None:
+                    self._session_modes[session_id] = mode_val
+                now = time.time()
+                self._session_info[session_id] = SessionInfo(
+                    session_id=session_id,
+                    created_at=current_time,
+                    last_activity_at=now,
+                    step_count=0,
+                    environment_type=type(env).__name__,
+                )
+        except asyncio.CancelledError:
+            # Joins the cleanup already under way if startup failure began one,
+            # so the environment is closed by a single owner.
+            try:
+                await drain_cleanup(start_cleanup())
+            except asyncio.CancelledError:
+                pass
             raise
-
-        async with self._session_lock:
-            self._sessions[session_id] = env
-            self._session_stacks[session_id] = stack
-            if mode is not None:
-                self._session_modes[session_id] = mode_val
-            now = time.time()
-            self._session_info[session_id] = SessionInfo(
-                session_id=session_id,
-                created_at=current_time,
-                last_activity_at=now,
-                step_count=0,
-                environment_type=type(env).__name__,
-            )
+        finally:
+            if creation_lock_acquired:
+                assert self._shared_session_creation_lock is not None
+                self._shared_session_creation_lock.release()
 
         return session_id, env
+
+    async def _discard_reserved_session(
+        self,
+        session_id: str,
+        executor: ThreadPoolExecutor,
+        env: Optional[Environment] = None,
+        stack: Optional[AsyncExitStack] = None,
+        factory_future: Optional[Future[Environment]] = None,
+        mcp_entry_task: Optional[asyncio.Task[Any]] = None,
+    ) -> None:
+        """
+        Release a session slot reserved by `_create_session` that never opened.
+
+        Drops every mapping the slot may have reached and closes whatever the
+        interrupted creation built, so the slot stops counting against
+        `max_concurrent_envs` and no environment outlives it.
+
+        Args:
+            session_id (`str`):
+                The reserved session ID to release.
+            executor (`ThreadPoolExecutor`):
+                The executor reserved alongside the slot.
+            env (`Environment`, *optional*):
+                The environment, if the factory already returned one.
+            stack (`AsyncExitStack`, *optional*):
+                The MCP session stack, if one was already entered.
+            factory_future (`Future`, *optional*):
+                The factory's thread future, if the factory call was reached.
+                Used to close an environment the thread is still building.
+            mcp_entry_task (`asyncio.Task`, *optional*):
+                The in-flight MCP session entry, if MCP startup was reached.
+                Cancelled and drained here so an entry interrupted before it
+                yielded can finish releasing what it had already acquired.
+        """
+        if mcp_entry_task is not None:
+            # Cancel at most once: a second cancellation would abort the entry's
+            # own unwind, and the stack holds no exit callback to replay it.
+            if not mcp_entry_task.done():
+                mcp_entry_task.cancel()
+            try:
+                await mcp_entry_task
+            except (asyncio.CancelledError, Exception):
+                # A cancelled or failed entry has unwound itself. If it did
+                # finish, `stack` owns the context and closes it below.
+                pass
+
+        if env is None and factory_future is not None:
+            # Cancelling the await can cancel a queued future, but cannot stop a
+            # factory whose executor thread is already running. In that case,
+            # keep the capacity reservation until its result can be disposed of.
+            if not factory_future.cancel():
+                try:
+                    env = await asyncio.wrap_future(factory_future)
+                except (asyncio.CancelledError, Exception):
+                    # A cancelled or failed factory produced no environment to
+                    # close. Its capacity reservation still has to be released.
+                    env = None
+
+        await self._cleanup_session_resources(env, executor, stack)
+        async with self._session_lock:
+            self._sessions.pop(session_id, None)
+            self._session_executors.pop(session_id, None)
+            self._session_stacks.pop(session_id, None)
+            self._session_info.pop(session_id, None)
+            self._session_modes.pop(session_id, None)
 
     async def _destroy_session(self, session_id: str) -> None:
         """
@@ -910,6 +1077,12 @@ class HTTPEnvServer:
                     f"Invalid mode: '{mode}'. Must be one of: {valid_modes}"
                 )
 
+        # Only explicitly provisioned simulation servers accept validation controls.
+        validation_token = os.environ.get("OPENENV_VALIDATION_TOKEN", "")
+        validation_enabled = (
+            mode == ServerMode.SIMULATION and 32 <= len(validation_token) <= 256
+        )
+
         # Wire up session lifecycle via app events
         server_ref = self
 
@@ -1246,7 +1419,7 @@ class HTTPEnvServer:
                                 request_id=request_id,
                             )
                         return JsonRpcResponse.error_response(
-                            JsonRpcErrorCode.INTERNAL_ERROR,
+                            JsonRpcErrorCode.METHOD_NOT_FOUND,
                             "Environment does not support MCP",
                             request_id=request_id,
                         )
@@ -1350,7 +1523,7 @@ class HTTPEnvServer:
                                 request_id=request_id,
                             )
                         return JsonRpcResponse.error_response(
-                            JsonRpcErrorCode.INTERNAL_ERROR,
+                            JsonRpcErrorCode.METHOD_NOT_FOUND,
                             "Environment does not support MCP",
                             request_id=request_id,
                         )
@@ -1867,6 +2040,8 @@ all schema information needed to interact with the environment.
             session_env = None
             owns_session = False
             attached_session = False
+            telemetry = None
+            operations_started = False
 
             try:
                 requested_session_id = websocket.query_params.get("session_id")
@@ -1936,6 +2111,64 @@ all schema information needed to interact with the environment.
 
                         msg_type = message_dict.get("type", "")
 
+                        if msg_type in {"validation_open", "validation_read"}:
+                            # Do not return Pydantic input/error details: these messages
+                            # contain credentials and must never echo or log them.
+                            try:
+                                if not validation_enabled or not owns_session:
+                                    raise ValueError("Validation unavailable")
+                                if msg_type == "validation_open":
+                                    auth = ValidationOpenMessage.model_validate(
+                                        message_dict
+                                    )
+                                    if telemetry is not None or operations_started:
+                                        raise ValueError("Validation already started")
+                                    if not secrets.compare_digest(
+                                        validation_token.encode(),
+                                        auth.data.token.get_secret_value().encode(),
+                                    ):
+                                        raise ValueError("Unauthorized")
+                                    telemetry = SessionTelemetry()
+                                    response = ValidationOpenedResponse(
+                                        data=ValidationOpenedData(
+                                            capability=telemetry.capability
+                                        )
+                                    )
+                                else:
+                                    auth = ValidationReadMessage.model_validate(
+                                        message_dict
+                                    )
+                                    if telemetry is None or not telemetry.authorized(
+                                        auth.data.capability.get_secret_value()
+                                    ):
+                                        raise ValueError("Unauthorized")
+                                    response = ValidationResponse(
+                                        data=telemetry.snapshot
+                                    )
+                            except Exception:
+                                response = WSErrorResponse(
+                                    data={
+                                        "message": "Validation unavailable or unauthorized",
+                                        "code": WSErrorCode.VALIDATION_ERROR,
+                                    }
+                                )
+                            await websocket.send_text(response.model_dump_json())
+                            continue
+
+                        seed_acceptance = None
+                        before_scores = None
+                        if msg_type in {"reset", "step", "state"}:
+                            operations_started = True
+                        if telemetry is not None and msg_type == "step":
+                            try:
+                                before_scores = rubric_counts(
+                                    getattr(session_env, "rubric", None)
+                                )
+                            except Exception:
+                                telemetry.snapshot.rubric_error = (
+                                    "Rubric introspection unavailable"
+                                )
+
                         try:
                             match msg_type:
                                 case "reset":
@@ -1967,6 +2200,12 @@ all schema information needed to interact with the environment.
                                             )
                                         )
 
+                                    if telemetry is not None:
+                                        seed_acceptance = SeedAcceptance(
+                                            requested="seed" in msg.data,
+                                            value=msg.data.get("seed"),
+                                            accepted="seed" in valid_kwargs,
+                                        )
                                     self._update_session_activity(session_id)
 
                                     response = WSObservationResponse(
@@ -2044,9 +2283,39 @@ all schema information needed to interact with the environment.
                                         }
                                     )
 
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                nodes = None
+                                try:
+                                    if msg_type in {"reset", "step"}:
+                                        nodes = rubric_snapshot(
+                                            getattr(session_env, "rubric", None),
+                                            before_scores,
+                                        )
+                                except Exception:
+                                    nodes = []
+                                    telemetry.snapshot.rubric_error = (
+                                        "Rubric introspection unavailable"
+                                    )
+                                telemetry.append(
+                                    msg_type,
+                                    message_dict,
+                                    response.model_dump(mode="json"),
+                                    seed=seed_acceptance,
+                                    rubric=nodes,
+                                )
                             await websocket.send_text(response.model_dump_json())
 
                         except ValidationError as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": "Invalid message",
@@ -2056,6 +2325,12 @@ all schema information needed to interact with the environment.
                             )
                             await websocket.send_text(error_resp.model_dump_json())
                         except Exception as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": str(e),

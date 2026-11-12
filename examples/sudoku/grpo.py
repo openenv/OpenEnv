@@ -56,7 +56,6 @@ def main():
     parser.add_argument("--trackio-space-id", default=None)
     args = parser.parse_args()
     env_url = args.env_url
-    # A private Space needs your token. A public one ignores it.
     token = get_token()
     headers = {"Authorization": f"Bearer {token}"} if token else None
 
@@ -65,8 +64,7 @@ def main():
             self.client = TextArenaEnv(base_url=env_url, headers=headers).sync()
 
         def reset(self, **kwargs) -> str | None:
-            # A new connection per game. The Space closes WebSockets after about 2 hours, and a game cut in the middle
-            # is lost.
+            # One connection per game, so the Space's periodic WebSocket drops don't land mid-game.
             self.client.close()
             self.client = TextArenaEnv(base_url=env_url, headers=headers).sync()
             result = self.client.reset()
@@ -105,7 +103,8 @@ def main():
             self.solved = result.done and result.reward >= 1.0
             return feedback.split("Board state: \n")[-1]
 
-    # 4 prompts x 16 games per step. Each game is one environment session, so the Space must allow 64 at once.
+    # 4 prompts x 16 games per step, one environment session each. MAX_CONCURRENT_ENVS=96 leaves room for the sessions
+    # still being closed between games.
     # One game per forward pass: with games up to 16k tokens, 8 at once ran out of memory on an A100 80GB.
     prompts_per_step, num_generations, per_device_batch_size = 4, 16, 1
     dataset = Dataset.from_dict(
@@ -124,7 +123,7 @@ def main():
             output_dir=args.hub_model_id.split("/")[-1],
             max_steps=args.max_steps,
             learning_rate=1e-6,
-            # Constant: in the Wordle run, the reward was still rising when a linear decay ran out.
+            # Constant, since with a linear decay to 0 the Wordle reward was still rising when the learning rate ran out.
             lr_scheduler_type="constant",
             num_generations=num_generations,
             per_device_train_batch_size=per_device_batch_size,
@@ -134,7 +133,6 @@ def main():
             gradient_checkpointing=True,
             bf16=True,
             chat_template_kwargs={"enable_thinking": True},
-            # Every move returns the whole grid: a 26-cell game is about 13k tokens.
             max_completion_length=16384,
             mask_truncated_completions=True,
             # Multi-turn rollouts: clip per-token ratios instead of masking whole sequences.
