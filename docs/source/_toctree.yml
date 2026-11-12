@@ -171,6 +171,8 @@
     title: Stripe World
   - local: environments/harvest_rush
     title: Harvest Rush
+  - local: environments/sql_optim
+    title: SQL Query Optimization
   title: Environments
 - isExpanded: false
   sections:
