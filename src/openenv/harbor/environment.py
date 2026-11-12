@@ -251,7 +251,11 @@ class HarborEnvironment(MCPEnvironment):
 
         # The client names the harness, and a `module:Class` name makes this server import that
         # module. Only the import paths the operator allowed at startup are accepted.
-        allowed = os.environ.get("OPENENV_HARBOR_ALLOW_HARNESS", "").split(",")
+        allowed = {
+            entry.strip()
+            for entry in os.environ.get("OPENENV_HARBOR_ALLOW_HARNESS", "").split(",")
+            if entry.strip()
+        }
         if ":" in harness and harness not in allowed:
             return HarborRolloutResult(
                 ok=False,

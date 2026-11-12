@@ -239,8 +239,16 @@ def test_runtime_refuses_host_side_agents_that_drop_capture_kwargs(custom_agents
         seams.get(f"{custom_agents}:SilentHostSideAgent")
 
 
+@pytest.mark.parametrize(
+    "allowed_harnesses",
+    [
+        "other:Agent,client_named_agent:Agent",
+        "other:Agent, client_named_agent:Agent ",
+        " , other:Agent,\tclient_named_agent:Agent , , ",
+    ],
+)
 async def test_serve_imports_only_the_harnesses_its_operator_allowed(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, allowed_harnesses
 ):
     """A client names the harness in `run_rollout`, and a `module:Class` name makes the server
     import that module. Unless the operator allowed it at startup, it is refused before any import."""
@@ -270,9 +278,7 @@ async def test_serve_imports_only_the_harnesses_its_operator_allowed(
     assert "--allow-harness client_named_agent:Agent" in await rollout_error()
     assert "client_named_agent" not in sys.modules
 
-    monkeypatch.setenv(
-        "OPENENV_HARBOR_ALLOW_HARNESS", "other:Agent,client_named_agent:Agent"
-    )
+    monkeypatch.setenv("OPENENV_HARBOR_ALLOW_HARNESS", allowed_harnesses)
     # Past the check, the rollout stops at the next one: no capture proxy runs here.
     assert "no capture proxy" in await rollout_error()
 
