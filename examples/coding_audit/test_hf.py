@@ -559,7 +559,7 @@ def test_rpc_ready_sandbox_waits_for_running_control_plane(harness, monkeypatch)
     def lagged_inspect(**kwargs):
         job = inspect(**kwargs)
         if not h.api.cancelled:
-            job.status.stage = "SCHEDULING" if not observed else "RUNNING"
+            job.status.stage = "SCHEDULING" if len(observed) < 25 else "RUNNING"
             observed.append(job.status.stage)
         return job
 
@@ -567,12 +567,31 @@ def test_rpc_ready_sandbox_waits_for_running_control_plane(harness, monkeypatch)
     monkeypatch.setattr("examples.coding_audit.hf.time.sleep", lambda _: None)
     record = h.backend.execute_script(":", "reference")
     assert record["error"] is None
-    assert observed == ["SCHEDULING", "RUNNING"]
+    assert observed == ["SCHEDULING"] * 25 + ["RUNNING"]
     assert record["cleanup_verified"]
     assert h.factory.created[0].commands
 
 
-@pytest.mark.parametrize("stage", ["SCHEDULING", "ERROR", "COMPLETED", "UNKNOWN"])
+def test_scheduling_reconciliation_stops_at_caller_deadline(harness):
+    h = harness
+    inspect = h.api.inspect_job
+
+    def never_running(**kwargs):
+        job = inspect(**kwargs)
+        if not h.api.cancelled:
+            job.status.stage = "SCHEDULING"
+        return job
+
+    h.api.inspect_job = never_running
+    h.backend.timeout = 0.02
+    started = time.monotonic()
+    record = h.backend.execute_script("dangerous", "reference")
+    assert time.monotonic() - started < 0.5
+    assert "deadline" in record["error"] and record["cleanup_verified"]
+    assert not h.factory.created[0].commands
+
+
+@pytest.mark.parametrize("stage", ["ERROR", "COMPLETED", "UNKNOWN"])
 def test_nonrunning_control_plane_never_executes_and_is_cleaned_up(
     harness, monkeypatch, stage
 ):

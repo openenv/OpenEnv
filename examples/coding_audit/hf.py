@@ -381,7 +381,7 @@ class HFTaskBackend:
         # SDK readiness checks the RPC server; the Jobs status can still lag.
         # Reconcile only SCHEDULING within the caller's existing deadline, and
         # recheck identity and the immutable image on every observation.
-        for attempt in range(20):
+        while True:
             job = self._inspect(sandbox_id)
             if job.docker_image != image:
                 raise HFBackendError("sandbox control-plane image mismatch")
@@ -389,10 +389,7 @@ class HFTaskBackend:
                 break
             if job.status.stage != "SCHEDULING":
                 raise HFBackendError("sandbox control-plane state is not runnable")
-            if attempt < 19:
-                time.sleep(0.5)
-        else:
-            raise HFBackendError("sandbox control-plane readiness did not converge")
+            time.sleep(0.5)
         # The SDK stat/read pair otherwise permits up to 512 MiB per read.
         sandbox.files.MAX_READ_BYTES = self.max_bytes
         sandbox.files.mkdir(self.workdir)
