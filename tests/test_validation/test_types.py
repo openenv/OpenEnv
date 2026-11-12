@@ -30,4 +30,7 @@ def test_lanes():
 
 
 def test_well_known_files_lists_implemented_parsers():
-    assert WELL_KNOWN_FILES == {SignatureKind.OPENENV_SERVED: "openenv.yaml"}
+    assert WELL_KNOWN_FILES == {
+        SignatureKind.OPENENV_SERVED: "openenv.yaml",
+        SignatureKind.HARBOR_TASK: "task.toml",
+    }
