@@ -282,6 +282,8 @@ class HTTPEnvServer:
         self._session_modes: Dict[str, Optional[str]] = {}
         self._session_websocket_attachments: set[str] = set()
         self._session_pending_closes: set[str] = set()
+        # Sessions with a WebSocket message being handled; never idle-reaped.
+        self._session_operations_in_flight: set[str] = set()
         self._session_lock = asyncio.Lock()
 
         # Create thread pool for running sync code in async context
@@ -734,6 +736,7 @@ class HTTPEnvServer:
                     for sid, info in self._session_info.items():
                         if (
                             sid not in self._session_websocket_attachments
+                            and sid not in self._session_operations_in_flight
                             and now - info.last_activity_at > timeout
                         ):
                             stale_ids.append(sid)
@@ -750,6 +753,7 @@ class HTTPEnvServer:
                         if (
                             info is None
                             or sid in self._session_websocket_attachments
+                            or sid in self._session_operations_in_flight
                             or (now - info.last_activity_at) <= timeout
                         ):
                             continue
@@ -2097,6 +2101,19 @@ all schema information needed to interact with the environment.
                         # Receive message from client
                         raw_message = await websocket.receive_text()
 
+                        # The reaper or shutdown may have destroyed this
+                        # session (closing its env and freeing its slot).
+                        if session_id not in self._sessions:
+                            error_resp = WSErrorResponse(
+                                data={
+                                    "message": "Session expired or was closed; "
+                                    "open a new connection",
+                                    "code": WSErrorCode.SESSION_ERROR,
+                                }
+                            )
+                            await websocket.send_text(error_resp.model_dump_json())
+                            break
+
                         try:
                             message_dict = json.loads(raw_message)
                         except json.JSONDecodeError as e:
@@ -2169,6 +2186,8 @@ all schema information needed to interact with the environment.
                                     "Rubric introspection unavailable"
                                 )
 
+                        self._session_operations_in_flight.add(session_id)
+                        self._update_session_activity(session_id)
                         try:
                             match msg_type:
                                 case "reset":
@@ -2206,7 +2225,6 @@ all schema information needed to interact with the environment.
                                             value=msg.data.get("seed"),
                                             accepted="seed" in valid_kwargs,
                                         )
-                                    self._update_session_activity(session_id)
 
                                     response = WSObservationResponse(
                                         data=serialize_observation(observation),
@@ -2338,6 +2356,9 @@ all schema information needed to interact with the environment.
                                 }
                             )
                             await websocket.send_text(error_resp.model_dump_json())
+                        finally:
+                            self._session_operations_in_flight.discard(session_id)
+                            self._update_session_activity(session_id)
 
             except WebSocketDisconnect:
                 pass
