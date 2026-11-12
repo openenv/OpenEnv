@@ -115,10 +115,15 @@ the raw trial evidence in the report bundle. Other checks are named SKIPs, so a
 passing task still reports WARN. This validates task packages, not the outer
 `harbor_env` server.
 
-Supported tasks use Linux, a single step, one Dockerfile, a shared verifier and
-public networking. Unsupported shapes include multi-step or non-Linux tasks,
-task-declared `environment.docker_image`, missing Dockerfiles, task-authored Compose
-files and separate verifier environments. GPU/TPU or external MCP requirements,
+Supported tasks use Linux, a single step, a shared verifier and public networking.
+The image comes from one Dockerfile or from a digest-pinned
+`environment.docker_image`, such as `org/image@sha256:<64 hex digits>`. Harbor
+prefers a declared image over a Dockerfile, so the do-nothing trial pulls the pin
+and `runtime.startup` records it as `source_image`. The validator leaves the pulled
+image in the local Docker cache. Unsupported shapes include multi-step or non-Linux
+tasks, an `environment.docker_image` without a digest, tasks with neither a
+Dockerfile nor a pinned image, task-authored Compose files and separate verifier
+environments. GPU/TPU or external MCP requirements,
 credentials, non-public or differing phase networks, task environment variables,
 healthchecks, skills, verifier collection and artifact extensions are also
 unsupported. A supplied provider, including `--space`, is unsupported. Each case

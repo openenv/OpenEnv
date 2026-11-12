@@ -1,7 +1,8 @@
 """Native Harbor execution: fresh Docker trials graded through RFC 008 check ids.
 
-No served-protocol evidence is synthesized. A do-nothing trial builds the image, and
-the oracle, its replay and any canaries run pinned to that image.
+No served-protocol evidence is synthesized. A do-nothing trial builds the image, or
+pulls the task's digest-pinned one, and the oracle, its replay and any canaries run
+pinned to that image.
 """
 
 import asyncio
@@ -41,6 +42,8 @@ from .runtime.scheduler import execute_graders
 from .types import CheckStatus, Lane, Level
 
 _IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
+# A tag can move between validation and training; a digest cannot.
+_PINNED_IMAGE = re.compile(r"[^@\s]+@sha256:[0-9a-f]{64}\Z")
 _RESOURCE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*\Z")
 _PROJECT = re.compile(
     r"openenv-validation-[a-f0-9]+-(nop|oracle|oracle-replay|canary-[1-8])__env"
@@ -280,19 +283,22 @@ def _unsupported(task, contract):
         return "multi-step Harbor tasks"
     if env.os.value != "linux":
         return "non-Linux Harbor tasks"
-    if env.docker_image is not None:
-        return "task-declared environment.docker_image instead of a Dockerfile build"
+    if env.docker_image is not None and not _PINNED_IMAGE.fullmatch(env.docker_image):
+        return "task-declared environment.docker_image without a sha256 digest pin"
     if config.verifier.environment is not None or (
         config.verifier.environment_mode is not None
         and config.verifier.environment_mode.value != "shared"
     ):
         return "separate Harbor verifier environments"
-    if not (task.task_dir / "environment/Dockerfile").is_file() or any(
+    if (
+        env.docker_image is None
+        and not (task.task_dir / "environment/Dockerfile").is_file()
+    ) or any(
         path.name.lower()
         in {"docker-compose.yaml", "docker-compose.yml", "compose.yaml", "compose.yml"}
         for path in (task.task_dir / "environment").rglob("*")
     ):
-        return "tasks without one Dockerfile or with task-authored Compose"
+        return "tasks without one Dockerfile or pinned image, or with task-authored Compose"
     if contract.resources.gpus or env.gpus or env.tpu or env.mcp_servers:
         return "GPU/TPU or external MCP requirements"
     if contract.requires_credentials:
@@ -851,7 +857,8 @@ def validate_harbor(
     inspector = DockerInspector()
     try:
         attempted = False
-        problem = _unsupported(read_harbor_task(subject.root), contract)
+        task = read_harbor_task(subject.root)
+        problem = _unsupported(task, contract)
         if skip_build:
             problem = "image build skipped by --skip-build"
         if provider is not None:
@@ -978,6 +985,10 @@ def validate_harbor(
                                 "task_effective_digest": digest_before,
                             },
                         )
+                        source_image = task.config.environment.docker_image
+                        if source_image is not None:
+                            record["source_image"] = source_image
+                            startup.measured["source_image"] = source_image
                         if malformed:
                             reward_result = _result(
                                 "runtime.reward_well_formed",

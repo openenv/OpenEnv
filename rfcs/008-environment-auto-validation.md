@@ -748,10 +748,12 @@ The profile requires Python 3.12 or newer and `harbor==0.25.0` alongside
 `openenv[harbor]`. A missing or mismatched Harbor installation is a validator
 environment error. It exits 3 and names `harbor==0.25.0`.
 
-The profile supports single-step Linux tasks with one Dockerfile, one main Docker
-service, a shared verifier and public networking. Unsupported shapes include
-multi-step or non-Linux tasks, task-declared `environment.docker_image`, missing
-Dockerfiles, task-authored Compose files and separate verifier environments.
+The profile supports single-step Linux tasks with one main Docker service, a shared
+verifier and public networking. The image comes from one Dockerfile or from a
+digest-pinned `environment.docker_image` (`name@sha256:<digest>`), which the report
+records as `source_image`. Unsupported shapes include multi-step or non-Linux tasks,
+an `environment.docker_image` without a digest, tasks with neither a Dockerfile nor
+a pinned image, task-authored Compose files and separate verifier environments.
 GPU/TPU or external MCP requirements, credentials, non-public or differing phase
 networks, task environment variables, healthchecks, skills, verifier collection and
 artifact extensions are also unsupported. A supplied provider, including `--space`,
