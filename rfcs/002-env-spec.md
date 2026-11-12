@@ -2,13 +2,13 @@
 
 **Status**: In Review
 **Created**: 10/14/2025
-**Amended**: YYYY-MM-DD
+**Amended**: 2026-11-19
 **Authors**: @Darktex, @pankit-eng, @jspisak, @zkwentz
 **RFC ID:** 002
 
 ## Amendment History
 
-**YYYY-MM-DD** (ratified by @burtenshaw after a 7-day objection window): Accepted the "Cloud Sandbox Providers" amendment. Added its admission criteria, and corrected S1 to allow the loopback and in-cluster plaintext legs that `HFSandboxProvider` and `KubernetesProvider` already use.
+**2026-11-19** (ratified by @burtenshaw after a 7-day objection window): Accepted the "Cloud Sandbox Providers" amendment. Added its admission criteria, and corrected S1 to allow the loopback and in-cluster plaintext legs that `HFSandboxProvider` and `KubernetesProvider` already use, plus local development cluster gateways behind an explicit opt-in.
 
 **June 14, 2026** (proposed by @thegovind): Added the "Cloud Sandbox Providers" subsection — a provider-neutral capability mapping, protocol invariants, and security invariants for adapting hosted sandbox runtimes onto the existing `ContainerProvider` contract without changing the client/server protocol.
 
@@ -147,7 +147,7 @@ class ContainerProvider(ABC):
 
 #### Cloud Sandbox Providers
 
-> **Status:** accepted YYYY-MM-DD. See Amendment History.
+> **Status:** accepted 2026-11-19. See Amendment History.
 
 Cloud sandbox platforms expose the same small set of capabilities under
 different names. A cloud sandbox provider is an adapter that maps those
@@ -215,12 +215,13 @@ hostile — no provider feature may rely on in-sandbox code being well-behaved �
 and enforce:
 
 S1. **Encrypted transport only.** Episode traffic never leaves the host or the
-   cluster in the clear. The returned `base_url` is `https`/`wss`, with two
+   cluster in the clear. The returned `base_url` is `https`/`wss`, with three
    plaintext exceptions: a loopback proxy that forwards over `https`/`wss`
-   (`HFSandboxProvider` returns `http://127.0.0.1:{port}`), and an in-cluster
+   (`HFSandboxProvider` returns `http://127.0.0.1:{port}`), an in-cluster
    Service address (`KubernetesProvider` returns
-   `http://{name}.{namespace}:{port}`). Any other plaintext (`http`/`ws`) URL is
-   rejected.
+   `http://{name}.{namespace}:{port}`), and a gateway of a local development
+   cluster on the same host (Kind, Minikube) behind an explicit opt-in such as
+   `allow_insecure=True`. Any other plaintext (`http`/`ws`) URL is rejected.
 S2. **Ingress URLs are bearer capabilities.** An anonymous or self-authenticating
    URL grants full control of the environment to whoever holds it: never logged,
    scoped and time-boxed, and network-restricted where possible. Authenticated
@@ -269,9 +270,10 @@ A new cloud sandbox provider is admitted to core when it meets all of these:
 3. **A generally available backend.** Self-hostable open source, or a hosted
    service anyone can sign up for.
 4. **Security invariants.** S1 to S6 hold, with two exceptions: plaintext only
-   on a loopback or in-cluster leg (S1), and public ingress only behind an
-   explicit opt-in such as `public=True`. The provider documents its egress
-   and cloud metadata posture.
+   on the legs S1 allows (loopback, in-cluster, or a local development cluster
+   behind an explicit opt-in such as `allow_insecure=True`), and public ingress
+   only behind an explicit opt-in such as `public=True`. The provider documents
+   its egress and cloud metadata posture.
 5. **Evidence.** Fake-SDK tests that pin the real SDK's method names and
    arguments, plus one live round trip recorded at the PR head: the `/ws`
    upgrade returns `101`, `reset()` and `step()` complete, and cleanup is
