@@ -402,6 +402,37 @@ def test_evaluate_missing_verdict_raises_not_zero(tmp_path: Path, staged_paths):
     assert not stage_logs.exists()
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_evaluate_non_finite_verdict_raises(value, tmp_path: Path, staged_paths):
+    """reward.txt holding nan or inf is no verdict either. float() reads
+    both, so without a check the trainer would get a NaN or infinite
+    reward."""
+    stage_tests, stage_logs = staged_paths
+    task = _make_task_dir(tmp_path)
+    env = Tbench2Environment(withhold_tests=True)
+    env._task_dir = task
+    env._workdir = str(tmp_path)
+    env._terminal_toolkit = _RecordingToolkit(output=f"__TB2_REWARD__:{value}")
+    env._withhold_verifier_assets(task)
+
+    with pytest.raises(RuntimeError, match="produced no verdict"):
+        env._evaluate_task()
+
+    assert not stage_tests.exists()
+    assert not stage_logs.exists()
+
+
+def test_evaluate_docker_non_finite_verdict_raises(tmp_path: Path):
+    """Docker-mode twin: a nan verdict errors out instead of scoring NaN."""
+    task = _make_task_dir(tmp_path)
+    env = Tbench2DockerEnvironment()
+    env._container = _FakeContainer(exec_output=b"__TB2_REWARD__:nan\n")
+    env._task_dir = task
+
+    with pytest.raises(RuntimeError, match="produced no verdict"):
+        env._evaluate_docker()
+
+
 def test_evaluate_without_tests_scores_zero(tmp_path: Path, staged_paths):
     task = tmp_path / "empty-task"
     task.mkdir()

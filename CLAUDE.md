@@ -292,7 +292,7 @@ docker build -t echo-env:latest -f envs/echo_env/server/Dockerfile .
 Scripts in `.claude/hooks/` are used by skills and can be run directly:
 
 ```bash
-bash .claude/hooks/lint.sh          # Run ruff format check
+bash .claude/hooks/lint.sh          # Check CI import sort, format, and lint (src/ tests/)
 bash .claude/hooks/test.sh          # Run pytest (excludes special envs)
 bash .claude/hooks/check-debug.sh   # Find debug code (print, breakpoint, TODO)
 bash .claude/hooks/post-push-pr.sh  # Validate PR after push (freshness, CI, conflicts)
@@ -310,9 +310,9 @@ bash .claude/hooks/install.sh
 ```
 
 This installs:
-- **pre-commit**: Branch check (blocks main), format, lint, debug artifacts check
+- **pre-commit**: Branch check (blocks main), format and lint check, debug artifacts check
 - **commit-msg**: Issue reference reminder (soft warning)
-- **pre-push**: Format, lint, tests, invariants, conflict detection
+- **pre-push**: Format and lint check, tests, invariants, conflict detection
 - **post-merge**: Worktree cleanup reminder
 
 Skip temporarily with `git commit/push --no-verify`.

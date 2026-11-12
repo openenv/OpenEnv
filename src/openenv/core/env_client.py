@@ -528,6 +528,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
         coro_factory: Callable[[], Any],
         *,
         allow_async_handoff: bool = False,
+        stop_loop: bool = False,
     ) -> Any:
         """Run an async operation through the sync wrapper."""
         if allow_async_handoff and self._execution_mode == "async":
@@ -536,9 +537,15 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             self._claim_execution_mode("sync")
         if self._sync_client is None:
             self._sync_client = self.sync()
-        return self._sync_client._run(coro_factory())
+        try:
+            return self._sync_client._run(coro_factory())
+        finally:
+            if stop_loop:
+                self._sync_client._stop_loop()
 
-    def _dispatch(self, coro_factory: Callable[[], Any]) -> Any:
+    def _dispatch(
+        self, coro_factory: Callable[[], Any], *, stop_loop: bool = False
+    ) -> Any:
         """Return an awaitable in async code and a concrete result in sync code."""
         try:
             running_loop = asyncio.get_running_loop()
@@ -549,15 +556,17 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             sync_loop = (
                 self._sync_client._loop if self._sync_client is not None else None
             )
-            if running_loop is sync_loop:
+            if running_loop is not None and running_loop is sync_loop:
                 return coro_factory()
-            return self._run_sync(coro_factory)
+            return self._run_sync(coro_factory, stop_loop=stop_loop)
         if running_loop is not None:
             if self._execution_mode == "async":
                 return coro_factory()
             return _AutoAsyncResult(self, coro_factory)
 
-        return self._run_sync(coro_factory, allow_async_handoff=True)
+        return self._run_sync(
+            coro_factory, allow_async_handoff=True, stop_loop=stop_loop
+        )
 
     def connect(self) -> Any:
         return self._dispatch(self._connect_async)
@@ -1079,7 +1088,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
             )
 
     def close(self) -> Any:
-        return self._dispatch(self._close_async)
+        return self._dispatch(self._close_async, stop_loop=True)
 
     async def _close_child_clients(self) -> asyncio.CancelledError | None:
         """Close every captured child while deferring caller cancellation."""
@@ -1206,7 +1215,7 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit sync context manager, closing connection."""
-        self._run_sync(self._close_async)
+        self._run_sync(self._close_async, stop_loop=True)
 
     def sync(self) -> "SyncEnvClient":
         """
