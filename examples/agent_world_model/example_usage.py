@@ -13,7 +13,7 @@ Usage:
     # Terminal 2 (set LLM credentials, any OpenAI-compatible endpoint works)
     export ENDPOINT_URL="https://YOUR_ENDPOINT_URL/v1"
     export OPENAI_API_KEY="your-api-key"
-    export AWM_EXAMPLE_AGENT_MODEL="gpt-5"
+    export AWM_EXAMPLE_AGENT_MODEL="gpt-5.6-sol"
     PYTHONPATH=src:envs uv run python examples/agent_world_model/example_usage.py
 
     # ---- Option B: hosted HF Space ----
@@ -23,7 +23,7 @@ Usage:
     # Optional: LLM credentials for SQL verifier mode
     export OPENENV_AWM_LLM_BASE_URL="https://..."
     export OPENENV_AWM_LLM_API_KEY="..."
-    export OPENENV_AWM_LLM_MODEL="gpt-5"
+    export OPENENV_AWM_LLM_MODEL="gpt-5.6-sol"
 """
 
 import asyncio
