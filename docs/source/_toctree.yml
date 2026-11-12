@@ -41,8 +41,6 @@
       title: Your First Environment
     - local: getting_started/environment-builder
       title: Deploying an Environment
-    - local: tutorials/seahaven-environment
-      title: "Tool-Use Environments (Seahaven)"
     title: Basics
   - sections:
     - local: guides/training
@@ -71,6 +69,8 @@
   - sections:
     - local: tutorials/evaluation-inspect
       title: Evaluating with Environments
+    - local: tutorials/seahaven-environment
+      title: "Tool-Use Environments (Seahaven)"
     title: Evals
   title: Learn
 - isExpanded: false

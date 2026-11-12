@@ -1,5 +1,8 @@
 # Build a Tool-Use Environment with Seahaven
 
+> [!NOTE]
+> A Seahaven environment doesn't compute rewards: every observation has `reward=None` and `done=False`, because whether a final state is correct depends on the task, which the world doesn't know. This differs from the OpenEnv convention of computing the reward inside the environment ([Reward Design](../guides/rewards)). Grade from `state()` in the code that drives the episode, as in [step 7](#7-grade-from-the-change-log), and bound each episode by turns or tool calls. OpenEnv's harness rollout helpers (`CollectRunner` and `build_harness_rollout_func`) require a reward produced by the environment: `CollectRunner` records every Seahaven episode as failed, and only `build_harness_rollout_func` raises `ValueError`. Don't return the grader's score as `VerifyResult.env_reward`, because that field only forwards a reward produced by the environment.
+
 A tool-use agent needs something stateful to act on: a CRM it can add contacts to, a payments API it can refund through, an issue tracker it can close tickets in. A mock that returns canned responses doesn't keep the agent's writes, and a real system can't be reset between episodes. [Seahaven](https://github.com/Kiln-AI/Seahaven) is a Python framework for building *worlds*, working copies of a tool or API backed by SQLite, and `seahaven serve` runs a world as an OpenEnv environment:
 
 - Every WebSocket session gets a private instance of the world.
@@ -263,9 +266,6 @@ reward: 1.0
 ```
 
 The grader reads only what changed, so it doesn't depend on how the agent got there, and the same world and fixture can serve many tasks, each with its own grader. Seahaven's [state document reference](https://github.com/Kiln-AI/Seahaven/blob/v0.6.0/src/seahaven/docs/state.md) defines the log and how to fold it when a row changes more than once.
-
-> [!NOTE]
-> A Seahaven environment doesn't compute rewards: every observation has `reward=None` and `done=False`, because whether a final state is correct depends on the task, which the world doesn't know. This differs from the OpenEnv convention of computing the reward inside the environment ([Reward Design](../guides/rewards)). Grade from `state()` in the code that drives the episode, as above, and bound each episode by turns or tool calls. OpenEnv's harness rollout helpers (`CollectRunner` and `build_harness_rollout_func`) require a reward produced by the environment, so they raise `ValueError` on a Seahaven episode.
 
 ## A Real Example: Stripe World
 
