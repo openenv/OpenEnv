@@ -347,6 +347,7 @@ async def run_rollout(
     trials_dir: Path | str,
     dataset: str = "",
     reward_key: str = "",
+    local_intercept_url: str = "",
     require_reward: bool = True,
     keep_sandbox: bool = False,
     agent_timeout_sec: float | None = None,
@@ -377,6 +378,10 @@ async def run_rollout(
             The live capture registry; a session is minted here and its id becomes the agent's key.
         intercept_url (`str`):
             Public URL of the capture proxy, as the sandbox must reach it.
+        local_intercept_url (`str`, *optional*):
+            The proxy's loopback URL. A host-side agent (`Seam.host_side`) is handed this instead of
+            `intercept_url`: it calls the model from this process, and every public hop is one more
+            place a long completion can be cut. Empty keeps `intercept_url` for every agent.
         model (`str`):
             Served model id. Normalised per harness by the seam.
         trials_dir (`Path` or `str`):
@@ -497,6 +502,14 @@ async def run_rollout(
 
             enable_shared_templates()
 
+            # A host-side agent calls the model from this process, so it takes the loopback URL. A
+            # public forward is one more hop that can cut a long completion: a gradio share link
+            # answers 502 after about a minute while the upstream is still generating, the agent
+            # retries, and the capture records the same prompt again as a new root.
+            seam = seams.get(harness, profile=harness_profile)
+            if local_intercept_url and seam.host_side:
+                intercept_url = local_intercept_url
+
             config_kwargs = dict(
                 task_dir=task_dir,
                 harness=harness,
@@ -521,7 +534,6 @@ async def run_rollout(
             # I/O worth speaking of: the sandbox is booted later, by `trial.run()`, outside the lock.
             # Harbor's wrappers read `os.environ` while constructing the agent, so the seam's
             # process-level vars have to be in place across `Trial.create` and are put back after.
-            seam = seams.get(harness, profile=harness_profile)
             *_, proc_env = seam.resolve(
                 base_url=intercept_url, session=session.session_id, model=model
             )
