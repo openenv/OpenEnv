@@ -559,6 +559,7 @@ async def _trial(
         record["trial_config_digest"] = _digest(effective_config)
         record["resources"] = contract.resources.model_dump()
         trial = await _create_trial(config)
+        record["harbor_build_timeout_s"] = trial._environment_build_timeout_sec
         trial._environment_build_timeout_sec = build_budget
         if not expected:
             record["build_timeout_s"] = build_budget

@@ -12,6 +12,7 @@ from openenv.validation.manifest import ManifestError
 from openenv.validation.parsers.harbor_toml import (
     HarborTaskParser,
     read_harbor_contract,
+    read_harbor_task,
 )
 from openenv.validation.runner import run_validation, source_digest
 from openenv.validation.types import CheckStatus, Level, SignatureKind, Verdict
@@ -66,6 +67,7 @@ def boundary(monkeypatch, task):
         oracle_exit=None,
         exception=False,
         exception_type=None,
+        exception_phase="environment build/start",
         no_identity=False,
         timeout=False,
         retained=True,
@@ -151,6 +153,9 @@ def boundary(monkeypatch, task):
             )
             self.hooks = {}
             self._openenv_cancelled_compose = []
+            self._environment_build_timeout_sec = read_harbor_task(
+                config.task.path
+            ).config.environment.build_timeout_sec
             state.excluded_copied.append(
                 (config.task.path / "environment/.worktrees").exists()
             )
@@ -189,12 +194,28 @@ def boundary(monkeypatch, task):
         async def run(self):
             for hook in self.hooks.get("environment-start", []):
                 await hook(None)
-            if state.exception_type in ("RuntimeError", "EnvironmentStartTimeoutError"):
+            if (
+                state.exception_type in ("RuntimeError", "EnvironmentStartTimeoutError")
+                and state.exception_phase == "environment build/start"
+            ):
                 return SimpleNamespace(
                     exception_info=SimpleNamespace(exception_type=state.exception_type),
                     verifier_result=None,
                 )
-            await self.agent_environment.start(force_build=False)
+            from harbor.trial.trial import (
+                EnvironmentStartTimeoutError,
+                Trial as HarborTrial,
+            )
+
+            try:
+                await HarborTrial._start_agent_environment(self)
+            except EnvironmentStartTimeoutError:
+                return SimpleNamespace(
+                    exception_info=SimpleNamespace(
+                        exception_type="EnvironmentStartTimeoutError"
+                    ),
+                    verifier_result=None,
+                )
             if not state.no_identity:
                 for hook in self.hooks.get("agent-start", []):
                     await hook(None)
@@ -712,6 +733,16 @@ def test_subject_failures_name_the_phase(task, boundary, exception_type, phase):
     assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
 
 
+def test_runtime_error_outside_build_start_is_a_validator_error(task, boundary):
+    boundary.exception_type = "RuntimeError"
+    boundary.exception_phase = "verifier"
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert startup.measured["failures"] == ["Harbor Trial returned exception_info"]
+    assert result(report, "runtime.reward_well_formed").status is CheckStatus.SKIP
+
+
 def test_cleanup_failure_blocks(task, boundary, tmp_path):
     boundary.cleanup_ok = False
     artifacts = tmp_path / "cleanup"
@@ -1069,6 +1100,47 @@ def test_validator_build_start_timeout_is_an_error(
     else:
         assert failures == ["validator build/start exceeded its 0.01-second budget"]
         assert failures[0] in startup.evidence
+    assert len(boundary.trials) == 1
+
+
+def test_real_harbor_start_uses_build_budget_then_episode_budgets(
+    task, boundary, monkeypatch
+):
+    timeouts = []
+    wait_for = asyncio.wait_for
+
+    async def record_timeout(awaitable, timeout):
+        timeouts.append(timeout)
+        return await wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", record_timeout)
+    report = run_validation(task)
+    assert result(report, "runtime.startup").status is CheckStatus.PASS
+    # Harbor starts each environment, then runs its agent under a separate budget.
+    assert timeouts == [600, 10, 10, 10, 10, 10]
+    assert [trial.role for trial in boundary.trials] == [
+        "nop",
+        "oracle",
+        "oracle-replay",
+    ]
+
+
+def test_missing_harbor_build_timeout_binding_is_a_startup_error(
+    task, boundary, monkeypatch
+):
+    create = harbor._create_trial
+
+    async def missing_binding(config):
+        trial = await create(config)
+        del trial._environment_build_timeout_sec
+        return trial
+
+    monkeypatch.setattr(harbor, "_create_trial", missing_binding)
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert startup.measured["failures"] == ["AttributeError"]
+    assert "retained_image_tag" not in startup.measured
     assert len(boundary.trials) == 1
 
 
