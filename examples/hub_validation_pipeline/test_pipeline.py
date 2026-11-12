@@ -86,6 +86,9 @@ def make_evidence(tmp_path, canary_count=2):
         "cleanup": {"verified": True},
         "trials": [],
     }
+    next(row for row in report["results"] if row["check_id"] == "runtime.startup")[
+        "measured"
+    ] = {"retained_image_tag": native["retained_image_tag"]}
     artifacts = tmp_path / "evidence"
     roles = ["nop", "oracle", "oracle-replay"] + [
         f"canary-{index}" for index in range(1, canary_count + 1)
@@ -160,6 +163,7 @@ def test_explicit_pilot_admits_but_full_gate_stays_incomplete(evidence):
     admitted = admit(evidence)
     assert admitted["out_of_profile_skips"] == ["runtime.host_containment"]
     assert admitted["rfc008_complete"] is False
+    assert admitted["retained_image_tag"] == evidence[4]["retained_image_tag"]
     with pytest.raises(ValueError, match="coverage"):
         admit(evidence, "full")
 
@@ -168,7 +172,14 @@ def test_full_profile_requires_every_policy_check_to_pass(evidence):
     _, report, artifacts, _, native = evidence
     report["verdict"] = "pass"
     report["results"] = [
-        {"check_id": key, "status": "pass", "duration_s": 0}
+        {
+            "check_id": key,
+            "status": "pass",
+            "duration_s": 0,
+            "measured": {"retained_image_tag": native["retained_image_tag"]}
+            if key == "runtime.startup"
+            else {},
+        }
         for key in pipeline.load_policy("v2").entries_for_lane(pipeline.Lane.LOCAL)
     ]
     save_bundle(artifacts, report, native)
@@ -398,6 +409,134 @@ def test_admission_recomputes_oracle_floor_from_raw_rewards(evidence):
     save_bundle(artifacts, report, native)
     with pytest.raises(ValueError, match="oracle/floor contract"):
         admit(evidence)
+
+
+@pytest.mark.parametrize(
+    "fault", ["missing-measured", "missing-tag", "malformed", "different"]
+)
+def test_startup_measurement_binds_retained_image(evidence, fault):
+    _, report, artifacts, _, native = evidence
+    startup = next(
+        row for row in report["results"] if row["check_id"] == "runtime.startup"
+    )
+    if fault == "missing-measured":
+        startup.pop("measured")
+    elif fault == "missing-tag":
+        startup["measured"].pop("retained_image_tag")
+    else:
+        startup["measured"]["retained_image_tag"] = (
+            "unowned:tag" if fault == "malformed" else "openenv-validation:" + "b" * 32
+        )
+    save_bundle(artifacts, report, native)
+    with pytest.raises(ValueError):
+        admit(evidence)
+
+
+@pytest.mark.parametrize(
+    "reward_range,floor,oracle,margin,tolerance,accepted",
+    [
+        ([0, 100], 0, 95, 0.1, 0.05, True),
+        ([50, 150], 50, 145, 0.1, 0.05, True),
+        ([0, 0.01], 0, 0.0095, 0.1, 0.05, True),
+        ([0, 100], 90, 100, 0.1, 0, True),
+        ([0, 100], 99, 100, 0.1, 0, False),
+        ([50, 150], 149, 150, 0.1, 0, False),
+        ([0, 0.01], 0.0099, 0.01, 0.1, 0, False),
+        ([0, 100], 0, 94.99, 0.1, 0.05, False),
+        ([0, 0.01], 0, 0.009499, 0.1, 0.05, False),
+    ],
+)
+def test_admission_scales_thresholds_by_reward_range(
+    evidence, reward_range, floor, oracle, margin, tolerance, accepted
+):
+    subject, report, artifacts, _, native = evidence
+    path = subject / "validation/openenv.json"
+    contract = pipeline.loads(path.read_text())
+    reward = {
+        "range": reward_range,
+        "floor_margin": margin,
+        "oracle_tolerance": tolerance,
+    }
+    contract["reward"].update(reward)
+    pipeline.write_json(path, contract)
+    report["manifest"]["reward"].update(reward)
+    report["source_digest"] = source_digest(subject)
+    native["task_effective_digest"] = report["source_digest"]
+    for trial in native["trials"]:
+        trial["unmodified_task_digest"] = report["source_digest"]
+        trial["rewards"]["reward"] = (
+            oracle if trial["role"] in {"oracle", "oracle-replay"} else floor
+        )
+        trial["rewards"]["aux"] = reward_range[0]
+        set_raw(artifacts, trial, "reward.json", pipeline.dumps(trial["rewards"]))
+    native.update(floor_reward=floor, oracle_reward=oracle)
+    save_bundle(artifacts, report, native)
+    # Recompute the contract even if all bundled semantic results claim PASS.
+    if accepted:
+        assert pipeline.reward_fraction(admit(evidence)["oracle_reward"]) == (
+            pipeline.reward_fraction(Decimal(str(oracle)))
+        )
+    else:
+        with pytest.raises(ValueError, match="oracle/floor contract"):
+            admit(evidence)
+
+
+@pytest.mark.parametrize("missing_oracle", [False, True])
+def test_native_prebuilt_task_is_excluded_without_model_or_docker(
+    tmp_path, monkeypatch, missing_oracle
+):
+    from openenv.validation.harbor import DockerInspector
+    from openenv.validation.runner import run_validation
+
+    task = demo.create_tasks(tmp_path / "input") / "good"
+    manifest = task / "task.toml"
+    config = pipeline.tomllib.loads(manifest.read_text())
+    config.setdefault("environment", {})["docker_image"] = (
+        "registry.example/task:latest"
+    )
+    manifest.write_text(pipeline.tomli_w.dumps(config))
+    if missing_oracle:
+        (task / "solution/solve.sh").unlink()
+    original = manifest.read_bytes()
+    reports = []
+
+    def validate(subject, report_path, profile, timeout):
+        report = run_validation(subject).model_dump(mode="json")
+        reports.append(report)
+        return 0, report
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("excluded native task must not execute Docker or a model")
+
+    monkeypatch.setattr(pipeline, "validate_task", validate)
+    monkeypatch.setattr(pipeline, "evaluate", forbidden)
+    monkeypatch.setattr(DockerInspector, "_docker", forbidden)
+    output = tmp_path / "output"
+    args = SimpleNamespace(
+        output=output,
+        contract=Path(pipeline.__file__).with_name("contract.json"),
+        local_dataset=[task],
+        hf_dataset=[],
+        harbor_dataset=[],
+        tasks_per_dataset=1,
+        profile=pipeline.PILOT,
+        validation_timeout=1,
+        llm_url="http://unused-model/v1",
+    )
+    assert pipeline.run(args) == 1
+    checks = {row["check_id"]: row for row in reports[0]["results"]}
+    assert checks["runtime.startup"]["status"] == "skip"
+    assert "docker_image" in checks["runtime.startup"]["evidence"][0]
+    if missing_oracle:
+        assert checks["semantic.oracle_max"]["status"] == "fail"
+    assert manifest.read_bytes() == original
+    assert list((output / "subjects").glob("*/task.toml"))[0].read_bytes() == original
+    summary = pipeline.loads((output / "summary.json").read_text())
+    assert (summary["accepted"], summary["excluded"], summary["model_trials"]) == (
+        0,
+        1,
+        0,
+    )
 
 
 @pytest.mark.parametrize(

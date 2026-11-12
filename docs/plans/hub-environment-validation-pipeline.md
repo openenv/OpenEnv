@@ -79,6 +79,12 @@ The explicitly selected `harbor-semantic-v1` profile requires:
   configuration, unchanged task identities and verified cleanup.
 - Bound raw reward files and successful oracle exits. Recompute replay equality,
   the declared oracle maximum, the NOP gap and canary floors from those files.
+- Scale tolerance and margin by `high - low`: require
+  `oracle >= high - oracle_tolerance * (high - low)` and both `high - floor` and
+  `oracle - floor` to be at least `floor_margin * (high - low)`.
+- Read the retained tag from `runtime.startup.measured.retained_image_tag` and
+  require equality with checksummed native/trial evidence. The validator retains
+  this tag only for runs without FAIL, ERROR or interruption.
 
 Other standard checks remain named SKIPs and can leave the underlying report WARN.
 The admission envelope records these limits beside the unchanged report; it does
@@ -92,6 +98,11 @@ both the original source digest and the effective validation digest. The current
 native adapter supports self-contained, single-step Linux tasks with one
 Dockerfile, shared verifier execution and public networking. Unsupported resource,
 credential, multi-service and extension contracts stay named SKIPs.
+Tasks declaring `environment.docker_image` are also unsupported, even alongside
+a Dockerfile: native trials must build the reviewed Dockerfile. Their startup
+SKIP excludes them before model handoff; acquisition preserves their original
+bytes. A missing `solution/solve.sh` still produces `semantic.oracle_max` FAIL.
+Supplemental cloud audits remain a separate profile and cannot waive this gate.
 
 ```bash
 uv run --no-sync openenv validate inputs/task --level semantic --policy v2 \

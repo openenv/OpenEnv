@@ -61,6 +61,11 @@ Trials, followed by one Trial per declared canary. It checks exact task, retaine
 image and inspected configuration identities, raw verifier rewards, replay equality,
 zero oracle exit codes and independently verified cleanup. It recomputes the
 oracle maximum, floor gap and canary floors from the bound raw evidence.
+For declared range `[low, high]`, let `width = high - low`. Oracle acceptance
+requires `oracle >= high - oracle_tolerance * width`; both `high - floor` and
+`oracle - floor` must be at least `floor_margin * width`. These are exact numeric
+comparisons, and tolerance/margin are fractions of the range rather than raw
+reward units.
 
 This establishes bounded executable/verifier sanity and exact-submission replay.
 It does not establish complete semantic coverage, hostile-code containment,
@@ -82,6 +87,14 @@ The native adapter supports self-contained single-step Linux tasks with one
 Dockerfile, shared verifier execution, public networking and no GPU, task-defined
 environment variables, healthchecks, external MCP/credential requirements or
 task-authored Compose. Unsupported shapes remain explicit SKIPs.
+The native trials must build the reviewed Dockerfile. A task that declares
+`environment.docker_image` is unsupported even when it also contains a Dockerfile;
+`runtime.startup` remains SKIP and the pipeline excludes it before model execution.
+This includes prebuilt-image benchmark tasks. Acquisition leaves their native
+bytes unchanged; the driver does not remove the image declaration to bypass the
+gate. A missing `solution/solve.sh` remains `semantic.oracle_max` FAIL even when
+startup is unsupported. The supplemental HF Jobs coding audit is a separate
+operator profile and does not waive these native admission requirements.
 
 ## Search both hubs and validate a small selection
 
@@ -163,8 +176,11 @@ Requested model runs additionally retain rollouts and native trial/capture evide
 its task, image, contract and execution copies.
 
 Cleanup targets exact run-owned Docker containers, networks and volumes and is
-independently rechecked. Validated images are retained for model handoff; their
-exact tags are recorded in native evidence. Remove only those recorded tags with
+independently rechecked. The validator removes its retained image tag on FAIL,
+ERROR or interruption. For an unfailed run, admission reads the tag from
+`runtime.startup.measured.retained_image_tag` and binds it to the checksummed native
+and trial evidence. The model corpus pins the actual immutable image ID.
+Remove only the recorded retained tags with
 `docker image rm <recorded-tag>` when no longer needed. Sources and excluded
 reports remain available; reruns use fresh output directories.
 

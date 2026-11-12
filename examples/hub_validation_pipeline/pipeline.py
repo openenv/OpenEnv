@@ -265,6 +265,11 @@ def admission(report, exit_code, subject, artifact_dir, profile, original_digest
         raise ValueError("required validation coverage is incomplete")
     if not {1, 2, 3}.issubset(report["levels_run"]):
         raise ValueError("semantic validation was not executed")
+    retained_tag = (
+        results["runtime.startup"].get("measured", {}).get("retained_image_tag")
+    )
+    if not re.fullmatch(r"openenv-validation:[a-f0-9]{32}", retained_tag or ""):
+        raise ValueError("startup retained image measurement is missing or invalid")
     if profile != PILOT and (
         report["verdict"] != "pass" or 3 not in report["levels_run"]
     ):
@@ -283,9 +288,7 @@ def admission(report, exit_code, subject, artifact_dir, profile, original_digest
         or report["manifest"]["execution"]["profile"] != PILOT
         or report["manifest"]["capabilities"]["canaries"] != parsed_contract.canaries
         or not re.fullmatch(r"sha256:[0-9a-f]{64}", native.get("image_ref") or "")
-        or not re.fullmatch(
-            r"openenv-validation:[a-f0-9]{32}", native.get("retained_image_tag") or ""
-        )
+        or native.get("retained_image_tag") != retained_tag
         or native["cleanup"]["verified"] is not True
         or "failure" in native
     ):
@@ -302,7 +305,7 @@ def admission(report, exit_code, subject, artifact_dir, profile, original_digest
         or any(
             not re.fullmatch(r"[0-9a-f]{64}", row["container_id"] or "")
             or row["image_ref"] != native["image_ref"]
-            or row["retained_image_tag"] != native["retained_image_tag"]
+            or row["retained_image_tag"] != retained_tag
             or row["unmodified_task_digest"] != report["source_digest"]
             or row["configuration"] != trials[0]["configuration"]
             or row["cleanup"]["verified"] is not True
@@ -318,13 +321,14 @@ def admission(report, exit_code, subject, artifact_dir, profile, original_digest
     low, high = map(reward_fraction, reward_contract["range"])
     margin = reward_fraction(reward_contract["floor_margin"])
     tolerance = reward_fraction(reward_contract["oracle_tolerance"])
+    width = high - low
     rewards = []
     for index, trial in enumerate(trials):
         overlay = (
             {}
             if index == 0
             else {
-                "environment.docker_image": native["retained_image_tag"],
+                "environment.docker_image": retained_tag,
             }
         )
         if index >= 3:
@@ -352,9 +356,9 @@ def admission(report, exit_code, subject, artifact_dir, profile, original_digest
     if (
         floor != reward_fraction(native.get("floor_reward"))
         or oracle != reward_fraction(native.get("oracle_reward"))
-        or oracle < high - tolerance
-        or oracle - floor < margin
-        or high - floor < margin
+        or oracle < high - tolerance * width
+        or oracle - floor < margin * width
+        or high - floor < margin * width
         or any(row[native["reward_key"]] > floor for row in rewards[3:])
     ):
         raise ValueError("raw native rewards do not satisfy the oracle/floor contract")
@@ -364,6 +368,7 @@ def admission(report, exit_code, subject, artifact_dir, profile, original_digest
         "original_source_digest": original_digest,
         "task_effective_digest": effective_digest,
         "image_ref": native["image_ref"],
+        "retained_image_tag": retained_tag,
         "reward_key": native["reward_key"],
         "floor_reward": native["floor_reward"],
         "oracle_reward": native["oracle_reward"],
