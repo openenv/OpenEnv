@@ -65,6 +65,7 @@ These invariants must NEVER be violated. If a change would violate them, stop an
    - Reward computation must stay inside environment boundary
    - External reward augmentation uses Transform pipeline
    - Transforms are server-side only
+   - Scope: this binds environments in `envs/` and OpenEnv's training helpers. The docs may list or teach an environment maintained outside this repository that returns `reward=None` and is graded by the caller from `state()`, as evaluation only, if the page says it has no built-in reward, says that `CollectRunner` and `build_harness_rollout_func` need an environment reward, and sits under Community Environments or Learn > Evals, not Basics. A caller-computed score must not be returned as `VerifyResult.env_reward`. Supporting caller-side rewards in the training helpers needs an RFC.
 
 4. **Communication patterns**
    - WebSocket for all environment communication (Gym-like API + metadata)

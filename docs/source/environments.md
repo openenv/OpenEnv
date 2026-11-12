@@ -342,6 +342,8 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
 
 ## Community Environments
 
+These environments are maintained outside this repository. An entry whose environment does not compute its own reward says so on its card.
+
 <div class="mt-6">
   <div class="w-full flex flex-col space-y-4 md:space-y-0 md:grid md:grid-cols-3 md:gap-4">
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
