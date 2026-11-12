@@ -231,9 +231,14 @@ def validate(
     Validate a local package or a running OpenEnv server.
 
     Local validation detects the package format by its well-known file (the
-    formats this build can parse; currently `openenv.yaml`), parses it into the
+    formats this build can parse: `openenv.yaml` or Harbor `task.toml`), parses it into the
     normalized manifest, runs the applicable graders up to the requested level,
     applies the severity policy, and emits a report.
+
+    Native Harbor tasks require the optional Harbor dependency and an explicit
+    `validation/openenv.json` contract. Fresh Docker trials grade the oracle, the
+    do-nothing floor and any declared canaries under the semantic check ids. Checks
+    without an implementation are named SKIPs, so the report is WARN at best.
 
     Exit codes: 0 pass/warn · 1 fail · 2 unrecognized/unsupported package · 3
     internal or policy error.

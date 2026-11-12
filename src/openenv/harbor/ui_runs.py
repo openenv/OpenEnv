@@ -437,6 +437,7 @@ async def _rollout(
         sandbox=sandbox,
         registry=service.capture.registry,
         intercept_url=service.public_url,
+        local_intercept_url=service.local_url,
         model=served,
         trials_dir=Path(
             os.environ.get("OPENENV_HARBOR_TRIALS_DIR", "/tmp/openenv-harbor-trials")
