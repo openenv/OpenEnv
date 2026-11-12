@@ -63,7 +63,7 @@ _HOST_FAILURES = {
 }
 _TERMINAL_STAGES = {"COMPLETED", "CANCELED", "ERROR", "DELETED"}
 _JOB_STOP_TIMEOUT_S = 60
-# Inside the 600-second validator start budget, so Sandbox.create finishes first.
+# Readiness budget inside the 600-second start budget; allocation can take longer.
 _SANDBOX_START_TIMEOUT_S = 540
 # Checks this binding measures; every other local check is a named SKIP.
 _IMPLEMENTED = {
@@ -303,6 +303,7 @@ class HFJobsInspector:
         self.namespace = namespace
         self._resources = resources
         self._api = None
+        self._observed_jobs = {}
 
     def preflight(self):
         from huggingface_hub import HfApi
@@ -338,11 +339,22 @@ class HFJobsInspector:
             },
         }
 
+    def register_job(self, project, job_id):
+        # The Sandbox handle is authoritative even before AGENT_START or listing.
+        self._observed_jobs.setdefault(project, set()).add(job_id)
+
     def _jobs(self, project):
         if not _PROJECT.fullmatch(project):
             raise NativeEvidenceError("not a run-owned Harbor project")
         labels = _job_labels(project.removesuffix("__env"))
         jobs = list(self._api.list_jobs(labels=labels, namespace=self.namespace))
+        # A listing omission does not prove a previously observed job terminated.
+        listed_ids = {job.id for job in jobs}
+        known_ids = self._observed_jobs.get(project, set())
+        jobs.extend(
+            self._api.inspect_job(job_id=job_id, namespace=self.namespace)
+            for job_id in sorted(known_ids - listed_ids)
+        )
         # Cleanup cancels what this returns, so recheck the server-side filter.
         if any(
             not labels.items() <= (job.labels or {}).items()
@@ -350,6 +362,7 @@ class HFJobsInspector:
             for job in jobs
         ):
             raise NativeEvidenceError("HF Jobs returned a job outside this run")
+        self._observed_jobs[project] = known_ids | listed_ids
         return jobs
 
     def inventory(self, project):
@@ -382,7 +395,7 @@ class HFJobsInspector:
         }
 
     def cleanup(self, project):
-        # A start abandoned at its deadline can still create a job, so keep looking.
+        # Startup settles allocation before teardown; inspect until each job ends.
         deadline = time.monotonic() + _JOB_STOP_TIMEOUT_S
         cancelled = set()
         while True:
@@ -482,15 +495,24 @@ async def _start_sandbox(environment, *, force_build, labels, namespace):
     # Harbor's hf-sandbox start, plus labels that let cleanup find every run-owned job.
     from huggingface_hub import Sandbox
 
-    environment._sandbox = await asyncio.to_thread(
-        Sandbox.create,
-        image=environment.task_env_config.docker_image,
-        flavor=environment._flavor,
-        idle_timeout=environment._idle_timeout,
-        namespace=namespace,
-        labels=labels,
-        start_timeout=_SANDBOX_START_TIMEOUT_S,
+    creating = asyncio.create_task(
+        asyncio.to_thread(
+            Sandbox.create,
+            image=environment.task_env_config.docker_image,
+            flavor=environment._flavor,
+            idle_timeout=environment._idle_timeout,
+            namespace=namespace,
+            labels=labels,
+            start_timeout=_SANDBOX_START_TIMEOUT_S,
+        )
     )
+    try:
+        environment._sandbox = await asyncio.shield(creating)
+    except asyncio.CancelledError:
+        # A cancelled worker can still allocate a job. Settle it and preserve its
+        # handle before Harbor teardown and the final ownership/terminal checks.
+        environment._sandbox = await creating
+        raise
     if workdir := environment.task_env_config.workdir:
         await asyncio.to_thread(environment._sandbox.files.mkdir, workdir)
     await environment.ensure_dirs(environment._mount_targets(writable_only=True))
@@ -760,8 +782,14 @@ async def _trial(
 
             async def build_and_start(*, force_build):
                 nonlocal phase
-                async with asyncio.timeout(build_budget):
-                    await start_environment(force_build=force_build)
+                try:
+                    async with asyncio.timeout(build_budget):
+                        await start_environment(force_build=force_build)
+                finally:
+                    if hf and trial.agent_environment._sandbox is not None:
+                        inspector.register_job(
+                            project, trial.agent_environment._sandbox.id
+                        )
                 phase = "agent setup"
 
             trial.agent_environment.start = build_and_start

@@ -154,7 +154,10 @@ def boundary(monkeypatch, task):
                 agent_dir=directory / "agent",
             )
             self.agent_environment = SimpleNamespace(
-                session_id=config.trial_name + "__env", start=self.start, stop=self.stop
+                session_id=config.trial_name + "__env",
+                start=self.start,
+                stop=self.stop,
+                _sandbox=None,
             )
             self.hooks = {}
             self._openenv_cancelled_compose = []
@@ -1431,6 +1434,7 @@ def hf_jobs(task, boundary, monkeypatch):
             status=SimpleNamespace(stage="RUNNING"),
         )
         state.jobs[job.id] = state.by_trial[trial.config.trial_name] = job
+        trial.agent_environment._sandbox = SimpleNamespace(id=job.id)
         running = [job for job in state.jobs.values() if job.status.stage == "RUNNING"]
         state.max_running = max(state.max_running, len(running))
 
@@ -1464,6 +1468,9 @@ def hf_jobs(task, boundary, monkeypatch):
             state.cancelled.append(job_id)
             if not state.cancel_fails:
                 state.jobs[job_id].status.stage = "CANCELED"
+
+        def inspect_job(self, *, job_id, namespace):
+            return state.jobs[job_id]
 
     boundary.on_start = start
     boundary.on_stop = stop
@@ -1573,6 +1580,36 @@ def test_hf_sandbox_job_must_run_the_pinned_image(task, boundary, hf_jobs):
     assert all(job.status.stage == "CANCELED" for job in hf_jobs.jobs.values())
 
 
+def test_hf_sandbox_failed_setup_registers_the_actual_job_before_teardown(
+    task, boundary, hf_jobs, monkeypatch, tmp_path
+):
+    import huggingface_hub
+
+    start = boundary.on_start
+
+    def failed_setup(trial):
+        start(trial)
+        raise OSError("sandbox setup failed")
+
+    def failed_stop(trial):
+        # Harbor clears its handle even when kill fails.
+        trial.agent_environment._sandbox = None
+
+    boundary.on_start = failed_setup
+    boundary.on_stop = failed_stop
+    monkeypatch.setattr(huggingface_hub.HfApi, "list_jobs", lambda self, **kwargs: [])
+    monkeypatch.setattr(harbor.time, "sleep", lambda seconds: None)
+    artifacts = tmp_path / "failed-hf-setup"
+    report = run_validation(task, sandbox="hf-sandbox", artifacts_dir=artifacts)
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
+    assert len(hf_jobs.jobs) == 3
+    assert sorted(hf_jobs.cancelled) == sorted(hf_jobs.jobs)
+    assert all(job.status.stage == "CANCELED" for job in hf_jobs.jobs.values())
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert native["cleanup"]["verified"]
+    assert all(trial["cleanup"]["jobs"] for trial in native["trials"])
+
+
 @pytest.mark.parametrize("cancel_works", [True, False])
 def test_hf_sandbox_cleanup_cancels_jobs_that_survive_teardown(
     task, boundary, hf_jobs, tmp_path, monkeypatch, cancel_works
@@ -1621,6 +1658,53 @@ def test_hf_jobs_cleanup_never_cancels_jobs_outside_its_run(labels, owner):
     with pytest.raises(harbor.NativeEvidenceError, match="outside this run"):
         inspector.cleanup("openenv-validation-" + "d" * 32 + "-nop__env")
     assert not cancelled
+
+
+@pytest.mark.parametrize("inspect_works", [True, False])
+def test_hf_jobs_cleanup_checks_observed_jobs_missing_from_listing(
+    monkeypatch, inspect_works
+):
+    project = "openenv-validation-" + "d" * 32 + "-nop__env"
+    job = SimpleNamespace(
+        id="known-job",
+        labels=harbor._job_labels(project.removesuffix("__env")),
+        owner=SimpleNamespace(name="me"),
+        status=SimpleNamespace(stage="RUNNING"),
+        docker_image=PINNED,
+        flavor="cpu-basic",
+    )
+    listing = [job]
+    cancelled = []
+
+    def inspect(*, job_id, namespace):
+        assert job_id == job.id and namespace == "me"
+        if not inspect_works:
+            raise OSError("job readback unavailable")
+        return job
+
+    def cancel(*, job_id, namespace):
+        assert job_id == job.id and namespace == "me"
+        cancelled.append(job_id)
+        job.status.stage = "CANCELED"
+
+    inspector = harbor.HFJobsInspector(PINNED, "cpu-basic", "me", None)
+    inspector._api = SimpleNamespace(
+        list_jobs=lambda **kwargs: list(listing),
+        inspect_job=inspect,
+        cancel_job=cancel,
+    )
+    monkeypatch.setattr(harbor.time, "sleep", lambda seconds: None)
+    assert inspector.capture(project, None)["container_id"] == job.id
+    listing.clear()
+    if inspect_works:
+        cleanup = inspector.cleanup(project)
+        assert cleanup["verified"]
+        assert cleanup["jobs"] == {job.id: "CANCELED"}
+        assert cancelled == [job.id]
+    else:
+        with pytest.raises(OSError, match="readback unavailable"):
+            inspector.cleanup(project)
+        assert not cancelled
 
 
 def test_hf_sandbox_gives_every_trial_its_own_worker_thread(

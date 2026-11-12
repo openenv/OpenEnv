@@ -603,7 +603,7 @@ def run_validation(
     [`~openenv.validation.signature.UnsupportedPackageError`] for
     recognized-but-unsupported ones (CLI exit code 2). A package whose declarations
     fail the manifest schema yields a normal report with a `static.manifest` FAIL
-    (exit code 1).
+    (exit code 1). An unknown `sandbox` raises `ValueError` before validation.
 
     Args:
         target (`Path`):
@@ -634,6 +634,8 @@ def run_validation(
     Returns:
         [`~openenv.validation.report.ValidationReport`]: the completed report.
     """
+    if sandbox not in ("docker", "hf-sandbox"):
+        raise ValueError(f"unknown sandbox {sandbox!r}; expected docker or hf-sandbox")
     target = Path(target)
     wants_runtime = max_level >= Level.RUNTIME
     policy = policy or load_policy("v2" if wants_runtime else "v1")

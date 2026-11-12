@@ -13,6 +13,12 @@ from openenv.validation.types import CheckStatus, Lane, Level, Verdict
 from support.runtime import evidence, FakeRuntimeProvider
 
 
+@pytest.mark.parametrize("level", list(Level))
+def test_unknown_sandbox_is_rejected_before_validation(tmp_path, level):
+    with pytest.raises(ValueError, match="unknown sandbox"):
+        run_validation(tmp_path, sandbox="hf_sandbox", max_level=level)
+
+
 @pytest.mark.parametrize(
     "mode", ["run", "skip-build", "source-change", "capability", "applies-to"]
 )

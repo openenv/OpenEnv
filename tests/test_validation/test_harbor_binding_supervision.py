@@ -2,6 +2,7 @@
 
 import asyncio
 import signal
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -215,3 +216,40 @@ async def test_hf_sandbox_start_labels_its_job_and_keeps_harbor_setup(
     assert "/logs/verifier" in calls[2][1][-1]
     await trial.agent_environment.stop(delete=True)
     assert calls[-1] == ("kill",)
+
+
+@pytest.mark.asyncio
+async def test_hf_sandbox_cancelled_start_retains_the_late_job(monkeypatch):
+    import huggingface_hub
+
+    entered = threading.Event()
+    release = threading.Event()
+    sandbox = SimpleNamespace(id="late-job")
+    environment = SimpleNamespace(
+        task_env_config=SimpleNamespace(docker_image="pinned-image"),
+        _flavor="cpu-basic",
+        _idle_timeout=600,
+        _sandbox=None,
+    )
+
+    def create(**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return sandbox
+
+    monkeypatch.setattr(huggingface_hub.Sandbox, "create", create)
+    running = asyncio.create_task(
+        harbor._start_sandbox(environment, force_build=False, labels={}, namespace="me")
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        running.cancel()
+        await asyncio.sleep(0)
+        cancelled_before_allocation_finished = running.done()
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+    # Outer teardown must not run before creation settles or lose the job handle.
+    assert not cancelled_before_allocation_finished
+    assert environment._sandbox is sandbox
