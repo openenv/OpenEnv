@@ -69,6 +69,8 @@
   - sections:
     - local: tutorials/evaluation-inspect
       title: Evaluating with Environments
+    - local: tutorials/seahaven-environment
+      title: "Tool-Use Environments (Seahaven)"
     title: Evals
   title: Learn
 - isExpanded: false
