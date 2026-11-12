@@ -339,9 +339,13 @@ async def _run_compose(
 ):
     # Harbor's Compose collector does not reap the client on outer cancellation.
     runtime = type(environment).runtime()
+    project_directory = environment.environment_dir
+    if not project_directory.is_dir():
+        project_directory = project_directory.parent
+    project_directory = project_directory.resolve()
     argv = [*runtime.compose, "--project-name", environment.session_id]
     if runtime.supports_compose_project_directory:
-        argv.extend(["--project-directory", str(environment.environment_dir.resolve())])
+        argv.extend(["--project-directory", str(project_directory)])
     for path in environment._docker_compose_paths:
         argv.extend(["-f", str(path.resolve())])
     spawn = asyncio.create_task(
@@ -349,7 +353,7 @@ async def _run_compose(
             *argv,
             *command,
             env=environment._compose_env_vars(include_os_env=True),
-            cwd=str(environment.environment_dir.resolve()),
+            cwd=str(project_directory),
             stdin=asyncio.subprocess.PIPE
             if stdin_data is not None
             else asyncio.subprocess.DEVNULL,
