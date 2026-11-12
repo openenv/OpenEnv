@@ -58,6 +58,8 @@ def inspection(monkeypatch):
         commands.append(args)
         if args[0] == "ps":
             return "\n".join(containers)
+        if args[:2] == ("image", "ls"):
+            return ""
         if args[:2] in (("network", "ls"), ("volume", "ls")):
             return ""
         if args == ("inspect", container["Id"]):

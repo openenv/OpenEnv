@@ -116,6 +116,12 @@ class DockerInspector:
             if any(not _RESOURCE_ID.fullmatch(item) for item in ids):
                 raise NativeEvidenceError("invalid Docker resource identity")
             inventory[kind] = ids
+        images = self._docker(
+            "image", "ls", "-q", "--no-trunc", project + "-main:latest"
+        ).split()
+        if len(images) > 1 or any(not _IMAGE_ID.fullmatch(image) for image in images):
+            raise NativeEvidenceError("invalid Compose image identity")
+        inventory["images"] = images
         return inventory
 
     def capture(self, project, retained_tag, *, retain=True):
@@ -231,6 +237,19 @@ class DockerInspector:
                 remaining = [name for name in remaining if name in existing]
             if remaining:
                 self._docker(*args, *remaining)
+        for image_ref in before["images"]:
+            tag = project + "-main:latest"
+            image = json.loads(self._docker("image", "inspect", tag))[0]
+            labels = image["Config"]["Labels"]
+            if (
+                image["Id"] != image_ref
+                or labels.get("com.docker.compose.project") != project
+                or labels.get("com.docker.compose.service") != "main"
+            ):
+                raise NativeEvidenceError(
+                    "Compose image ownership changed before removal"
+                )
+            self._docker("image", "rm", "--no-prune", tag)
         after = self.inventory(project)
         if registered:
             existing = set(self._docker("volume", "ls", "-q").split())

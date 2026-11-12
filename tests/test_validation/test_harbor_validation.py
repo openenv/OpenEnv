@@ -79,6 +79,7 @@ def boundary(monkeypatch, task):
         cleanup_calls=[],
         preflight_error=None,
         interrupt_role=None,
+        on_build=None,
     )
 
     class Inspector:
@@ -166,6 +167,8 @@ def boundary(monkeypatch, task):
                 self.paths.reward_json_path.symlink_to("outside-reward.json")
 
         async def start(self, *, force_build):
+            if self.role == "nop" and state.on_build is not None:
+                state.on_build(self.agent_environment.session_id)
             if state.pending_compose:
                 self._openenv_cancelled_compose.append(
                     {
@@ -255,8 +258,21 @@ def boundary(monkeypatch, task):
 @pytest.fixture
 def image_docker(boundary, monkeypatch):
     state = SimpleNamespace(
-        images={"unrelated:tag": IMAGE}, removed=set(), commands=[], image_os="linux"
+        images={"unrelated:tag": IMAGE},
+        removed=set(),
+        commands=[],
+        image_os="linux",
+        remove_error=False,
+        image_drift=False,
+        foreign_image=False,
     )
+
+    def built(project):
+        state.images[project + "-main:latest"] = (
+            "sha256:" + "e" * 64 if state.foreign_image else IMAGE
+        )
+
+    boundary.on_build = built
 
     def docker(self, *args):
         state.commands.append(args)
@@ -299,9 +315,33 @@ def image_docker(boundary, monkeypatch):
         if args[:2] == ("image", "tag"):
             state.images[args[3]] = args[2]
             return ""
+        if args[:2] == ("image", "ls"):
+            assert args[2:4] == ("-q", "--no-trunc")
+            return state.images.get(args[4], "")
         if args[:2] == ("image", "inspect"):
-            return json.dumps([{"Id": state.images[args[2]], "Os": state.image_os}])
+            image = state.images[args[2]]
+            if state.image_drift and args[2].endswith("-main:latest"):
+                image = "sha256:" + "e" * 64
+            project = args[2].removesuffix("-main:latest")
+            return json.dumps(
+                [
+                    {
+                        "Id": image,
+                        "Os": state.image_os,
+                        "Config": {
+                            "Labels": {
+                                "com.docker.compose.project": "unrelated"
+                                if state.foreign_image
+                                else project,
+                                "com.docker.compose.service": "main",
+                            }
+                        },
+                    }
+                ]
+            )
         if args[:3] == ("image", "rm", "--no-prune"):
+            if state.remove_error and args[3].endswith("-main:latest"):
+                raise OSError("image removal failed")
             del state.images[args[3]]
             return ""
         if args[:3] == ("rm", "-f", "-v"):
@@ -443,7 +483,12 @@ def test_retained_image_policy(task, boundary, image_docker, tmp_path, outcome):
     report = run_validation(task, artifacts_dir=artifacts)
     tag = "openenv-validation:" + boundary.trials[0].config.trial_name.split("-")[2]
     measured = result(report, "runtime.startup").measured
-    removals = [cmd for cmd in image_docker.commands if cmd[:2] == ("image", "rm")]
+    compose_tag = boundary.trials[0].agent_environment.session_id + "-main:latest"
+    removals = [
+        cmd
+        for cmd in image_docker.commands
+        if cmd[:2] == ("image", "rm") and cmd[3] != compose_tag
+    ]
     if outcome == "kept":
         assert report.verdict is Verdict.WARN
         assert measured["retained_image_tag"] == tag
@@ -461,6 +506,51 @@ def test_retained_image_policy(task, boundary, image_docker, tmp_path, outcome):
     assert json.loads((artifacts / "report.json").read_text()) == json.loads(
         report.model_dump_json()
     )
+
+
+@pytest.mark.parametrize("keep", [True, False], ids=["kept", "removed"])
+def test_compose_build_tag_is_removed_on_every_run(
+    task, boundary, image_docker, tmp_path, keep
+):
+    if not keep:
+        boundary.rewards["nop"] = b'{"reward":1}'
+    report = run_validation(task, artifacts_dir=tmp_path / "compose-tags")
+    project = boundary.trials[0].agent_environment.session_id
+    compose_tag = project + "-main:latest"
+    retained_tag = "openenv-validation:" + project.split("-")[2]
+    expected = {"unrelated:tag": IMAGE}
+    if keep:
+        expected[retained_tag] = IMAGE
+        assert (
+            result(report, "runtime.startup").measured["retained_image_tag"]
+            == retained_tag
+        )
+    assert image_docker.images == expected
+    removal = ("image", "rm", "--no-prune", compose_tag)
+    index = image_docker.commands.index(removal)
+    assert image_docker.commands[index - 1] == ("image", "inspect", compose_tag)
+    assert image_docker.removed == {trial.role for trial in boundary.trials}
+
+
+@pytest.mark.parametrize("defect", ["remove_error", "image_drift", "foreign_image"])
+def test_compose_tag_cleanup_failure_is_a_startup_error(
+    task, boundary, image_docker, tmp_path, defect
+):
+    setattr(image_docker, defect, True)
+    artifacts = tmp_path / "compose-cleanup"
+    report = run_validation(task, artifacts_dir=artifacts)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert "retained_image_tag" not in startup.measured
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert not native["cleanup"]["verified"]
+    assert native["trials"][0]["failure"] == "CleanupNotVerified"
+    assert "unrelated:tag" in image_docker.images
+    if defect in {"image_drift", "foreign_image"}:
+        assert not any(
+            cmd[:2] == ("image", "rm") and cmd[3].endswith("-main:latest")
+            for cmd in image_docker.commands
+        )
 
 
 @pytest.mark.parametrize("error", [KeyboardInterrupt, OSError])
@@ -746,6 +836,9 @@ def test_host_inspector_scopes_inventory_and_cleanup_to_owned_project(monkeypatc
 
     def docker(*args):
         commands.append(args)
+        if args[:2] == ("image", "ls"):
+            assert args == ("image", "ls", "-q", "--no-trunc", project + "-main:latest")
+            return ""
         if args == ("volume", "ls", "-q"):
             return "\n".join(resources["volumes"])
         if args[0] == "inspect":
@@ -786,7 +879,7 @@ def test_host_inspector_scopes_inventory_and_cleanup_to_owned_project(monkeypatc
 
     monkeypatch.setattr(inspector, "_docker", docker)
     assert inspector.cleanup(project)["verified"]
-    assert commands[-3:] == [
+    assert commands[-4:] == [
         (
             "ps",
             "-aq",
@@ -809,6 +902,7 @@ def test_host_inspector_scopes_inventory_and_cleanup_to_owned_project(monkeypatc
             "--filter",
             f"label=com.docker.compose.project={project}",
         ),
+        ("image", "ls", "-q", "--no-trunc", project + "-main:latest"),
     ]
     with pytest.raises(ValueError, match="run-owned"):
         inspector.cleanup("somebody-elses-project")
@@ -827,7 +921,12 @@ def test_anonymous_volumes_are_registered_removed_and_rechecked(
     def inventory(value):
         assert value == project
         # The anonymous volume deliberately has no Compose project label.
-        return {"containers": list(containers), "networks": [], "volumes": []}
+        return {
+            "containers": list(containers),
+            "networks": [],
+            "volumes": [],
+            "images": [],
+        }
 
     def docker(*args):
         if args == ("inspect", "c" * 64):
