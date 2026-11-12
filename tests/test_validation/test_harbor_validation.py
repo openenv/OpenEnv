@@ -1571,6 +1571,23 @@ def test_hf_sandbox_flavor_must_exist_and_cover_the_contract(
     assert not boundary.trials and not hf_jobs.jobs
 
 
+@pytest.mark.parametrize(
+    "resource,capacity", [("memory_mb", 16 * 1024), ("disk_mb", 50 * 1024)]
+)
+@pytest.mark.parametrize("excess", [0, 1])
+def test_hf_sandbox_flavor_capacity_uses_contract_mib(
+    task, boundary, hf_jobs, resource, capacity, excess
+):
+    path = task / "validation/openenv.json"
+    contract = json.loads(path.read_text())
+    contract["resources"][resource] = capacity + excess
+    path.write_text(json.dumps(contract))
+    report = run_validation(task, sandbox="hf-sandbox")
+    startup = result(report, "runtime.startup")
+    assert startup.status is (CheckStatus.ERROR if excess else CheckStatus.PASS)
+    assert bool(hf_jobs.jobs) is (not excess)
+
+
 def test_hf_sandbox_job_must_run_the_pinned_image(task, boundary, hf_jobs):
     hf_jobs.image = "registry.example/image@sha256:" + "e" * 64
     report = run_validation(task, sandbox="hf-sandbox")
