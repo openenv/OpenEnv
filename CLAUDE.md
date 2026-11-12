@@ -292,7 +292,7 @@ docker build -t echo-env:latest -f envs/echo_env/server/Dockerfile .
 Scripts in `.claude/hooks/` are used by skills and can be run directly:
 
 ```bash
-bash .claude/hooks/lint.sh          # Run ruff format check
+bash .claude/hooks/lint.sh          # Check CI import sort, format, and lint (src/ tests/)
 bash .claude/hooks/test.sh          # Run pytest (excludes special envs)
 bash .claude/hooks/check-debug.sh   # Find debug code (print, breakpoint, TODO)
 bash .claude/hooks/post-push-pr.sh  # Validate PR after push (freshness, CI, conflicts)

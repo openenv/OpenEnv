@@ -15,10 +15,17 @@ def test_openenv_yaml_detects_the_served_format():
 
 
 def test_the_table_lists_exactly_the_implemented_parsers():
-    assert set(WELL_KNOWN_FILES) == {SignatureKind.OPENENV_SERVED}
+    assert set(WELL_KNOWN_FILES) == {
+        SignatureKind.OPENENV_SERVED,
+        SignatureKind.HARBOR_TASK,
+    }
 
 
-@pytest.mark.parametrize("fixture", ["harbor_task_min", "posttrain_task_min"])
+def test_harbor_task_detects_the_native_format():
+    assert detect_signature(FIXTURES / "harbor_task_min") is SignatureKind.HARBOR_TASK
+
+
+@pytest.mark.parametrize("fixture", ["posttrain_task_min"])
 def test_formats_without_parsers_are_unrecognized_not_guessed(fixture):
     with pytest.raises(SignatureError, match="unrecognized"):
         detect_signature(FIXTURES / fixture)

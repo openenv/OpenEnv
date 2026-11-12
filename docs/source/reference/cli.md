@@ -60,18 +60,102 @@ openenv validate ./my_env --level static
 openenv validate ./my_env --level runtime --local --output report.json
 ```
 
-Runtime validation requires Docker and a `validation.execution` declaration in
+For served packages, runtime validation requires Docker and a `validation.execution` declaration in
 `openenv.yaml`. The declaration points to a bounded JSON replay plan containing
 one reset and a sequence of actions. The validator builds an immutable image,
-opens one WebSocket session, measures reward values, observation schemas and
-state continuity, and removes the container even if a check fails.
+collects the original episode, repeats the plan in a fresh WebSocket session and
+with a different seed, then replays it in a fresh container when the provider
+supports that capability. Docker validation uses two containers concurrently
+during the fresh-container replay. Both use the same immutable image and are
+removed even if a check fails.
 
-The runtime level implements startup, reward, observation, state and network
-policy checks. Other applicable Level 2 checks appear explicitly as `SKIP`; they make
+Harbor `task.toml` directories are also recognized. Validation requires Python 3.12 or newer
+and `harbor==0.25.0` installed alongside `openenv[harbor]`:
+
+```bash
+pip install "openenv[harbor]" "harbor==0.25.0"
+```
+
+A missing or mismatched Harbor installation exits 3 and names `harbor==0.25.0`.
+
+Add a `validation/openenv.json` contract with `profile: "harbor-semantic-v1"`,
+`reward_key`, `reward`, `resources` and `types`. The reward range, oracle tolerance
+and floor margin must be explicit. Oracle tolerance and floor margin are fractions
+of the declared reward range. Numeric strings in numeric fields, oversized integers
+and excessive JSON nesting fail `static.manifest`. Reward and resource numbers must
+retain their exact value when stored as floats. `resources.gpu_types` remains a list
+of strings. This is a minimal complete contract:
+
+```json
+{
+  "profile": "harbor-semantic-v1",
+  "reward_key": "reward",
+  "reward": {
+    "range": [0, 1],
+    "oracle_tolerance": 0,
+    "floor_margin": 0.1
+  },
+  "resources": {
+    "cpu": 1,
+    "memory_mb": 512,
+    "disk_mb": 1024,
+    "episode_timeout_s": 300
+  },
+  "types": {"tags": ["swe"]}
+}
+```
+
+The `harbor-semantic-v1` binding runs
+fresh Harbor trials in Docker: a do-nothing agent, the oracle (`solution/solve.sh`),
+an oracle replay and any canaries declared in the contract. A canary is a known-wrong
+`solve.sh` replacement. The results report under `runtime.startup`,
+`runtime.reward_well_formed`, `runtime.episode_determinism`, `semantic.oracle_max`,
+`semantic.floor_gap` and `semantic.canary_floor`, and `harbor-evidence.json` keeps
+the raw trial evidence in the report bundle. Other checks are named SKIPs, so a
+passing task still reports WARN. This validates task packages, not the outer
+`harbor_env` server.
+
+Supported tasks use Linux, a single step, a shared verifier and public networking.
+The image comes from one Dockerfile or from a digest-pinned
+`environment.docker_image`, such as `org/image@sha256:<64 hex digits>`. Harbor
+prefers a declared image over a Dockerfile, so the do-nothing trial pulls the pin
+and `runtime.startup` records it as `source_image`. The validator leaves the pulled
+image in the local Docker cache. Unsupported shapes include multi-step or non-Linux
+tasks, an `environment.docker_image` without a digest, tasks with neither a
+Dockerfile nor a pinned image, task-authored Compose files and separate verifier
+environments. GPU/TPU or external MCP requirements,
+credentials, non-public or differing phase networks, task environment variables,
+healthchecks, skills, verifier collection and artifact extensions are also
+unsupported. A supplied provider, including `--space`, is unsupported. Each case
+gives `runtime.startup` SKIP with a named reason and runs no trials. With valid
+static declarations and an oracle, the verdict is WARN and the exit code is 0.
+A missing `solution/solve.sh` still FAILs `semantic.oracle_max` at the semantic level,
+including with `--skip-build` or `--space`.
+
+The initial image build and environment start share a separate 600-second validator
+budget. Exceeding it gives `runtime.startup` ERROR. Later environment starts use the
+episode budget. There is no shared outer trial deadline. Harbor bounds setup, agent
+and verifier separately with the declared `resources.episode_timeout_s`. A timeout
+in one of these phases is a package FAIL that names the phase.
+
+The do-nothing trial builds from the task's Dockerfile, or pulls the digest-pinned
+image when the task declares one. The validator keeps `openenv-validation:<run id>`
+only when the run has no FAIL or ERROR and was not interrupted. It records the tag in `runtime.startup.measured` as
+`retained_image_tag`. Otherwise it removes the tag. The run-owned Compose build tag
+is removed on every run. Tag removal verifies image identity and uses `--no-prune`.
+A removal failure marks cleanup incomplete and gives a startup ERROR. During an
+abort, cleanup preserves the original exception and records the removal failure.
+
+The 16 implemented runtime checks cover startup, rewards, observation schemas,
+state continuity, network policy, host containment, resource bounds, episode isolation,
+oracle containment, seed forwarding, determinism, emitted trajectory records, tool
+and task discovery, rubric introspection and reward attribution. Applicable checks
+with unsupported capabilities or incomplete evidence appear as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
-includes the available lower-level checks but does not claim semantic execution.
+runs the semantic checks for Harbor tasks. Served packages have no oracle execution
+yet, so their semantic checks are named SKIPs.
 `--skip-build` runs declaration checks and skips runtime execution entirely.
 The Docker provider supports CPU workloads in `public` and `no-network` modes;
 `allowlist` and GPU requirements skip runtime before building. A `no-network`
@@ -80,10 +164,121 @@ shares only its network namespace, built from a digest-pinned validator image
 pulled on first use. `runtime.network_policy` probes a validator-owned sink from
 the subject's namespace and from a control container; a probe counts only when
 the control reaches the sink, and a denial that is not proven is a `SKIP`.
+`runtime.host_containment` inspects the launch from outside the subject and runs a
+probe from the validator image that joins only the subject's PID namespace, as the
+subject's own user. It fails when the subject runs privileged, shares a host
+namespace, holds capabilities, runs as root or has an unexpected mount. The probe
+also reads every writable filesystem from the subject's mount table. The image root
+must be read-only. Besides `/tmp` and `/dev/shm`, only Docker's `/proc`, `/dev/pts`
+and `/dev/mqueue` pseudo-filesystems and its root-owned `/dev` may be writable, and
+the subject must not be able to create files or write existing regular files on
+that device filesystem. The helper inventories at most 1024 entries to depth 32,
+without following symlinks or entering separate mounts such as `/dev/shm`.
+An unreadable or exhausted inventory, a probe that cannot write an allotted root,
+or a mount table that cannot be read in full leaves containment unproven and
+reports `SKIP`.
+`runtime.resource_bounds` reads the subject's cgroup v2 limits and writable-root
+sizes and compares them with the declared `cpu`, `memory_mb` and `disk_mb`; swap
+must be disabled and the process count bounded. Storage accounting uses the complete
+mount inventory and the device-storage inventory above, charges any usable device
+filesystem once across its aliases, and cannot pass with incomplete storage
+evidence or an unbounded writable filesystem. Each bounded memory, process,
+disk and Docker exec-timeout probe runs in its own disposable subject. A fresh
+start marker and trusted cgroup events or filesystem measurements must corroborate
+enforcement. Subject text cannot establish excess usage. Exit 137 alone proves no limit. Unreadable cgroup files preserve
+independently readable limits and leave the affected qualification unproven.
+Unavailable evidence reports `SKIP`; failed disposable teardown reports `ERROR`
+and outer cleanup retries every run-owned subject and helper. The exec-timeout
+probe requires a trusted helper to observe a live parent and child with the
+fresh stimulus nonce before timeout, followed by verified removal. A printed
+descendant marker alone leaves qualification unproven. It does not qualify
+enforcement of the declared `episode_timeout_s` for a served episode.
+`runtime.episode_isolation` runs the replay plan twice on one session, as episode A
+and then a reset into episode B, and once more on a new session. Episode B must
+match the fresh episode exchange for exchange. Messages are compared as decoded
+JSON values, so key order and formatting do not count. If episode A or the fresh
+episode differs from the original measured episode, the subject is not
+deterministic under fixed inputs and the check reports `SKIP`. Each episode gets
+its own `episode_timeout_s` deadline and trace size bound. When an episode stops
+early before any response differs, the experiment is incomplete and the check
+also reports `SKIP`.
+`runtime.oracle_containment` applies when `capabilities.oracle` is declared. It
+compares complete declared oracle files with collected reset, step and state
+responses, the complete `/schema` response, and unauthenticated HTTP probes of
+each inventoried file's package-relative URL. It decodes JSON string values and
+compares structured JSON independent of formatting. Isolated source lines are
+ignored because ordinary boilerplate does not establish disclosure. A matching
+complete artifact fails regardless of HTTP status or incomplete evidence elsewhere.
+
+Oracle inventory reads at most 64 files and 1 MiB. HTTP probes share a 10 second
+wall deadline and 1 MiB body budget, follow at most three same-origin redirects,
+and reject compressed responses before decoding. Missing or failed probes,
+unresolved redirects, incomplete transcripts or schemas, unreadable inventory
+entries, unsupported structured JSON comparisons, files too short to trace
+reliably, and omitted files or bytes report
+`SKIP` unless a disclosure was found. Coverage counts are recorded for each limit.
+A pass establishes only that complete artifacts did not match
+these measured responses. It does not test arbitrary MCP tool reads, partial or
+transformed disclosures, or writes to reward artifacts; it does not certify the
+full agent boundary.
 `--local` explicitly selects this default package mode and rejects a remote URL.
-The declared `episode_timeout_s` bounds collection; a reset or judged step may use
-its remaining budget. Collection failures appear once under `runtime.startup`,
-with dependent contract checks skipped and the completed trace retained.
+Explicitly unsupported session telemetry yields a `SKIP` naming `session_telemetry`;
+authorization refusals and malformed telemetry remain failures. Explicitly unsupported
+`tools/list` similarly skips with `tool_discovery` named. Internal discovery errors
+and malformed responses remain failures, even for an empty declared tool set. Seed control
+reports observed forwarding to reset, separately from empirical determinism.
+The declared `episode_timeout_s` bounds each episode; a reset or judged step may use
+its remaining budget. Original and replay collection share a 300-second deadline
+and a 32 MiB evidence budget. `llm_judged` requests 20 identical-input episodes,
+including the original, plus the different-seed episode. Validation repeats the
+actions and any external service calls they make, so budget for the additional
+runtime and cost. Missing replay samples cannot pass determinism. Primary episode
+collection failures appear under `runtime.startup`, with dependent contract checks
+skipped and the completed trace retained.
+Validator JSON numeric-range and depth limits report named capability `SKIP`s,
+preserving the received evidence when it can be retained without validation credentials.
+
+`--space` validates a Hugging Face Space on HF Jobs instead of a local directory:
+
+```bash
+openenv validate --space openenv/echo_env --level runtime
+openenv validate --space my-org/my-env --level runtime --flavor t4-small
+```
+
+The validator resolves `--revision` (a branch, tag or commit hash; default `main`)
+to one commit and downloads and hashes the Space files at that commit. Hub download
+bookkeeping is excluded. The report target names the resolved source commit.
+
+Runtime validation currently reports a named `immutable_image` SKIP without
+creating an HF Job. The supported Hub API exposes a mutable Space image name and
+current Space runtime metadata, but does not establish an immutable image digest
+bound to the downloaded source commit. Matching repository and running-build
+revisions alone cannot prove which image a Job would pull. A different repository
+or reported runtime revision reports `runtime.startup` as `ERROR`. This provider
+also refuses building, sleeping and paused Spaces: it requires reported stage
+`RUNNING`, without treating that stage as proof of image provenance. Absent runtime
+stage or revision metadata yields a named `space_runtime_metadata` SKIP; explicit
+contradictory metadata still yields ERROR. Use
+`--level static` to validate historical source commits. Reports retain the source
+commit and source digest without claiming a verified runtime image or execution.
+
+`--flavor` selects an HF Jobs hardware flavor (default `cpu-basic`; see
+`hf jobs hardware`). A GPU flavor satisfies the declared GPU prerequisite, but
+image verification still blocks execution. The provider only supports `public`
+network mode; network policy, host containment and resource bounds require
+capabilities it cannot inspect from outside the HF Job. CPU/GPU runtime and
+WebSocket qualification, cleanup and the reported Sandbox startup issue remain
+unverified on live HF infrastructure.
+
+The serving implementation supports ordinary Dockerfile backslash continuations
+and final-stage commands, including inheritance from a named earlier stage.
+Heredocs are unsupported: a `<<` marker in any non-comment instruction, including
+a literal marker, reports a named `dockerfile_heredoc` SKIP before command parsing.
+`ENTRYPOINT`, custom `SHELL` commands, custom escape directives and commands
+inherited from an external base image are unsupported. The server log retains at
+most the first 64 KiB of combined stdout and stderr; further output is drained
+and discarded. These serving paths have local regression coverage and do not
+enable unverified image launches.
 
 Credential delivery is deferred for this release. Set
 `validation.execution.requires_credentials: true` when the environment needs an

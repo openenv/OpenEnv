@@ -1,0 +1,9 @@
+{
+  "description": "Multi-step spatial reasoning: draw one line through a SPaRC grid puzzle, one move per step, from the start node to the exit while following every rule on the board. The reward is 1.0 for a line that matches a stored solution.",
+  "tags": ["openenv", "rl-environment", "spatial-reasoning", "planning", "puzzles", "multi-turn", "grid-world"],
+  "representative_queries": [
+    "find a spatial reasoning environment for language models",
+    "evaluate step-by-step planning on grid pathfinding puzzles",
+    "find a multi-turn puzzle environment with a verifiable reward"
+  ]
+}

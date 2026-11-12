@@ -38,6 +38,9 @@ class JupyterState(State):
     setup_results: List[CommandResult] = Field(default_factory=list)
     verify_results: List[CommandResult] = Field(default_factory=list)
     verify_commands: List[str] = Field(default_factory=list)
+    setup_commands: List[str] = Field(default_factory=list)
+    submit_paths: List[str] = Field(default_factory=list)
+    submission_refused: List[str] = Field(default_factory=list)
     submitted_answer: Optional[str] = None
     last_reward: Optional[float] = None
     reward_override_ignored: Optional[str] = None
