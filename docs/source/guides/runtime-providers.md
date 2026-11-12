@@ -186,6 +186,13 @@ Runs the server in a
 sandbox, claimed from a pre-created `SandboxWarmPool`. Install with
 `pip install openenv[agent-sandbox]` (the SDK requires Python 3.11+).
 
+Use it instead of `KubernetesProvider` when the cluster runs the agent-sandbox
+controller and `sandbox-router`: sandboxes come from a warm pool, the controller
+deletes each claim after `shutdown_after_seconds` even if the client process
+dies, and requests go through the router or Gateway, so the client can run
+outside the cluster. `KubernetesProvider` needs no controller and runs any image
+as one Pod and one Service, but its URL works only from inside the cluster.
+
 Cluster prerequisites: the agent-sandbox controller and the `sandbox-router`
 deployed, plus a warm pool whose template runs an OpenEnv environment image
 (its CMD already serves OpenEnv on port 8000):
