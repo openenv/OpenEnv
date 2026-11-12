@@ -253,7 +253,7 @@ async def test_hf_sandbox_cancelled_start_retains_the_late_job(
     finally:
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await running
+            await asyncio.wait_for(running, timeout=5)
     # Outer teardown must not run before creation settles or lose the job handle.
     assert not cancelled_before_allocation_finished
     assert environment._sandbox is sandbox
