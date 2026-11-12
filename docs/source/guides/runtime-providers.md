@@ -62,6 +62,7 @@ is a one-line change.
 | `NovitaSandboxProvider` | Novita AI sandboxes | `pip install openenv[novita]` | ✅ |
 | `HFSandboxProvider` | Hugging Face sandboxes (billed as HF Jobs) | core | ✅ |
 | `KubernetesProvider` | Kubernetes cluster | `pip install openenv[kubernetes]` | ✅ |
+| `BoxdProvider` | boxd machines (microVMs) | `pip install openenv[boxd]` | ✅ |
 
 Cloud-provider SDKs are optional extras, imported lazily, so installing core
 OpenEnv pulls in no cloud SDK. The core providers (`LocalDockerProvider`,
@@ -91,8 +92,8 @@ async with MyEnv(provider=provider) as env:
     ...
 ```
 
-`ModalProvider`, `DaytonaProvider`, `ACASandboxProvider`, and `HFSandboxProvider`
-support this provider-owned flow. Providers that require an explicit image at
+`ModalProvider`, `DaytonaProvider`, `ACASandboxProvider`, `HFSandboxProvider`,
+and `BoxdProvider` support this provider-owned flow. Providers that require an explicit image at
 `start_container()` time, such as `LocalDockerProvider` and
 `DockerSwarmProvider`, should still be started manually and passed in with the
 returned `base_url`:
@@ -177,6 +178,38 @@ provider = ACASandboxProvider(
     sdk_kwargs={},
 )
 ```
+
+### BoxdProvider
+
+Runs the server in a [boxd](https://boxd.sh?ref=OpenEnv) machine, a microVM
+with Docker installed. Install with `pip install openenv[boxd]`. Requires a
+boxd API key, as `api_key=` or the `BOXD_API_KEY` environment variable
+(optionally `org=`/`BOXD_ORG` and `region=`/`BOXD_REGION`, `fra` or `nyc`).
+
+The provider creates one isolated machine per `start_container`, runs the
+image in it with `docker run`, and returns the machine's HTTPS URL. The URL is
+public, so treat it like the environment's address on the internet.
+`stop_container()` deletes the machine. `env_vars` reach the container through
+a `docker run --env-file` that is removed after the run.
+
+```python
+from openenv.core.containers.runtime.boxd_provider import BoxdProvider
+
+provider = BoxdProvider(image="ghcr.io/huggingface/openenv-echo-env:latest")
+```
+
+A local Dockerfile works too. The build context is uploaded to the machine and
+built there with `docker build`:
+
+```python
+image = BoxdProvider.image_from_dockerfile("envs/echo_env/server/Dockerfile")
+provider = BoxdProvider(image=image)
+```
+
+`vcpu` and `memory` pick the machine size (`1`/`"4G"`, `2`/`"8G"`, `4`/`"16G"`
+or `8`/`"32G"`); the organization's default applies otherwise.
+
+Full example: [`examples/boxd_echo_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/boxd_echo_env.py).
 
 ### DaytonaProvider
 
