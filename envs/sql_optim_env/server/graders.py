@@ -17,6 +17,8 @@ production calls omit ``mask`` (full scoring, including the 0.02 minimum when
 appropriate).
 """
 
+import functools
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -49,9 +51,49 @@ class GradeMask:
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
+# Endings a keyword may carry and still name the same thing: plurals, tenses,
+# and the -ate/-ation family that the deliberate stems (`aggreg`, `concatenat`)
+# are written to reach. Any other letter or digit after a keyword means it is
+# only the start of a different word (`star` in `started`, `join` in `joint`).
+_KW_SUFFIXES = (
+    "s",
+    "es",
+    "d",
+    "ed",
+    "e",
+    "ing",
+    "ion",
+    "ions",
+    "ation",
+    "ations",
+    "ate",
+    "ates",
+    "ated",
+    "ating",
+)
+
+
+@functools.lru_cache(maxsize=None)
+def _kw_pattern(keyword: str) -> "re.Pattern[str]":
+    """Compile *keyword* to match as a whole word, allowing `_KW_SUFFIXES`.
+
+    The boundary is a letter or digit, not `\\w`: an underscore separates words
+    here, so a structured `issue_type` such as `select_star` still matches
+    `star`. Boundaries only apply at an alphanumeric edge, since a keyword that
+    starts or ends in punctuation (`cast(`, `select *`) delimits itself.
+    """
+    kw = keyword.lower()
+    pattern = re.escape(kw)
+    if kw[:1].isalnum():
+        pattern = r"(?<![a-z0-9])" + pattern
+    if kw[-1:].isalnum():
+        pattern += r"(?:" + "|".join(_KW_SUFFIXES) + r")?(?![a-z0-9])"
+    return re.compile(pattern)
+
+
 def _kw_match(text: str, keywords: List[str]) -> bool:
     t = text.lower()
-    return any(kw.lower() in t for kw in keywords)
+    return any(_kw_pattern(kw).search(t) for kw in keywords)
 
 
 def _suggestions_text(action: Action) -> str:

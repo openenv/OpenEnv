@@ -1162,3 +1162,81 @@ class TestExactComparison:
         deadline(15.0)
         monkeypatch.setattr(ex_mod, "_symmetric_difference_sql", real_sql)
         assert executor._results_equal("SELECT 1 AS x", "SELECT 1 AS x") is True
+
+
+class TestIssueDetectionMatching:
+    """Issue-detection keywords match whole words, not fragments of other words.
+
+    Ground-truth keywords were matched as plain substrings, so `star` (for
+    `SELECT *`) matched `started`, and a summary that never mentioned the issue
+    still earned its share of the 25% detection slice. A keyword may still carry
+    an inflection (`joins`, `ranking`), and the deliberate stems (`aggreg`,
+    `concatenat`) still reach the words they were written for.
+    """
+
+    @pytest.mark.parametrize(
+        "keyword, text",
+        [
+            ("star", "I started reviewing the query"),
+            ("star", "start by reading the plan"),
+            ("cast", "the forecast says nothing"),
+            ("cast", "broadcast the result"),
+            ("join", "a joint effort"),
+            ("cte", "rows are selected as expected"),
+            ("correlated", "this subquery is uncorrelated"),
+            ("limit 1", "add limit 10"),
+            ("low", "see below"),
+        ],
+    )
+    def test_keyword_inside_another_word_does_not_match(self, keyword, text):
+        from envs.sql_optim_env.server.graders import _kw_match
+
+        assert not _kw_match(text, [keyword])
+
+    @pytest.mark.parametrize(
+        "keyword, text",
+        [
+            ("aggreg", "use one aggregation"),
+            ("aggreg", "aggregate once"),
+            ("concatenat", "concatenate first"),
+            ("concatenat", "the concatenation runs per row"),
+            ("join aggregat", "a join aggregation"),
+            ("join", "rewrite with joins"),
+            ("join", "joined on id"),
+            ("rank", "a ranking window"),
+            ("star", "issue: select_star"),
+            ("cast", "non_sargable_cast"),
+            ("cast(", "CAST(id AS VARCHAR)"),
+            ("select *", "SELECT * reads every column"),
+            ("like '%", "LIKE '%buy%' scans"),
+            ("CTE", "move it into a CTE"),
+        ],
+    )
+    def test_whole_words_inflections_and_stems_still_match(self, keyword, text):
+        from envs.sql_optim_env.server.graders import _kw_match
+
+        assert _kw_match(text, [keyword])
+
+    def test_every_task_keyword_still_matches_itself(self):
+        """Guards the keyword lists: each one is reachable as prose and as a label."""
+        from envs.sql_optim_env.server.graders import _kw_match
+
+        for task in TASKS.values():
+            for issue in task["ground_truth_issues"]:
+                for keyword in issue["keywords"]:
+                    assert _kw_match(f"note: {keyword}.", [keyword]), keyword
+                    assert _kw_match(f"x_{keyword}_y", [keyword]), keyword
+
+    def test_unrelated_summary_earns_no_detection_credit(self):
+        """`started` alone used to collect the `select_star` slice."""
+        from envs.sql_optim_env.server.graders import grade
+
+        task = TASKS["task_1_basic_antipatterns"]
+        action = SQLOptimAction(
+            suggestions=[],
+            optimized_query=task["sql_query"],
+            summary="I started reviewing the query but found nothing wrong with it.",
+            approved=False,
+        )
+        reward = grade(task, action)
+        assert reward.breakdown["issue_detection"] == 0.0
