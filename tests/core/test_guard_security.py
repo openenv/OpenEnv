@@ -159,7 +159,6 @@ def test_websocket_handshake_is_rate_limited(monkeypatch):
         monkeypatch,
         OPENENV_GUARD_ENABLED="1",
         OPENENV_GUARD_RATE_LIMIT="1",
-        OPENENV_GUARD_RATE_LIMIT_AUTO_BAN="0",
     )
     assert _ws_reset(app, ip) == "observation"
     assert _ws_refusal_code(app, ip) == 1008
@@ -168,18 +167,6 @@ def test_websocket_handshake_is_rate_limited(monkeypatch):
 def test_websocket_unguarded_when_disabled(monkeypatch):
     app = _make_app(monkeypatch, OPENENV_GUARD_BLOCKED_IPS="198.51.100.1")
     assert _ws_reset(app, "198.51.100.1") == "observation"
-
-
-def test_websocket_passive_mode_logs_and_accepts(monkeypatch, caplog):
-    blocked = _unique_ip()
-    app = _make_app(
-        monkeypatch,
-        OPENENV_GUARD_ENABLED="1",
-        OPENENV_GUARD_PASSIVE_MODE="1",
-        OPENENV_GUARD_BLOCKED_IPS=blocked,
-    )
-    assert _ws_reset(app, blocked) == "observation"
-    assert "would be refused" in caplog.text
 
 
 def test_guard_initializes_at_startup(monkeypatch, caplog):
@@ -230,40 +217,21 @@ def test_websocket_refused_while_redis_unreachable(monkeypatch):
         assert client.get("/health").status_code == 503
 
 
-def test_passive_mode_admits_while_redis_unreachable(monkeypatch, caplog):
-    ip = _unique_ip()
-    app = _make_app(
-        monkeypatch,
-        OPENENV_GUARD_ENABLED="1",
-        OPENENV_GUARD_PASSIVE_MODE="1",
-        OPENENV_GUARD_REDIS_URL="redis://127.0.0.1:1",
-    )
-    assert _ws_reset(app, ip) == "observation"
-    assert "would be refused" in caplog.text
-    with TestClient(app, client=(ip, 50000)) as client:
-        assert client.get("/health").status_code == 200
-
-
-async def test_full_bundle_mapping(monkeypatch):
+async def test_settings_mapping(monkeypatch):
     for name in list(os.environ):
         if name.startswith("OPENENV_GUARD_"):
             monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("OPENENV_GUARD_ENABLED", "1")
-    monkeypatch.setenv("OPENENV_GUARD_PASSIVE_MODE", "1")
-    monkeypatch.setenv("OPENENV_GUARD_SECURITY_HEADERS", "1")
-    monkeypatch.setenv("OPENENV_GUARD_ENFORCE_HTTPS", "1")
-    monkeypatch.setenv("OPENENV_GUARD_BLOCKED_COUNTRIES", "RU")
-    monkeypatch.setenv("IPINFO_TOKEN", "test-token")
-    monkeypatch.setenv("OPENENV_GUARD_BLOCK_CLOUD_PROVIDERS", "AWS")
-    monkeypatch.setenv("OPENENV_GUARD_LOG_FILE", "guard.log")
+    monkeypatch.setenv("OPENENV_GUARD_AUTO_BAN_THRESHOLD", "3")
+    monkeypatch.setenv("OPENENV_GUARD_AUTO_BAN_DURATION", "60")
+    monkeypatch.setenv("OPENENV_GUARD_ALLOWED_IPS", "10.0.0.0/8")
+    monkeypatch.setenv("OPENENV_GUARD_BLOCKED_USER_AGENTS", "badbot")
+    monkeypatch.setenv("OPENENV_GUARD_TRUSTED_PROXY_DEPTH", "2")
     config = _build_security_config()
-    assert config.passive_mode is True
-    assert config.redis_fail_open is True
-    assert config.enforce_https is True
-    assert config.security_headers["enabled"] is True
-    assert config.blocked_countries == frozenset({"RU"})
-    assert config.block_cloud_providers == frozenset({"AWS"})
-    assert config.custom_log_file == "guard.log"
+    assert config.auto_ban_threshold == 3
+    assert config.auto_ban_duration == 60
+    assert config.whitelist == ("10.0.0.0/8",)
+    assert config.blocked_user_agents == ["badbot"]
+    assert config.trusted_proxy_depth == 2
     assert config.enable_redis is False
 
 
@@ -289,10 +257,12 @@ async def test_default_config_zero_trust(monkeypatch):
     # X-Forwarded-For is not honored, so LAN clients cannot spoof their
     # way past the blocklist or rate limits.
     assert config.trusted_proxies == ()
-    # Request bodies are model input, not commands: scanning them is opt-in.
+    # Request bodies are model input, not commands: they are never scanned.
     assert config.detection_scan_body is False
-    # Repeated rate-limit violations feed the ban engine by default.
-    assert config.enable_rate_limit_auto_ban is True
+    # Behind an unlisted proxy every client shares one rate-limit bucket, so
+    # a 429 must not turn into a ban for all of them.
+    assert config.enable_rate_limit_auto_ban is False
+    assert config.security_headers is None
 
 
 async def test_trusted_proxies_from_env(monkeypatch):
@@ -302,15 +272,6 @@ async def test_trusted_proxies_from_env(monkeypatch):
     monkeypatch.setenv("OPENENV_GUARD_TRUSTED_PROXIES", "10.0.0.1,10.0.0.2")
     config = _build_security_config()
     assert config.trusted_proxies == ("10.0.0.1", "10.0.0.2")
-
-
-async def test_invalid_boolean_env_raises(monkeypatch):
-    for name in list(os.environ):
-        if name.startswith("OPENENV_GUARD_"):
-            monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("OPENENV_GUARD_SCAN_BODY", "sometimes")
-    with pytest.raises(ValueError, match="OPENENV_GUARD_SCAN_BODY"):
-        _build_security_config()
 
 
 @pytest.mark.parametrize("startup_fails", [False, True])
