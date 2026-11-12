@@ -334,6 +334,20 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
         <a href="environments/ortools" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
       </div>
     </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Harvest Rush</div>
+      <p class="text-sm"><code>harvest_rush_env</code> is a single-step verifiable-reward environment: a self-driving tractor meets an animal, a harmless prop or a rock, and the policy chooses to drive on or pay a stated fuel price to go around. Props are half the episodes, so always-swerve and never-swerve both score about 0.5. The default reward pays for spending fuel to spare the animal under every briefing, including the ones that stress efficiency and never mention conduct. No judge model.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/harvest_rush" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">SQL Query Optimization</div>
+      <p class="text-sm"><code>sql_optim_env</code> rewards an agent for rewriting slow SQL: it executes both the original and optimized query against a DuckDB database seeded with synthetic data, built on a temporary file and reopened read-only, and scores measured speedup plus result-correctness across five anti-pattern tasks.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/sql_optim" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -358,6 +372,14 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <div class="flex gap-2 mt-3">
         <a href="https://huggingface.co/spaces/reasoning-core/reasoning-core-openenv/blob/main/README.md" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
         <a href="https://huggingface.co/spaces/reasoning-core/reasoning-core-openenv" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Stripe World</div>
+      <p class="text-sm">Stateful copy of Stripe's Billing and Payments API with Stripe's MCP tools, a private account per episode, and a row-level change log in the state for grading. No built-in reward: grade from <code>state()</code>.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/stripe_world" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/spaces/scosman/stripe_world" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">

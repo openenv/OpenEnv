@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -20,6 +21,13 @@ except ImportError as _e2b_import_error:  # pragma: no cover
     _E2B_IMPORT_ERROR = _e2b_import_error
     Sandbox = None  # type: ignore[assignment]
 
+# E2B's default code-interpreter template runs its Jupyter server, and so the
+# kernel ``run_shell`` goes through, as root with the notebook in /home/user.
+# ``run_command`` keeps the same user and directory, so verify commands see the
+# same permissions they did when they ran from the kernel.
+_COMMAND_USER = "root"
+_COMMAND_CWD = "/home/user"
+
 
 @dataclass
 class ToolResult:
@@ -27,6 +35,22 @@ class ToolResult:
     output: str = ""
     error: str | None = None
     metadata: dict[str, Any] | None = None
+
+
+def _command_result(
+    stdout: str | None, stderr: str | None, exit_code: int
+) -> ToolResult:
+    """Describe a command that ran and exited, in the shape `run_shell` uses."""
+    ok = exit_code == 0
+    output = "\n".join(
+        part for part in [(stdout or "").strip(), (stderr or "").strip()] if part
+    )
+    return ToolResult(
+        ok=ok,
+        output=output,
+        error=None if ok else f"exit_code={exit_code}",
+        metadata={"exit_code": exit_code, "stdout": stdout or ""},
+    )
 
 
 class E2BSandbox:
@@ -63,6 +87,67 @@ class E2BSandbox:
             error=None if ok else f"exit_code={rc}",
             metadata={"exit_code": rc},
         )
+
+    def run_command(self, command: str, timeout_s: float = 30) -> ToolResult:
+        """
+        Execute a shell command as its own sandbox process, outside the kernel.
+
+        ``run_shell`` sends a ``subprocess.run`` cell to the code-interpreter
+        kernel, so its result depends on the kernel's state: a rebound
+        ``subprocess.run``, a changed working directory, edited ``os.environ``.
+        That is fine for the agent's own ``bash`` tool and wrong for
+        verification. This goes through E2B's process API instead and reports
+        the command's real exit status.
+
+        It removes the coupling to the kernel. It is not an isolation boundary:
+        the agent's shell runs as root in the same sandbox, so it can still
+        change what any process there sees, including this command's login
+        shell.
+
+        Args:
+            command (`str`):
+                Shell command to run.
+            timeout_s (`float`, *optional*, defaults to `30`):
+                Seconds to wait for the command before giving up on it.
+
+        Returns:
+            [`ToolResult`]: `ok` is `True` only for a zero exit status.
+
+        Raises:
+            `Exception`: whatever the SDK raises when the command cannot be
+                started, or when the wait for it ends without an exit status.
+                Only a command that ran and exited is reported as a result:
+                a sandbox that is unreachable, expired or unauthenticated says
+                nothing about the work being verified.
+        """
+        # Started in the background so there is a handle to kill if the wait
+        # fails: E2B keeps a command running when its connection drops.
+        handle = self._sbx.commands.run(
+            command,
+            background=True,
+            user=_COMMAND_USER,
+            cwd=_COMMAND_CWD,
+            timeout=timeout_s,
+        )
+        try:
+            result = handle.wait()
+        except Exception as exc:
+            # The SDK raises CommandExitException for a command that ran and
+            # exited non-zero. It is told apart by its exit code rather than by
+            # class so that this module keeps importing, and the tests keep
+            # driving it, without the SDK installed.
+            exit_code = getattr(exc, "exit_code", None)
+            if exit_code is not None:
+                return _command_result(exc.stdout, exc.stderr, exit_code)
+            # No exit status: the command timed out, or the connection to it
+            # broke. Ask E2B to stop it, but a kill signals the command's own
+            # process, so a child of it can stay alive and still write to the
+            # sandbox. Nothing here can call the command finished, so the
+            # failure is raised rather than counted as a verify result.
+            with contextlib.suppress(Exception):
+                handle.kill()
+            raise
+        return _command_result(result.stdout, result.stderr, result.exit_code)
 
     def read_file(
         self, file_path: str, offset: int | None = None, limit: int | None = None

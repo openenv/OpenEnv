@@ -29,6 +29,8 @@
       title: The Task API
     - local: guides/customizing-web-ui
       title: Customizing the Web UI
+    - local: guides/request-security
+      title: Request Security
     title: Advanced Concepts
   title: Concepts
 - sections:
@@ -69,6 +71,8 @@
   - sections:
     - local: tutorials/evaluation-inspect
       title: Evaluating with Environments
+    - local: tutorials/seahaven-environment
+      title: "Tool-Use Environments (Seahaven)"
     title: Evals
   title: Learn
 - isExpanded: false
@@ -165,6 +169,12 @@
     title: Sophistry Bench Sprint
   - local: environments/ortools
     title: OR-Tools
+  - local: environments/stripe_world
+    title: Stripe World
+  - local: environments/harvest_rush
+    title: Harvest Rush
+  - local: environments/sql_optim
+    title: SQL Query Optimization
   title: Environments
 - isExpanded: false
   sections:
