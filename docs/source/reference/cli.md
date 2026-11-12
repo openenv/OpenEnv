@@ -138,9 +138,9 @@ episode budget. There is no shared outer trial deadline. Harbor bounds setup, ag
 and verifier separately with the declared `resources.episode_timeout_s`. A timeout
 in one of these phases is a package FAIL that names the phase.
 
-The do-nothing trial builds from the task's Dockerfile. The validator keeps
-`openenv-validation:<run id>` only when the run has no FAIL or ERROR and was not
-interrupted. It records the tag in `runtime.startup.measured` as
+The do-nothing trial builds from the task's Dockerfile, or pulls the digest-pinned
+image when the task declares one. The validator keeps `openenv-validation:<run id>`
+only when the run has no FAIL or ERROR and was not interrupted. It records the tag in `runtime.startup.measured` as
 `retained_image_tag`. Otherwise it removes the tag. The run-owned Compose build tag
 is removed on every run. Tag removal verifies image identity and uses `--no-prune`.
 A removal failure marks cleanup incomplete and gives a startup ERROR. During an
