@@ -60,7 +60,7 @@ openenv validate ./my_env --level static
 openenv validate ./my_env --level runtime --local --output report.json
 ```
 
-Runtime validation requires Docker and a `validation.execution` declaration in
+For served packages, runtime validation requires Docker and a `validation.execution` declaration in
 `openenv.yaml`. The declaration points to a bounded JSON replay plan containing
 one reset and a sequence of actions. The validator builds an immutable image,
 collects the original episode, repeats the plan in a fresh WebSocket session and
@@ -68,6 +68,83 @@ with a different seed, then replays it in a fresh container when the provider
 supports that capability. Docker validation uses two containers concurrently
 during the fresh-container replay. Both use the same immutable image and are
 removed even if a check fails.
+
+Harbor `task.toml` directories are also recognized. Validation requires Python 3.12 or newer
+and `harbor==0.25.0` installed alongside `openenv[harbor]`:
+
+```bash
+pip install "openenv[harbor]" "harbor==0.25.0"
+```
+
+A missing or mismatched Harbor installation exits 3 and names `harbor==0.25.0`.
+
+Add a `validation/openenv.json` contract with `profile: "harbor-semantic-v1"`,
+`reward_key`, `reward`, `resources` and `types`. The reward range, oracle tolerance
+and floor margin must be explicit. Oracle tolerance and floor margin are fractions
+of the declared reward range. Numeric strings in numeric fields, oversized integers
+and excessive JSON nesting fail `static.manifest`. Reward and resource numbers must
+retain their exact value when stored as floats. `resources.gpu_types` remains a list
+of strings. This is a minimal complete contract:
+
+```json
+{
+  "profile": "harbor-semantic-v1",
+  "reward_key": "reward",
+  "reward": {
+    "range": [0, 1],
+    "oracle_tolerance": 0,
+    "floor_margin": 0.1
+  },
+  "resources": {
+    "cpu": 1,
+    "memory_mb": 512,
+    "disk_mb": 1024,
+    "episode_timeout_s": 300
+  },
+  "types": {"tags": ["swe"]}
+}
+```
+
+The `harbor-semantic-v1` binding runs
+fresh Harbor trials in Docker: a do-nothing agent, the oracle (`solution/solve.sh`),
+an oracle replay and any canaries declared in the contract. A canary is a known-wrong
+`solve.sh` replacement. The results report under `runtime.startup`,
+`runtime.reward_well_formed`, `runtime.episode_determinism`, `semantic.oracle_max`,
+`semantic.floor_gap` and `semantic.canary_floor`, and `harbor-evidence.json` keeps
+the raw trial evidence in the report bundle. Other checks are named SKIPs, so a
+passing task still reports WARN. This validates task packages, not the outer
+`harbor_env` server.
+
+Supported tasks use Linux, a single step, a shared verifier and public networking.
+The image comes from one Dockerfile or from a digest-pinned
+`environment.docker_image`, such as `org/image@sha256:<64 hex digits>`. Harbor
+prefers a declared image over a Dockerfile, so the do-nothing trial pulls the pin
+and `runtime.startup` records it as `source_image`. The validator leaves the pulled
+image in the local Docker cache. Unsupported shapes include multi-step or non-Linux
+tasks, an `environment.docker_image` without a digest, tasks with neither a
+Dockerfile nor a pinned image, task-authored Compose files and separate verifier
+environments. GPU/TPU or external MCP requirements,
+credentials, non-public or differing phase networks, task environment variables,
+healthchecks, skills, verifier collection and artifact extensions are also
+unsupported. A supplied provider, including `--space`, is unsupported. Each case
+gives `runtime.startup` SKIP with a named reason and runs no trials. With valid
+static declarations and an oracle, the verdict is WARN and the exit code is 0.
+A missing `solution/solve.sh` still FAILs `semantic.oracle_max` at the semantic level,
+including with `--skip-build` or `--space`.
+
+The initial image build and environment start share a separate 600-second validator
+budget. Exceeding it gives `runtime.startup` ERROR. Later environment starts use the
+episode budget. There is no shared outer trial deadline. Harbor bounds setup, agent
+and verifier separately with the declared `resources.episode_timeout_s`. A timeout
+in one of these phases is a package FAIL that names the phase.
+
+The do-nothing trial builds from the task's Dockerfile, or pulls the digest-pinned
+image when the task declares one. The validator keeps `openenv-validation:<run id>`
+only when the run has no FAIL or ERROR and was not interrupted. It records the tag in `runtime.startup.measured` as
+`retained_image_tag`. Otherwise it removes the tag. The run-owned Compose build tag
+is removed on every run. Tag removal verifies image identity and uses `--no-prune`.
+A removal failure marks cleanup incomplete and gives a startup ERROR. During an
+abort, cleanup preserves the original exception and records the removal failure.
 
 The 16 implemented runtime checks cover startup, rewards, observation schemas,
 state continuity, network policy, host containment, resource bounds, episode isolation,
@@ -77,7 +154,8 @@ with unsupported capabilities or incomplete evidence appear as `SKIP`; they make
 the result `WARN`, which exits zero and does not mean Level 2 is complete.
 `FAIL` exits 1, unsupported package formats exit 2, and internal or policy errors
 exit 3. `--level semantic`
-includes the available lower-level checks but does not claim semantic execution.
+runs the semantic checks for Harbor tasks. Served packages have no oracle execution
+yet, so their semantic checks are named SKIPs.
 `--skip-build` runs declaration checks and skips runtime execution entirely.
 The Docker provider supports CPU workloads in `public` and `no-network` modes;
 `allowlist` and GPU requirements skip runtime before building. A `no-network`

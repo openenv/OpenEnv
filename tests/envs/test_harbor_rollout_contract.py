@@ -393,6 +393,73 @@ def test_verifier_exclusions_survive_capture_export(monkeypatch, tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    ("harness", "expected"),
+    [("terminus-2", "http://127.0.0.1:8100"), ("opencode", "https://tunnel.test")],
+)
+def test_only_a_host_side_agent_takes_the_loopback_url(
+    monkeypatch, tmp_path, harness, expected
+):
+    """A host-side agent calls the model from this process. Through a public forward, a long
+    completion can be cut mid-generation (a gradio share link answers 502 after about a minute),
+    the agent retries and the capture records the prompt twice. Sandboxed agents still need the
+    public URL: loopback is the sandbox itself."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from openenv.core.harness.capture.sessions import SessionRegistry
+
+    trial_module = pytest.importorskip("harbor.trial.trial")
+
+    class Trial:
+        @classmethod
+        async def create(cls, config):
+            return cls()
+
+        async def run(self):
+            return SimpleNamespace(
+                verifier_result=SimpleNamespace(rewards={"reward": 1.0})
+            )
+
+    seen = {}
+
+    def build(**kwargs):
+        seen["url"] = kwargs["intercept_url"]
+
+    monkeypatch.setattr(trial_module, "Trial", Trial)
+    monkeypatch.setattr(rollout, "build_trial_config", build)
+    asyncio.run(
+        rollout.run_rollout(
+            task_dir=tmp_path,
+            harness=harness,
+            sandbox="e2b",
+            registry=SessionRegistry(),
+            intercept_url="https://tunnel.test",
+            local_intercept_url="http://127.0.0.1:8100",
+            model="m",
+            trials_dir=tmp_path,
+        )
+    )
+    assert seen["url"] == expected
+
+
+def test_host_side_seams():
+    assert seams.get("terminus-2").host_side and seams.get("computer-1").host_side
+    assert not seams.get("opencode").host_side
+
+
+@pytest.mark.parametrize("mounted", [False, True])
+def test_capture_loopback_is_used_only_when_the_service_owns_its_port(mounted):
+    from types import SimpleNamespace
+
+    from openenv.harbor.serving import HarborService
+
+    service = object.__new__(HarborService)
+    service.mounted = mounted
+    service.capture = SimpleNamespace(port=8100)
+    assert service.local_url == ("" if mounted else "http://127.0.0.1:8100")
+
+
 @pytest.mark.parametrize("strict", [True, False], ids=["train", "look"])
 def test_ambiguous_rewards_fail_training_but_not_a_rollout_to_look_at(
     monkeypatch, tmp_path, strict
