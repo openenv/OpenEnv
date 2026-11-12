@@ -322,8 +322,8 @@ class HFJobsInspector:
         )
         if (
             cpu < self._resources.cpu
-            or memory_gb * 1000 < self._resources.memory_mb
-            or disk_gb * 1000 < self._resources.disk_mb
+            or memory_gb * 1024 < self._resources.memory_mb
+            or disk_gb * 1024 < self._resources.disk_mb
         ):
             raise NativeEvidenceError(
                 f"HF Jobs flavor {self.flavor} ({item.cpu}, {item.ram} RAM, "
