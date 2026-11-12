@@ -355,7 +355,7 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">Stripe World</div>
-      <p class="text-sm">Stateful copy of Stripe's Billing and Payments API with Stripe's MCP tools, a private account per episode, and a row-level change log in the state for grading.</p>
+      <p class="text-sm">Stateful copy of Stripe's Billing and Payments API with Stripe's MCP tools, a private account per episode, and a row-level change log in the state for grading. No built-in reward: grade from <code>state()</code>.</p>
       <div class="flex gap-2 mt-3">
         <a href="environments/stripe_world" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
         <a href="https://huggingface.co/spaces/scosman/stripe_world" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
