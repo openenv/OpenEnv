@@ -59,20 +59,22 @@ With `OPENENV_GUARD_REDIS_URL` set, the guard connects to Redis at startup. Whil
 
 By default no proxy is trusted: the guard ignores `X-Forwarded-For` and treats the TCP peer as the client, so a client cannot choose its own address to get past a ban, a block list or a rate limit.
 
-Behind a reverse proxy, every request comes from the proxy's address. A Space runs behind one. With no trusted proxies listed, all clients share one rate-limit bucket and one ban: once the bucket fills, every client gets 429 until the window passes, `/health` included, and a single client that trips penetration detection enough times gets everyone banned.
+Behind a reverse proxy, every request comes from a proxy's address. A Space runs behind several proxies: the TCP peer (`request.client.host`) is one of a few private `10.x` addresses, and `X-Forwarded-For` holds the client's address. With no trusted proxies listed, IP lists, bans and rate limits apply to the proxy addresses. Blocking a client's IP has no effect, and all clients share one rate-limit bucket per proxy address: once those buckets fill, every client gets 429 until the window passes, `/health` included. A single client that trips penetration detection enough times gets the proxies banned, and with them everyone.
 
-List the proxy in `OPENENV_GUARD_TRUSTED_PROXIES` to give each client its own bucket. The guard then takes the client address from the `X-Forwarded-For` entry the proxy appended. With more than one proxy in the chain, set `OPENENV_GUARD_TRUSTED_PROXY_DEPTH` to the number of proxies that append to the header.
+List the proxies in `OPENENV_GUARD_TRUSTED_PROXIES` to give each client its own bucket. The guard then takes the client address from the `X-Forwarded-For` entry the proxy appended. With more than one proxy in the chain, set `OPENENV_GUARD_TRUSTED_PROXY_DEPTH` to the number of proxies that append to the header. A Space appends one entry, so keep the default of `1`.
 
-Find the proxy's address instead of guessing a range:
+Find the proxy addresses instead of guessing a range:
 
-1. Send a few requests through the public URL and read the server log (the container logs, on a Space). uvicorn's access log shows the address each request came from, as in `INFO: 10.16.0.5:43218 - "GET /health HTTP/1.1" 200 OK`. Requests through the proxy show the proxy's address.
-2. Keep watching for a while, since a platform can run several proxy instances, and list every address you see.
+1. Send a few requests through the public URL and read the server log (on a Space, `hf spaces logs <user>/<space>`). uvicorn's access log shows the address each request came from, as in `INFO: 10.16.0.5:43218 - "GET /health HTTP/1.1" 200 OK`. Requests through the proxy show the proxy's address.
+2. Keep watching for a while, since a platform can run several proxy instances, and list every address you see. When this was checked, a Space used four, all seen within the first ten requests.
 3. Don't list a whole private range such as `10.0.0.0/8` to cover addresses you haven't seen. Any peer in a trusted range can put any address in `X-Forwarded-For`, and so pick its own bucket or get past a block list.
 
-Run uvicorn without `--forwarded-allow-ips '*'` when the guard is on. With that flag, uvicorn replaces the peer address with the left-most `X-Forwarded-For` entry before the guard sees the request, and the client chooses that entry.
+A request through a proxy you haven't listed is treated as coming from that proxy, so check the log again if a block stops working or clients start sharing a limit.
+
+Run uvicorn without `--forwarded-allow-ips '*'` when the guard is on. With that flag, uvicorn replaces the peer address with the left-most `X-Forwarded-For` entry before the guard sees the request, and the client chooses that entry: a Space appends to the header the client sends instead of replacing it.
 
 > [!NOTE]
-> This guidance has not been checked on a live Space yet.
+> Checked on a Hugging Face Space on 2026-11-12.
 
 ## Related Reading
 
