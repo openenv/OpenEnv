@@ -6,6 +6,7 @@ from .types import SignatureKind
 
 WELL_KNOWN_FILES: dict[SignatureKind, str] = {
     SignatureKind.OPENENV_SERVED: "openenv.yaml",
+    SignatureKind.HARBOR_TASK: "task.toml",
 }
 """Formats this build can parse. Values are the enum filenames."""
 
