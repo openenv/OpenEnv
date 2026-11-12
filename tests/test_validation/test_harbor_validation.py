@@ -263,6 +263,7 @@ def image_docker(boundary, monkeypatch):
         commands=[],
         image_os="linux",
         remove_error=False,
+        retained_remove_error=False,
         image_drift=False,
         foreign_image=False,
     )
@@ -340,7 +341,10 @@ def image_docker(boundary, monkeypatch):
                 ]
             )
         if args[:3] == ("image", "rm", "--no-prune"):
-            if state.remove_error and args[3].endswith("-main:latest"):
+            if (state.remove_error and args[3].endswith("-main:latest")) or (
+                state.retained_remove_error
+                and args[3].startswith("openenv-validation:")
+            ):
                 raise OSError("image removal failed")
             del state.images[args[3]]
             return ""
@@ -565,6 +569,31 @@ def test_retained_image_removed_when_reporting_does_not_complete(
         run_validation(task, artifacts_dir=tmp_path / "interrupted-report")
     assert image_docker.images == {"unrelated:tag": IMAGE}
     assert len(boundary.trials) == 3
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt, OSError])
+def test_image_removal_failure_preserves_the_reporting_exception(
+    task, boundary, image_docker, tmp_path, monkeypatch, error
+):
+    original = error()
+    cleanup = {}
+
+    def interrupted(*args, **kwargs):
+        nonlocal cleanup
+        cleanup = kwargs["cleanup"]
+        raise original
+
+    image_docker.retained_remove_error = True
+    monkeypatch.setattr(harbor, "write_runtime_bundle", interrupted)
+    with pytest.raises(error) as caught:
+        run_validation(task, artifacts_dir=tmp_path / "interrupted-report")
+    assert caught.value is original
+    assert not cleanup["verified"] and not cleanup["completed"]
+    assert cleanup["failure"] == "OSError"
+    assert (
+        "retained image removal failed (OSError); cleanup incomplete"
+        in original.__notes__
+    )
 
 
 def test_build_failure_has_no_retained_tag_to_remove(task, boundary, image_docker):

@@ -840,7 +840,6 @@ def validate_harbor(
         record["harbor"]["commit_id"] = installed.get("vcs_info", {}).get("commit_id")
     files = {}
     inspector = DockerInspector()
-    completed = False
     try:
         attempted = False
         problem = _unsupported(read_harbor_task(subject.root), contract)
@@ -1173,8 +1172,15 @@ def validate_harbor(
                 path.chmod(0o600)
                 checksums += f"{hashlib.sha256(raw).hexdigest()}  {name}\n"
             (artifacts_dir / "SHA256SUMS").write_text(checksums)
-        completed = True
         return report
-    finally:
-        if not completed:
+    except BaseException as original:
+        try:
             inspector.remove_image()
+        except (Exception, KeyboardInterrupt) as exc:
+            record["cleanup"].update(
+                verified=False, completed=False, failure=type(exc).__name__
+            )
+            original.add_note(
+                f"retained image removal failed ({type(exc).__name__}); cleanup incomplete"
+            )
+        raise
