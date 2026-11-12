@@ -748,10 +748,12 @@ The profile requires Python 3.12 or newer and `harbor==0.25.0` alongside
 `openenv[harbor]`. A missing or mismatched Harbor installation is a validator
 environment error. It exits 3 and names `harbor==0.25.0`.
 
-The profile supports single-step Linux tasks with one Dockerfile, one main Docker
-service, a shared verifier and public networking. Unsupported shapes include
-multi-step or non-Linux tasks, task-declared `environment.docker_image`, missing
-Dockerfiles, task-authored Compose files and separate verifier environments.
+The profile supports single-step Linux tasks with one main Docker service, a shared
+verifier and public networking. The image comes from one Dockerfile or from a
+digest-pinned `environment.docker_image` (`name@sha256:<digest>`), which the report
+records as `source_image`. Unsupported shapes include multi-step or non-Linux tasks,
+an `environment.docker_image` without a digest, tasks with neither a Dockerfile nor
+a pinned image, task-authored Compose files and separate verifier environments.
 GPU/TPU or external MCP requirements, credentials, non-public or differing phase
 networks, task environment variables, healthchecks, skills, verifier collection and
 artifact extensions are also unsupported. A supplied provider, including `--space`,
@@ -762,9 +764,10 @@ at the semantic level, including with `--skip-build` or `--space`.
 
 Execution runs fresh Harbor Trials in a fixed order: a do-nothing (NOP) trial, the
 oracle (`solution/solve.sh`), an oracle replay, and one trial per declared canary.
-The NOP trial builds the image. The validator inspects the actual agent container
-at `AGENT_START`, retains its immutable image under a run-owned tag, and pins every
-later trial to that image and its effective container configuration.
+The NOP trial builds the image, or pulls the task's digest-pinned one. The validator
+inspects the actual agent container at `AGENT_START`, retains its immutable image
+under a run-owned tag, and pins every later trial to that image and its effective
+container configuration.
 
 The initial image build and environment start share a separate 600-second validator
 budget. Exceeding it gives `runtime.startup` ERROR. Later environment starts use the
