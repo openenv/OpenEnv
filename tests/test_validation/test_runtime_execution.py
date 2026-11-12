@@ -7,15 +7,28 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from openenv.validation.policy import load_policy, PolicyError
-from openenv.validation.providers import ProviderError, StartupError
+from openenv.validation.providers import CleanupError, ProviderError, StartupError
 from openenv.validation.report import CheckResult
 from openenv.validation.runner import run_validation, source_digest
 from openenv.validation.runtime.artifacts import write_runtime_bundle
-from openenv.validation.runtime.contracts import RuntimeEvidence
+from openenv.validation.runtime.collector import (
+    RuntimeCollectionInterrupted,
+    RuntimeCollectionUnsupported,
+)
+from openenv.validation.runtime.contracts import (
+    HttpProbe,
+    ReplayEvidence,
+    RuntimeEvidence,
+)
+from openenv.validation.runtime.replay import REPLAY_BUDGET_SECONDS
 from openenv.validation.runtime.scheduler import execute_graders, order_graders
 from openenv.validation.types import CheckStatus, Level, ProviderCapability
 from support.runtime import evidence, exchange, FakeRuntimeProvider
+from test_host_containment import contained
+from test_network_policy_grader import evidence as network_evidence
+from test_resource_bounds import bounded
 
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/validation/runtime/served_probe"
@@ -25,17 +38,50 @@ FIXTURE = Path(__file__).parents[1] / "fixtures/validation/runtime/served_probe"
 def package(tmp_path):
     root = tmp_path / "subject"
     shutil.copytree(FIXTURE, root, ignore=shutil.ignore_patterns("__pycache__"))
+    # Lifecycle tests use the minimal declaration; discovery tests opt in below.
+    path = root / "openenv.yaml"
+    document = yaml.safe_load(path.read_text())
+    document["validation"]["capabilities"].update(
+        declared_tools=[], rubric_tree=False, task_api=False
+    )
+    document["validation"]["capabilities"].pop("declared_task_count", None)
+    path.write_text(yaml.safe_dump(document))
     return root
 
 
-def measured_episode():
+@pytest.fixture
+def discovery_package(package):
+    path = package / "openenv.yaml"
+    document = yaml.safe_load(path.read_text())
+    document["validation"]["capabilities"].update(
+        task_api=True, declared_task_count={"train": 100}, rubric_tree=True
+    )
+    path.write_text(yaml.safe_dump(document))
+    return package
+
+
+@pytest.fixture
+def baseline_only(monkeypatch):
+    """Isolate original-subject failure handling from separately tested replays."""
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_replays",
+        lambda provider, running, spec, plan, evidence, **kwargs: evidence,
+    )
+
+
+def measured_episode(seed=42):
     rows = []
     for step in (0, 1):
         operation = "reset" if step == 0 else "step"
         rows.append(
             exchange(
                 operation,
-                {"data": {"episode_id": "validation-probe"}},
+                {
+                    "type": operation,
+                    "data": {"episode_id": "validation-probe", "seed": seed}
+                    if operation == "reset"
+                    else {"increment": 1},
+                },
                 {
                     "type": "observation",
                     "data": {
@@ -56,7 +102,7 @@ def measured_episode():
                 },
             )
         )
-    return evidence(
+    result = evidence(
         *rows,
         observation_schema={
             "type": "object",
@@ -68,9 +114,280 @@ def measured_episode():
             },
         },
     )
+    return replace(
+        result,
+        telemetry_json=json.dumps(
+            {
+                "schema_version": 1,
+                "seed": {"requested": True, "accepted": True, "value": seed},
+                "trajectory": {
+                    "schema_version": 1,
+                    "source": "openenv-server",
+                    "complete": True,
+                    "records": [
+                        {
+                            "operation": row.operation,
+                            "request": json.loads(row.request_json),
+                            "response": json.loads(row.response_json),
+                        }
+                        for row in rows
+                    ],
+                },
+            }
+        ),
+    )
 
 
-def test_runtime_collects_once_cleans_up_and_marks_remaining_work(
+def discovery_episode():
+    from test_runtime_discovery import node, telemetry
+
+    result = measured_episode()
+    snapshot = json.loads(result.telemetry_json)
+    snapshot.update(telemetry([node(score=1.0)]))
+    return replace(
+        result,
+        tools_json='{"tools":[]}',
+        tasks_json=json.dumps(
+            {
+                "splits": [{"name": "train"}],
+                "counts": {"train": 100},
+                "previews": {"train": ["task-0", "task-1"]},
+            }
+        ),
+        telemetry_json=json.dumps(snapshot),
+    )
+
+
+@pytest.mark.parametrize("failure", ["episode", "depth", "numeric", "interrupted"])
+@pytest.mark.parametrize(
+    "discovery,tool_status,task_status",
+    [
+        ("healthy", CheckStatus.PASS, CheckStatus.PASS),
+        ("extra-tool", CheckStatus.FAIL, CheckStatus.PASS),
+        ("wrong-count", CheckStatus.PASS, CheckStatus.FAIL),
+        ("missing", CheckStatus.SKIP, CheckStatus.SKIP),
+        ("unavailable", CheckStatus.SKIP, CheckStatus.PASS),
+        ("errors", CheckStatus.FAIL, CheckStatus.FAIL),
+    ],
+)
+def test_completed_discovery_is_graded_after_primary_episode_failure(
+    discovery_package,
+    monkeypatch,
+    tmp_path,
+    failure,
+    discovery,
+    tool_status,
+    task_status,
+):
+    sample = replace(
+        discovery_episode(), failure_phase="step", failure_reason="step incomplete"
+    )
+    if discovery == "extra-tool":
+        sample = replace(sample, tools_json='{"tools":[{"name":"undeclared"}]}')
+    elif discovery == "wrong-count":
+        tasks = json.loads(sample.tasks_json)
+        tasks["counts"]["train"] = 101
+        sample = replace(sample, tasks_json=json.dumps(tasks))
+    elif discovery == "missing":
+        sample = replace(sample, tools_json=None, tasks_json=None)
+    elif discovery == "unavailable":
+        sample = replace(sample, tools_json=None, tools_unavailable="unsupported tools")
+    elif discovery == "errors":
+        sample = replace(
+            sample, tools_error="tool discovery denied", tasks_error="task API failed"
+        )
+
+    def collect(*args, **kwargs):
+        assert kwargs["collect_tools"] is kwargs["collect_tasks"] is True
+        if failure == "interrupted":
+            raise RuntimeCollectionInterrupted(sample)
+        if failure != "episode":
+            raise RuntimeCollectionUnsupported(
+                sample,
+                capability="json_depth" if failure == "depth" else "json_numeric_range",
+            )
+        return sample
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=bundle,
+    )
+    results = {result.check_id: result for result in report.results}
+    assert (
+        results["runtime.startup"].status
+        is {
+            "episode": CheckStatus.FAIL,
+            "depth": CheckStatus.SKIP,
+            "numeric": CheckStatus.SKIP,
+            "interrupted": CheckStatus.ERROR,
+        }[failure]
+    )
+    assert results["runtime.tool_declaration_accuracy"].status is tool_status
+    assert results["runtime.task_declaration_accuracy"].status is task_status
+    assert report.verdict.value == (
+        "fail"
+        if failure in {"episode", "interrupted"}
+        or CheckStatus.FAIL in {tool_status, task_status}
+        else "warn"
+    )
+    for check in (
+        "runtime.tool_declaration_accuracy",
+        "runtime.task_declaration_accuracy",
+    ):
+        assert sum(row.check_id == check for row in report.results) == 1
+    assert provider.subject.stopped
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    assert json.loads((bundle / "report.json").read_text()) == report.model_dump(
+        mode="json"
+    )
+
+
+class GraderTermination(BaseException):
+    """A grader termination outside ordinary exception and cancellation handling."""
+
+
+@pytest.mark.parametrize("error", [SystemExit, GeneratorExit, GraderTermination])
+def test_terminating_discovery_recovery_still_cleans_up(
+    discovery_package, monkeypatch, error
+):
+    from openenv.validation.graders.runtime.discovery import (
+        TaskDeclarationAccuracyGrader,
+    )
+
+    sample = discovery_episode()
+    termination = error("grader terminated")
+
+    def collect(*args, **kwargs):
+        raise RuntimeCollectionUnsupported(sample, capability="json_depth")
+
+    def grade(*args):
+        raise termination
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr(TaskDeclarationAccuracyGrader, "run", grade)
+    provider = FakeRuntimeProvider()
+    with pytest.raises(error) as raised:
+        run_validation(discovery_package, max_level=Level.RUNTIME, provider=provider)
+    assert raised.value is termination
+    assert len(provider.launches) == 1
+    assert provider.subject.stopped
+
+
+def test_interrupting_discovery_recovery_still_cleans_up(
+    discovery_package, monkeypatch, tmp_path
+):
+    from openenv.validation.graders.runtime.discovery import (
+        ToolDeclarationAccuracyGrader,
+    )
+
+    sample = replace(
+        discovery_episode(), failure_phase="step", failure_reason="JSON unsupported"
+    )
+    tasks = json.loads(sample.tasks_json)
+    tasks["counts"]["train"] = 101
+    sample = replace(sample, tasks_json=json.dumps(tasks))
+    calls = []
+
+    def collect(*args, **kwargs):
+        raise RuntimeCollectionUnsupported(sample, capability="json_depth")
+
+    def grade(*args):
+        calls.append(True)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr(ToolDeclarationAccuracyGrader, "run", grade)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=bundle,
+    )
+    results = {row.check_id: row for row in report.results}
+    assert calls == [True]
+    assert results["runtime.startup"].status is CheckStatus.ERROR
+    assert results["runtime.startup"].evidence == ["validation interrupted"]
+    assert results["runtime.task_declaration_accuracy"].status is CheckStatus.FAIL
+    assert results["runtime.tool_declaration_accuracy"].status is CheckStatus.SKIP
+    assert results["runtime.tool_declaration_accuracy"].evidence == [
+        "grader did not complete"
+    ]
+    assert report.verdict.value == "fail"
+    assert provider.subject.stopped
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    assert len(results) == len(report.results)
+    assert json.loads((bundle / "report.json").read_text()) == report.model_dump(
+        mode="json"
+    )
+
+
+@pytest.mark.parametrize("interruptions", [1, 2])
+def test_grading_interruption_preserves_completed_results_without_rerunning(
+    discovery_package, monkeypatch, tmp_path, baseline_only, interruptions
+):
+    from openenv.validation.graders.runtime.discovery import (
+        TaskDeclarationAccuracyGrader,
+        ToolDeclarationAccuracyGrader,
+    )
+
+    sample = replace(
+        discovery_episode(), failure_phase="step", failure_reason="step failed"
+    )
+    tasks = json.loads(sample.tasks_json)
+    tasks["counts"]["train"] = 101
+    sample = replace(sample, tasks_json=json.dumps(tasks))
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence", lambda *a, **k: sample
+    )
+    calls = []
+    task_run = TaskDeclarationAccuracyGrader.run
+    tool_run = ToolDeclarationAccuracyGrader.run
+
+    def task(self, subject):
+        calls.append("task")
+        return task_run(self, subject)
+
+    def tool(self, subject):
+        calls.append("tool")
+        if calls.count("tool") <= interruptions:
+            raise KeyboardInterrupt
+        return tool_run(self, subject)
+
+    monkeypatch.setattr(TaskDeclarationAccuracyGrader, "run", task)
+    monkeypatch.setattr(ToolDeclarationAccuracyGrader, "run", tool)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=bundle,
+    )
+    results = {row.check_id: row for row in report.results}
+    assert calls == ["task", "tool", "tool"]
+    assert results["runtime.task_declaration_accuracy"].status is CheckStatus.FAIL
+    assert results["runtime.tool_declaration_accuracy"].status is (
+        CheckStatus.PASS if interruptions == 1 else CheckStatus.SKIP
+    )
+    assert results["runtime.startup"].status is CheckStatus.ERROR
+    assert results["runtime.startup"].evidence == ["validation interrupted"]
+    assert report.verdict.value == "fail"
+    assert provider.subject.stopped
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    assert len(results) == len(report.results)
+    assert json.loads((bundle / "report.json").read_text()) == report.model_dump(
+        mode="json"
+    )
+
+
+def test_runtime_collects_primary_isolation_and_session_replays_then_cleans_up(
     package, monkeypatch, tmp_path
 ):
     provider = FakeRuntimeProvider()
@@ -78,15 +395,26 @@ def test_runtime_collects_once_cleans_up_and_marks_remaining_work(
 
     def collect(*args, **kwargs):
         calls.append((args, kwargs))
-        return measured_episode()
+        return measured_episode(seed=args[1].reset.seed)
 
     monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr(
+        "openenv.validation.runtime.replay.collect_runtime_evidence", collect
+    )
     bundle = tmp_path / "bundle"
     report = run_validation(
         package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
     )
     results = {r.check_id: r.status for r in report.results}
-    assert len(calls) == 1
+    # Primary, same-session pair, fresh isolation session, then repeatability controls.
+    assert [kwargs.get("episodes", 1) for _, kwargs in calls] == [1, 2, 1, 1, 1]
+    assert [args[1].reset.seed for args, _ in calls] == [42, 42, 42, 42, 43]
+    assert len({kwargs["validation_token"] for _, kwargs in calls[:3]}) == 1
+    assert [kwargs.get("request_telemetry", True) for _, kwargs in calls[:3]] == [
+        True,
+        False,
+        False,
+    ]
     assert len(provider.builds) == len(provider.launches) == 1
     assert provider.subject.stopped
     assert report.report_schema_version == "2"
@@ -97,14 +425,25 @@ def test_runtime_collects_once_cleans_up_and_marks_remaining_work(
         "reward_well_formed",
         "observation_schema",
         "state_contract",
+        "seed_control",
+        "trajectory_record",
     ):
         assert results[f"runtime.{name}"] is CheckStatus.PASS
     assert results["runtime.network_policy"] is CheckStatus.SKIP
+    assert results["runtime.episode_determinism"] is CheckStatus.SKIP
+    assert any(
+        "fresh_container" in reason
+        for result in report.results
+        if result.check_id == "runtime.episode_determinism"
+        for reason in result.evidence
+    )
     assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
     assert json.loads((bundle / "runtime-plan.json").read_text())["reset"]["seed"] == 42
 
 
-def test_runtime_collection_uses_declared_episode_timeout(package, monkeypatch):
+def test_runtime_collection_caps_declared_episode_timeout_at_total_budget(
+    package, monkeypatch, baseline_only
+):
     path = package / "openenv.yaml"
     path.write_text(
         path.read_text().replace("episode_timeout_s: 30.0", "episode_timeout_s: 600.0")
@@ -118,7 +457,642 @@ def test_runtime_collection_uses_declared_episode_timeout(package, monkeypatch):
     monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
     run_validation(package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider())
 
-    assert calls[0]["episode_timeout_s"] == 600.0
+    assert [call["episode_timeout_s"] for call in calls] == [
+        REPLAY_BUDGET_SECONDS,
+        600.0,
+        600.0,
+    ]
+
+
+@pytest.mark.parametrize(
+    "sequential_s,fresh_s,oracle_s",
+    [(301.0, 0.0, 0.0), (0.0, 301.0, 0.0), (59.0, 0.0, 10.0)],
+    ids=["slow-sequential", "slow-fresh", "oracle-crosses-old-deadline"],
+)
+@pytest.mark.parametrize("outcome", ["healthy", "known-fail", "interrupted"])
+def test_replay_budget_excludes_isolation_and_oracle_but_charges_all_replay_work(
+    package, monkeypatch, tmp_path, sequential_s, fresh_s, oracle_s, outcome
+):
+    path = package / "openenv.yaml"
+    path.write_text(
+        path.read_text().replace("episode_timeout_s: 30.0", "episode_timeout_s: 600.0")
+    )
+    now = [1000.0]
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr("openenv.validation.runner.time", clock)
+    monkeypatch.setattr("openenv.validation.runtime.replay.time", clock)
+    provider = FakeRuntimeProvider(capabilities=frozenset(ProviderCapability))
+    events, timeouts = [], []
+    original = provider.subject
+    fresh = type(original)(base_url="http://fresh")
+    image = "sha256:" + "a" * 64
+
+    def inspect_original():
+        events.append("inspect-original")
+        if len(timeouts) > 1:
+            now[0] += 3.0
+        return {"container_id": "original", "image_id": image}
+
+    def inspect_fresh():
+        events.append("inspect-fresh")
+        now[0] += 2.0
+        return {"container_id": "fresh", "image_id": image}
+
+    def start(spec):
+        provider.launches.append(spec)
+        events.append(
+            "start-original" if len(provider.launches) == 1 else "start-fresh"
+        )
+        if len(provider.launches) == 1:
+            return original
+        now[0] += 4.0
+        return fresh
+
+    def stop(subject, name):
+        events.append(name)
+        subject.stopped = True
+
+    monkeypatch.setattr(provider, "start", start)
+    monkeypatch.setattr(original, "inspect", inspect_original)
+    monkeypatch.setattr(fresh, "inspect", inspect_fresh)
+    monkeypatch.setattr(original, "stop", lambda: stop(original, "stop-original"))
+    monkeypatch.setattr(fresh, "stop", lambda: stop(fresh, "stop-fresh"))
+
+    def collect(base_url, plan, **kwargs):
+        phases = [
+            "primary",
+            "sequential",
+            "fresh-isolation",
+            "session",
+            "seed",
+            "container",
+        ]
+        durations = [240.0, sequential_s, fresh_s, 10.0, 20.0, 5.0]
+        index = len(timeouts)
+        events.append(phases[index])
+        timeouts.append(kwargs["episode_timeout_s"])
+        now[0] += durations[index]
+        assert base_url == (fresh.base_url if index == 5 else original.base_url)
+        sample = measured_episode(seed=plan.reset.seed)
+        if outcome == "known-fail":
+            row = sample.exchanges[0]
+            response = json.loads(row.response_json)
+            response["data"]["reward"] = 2
+            sample = replace(
+                sample,
+                exchanges=(
+                    replace(row, response_json=json.dumps(response)),
+                    *sample.exchanges[1:],
+                ),
+            )
+        if outcome == "interrupted" and index == 5:
+            raise RuntimeCollectionInterrupted(
+                replace(
+                    sample, exchanges=sample.exchanges[:2], failure_reason="interrupted"
+                )
+            )
+        return replace(sample, exchanges=sample.exchanges * kwargs.get("episodes", 1))
+
+    def oracle(*args):
+        events.append("oracle")
+        now[0] += oracle_s
+        return (HttpProbe("/oracle/solve.sh", 404),)
+
+    def measure(name, value):
+        def measured():
+            events.append(name)
+            return value
+
+        return measured
+
+    for name, value in (
+        ("network", network_evidence("public")),
+        ("containment", contained()),
+        ("resources", bounded()),
+    ):
+        monkeypatch.setattr(
+            original, f"measure_{name}", measure(name, value), raising=False
+        )
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr(
+        "openenv.validation.runtime.replay.collect_runtime_evidence", collect
+    )
+    monkeypatch.setattr("openenv.validation.runner._oracle_probes", oracle)
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+
+    assert timeouts == [300.0, 600.0, 600.0, 60.0, 50.0, 21.0]
+    assert provider.launches[1].startup_timeout_s == 27.0
+    assert events == [
+        "start-original",
+        "inspect-original",
+        "primary",
+        "sequential",
+        "fresh-isolation",
+        "oracle",
+        "session",
+        "seed",
+        "inspect-original",
+        "start-fresh",
+        "inspect-fresh",
+        "container",
+        "stop-fresh",
+        *([] if outcome == "interrupted" else ["network", "containment", "resources"]),
+        "stop-original",
+    ]
+    assert original.stopped and fresh.stopped
+    results = {r.check_id: r for r in report.results}
+    assert results["runtime.startup"].status is (
+        CheckStatus.ERROR if outcome == "interrupted" else CheckStatus.PASS
+    )
+    assert results["runtime.episode_determinism"].status is (
+        CheckStatus.SKIP if outcome == "interrupted" else CheckStatus.PASS
+    )
+    assert (
+        results["runtime.reward_well_formed"].status
+        is (
+            {
+                "healthy": CheckStatus.PASS,
+                "known-fail": CheckStatus.FAIL,
+                "interrupted": CheckStatus.SKIP,
+            }[outcome]
+        )
+    )
+    assert (
+        report.verdict.value
+        == {"healthy": "warn", "known-fail": "fail", "interrupted": "fail"}[outcome]
+    )
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+    replays = json.loads((bundle / "replays.json").read_text())
+    assert [row["scope"] for row in replays["samples"]] == [
+        "session",
+        "seed",
+        "container",
+    ]
+    assert replays["samples"][-1]["cleanup_complete"] is True
+    if outcome == "interrupted":
+        assert results["runtime.startup"].evidence == ["validation interrupted"]
+        assert replays["failure_reason"] == "fresh container replay interrupted"
+
+
+@pytest.mark.parametrize(
+    "primary_s,replay_s,expected_timeouts",
+    [(300.0, 0.0, []), (305.0, 0.0, []), (290.0, 6.0, [10.0, 4.0])],
+    ids=["exhausted-primary", "late-primary", "shared-replay-remainder"],
+)
+def test_replay_budget_cannot_refill_after_primary_or_between_replays(
+    package, monkeypatch, tmp_path, primary_s, replay_s, expected_timeouts
+):
+    path = package / "openenv.yaml"
+    path.write_text(
+        path.read_text().replace("episode_timeout_s: 30.0", "episode_timeout_s: 600.0")
+    )
+    now = [1000.0]
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr("openenv.validation.runner.time", clock)
+    monkeypatch.setattr("openenv.validation.runtime.replay.time", clock)
+    calls, timeouts = [], []
+
+    def primary(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            now[0] += primary_s
+        sample = measured_episode()
+        return replace(sample, exchanges=sample.exchanges * kwargs.get("episodes", 1))
+
+    def replay(base_url, plan, **kwargs):
+        timeouts.append(kwargs["episode_timeout_s"])
+        now[0] += min(replay_s, kwargs["episode_timeout_s"])
+        return measured_episode(seed=plan.reset.seed)
+
+    provider = FakeRuntimeProvider(
+        capabilities=frozenset(
+            {*FakeRuntimeProvider().capabilities, ProviderCapability.FRESH_CONTAINER}
+        )
+    )
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", primary)
+    monkeypatch.setattr(
+        "openenv.validation.runtime.replay.collect_runtime_evidence", replay
+    )
+    monkeypatch.setattr("openenv.validation.runner._oracle_probes", lambda *a: ())
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+
+    assert timeouts == expected_timeouts
+    assert [call.get("episodes", 1) for call in calls] == [1, 2, 1]
+    assert len(provider.launches) == 1
+    assert provider.subject.stopped
+    results = {r.check_id: r for r in report.results}
+    assert results["runtime.startup"].status is CheckStatus.PASS
+    assert results["runtime.episode_determinism"].status is CheckStatus.SKIP
+    replays = json.loads((bundle / "replays.json").read_text())
+    assert "TimeoutError" in replays["failure_reason"]
+    assert len(replays["samples"]) == len(expected_timeouts)
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+
+
+@pytest.mark.parametrize("capability", ["json_depth", "json_numeric_range"])
+def test_initial_unsupported_json_skips_and_keeps_the_received_schema(
+    package, monkeypatch, tmp_path, capability
+):
+    prefix = RuntimeEvidence(
+        schema_response_json=(
+            '{"observation":{"minimum":1e9999999999999999999}}'
+            if capability == "json_numeric_range"
+            else '{"observation":' + "[" * 20000 + "0" + "]" * 20000 + "}"
+        ),
+        failure_phase="schema",
+        failure_reason=f"schema JSON exceeds validator support ({capability})",
+    )
+
+    def collect(*args, **kwargs):
+        raise RuntimeCollectionUnsupported(prefix, capability=capability)
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    provider = FakeRuntimeProvider()
+    report = run_validation(
+        package,
+        max_level=Level.RUNTIME,
+        provider=provider,
+        artifacts_dir=tmp_path / "bundle",
+    )
+    startup = next(
+        result for result in report.results if result.check_id == "runtime.startup"
+    )
+    assert startup.status is CheckStatus.SKIP
+    assert capability in startup.evidence[0]
+    for name in ("reward_well_formed", "observation_schema", "state_contract"):
+        assert (
+            next(r for r in report.results if r.check_id == f"runtime.{name}").status
+            is CheckStatus.SKIP
+        )
+    assert provider.subject.stopped
+    metadata = json.loads((tmp_path / "bundle/collector-evidence.json").read_text())
+    assert metadata["schema_response_available"] is True
+    assert metadata["schema_response_parse_failed"] is True
+
+
+@pytest.mark.parametrize("failure", ["episode", "json_limit"])
+def test_declaration_mismatches_survive_primary_collection_failure(
+    discovery_package, monkeypatch, baseline_only, failure
+):
+    tasks = json.loads(discovery_episode().tasks_json)
+    tasks["counts"]["train"] = 99
+    prefix = replace(
+        discovery_episode(),
+        tools_json='{"tools":[{"name":"undeclared"}]}',
+        tasks_json=json.dumps(tasks),
+        failure_phase="step",
+        failure_reason="step failed (ValueError)",
+    )
+
+    def collect(*args, **kwargs):
+        if failure == "json_limit":
+            raise RuntimeCollectionUnsupported(prefix, capability="json_numeric_range")
+        return prefix
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    report = run_validation(
+        discovery_package,
+        max_level=Level.RUNTIME,
+        provider=FakeRuntimeProvider(),
+    )
+    results = {result.check_id: result for result in report.results}
+
+    assert results["runtime.startup"].status is (
+        CheckStatus.FAIL if failure == "episode" else CheckStatus.SKIP
+    )
+    assert results["runtime.tool_declaration_accuracy"].status is CheckStatus.FAIL
+    assert results["runtime.task_declaration_accuracy"].status is CheckStatus.FAIL
+    assert report.verdict.value == "fail"
+
+
+@pytest.mark.parametrize("unsupported_call", [2, 3], ids=["sequential", "fresh"])
+@pytest.mark.parametrize("capability", ["json_depth", "json_numeric_range"])
+@pytest.mark.parametrize("fault", [None, "reward", "observation", "state", "oracle"])
+def test_late_json_limit_preserves_primary_grading(
+    package, monkeypatch, tmp_path, unsupported_call, capability, fault
+):
+    original = measured_episode()
+    original = replace(
+        original,
+        schema_response_json=json.dumps(
+            {"observation": json.loads(original.observation_schema_json)}
+        ),
+    )
+    primary = original
+    if fault:
+        index = 1 if fault in {"state", "oracle"} else 0
+        rows = list(original.exchanges)
+        response = json.loads(rows[index].response_json)
+        data = response["data"]
+        if fault == "reward":
+            data["reward"] = 2
+        elif fault == "observation":
+            data["observation"]["counter"] = "wrong-type"
+        elif fault == "state":
+            data["episode_id"] = "wrong-episode"
+        else:
+            data["private"] = (package / "oracle/solve.sh").read_text()
+        rows[index] = replace(rows[index], response_json=json.dumps(response))
+        primary = replace(original, exchanges=tuple(rows))
+    prefix = replace(
+        original,
+        exchanges=(original.exchanges * 2)[:6]
+        if unsupported_call == 2
+        else original.exchanges[:2],
+        failure_phase="step",
+        failure_reason=f"step JSON exceeds validator support ({capability})",
+    )
+    calls = []
+
+    def collect(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == unsupported_call:
+            raise RuntimeCollectionUnsupported(prefix, capability=capability)
+        if len(calls) == 1:
+            return primary
+        return replace(
+            original, exchanges=original.exchanges * kwargs.get("episodes", 1)
+        )
+
+    probes = (HttpProbe("/oracle/solve.sh", 404),)
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr("openenv.validation.runner._oracle_probes", lambda *a: probes)
+    bundle = tmp_path / "bundle"
+    provider = FakeRuntimeProvider()
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    results = {r.check_id: r for r in report.results}
+    assert results["runtime.startup"].status is CheckStatus.PASS
+    assert [call.get("episodes", 1) for call in calls] == [1, 2, 1]
+    for name, fault_name in (
+        ("reward_well_formed", "reward"),
+        ("observation_schema", "observation"),
+        ("state_contract", "state"),
+    ):
+        expected = CheckStatus.FAIL if fault == fault_name else CheckStatus.PASS
+        assert results[f"runtime.{name}"].status is expected
+    assert results["runtime.oracle_containment"].status is (
+        CheckStatus.FAIL if fault == "oracle" else CheckStatus.SKIP
+    )
+    assert results["runtime.episode_isolation"].status is CheckStatus.SKIP
+    assert report.verdict.value == ("warn" if fault is None else "fail")
+    assert provider.subject.stopped
+    phase = "sequential" if unsupported_call == 2 else "fresh"
+    metadata = json.loads((bundle / f"isolation-{phase}-evidence.json").read_text())
+    assert metadata["complete"] is False
+    assert metadata["failure_phase"] == "step"
+    assert metadata["failure_reason"] == prefix.failure_reason
+    trace = json.loads((bundle / f"isolation-{phase}-trace.json").read_text())
+    assert len(trace) == len(prefix.exchanges)
+    assert len(json.loads((bundle / "collector-trace.json").read_text())) == 4
+    assert json.loads((bundle / "oracle-http.json").read_text())[0]["status"] == 404
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is True
+
+
+@pytest.mark.parametrize("unsupported_call", [2, 3])
+@pytest.mark.parametrize(
+    "outcome", ["measured", "provider_error", "cleanup_error", "stop_error"]
+)
+def test_late_json_limit_keeps_measurements_and_error_precedence(
+    package, monkeypatch, tmp_path, unsupported_call, outcome
+):
+    provider = FakeRuntimeProvider(
+        capabilities=frozenset(
+            {
+                ProviderCapability.IMAGE_BUILD,
+                ProviderCapability.EXEC,
+                ProviderCapability.NETWORK_POLICY,
+                ProviderCapability.INSPECTED_ISOLATION,
+                ProviderCapability.RESOURCE_ENFORCEMENT,
+            }
+        )
+    )
+    original = measured_episode()
+    primary = original
+    if outcome == "stop_error":
+        row = original.exchanges[0]
+        data = json.loads(row.response_json)
+        data["data"]["reward"] = 2
+        primary = replace(
+            original,
+            exchanges=(
+                replace(row, response_json=json.dumps(data)),
+                *original.exchanges[1:],
+            ),
+        )
+    calls = 0
+
+    def collect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == unsupported_call:
+            raise RuntimeCollectionUnsupported(
+                replace(
+                    original,
+                    failure_phase="step",
+                    failure_reason="step JSON exceeds validator support (json_depth)",
+                ),
+                capability="json_depth",
+            )
+        return primary if calls == 1 else original
+
+    measurements = []
+
+    def measure(name, value):
+        def run():
+            measurements.append(name)
+            if name == "resources" and outcome in {"provider_error", "cleanup_error"}:
+                error = CleanupError if outcome == "cleanup_error" else ProviderError
+                raise error(
+                    "resource helper cleanup failed"
+                    if outcome == "cleanup_error"
+                    else "resource measurement unavailable"
+                )
+            return value
+
+        return run
+
+    for name, value in (
+        ("network", network_evidence("public")),
+        ("containment", contained()),
+        ("resources", bounded()),
+    ):
+        monkeypatch.setattr(
+            provider.subject, f"measure_{name}", measure(name, value), raising=False
+        )
+
+    def stop():
+        provider.subject.stopped = True
+        if outcome == "stop_error":
+            raise RuntimeError("token=must-not-appear")
+
+    monkeypatch.setattr(provider.subject, "stop", stop)
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    monkeypatch.setattr("openenv.validation.runner._oracle_probes", lambda *a: ())
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    results = {r.check_id: r for r in report.results}
+    startup = results["runtime.startup"]
+    assert startup.status is (
+        CheckStatus.ERROR
+        if outcome in {"cleanup_error", "stop_error"}
+        else CheckStatus.PASS
+    )
+    assert measurements == ["network", "containment", "resources"]
+    assert calls == 3 and provider.subject.stopped
+    if outcome == "cleanup_error":
+        assert startup.evidence == ["resource helper cleanup failed"]
+        assert results["runtime.reward_well_formed"].status is CheckStatus.SKIP
+    else:
+        for name in ("network_policy", "host_containment"):
+            assert results[f"runtime.{name}"].status is CheckStatus.PASS
+        assert results["runtime.resource_bounds"].status is (
+            CheckStatus.SKIP if outcome == "provider_error" else CheckStatus.PASS
+        )
+        assert results["runtime.reward_well_formed"].status is (
+            CheckStatus.FAIL if outcome == "stop_error" else CheckStatus.PASS
+        )
+    if outcome == "stop_error":
+        assert startup.evidence == [
+            "subject built and reached its control endpoint",
+            "subject teardown failed",
+        ]
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is (
+        outcome != "stop_error"
+    )
+    assert "must-not-appear" not in report.model_dump_json()
+
+
+def test_cancellation_after_recovered_sequential_limit_retains_both_prefixes(
+    package, monkeypatch, tmp_path
+):
+    original = measured_episode()
+    unsupported = replace(
+        original,
+        exchanges=original.exchanges[:2],
+        failure_phase="step",
+        failure_reason="step JSON exceeds validator support (json_depth)",
+    )
+    interrupted = replace(
+        original,
+        exchanges=original.exchanges[:1],
+        failure_phase="state",
+        failure_reason="state failed (KeyboardInterrupt)",
+    )
+    calls = 0
+
+    def collect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeCollectionUnsupported(unsupported, capability="json_depth")
+        if calls == 3:
+            raise RuntimeCollectionInterrupted(interrupted)
+        return original
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    startup = next(r for r in report.results if r.check_id == "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert startup.evidence == ["validation interrupted"]
+    assert calls == 3 and provider.subject.stopped
+    for phase, prefix in (("sequential", unsupported), ("fresh", interrupted)):
+        metadata = json.loads((bundle / f"isolation-{phase}-evidence.json").read_text())
+        assert metadata["failure_reason"] == prefix.failure_reason
+        assert len(
+            json.loads((bundle / f"isolation-{phase}-trace.json").read_text())
+        ) == len(prefix.exchanges)
+
+
+@pytest.mark.parametrize("interrupted_call", [2, 3])
+def test_interrupted_isolation_retains_every_completed_session(
+    package, monkeypatch, tmp_path, interrupted_call
+):
+    original = measured_episode()
+    prefix = replace(
+        original,
+        exchanges=original.exchanges[:2],
+        failure_phase="step",
+        failure_reason="step failed (KeyboardInterrupt)",
+    )
+    calls = 0
+
+    def collect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == interrupted_call:
+            raise RuntimeCollectionInterrupted(prefix)
+        return original
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    bundle = tmp_path / "bundle"
+    provider = FakeRuntimeProvider()
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    assert provider.subject.stopped
+    startup = next(r for r in report.results if r.check_id == "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    assert len(json.loads((bundle / "collector-trace.json").read_text())) == 4
+    sequential = json.loads((bundle / "isolation-sequential-trace.json").read_text())
+    fresh = json.loads((bundle / "isolation-fresh-trace.json").read_text())
+    assert len(sequential) == (2 if interrupted_call == 2 else 4)
+    assert len(fresh) == (0 if interrupted_call == 2 else 2)
+    metadata = json.loads((bundle / "isolation-fresh-evidence.json").read_text())
+    assert metadata["complete"] is False
+    assert metadata["failure_phase"] == (
+        "not_started" if interrupted_call == 2 else "step"
+    )
+
+
+def test_interrupted_oracle_collection_retains_completed_probes(
+    package, monkeypatch, tmp_path
+):
+    manifest = package / "openenv.yaml"
+    manifest.write_text(
+        manifest.read_text().replace("location: oracle/solve.sh", "location: oracle")
+    )
+    (package / "oracle/00_first.txt").write_text("completed-probe-prefix")
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence",
+        lambda *args, **kwargs: measured_episode(),
+    )
+
+    def get(base_url, path, *args):
+        if path == "oracle/00_first.txt":
+            return HttpProbe("/" + path, 403, b"completed-probe-prefix")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("openenv.validation.runner._get", get)
+    provider = FakeRuntimeProvider()
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    assert provider.subject.stopped
+    assert (
+        next(r for r in report.results if r.check_id == "runtime.startup").status
+        is CheckStatus.ERROR
+    )
+    probes = json.loads((bundle / "oracle-http.json").read_text())
+    assert len(probes) == 2
+    assert probes[0]["body"] == "completed-probe-prefix"
+    assert probes[0]["status"] == 403
+    assert probes[1]["path"] == "/oracle/solve.sh"
+    assert probes[1]["failure"] == "KeyboardInterrupt"
 
 
 def test_skip_build_has_no_provider_side_effects(package):
@@ -298,7 +1272,7 @@ def test_provider_failure_diagnostics_are_visible_and_bounded(package):
 
 @pytest.mark.parametrize("mutation", ["content", "symlink", "unreadable"])
 def test_source_change_withdraws_dependent_runtime_results(
-    package, monkeypatch, tmp_path, mutation
+    package, monkeypatch, tmp_path, mutation, baseline_only, discovery_package
 ):
     provider = FakeRuntimeProvider()
     original_digest = source_digest(package)
@@ -315,7 +1289,7 @@ def test_source_change_withdraws_dependent_runtime_results(
             monkeypatch.setattr(
                 "openenv.validation.runner.source_digest", unreadable_source
             )
-        return measured_episode()
+        return discovery_episode()
 
     monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
     bundle = tmp_path / "bundle"
@@ -330,7 +1304,15 @@ def test_source_change_withdraws_dependent_runtime_results(
         else "package source could not be verified after validation"
     )
     assert results["runtime.startup"].evidence == [reason]
-    for name in ("reward_well_formed", "observation_schema", "state_contract"):
+    for name in (
+        "reward_well_formed",
+        "observation_schema",
+        "state_contract",
+        "tool_declaration_accuracy",
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+        "reward_attribution",
+    ):
         result = results[f"runtime.{name}"]
         assert result.status is CheckStatus.SKIP
         assert "runtime.startup" in result.evidence[0]
@@ -388,7 +1370,7 @@ def test_teardown_failure_preserves_primary_provider_error(
 @pytest.mark.parametrize("collection_state", ["complete", "failed", "partial"])
 @pytest.mark.parametrize("teardown_error", [RuntimeError, KeyboardInterrupt])
 def test_teardown_failure_preserves_collection_outcome(
-    package, monkeypatch, tmp_path, collection_state, teardown_error
+    package, monkeypatch, tmp_path, collection_state, teardown_error, baseline_only
 ):
     provider = FakeRuntimeProvider()
     collected = measured_episode()
@@ -443,7 +1425,9 @@ def test_teardown_failure_preserves_collection_outcome(
     assert "must-not-appear" not in report.model_dump_json()
 
 
-def test_bad_static_bounds_do_not_suppress_independent_runtime(package, monkeypatch):
+def test_bad_static_bounds_do_not_suppress_independent_runtime(
+    package, monkeypatch, baseline_only
+):
     path = package / "openenv.yaml"
     path.write_text(path.read_text().replace("floor_margin: 0.5", "floor_margin: 0.01"))
     provider = FakeRuntimeProvider()
@@ -459,6 +1443,112 @@ def test_bad_static_bounds_do_not_suppress_independent_runtime(package, monkeypa
     )
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_bundle_cleanup_includes_failed_replay_teardown(
+    package, monkeypatch, tmp_path, interrupted
+):
+    provider = FakeRuntimeProvider()
+    combined = replace(
+        measured_episode(),
+        replays=(
+            ReplayEvidence(
+                "container",
+                RuntimeEvidence(failure_reason="fresh container teardown unconfirmed"),
+                cleanup_complete=False,
+            ),
+        ),
+    )
+
+    def replays(*args, **kwargs):
+        if interrupted:
+            raise RuntimeCollectionInterrupted(combined)
+        return combined
+
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence",
+        lambda *a, **k: measured_episode(),
+    )
+    monkeypatch.setattr("openenv.validation.runner.collect_replays", replays)
+    bundle = tmp_path / "bundle"
+    result = run_validation(
+        package, max_level=Level.RUNTIME, provider=provider, artifacts_dir=bundle
+    )
+    assert provider.subject.stopped
+    assert (
+        next(row for row in result.results if row.check_id == "runtime.startup").status
+        is CheckStatus.ERROR
+    )
+    assert json.loads((bundle / "cleanup.json").read_text()) == {
+        "required": True,
+        "completed": False,
+    }
+    replay = json.loads((bundle / "replays.json").read_text())["samples"][0]
+    assert replay["cleanup_complete"] is False
+
+
+@pytest.mark.parametrize(
+    "fault,failed_check",
+    [
+        (None, None),
+        ("invalid_reward", "runtime.reward_well_formed"),
+        ("replay_divergence", "runtime.episode_determinism"),
+    ],
+)
+def test_replay_cleanup_failure_prevents_pass_and_preserves_runtime_findings(
+    package, monkeypatch, tmp_path, fault, failed_check
+):
+    baseline = measured_episode()
+    changed_rows = list(baseline.exchanges)
+    response = json.loads(changed_rows[2].response_json)
+    if fault == "invalid_reward":
+        response["data"]["reward"] = 2.0
+    elif fault == "replay_divergence":
+        response["data"]["observation"]["counter"] = 99
+    changed_rows[2] = replace(changed_rows[2], response_json=json.dumps(response))
+    telemetry = json.loads(baseline.telemetry_json)
+    telemetry["trajectory"]["records"][2]["response"] = response
+    changed = replace(
+        baseline, exchanges=tuple(changed_rows), telemetry_json=json.dumps(telemetry)
+    )
+    if fault == "invalid_reward":
+        baseline = changed
+    combined = replace(
+        baseline,
+        replays=(
+            ReplayEvidence("session", baseline),
+            ReplayEvidence("container", changed, cleanup_complete=False),
+            ReplayEvidence("seed", measured_episode(seed=43)),
+        ),
+    )
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence", lambda *a, **k: baseline
+    )
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_replays", lambda *a, **k: combined
+    )
+    bundle = tmp_path / "bundle"
+    report = run_validation(
+        package,
+        max_level=Level.RUNTIME,
+        provider=FakeRuntimeProvider(),
+        artifacts_dir=bundle,
+    )
+    checks = {row.check_id: row for row in report.results}
+    assert checks["runtime.startup"].status is CheckStatus.ERROR
+    assert "replay subject teardown failed" in checks["runtime.startup"].evidence
+    if failed_check:
+        assert checks[failed_check].status is CheckStatus.FAIL
+    else:
+        determinism = checks["runtime.episode_determinism"]
+        assert determinism.status is CheckStatus.SKIP
+        assert determinism.measured["completed_replays"] == 3
+        assert determinism.evidence == ["fresh container cleanup was not confirmed"]
+        assert checks["runtime.reward_well_formed"].status is CheckStatus.PASS
+    assert checks["runtime.state_contract"].status is CheckStatus.PASS
+    assert report.verdict.value == "fail"
+    assert json.loads((bundle / "cleanup.json").read_text())["completed"] is False
+
+
 def test_semantic_ceiling_does_not_claim_semantic_execution(package):
     report = run_validation(package, max_level=Level.SEMANTIC, skip_build=True)
     assert report.levels_run == [Level.STATIC]
@@ -466,6 +1556,187 @@ def test_semantic_ceiling_does_not_claim_semantic_execution(package):
         r.check_id == "semantic.oracle_max" and r.status is CheckStatus.SKIP
         for r in report.results
     )
+
+
+def test_runner_checks_empty_tools_and_omits_undeclared_optional_capabilities(
+    package, monkeypatch, baseline_only
+):
+    observed = []
+
+    def collect(*args, **kwargs):
+        observed.append(kwargs)
+        return replace(measured_episode(), tools_json='{"tools":[]}')
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    result = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    checks = {row.check_id: row for row in result.results}
+    assert checks["runtime.tool_declaration_accuracy"].status is CheckStatus.PASS
+    assert observed[0]["collect_tools"] is True
+    assert observed[0]["collect_tasks"] is False
+    for name in (
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+        "reward_attribution",
+    ):
+        assert "runtime." + name not in checks
+
+
+def test_runner_collects_and_grades_claimed_discovery_and_rubric_evidence(
+    discovery_package, monkeypatch, baseline_only
+):
+    observed = []
+
+    def collect(*args, **kwargs):
+        observed.append(kwargs)
+        return discovery_episode()
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    result = run_validation(
+        discovery_package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    checks = {row.check_id: row for row in result.results}
+    assert observed[0]["collect_tasks"] is True
+    for name in (
+        "tool_declaration_accuracy",
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+        "reward_attribution",
+    ):
+        assert checks["runtime." + name].status is CheckStatus.PASS
+
+
+@pytest.mark.parametrize("declared", [False, True])
+@pytest.mark.parametrize("task_api", [False, True])
+def test_parsed_declaration_presence_controls_collection_and_findings(
+    package, monkeypatch, baseline_only, declared, task_api
+):
+    path = package / "openenv.yaml"
+    document = yaml.safe_load(path.read_text())
+    capabilities = document["validation"]["capabilities"]
+    capabilities["task_api"] = task_api
+    for field, empty in (("declared_tools", []), ("declared_task_count", {})):
+        if declared:
+            capabilities[field] = empty
+        else:
+            capabilities.pop(field, None)
+    path.write_text(yaml.safe_dump(document))
+    observed = []
+
+    def collect(*args, **kwargs):
+        observed.append(kwargs)
+        # Omitted counts are unknown even when a working API advertises tasks.
+        return replace(
+            discovery_episode(),
+            tools_json='{"tools":[]}',
+            tasks_json='{"splits":[],"counts":{},"previews":{}}'
+            if declared
+            else discovery_episode().tasks_json,
+        )
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    result = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    parsed = result.manifest.capabilities.model_fields_set
+    assert ("declared_tools" in parsed) is declared
+    assert ("declared_task_count" in parsed) is declared
+    restored = type(result).model_validate_json(result.model_dump_json())
+    restored_fields = restored.manifest.capabilities.model_fields_set
+    assert ("declared_tools" in restored_fields) is declared
+    assert ("declared_task_count" in restored_fields) is declared
+    assert observed[0]["collect_tools"] is declared
+    assert observed[0]["collect_tasks"] is (declared or task_api)
+    checks = {row.check_id: row for row in result.results}
+    assert ("runtime.tool_declaration_accuracy" in checks) is declared
+    assert ("runtime.task_declaration_accuracy" in checks) is (declared or task_api)
+    if declared:
+        assert checks["runtime.tool_declaration_accuracy"].status is CheckStatus.PASS
+        assert checks["runtime.task_declaration_accuracy"].status is CheckStatus.PASS
+    elif task_api:
+        check = checks["runtime.task_declaration_accuracy"]
+        assert check.status is CheckStatus.SKIP
+        assert check.evidence == ["task counts were not declared"]
+
+
+@pytest.mark.parametrize("failed_collection", [False, True])
+def test_claims_without_evidence_are_incomplete_or_fail_not_pass(
+    discovery_package, monkeypatch, baseline_only, failed_collection
+):
+    reason = "discovery failed (ValueError)" if failed_collection else None
+    measured = replace(
+        measured_episode(),
+        telemetry_json=None,
+        telemetry_error=reason,
+        tools_error=reason,
+        tasks_error=reason,
+    )
+    monkeypatch.setattr(
+        "openenv.validation.runner.collect_runtime_evidence", lambda *a, **k: measured
+    )
+    result = run_validation(
+        discovery_package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    checks = {row.check_id: row for row in result.results}
+    for name in (
+        "tool_declaration_accuracy",
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+    ):
+        assert checks["runtime." + name].status is (
+            CheckStatus.FAIL if failed_collection else CheckStatus.SKIP
+        )
+    assert checks["runtime.reward_attribution"].status is CheckStatus.SKIP
+
+
+def test_claimed_discovery_checks_name_missing_evidence_or_dependencies(
+    discovery_package,
+):
+    result = run_validation(discovery_package, max_level=Level.RUNTIME, skip_build=True)
+    checks = {row.check_id: row for row in result.results}
+    for name in (
+        "tool_declaration_accuracy",
+        "task_declaration_accuracy",
+        "rubric_introspectable",
+        "reward_attribution",
+    ):
+        check = checks["runtime." + name]
+        assert check.status is CheckStatus.SKIP
+        if name in {"tool_declaration_accuracy", "task_declaration_accuracy"}:
+            assert check.evidence == ["runtime evidence is unavailable"]
+            continue
+        dependencies = "runtime.startup"
+        if name == "reward_attribution":
+            dependencies += ", runtime.rubric_introspectable"
+        assert check.evidence == [f"unmet dependency: {dependencies}"]
+
+
+def test_task_count_claim_is_checked_even_without_task_api_flag(
+    package, monkeypatch, baseline_only
+):
+    path = package / "openenv.yaml"
+    document = yaml.safe_load(path.read_text())
+    document["validation"]["capabilities"]["declared_task_count"] = {"train": 2}
+    path.write_text(yaml.safe_dump(document))
+    observed = []
+
+    def collect(*args, **kwargs):
+        observed.append(kwargs)
+        return measured_episode()
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    result = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    task_check = next(
+        row
+        for row in result.results
+        if row.check_id == "runtime.task_declaration_accuracy"
+    )
+    assert task_check.status is CheckStatus.SKIP
+    assert "missing prerequisite" in task_check.evidence[0]
+    assert observed[0]["collect_tasks"] is True
 
 
 def grader(check_id, depends_on=(), *, status=CheckStatus.PASS, requires=frozenset()):
@@ -566,3 +1837,67 @@ def test_collection_failure_is_reported_once_and_dependents_skip(
         assert checks[f"runtime.{name}"].evidence == [
             "unmet dependencies: runtime.startup"
         ]
+
+
+@pytest.mark.parametrize("unsupported_call", [2, 3])
+def test_unsupported_isolation_keeps_startup_and_grades_completed_evidence(
+    package, monkeypatch, unsupported_call
+):
+    partial = replace(
+        measured_episode(),
+        failure_phase="step",
+        failure_reason="step JSON exceeds validator support (json_numeric_range)",
+    )
+    calls = 0
+
+    def collect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == unsupported_call:
+            raise RuntimeCollectionUnsupported(partial)
+        return measured_episode()
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    results = {result.check_id: result for result in report.results}
+
+    assert results["runtime.startup"].status is CheckStatus.PASS
+    assert results["runtime.reward_well_formed"].status is CheckStatus.PASS
+
+
+def test_unsupported_sequential_still_collects_fresh_and_grades_prefix(
+    package, monkeypatch
+):
+    original = measured_episode()
+    after_reset = list(original.exchanges)
+    after_reset[2] = replace(
+        after_reset[2],
+        response_json=after_reset[2].response_json.replace(
+            '"counter": 1', '"counter": 2'
+        ),
+    )
+    partial = replace(
+        original,
+        exchanges=original.exchanges + tuple(after_reset),
+        failure_phase="state",
+        failure_reason="state JSON exceeds validator support (json_depth)",
+    )
+    calls = 0
+
+    def collect(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeCollectionUnsupported(partial)
+        return original
+
+    monkeypatch.setattr("openenv.validation.runner.collect_runtime_evidence", collect)
+    report = run_validation(
+        package, max_level=Level.RUNTIME, provider=FakeRuntimeProvider()
+    )
+    results = {result.check_id: result for result in report.results}
+
+    assert calls == 3
+    assert results["runtime.episode_isolation"].status is CheckStatus.FAIL

@@ -196,6 +196,47 @@ class TestReasoningGymEnvironment:
         assert obs.correct_answer is None
         assert obs.reward == 0.0
 
+    def test_answer_after_done_is_not_scored(self):
+        """A second answer, e.g. the revealed correct answer, is not scored."""
+        env = ReasoningGymEnvironment()
+        env.reset(dataset_name="leg_counting", dataset_config={}, seed=1, size=1)
+
+        first = env.step(ReasoningGymAction(answer="x"))
+        assert first.done is True
+        assert first.reward == 0.0
+        assert first.correct_answer is not None
+
+        second = env.step(ReasoningGymAction(answer=str(first.correct_answer)))
+        assert second.done is True
+        assert second.reward == 0.0
+        assert second.score == first.score
+
+    def test_extra_step_after_correct_answer_does_not_rescore(self):
+        """The correct answer scores 1.0, and an extra step keeps that reward."""
+        env = ReasoningGymEnvironment()
+        env.reset(dataset_name="leg_counting", dataset_config={}, seed=1, size=1)
+        answer = str(env._current_entry["answer"])
+
+        first = env.step(ReasoningGymAction(answer=answer))
+        assert first.reward == 1.0
+
+        second = env.step(ReasoningGymAction(answer="x"))
+        assert second.done is True
+        assert second.reward == 1.0
+        assert env.state.step_count == 1
+
+    def test_reset_allows_answering_the_next_question(self):
+        """reset() starts a new episode that is scored normally."""
+        env = ReasoningGymEnvironment()
+        env.reset(dataset_name="leg_counting", dataset_config={}, seed=1, size=2)
+        env.step(ReasoningGymAction(answer="x"))
+
+        env.reset()
+        answer = str(env._current_entry["answer"])
+        obs = env.step(ReasoningGymAction(answer=answer))
+        assert obs.done is True
+        assert obs.reward == 1.0
+
     def test_dataset_iterator_wraps_around(self):
         """Test that dataset iterator restarts when exhausted."""
         env = ReasoningGymEnvironment()

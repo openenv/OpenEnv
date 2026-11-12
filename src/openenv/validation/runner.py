@@ -3,36 +3,75 @@
 import hashlib
 import json
 import os
+import secrets
 import stat
 import time
 import uuid
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from urllib.parse import quote
+
+import httpx
 
 from .graders import GraderRegistry, Subject
 from .graders.runtime import (
+    EpisodeIsolationGrader,
+    HostContainmentGrader,
     NetworkPolicyGrader,
     ObservationSchemaGrader,
+    OracleContainmentGrader,
+    ResourceBoundsGrader,
     RewardWellFormedGrader,
     StateContractGrader,
+)
+from .graders.runtime.discovery import (
+    RewardAttributionGrader,
+    RubricIntrospectableGrader,
+    TaskDeclarationAccuracyGrader,
+    ToolDeclarationAccuracyGrader,
+)
+from .graders.runtime.oracle import oracle_inventory
+from .graders.runtime.repeatability import (
+    EpisodeDeterminismGrader,
+    SeedControlGrader,
+    TrajectoryRecordGrader,
 )
 from .graders.static import StaticManifestGrader
 from .manifest import ManifestError, NormalizedManifest, NormalizedManifestV2
 from .parsers import ParserRegistry
+from .parsers.harbor_toml import HarborTaskParser
 from .parsers.openenv_yaml import OpenEnvYamlParser
 from .policy import apply_policy, load_policy, PolicyError, SeverityPolicy
-from .providers import ProviderError, StartupError, UnsupportedCapability
+from .providers import CleanupError, ProviderError, StartupError, UnsupportedCapability
 from .report import CheckResult, ValidationReport, ValidationReportV2
 from .runtime.artifacts import write_runtime_bundle
-from .runtime.collector import collect_runtime_evidence, RuntimeCollectionInterrupted
-from .runtime.contracts import LaunchSpec, load_runtime_plan, RuntimePlanError
+from .runtime.collector import (
+    collect_runtime_evidence,
+    RuntimeCollectionInterrupted,
+    RuntimeCollectionUnsupported,
+)
+from .runtime.contracts import (
+    HttpProbe,
+    IsolationEvidence,
+    LaunchSpec,
+    load_runtime_plan,
+    RuntimeEvidence,
+    RuntimePlanError,
+)
+from .runtime.replay import collect_replays, REPLAY_BUDGET_SECONDS
 from .runtime.scheduler import execute_graders, order_graders
+from .runtime.transport import http_deadline
 from .signature import detect_signature
 from .types import CheckStatus, Lane, Level, ProviderCapability
 
 REPORT_SCHEMA_VERSION = "1"
 
 _DIGEST_EXCLUDED_DIRS = {".git", "__pycache__", ".venv", ".worktrees", "outputs"}
+
+# One deadline and one body budget cover the oracle's HTTP probes.
+ORACLE_PROBE_TIMEOUT_S = 10.0
+MAX_ORACLE_PROBE_BYTES = 1024 * 1024
+MAX_REDIRECTS = 3
 
 
 def source_digest(package_root: Path) -> str:
@@ -83,6 +122,7 @@ def default_parser_registry() -> ParserRegistry:
     """The parsers shipped in this build."""
     registry = ParserRegistry()
     registry.register(OpenEnvYamlParser())
+    registry.register(HarborTaskParser())
     return registry
 
 
@@ -93,7 +133,19 @@ def default_grader_registry(policy: SeverityPolicy) -> GraderRegistry:
     registry.register(RewardWellFormedGrader())
     registry.register(ObservationSchemaGrader())
     registry.register(StateContractGrader())
+    registry.register(SeedControlGrader())
+    registry.register(EpisodeDeterminismGrader())
+    registry.register(TrajectoryRecordGrader())
+    registry.register(ToolDeclarationAccuracyGrader())
+    registry.register(TaskDeclarationAccuracyGrader())
+    registry.register(RubricIntrospectableGrader())
+    registry.register(RewardAttributionGrader())
+
     registry.register(NetworkPolicyGrader())
+    registry.register(HostContainmentGrader())
+    registry.register(ResourceBoundsGrader())
+    registry.register(EpisodeIsolationGrader())
+    registry.register(OracleContainmentGrader())
     return registry
 
 
@@ -107,15 +159,118 @@ def _outcome(check_id, status, reason, *, started=None, measured=None):
     )
 
 
+class _OracleCollectionInterrupted(KeyboardInterrupt):
+    """Cancellation carrying the bounded HTTP evidence already received."""
+
+    def __init__(self, probes):
+        super().__init__("oracle collection interrupted")
+        self.probes = tuple(probes)
+
+
+def _get(base_url, location, deadline, max_bytes=MAX_ORACLE_PROBE_BYTES):
+    """
+    GET a package-relative path from the control endpoint, unproxied and bounded.
+
+    Same-origin redirects are followed up to `MAX_REDIRECTS` times. Every request
+    and body read ends at `deadline`, a `time.monotonic()` value. The probe keeps
+    bounded bodies from every redirect hop and names any incomplete response.
+    """
+    path = "/" + PurePosixPath(location).as_posix()
+    url = httpx.URL(base_url.rstrip("/") + quote(path))
+    origin = (url.scheme, url.host, url.port)
+    status, body = None, bytearray()
+    redirects = []
+    retained = 0
+
+    def probe(failure=None):
+        return HttpProbe(path, status, bytes(body), failure, tuple(redirects))
+
+    try:
+        # Without keep-alive, every request opens a socket the deadline can abort.
+        with httpx.Client(
+            trust_env=False,
+            follow_redirects=False,
+            limits=httpx.Limits(max_keepalive_connections=0),
+        ) as client:
+            for hop in range(MAX_REDIRECTS + 1):
+                timeout = deadline - time.monotonic()
+                with (
+                    http_deadline(timeout) as extensions,
+                    client.stream(
+                        "GET",
+                        url,
+                        timeout=timeout,
+                        headers={"Accept-Encoding": "identity"},
+                        extensions=extensions,
+                    ) as response,
+                ):
+                    status = response.status_code
+                    # iter_bytes() would decompress before the byte bound applies.
+                    encoding = response.headers.get("Content-Encoding", "identity")
+                    if encoding.strip().lower() != "identity":
+                        return probe("compressed response")
+                    for chunk in response.iter_raw():
+                        if retained + len(body) + len(chunk) > max_bytes:
+                            body.extend(chunk[: max_bytes - retained - len(body)])
+                            return probe("body exceeds the byte bound")
+                        body.extend(chunk)
+                if not response.has_redirect_location:
+                    return probe()
+                if hop == MAX_REDIRECTS:
+                    return probe("too many redirects")
+                if retained + len(body) >= max_bytes:
+                    return probe("body exceeds the byte bound")
+                url = url.join(response.headers["Location"])
+                if (url.scheme, url.host, url.port) != origin:
+                    return probe("cross-origin redirect")
+                redirects.append(bytes(body))
+                retained += len(body)
+                body.clear()
+                status = None
+    except KeyboardInterrupt:
+        raise _OracleCollectionInterrupted((probe("KeyboardInterrupt"),)) from None
+    except (httpx.HTTPError, httpx.InvalidURL, TimeoutError) as exc:
+        # Exception text may include subject-controlled URLs.
+        return probe(type(exc).__name__)
+    return probe("too many redirects")
+
+
+def _oracle_probes(base_url, root, location):
+    """Share one deadline and body budget across the bounded file inventory."""
+    try:
+        inventory = oracle_inventory(root, location)
+    except (OSError, UnicodeError):
+        return ()
+    deadline = time.monotonic() + ORACLE_PROBE_TIMEOUT_S
+    remaining = MAX_ORACLE_PROBE_BYTES
+    probes = []
+    for path, _ in inventory.files:
+        if remaining <= 0 or time.monotonic() >= deadline:
+            probe = HttpProbe("/" + path, None, failure="oracle probe budget exhausted")
+        else:
+            try:
+                probe = _get(base_url, path, deadline, remaining)
+            except KeyboardInterrupt as exc:
+                interrupted = (
+                    exc.probes
+                    if isinstance(exc, _OracleCollectionInterrupted)
+                    else (HttpProbe("/" + path, None, failure="KeyboardInterrupt"),)
+                )
+                raise _OracleCollectionInterrupted((*probes, *interrupted)) from None
+        probes.append(probe)
+        remaining -= len(probe.body) + sum(map(len, probe.redirect_bodies))
+    return tuple(probes)
+
+
 def _applicable(check_id, manifest):
     if manifest is None:
         return True
     if check_id in {"runtime.rubric_introspectable", "runtime.reward_attribution"}:
         return manifest.capabilities.rubric_tree
     if check_id == "runtime.task_declaration_accuracy":
-        return manifest.capabilities.task_api or bool(
-            manifest.capabilities.declared_task_count
-        )
+        return TaskDeclarationAccuracyGrader().applies_to(manifest)
+    if check_id == "runtime.tool_declaration_accuracy":
+        return ToolDeclarationAccuracyGrader().applies_to(manifest)
     return True
 
 
@@ -124,6 +279,8 @@ def _runtime(subject, graders, *, skip_build, provider):
     manifest = subject.manifest
     plan = None
     evidence = None
+    isolation = None
+    oracle_http = ()
     running = None
     inspection = {}
     cleanup = {"required": False, "completed": True}
@@ -166,12 +323,12 @@ def _runtime(subject, graders, *, skip_build, provider):
             resources=manifest.resources,
             network=manifest.network,
             run_id="validation-" + uuid.uuid4().hex,
+            env_vars={"OPENENV_VALIDATION_TOKEN": secrets.token_urlsafe(32)},
         )
         attempted = True
         image_ref = provider.build(subject.root, manifest.execution)
-        running = provider.start(
-            LaunchSpec.model_validate({**spec.model_dump(), "image_ref": image_ref})
-        )
+        spec = LaunchSpec.model_validate({**spec.model_dump(), "image_ref": image_ref})
+        running = provider.start(spec)
         cleanup = {"required": True, "completed": False}
         inspection = running.inspect()
         result = _outcome(
@@ -181,11 +338,19 @@ def _runtime(subject, graders, *, skip_build, provider):
             started=started,
             measured={"provider": provider.name, "image_ref": image_ref},
         )
+        replay_deadline = time.monotonic() + REPLAY_BUDGET_SECONDS
         evidence = collect_runtime_evidence(
             running.base_url,
             plan,
-            episode_timeout_s=manifest.resources.episode_timeout_s,
+            episode_timeout_s=min(
+                manifest.resources.episode_timeout_s, REPLAY_BUDGET_SECONDS
+            ),
+            validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
+            collect_tools=_applicable("runtime.tool_declaration_accuracy", manifest),
+            collect_tasks=_applicable("runtime.task_declaration_accuracy", manifest),
         )
+        # Independent isolation and oracle probes do not spend the replay budget.
+        replay_remaining_s = max(0.0, replay_deadline - time.monotonic())
         # Protocol collection must finish before its dependent contract checks run.
         if evidence.failure_reason:
             result = _outcome(
@@ -194,6 +359,59 @@ def _runtime(subject, graders, *, skip_build, provider):
                 evidence.failure_reason,
                 started=started,
             )
+        if result.status is CheckStatus.PASS:
+            not_started = RuntimeEvidence(
+                failure_phase="not_started",
+                failure_reason="validation interrupted before the fresh episode",
+            )
+            try:
+                # Later JSON limits leave primary contracts and other probes measurable.
+                try:
+                    sequential = collect_runtime_evidence(
+                        running.base_url,
+                        plan,
+                        episode_timeout_s=manifest.resources.episode_timeout_s,
+                        episodes=2,
+                        validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
+                        request_telemetry=False,
+                    )
+                except RuntimeCollectionUnsupported as exc:
+                    sequential = exc.evidence
+                isolation = IsolationEvidence(sequential=sequential, fresh=not_started)
+                try:
+                    fresh = collect_runtime_evidence(
+                        running.base_url,
+                        plan,
+                        episode_timeout_s=manifest.resources.episode_timeout_s,
+                        validation_token=spec.env_vars["OPENENV_VALIDATION_TOKEN"],
+                        request_telemetry=False,
+                    )
+                except RuntimeCollectionUnsupported as exc:
+                    fresh = exc.evidence
+                isolation = replace(isolation, fresh=fresh)
+            except RuntimeCollectionInterrupted as exc:
+                isolation = (
+                    IsolationEvidence(sequential=exc.evidence, fresh=not_started)
+                    if isolation is None
+                    else replace(isolation, fresh=exc.evidence)
+                )
+                raise KeyboardInterrupt from None
+            if manifest.capabilities.oracle is not None:
+                oracle_http = _oracle_probes(
+                    running.base_url,
+                    subject.root,
+                    manifest.capabilities.oracle.location,
+                )
+        evidence = collect_replays(
+            provider,
+            running,
+            spec,
+            plan,
+            evidence,
+            capabilities=manifest.capabilities,
+            deadline=time.monotonic() + replay_remaining_s,
+        )
+
         network_json = None
         if (
             result.status is CheckStatus.PASS
@@ -207,18 +425,58 @@ def _runtime(subject, graders, *, skip_build, provider):
                 inspection = {**inspection, "network": network}
             except ProviderError as exc:
                 inspection = {**inspection, "network_error": str(exc)[:1024]}
+        containment_json = None
+        if (
+            result.status is CheckStatus.PASS
+            and ProviderCapability.INSPECTED_ISOLATION in provider.capabilities
+        ):
+            try:
+                containment = running.measure_containment()
+                containment_json = json.dumps(containment, allow_nan=False)
+                inspection = {**inspection, "containment": containment}
+            except ProviderError as exc:
+                inspection = {**inspection, "containment_error": str(exc)[:1024]}
+        resource_json = None
+        if (
+            result.status is CheckStatus.PASS
+            and ProviderCapability.RESOURCE_ENFORCEMENT in provider.capabilities
+        ):
+            try:
+                resources = running.measure_resources()
+                resource_json = json.dumps(resources, allow_nan=False)
+                inspection = {**inspection, "resources": resources}
+            except CleanupError:
+                raise
+            except ProviderError as exc:
+                inspection = {**inspection, "resources_error": str(exc)[:1024]}
         subject = replace(
             subject,
             image_ref=image_ref,
             running=running,
             runtime_evidence=evidence,
             network_evidence_json=network_json,
+            containment_evidence_json=containment_json,
+            resource_evidence_json=resource_json,
+            isolation_evidence=isolation,
+            oracle_http=oracle_http,
         )
-        checks = execute_graders(
-            graders,
-            subject,
-            provider_capabilities=provider.capabilities,
-            prior=[result],
+        checks.extend(
+            execute_graders(
+                graders,
+                subject,
+                provider_capabilities=provider.capabilities,
+                prior=[result],
+            )
+        )
+        # Cleanup failure cannot invalidate evidence already collected from a
+        # healthy subject. Preserve its findings before failing the run closed.
+        if any(replay.cleanup_complete is False for replay in evidence.replays):
+            result.status = CheckStatus.ERROR
+            result.evidence.append("replay subject teardown failed")
+    except RuntimeCollectionUnsupported as exc:
+        evidence = exc.evidence
+        result = _outcome(
+            "runtime.startup", CheckStatus.SKIP, str(exc), started=started
         )
     except UnsupportedCapability as exc:
         result = _outcome(
@@ -241,6 +499,8 @@ def _runtime(subject, graders, *, skip_build, provider):
     except KeyboardInterrupt as exc:
         if isinstance(exc, RuntimeCollectionInterrupted):
             evidence = exc.evidence
+        elif isinstance(exc, _OracleCollectionInterrupted):
+            oracle_http = exc.probes
         result = _outcome(
             "runtime.startup",
             CheckStatus.ERROR,
@@ -255,25 +515,66 @@ def _runtime(subject, graders, *, skip_build, provider):
             started=started,
         )
     finally:
-        if running is not None:
-            try:
-                running.stop()
-                cleanup["completed"] = True
-            except (Exception, KeyboardInterrupt) as exc:
-                cleanup["completed"] = False
-                cleanup["reason"] = f"subject teardown failed ({type(exc).__name__})"
-                if result is None:
+        try:
+            # Discovery precedes the episode; its completed evidence remains usable
+            # when collection is unsupported or interrupted before normal grading.
+            graded = {check.check_id for check in checks}
+            independent = [
+                grader
+                for grader in graders
+                if not grader.depends_on and grader.check_id not in graded
+            ]
+            if independent:
+                try:
+                    checks.extend(
+                        execute_graders(
+                            independent, replace(subject, runtime_evidence=evidence)
+                        )
+                    )
+                except KeyboardInterrupt:
                     result = _outcome(
                         "runtime.startup",
                         CheckStatus.ERROR,
-                        "subject teardown failed",
+                        "validation interrupted",
                         started=started,
                     )
-                else:
-                    result.status = CheckStatus.ERROR
-                    result.evidence.append("subject teardown failed")
-                    result.duration_s = time.monotonic() - started
-    return [result, *checks], attempted, plan, evidence, inspection, cleanup
+        finally:
+            if running is not None:
+                try:
+                    running.stop()
+                    cleanup["completed"] = not (
+                        evidence
+                        and any(
+                            replay.cleanup_complete is False
+                            for replay in evidence.replays
+                        )
+                    )
+                except (Exception, KeyboardInterrupt) as exc:
+                    cleanup["completed"] = False
+                    cleanup["reason"] = (
+                        f"subject teardown failed ({type(exc).__name__})"
+                    )
+                    if result is None:
+                        result = _outcome(
+                            "runtime.startup",
+                            CheckStatus.ERROR,
+                            "subject teardown failed",
+                            started=started,
+                        )
+                    else:
+                        result.status = CheckStatus.ERROR
+                        result.evidence.append("subject teardown failed")
+                        result.duration_s = time.monotonic() - started
+    return (
+        [result, *checks],
+        attempted,
+        plan,
+        evidence,
+        inspection,
+        cleanup,
+        isolation,
+        oracle_http,
+    )
 
 
 def run_validation(
@@ -284,6 +585,7 @@ def run_validation(
     policy: SeverityPolicy | None = None,
     provider=None,
     artifacts_dir: Path | None = None,
+    report_target: str | None = None,
 ) -> ValidationReport | ValidationReportV2:
     """
     Validate a package end to end and return the report.
@@ -308,6 +610,8 @@ def run_validation(
             Validation-only provider; defaults to Docker-local for runtime runs.
         artifacts_dir (`Path`, *optional*):
             Write a redacted reproduction bundle to this directory.
+        report_target (`str`, *optional*):
+            Durable source identity for the report; defaults to the package path.
 
     Returns:
         [`~openenv.validation.report.ValidationReport`]: the completed report.
@@ -357,7 +661,8 @@ def run_validation(
             )
 
     levels = [Level.STATIC]
-    plan = evidence = None
+    plan = evidence = isolation = None
+    oracle_http = ()
     inspection = {}
     cleanup = {"required": False, "completed": True}
     if manifest is not None:
@@ -382,7 +687,33 @@ def run_validation(
             )
         )
         if wants_runtime:
-            runtime_results, attempted, plan, evidence, inspection, cleanup = _runtime(
+            if (
+                isinstance(manifest, NormalizedManifestV2)
+                and manifest.execution.kind == "harbor_task"
+            ):
+                from .harbor import validate_harbor
+
+                return validate_harbor(
+                    subject,
+                    max_level=max_level,
+                    policy=policy,
+                    results=results,
+                    digest_before=digest_before,
+                    artifacts_dir=artifacts_dir,
+                    report_target=report_target,
+                    skip_build=skip_build,
+                    provider=provider,
+                )
+            (
+                runtime_results,
+                attempted,
+                plan,
+                evidence,
+                inspection,
+                cleanup,
+                isolation,
+                oracle_http,
+            ) = _runtime(
                 subject,
                 [
                     grader
@@ -396,29 +727,29 @@ def run_validation(
             if attempted:
                 levels.append(Level.RUNTIME)
 
+    # Policy IDs are an inventory, not evidence that a grader exists. Name every
+    # requested check that did not run, so a PASS never hides missing coverage.
+    present = {result.check_id for result in results}
+    for entry in policy.entries_for_lane(Lane.LOCAL).values():
+        grader = graders.get(entry.check_id)
+        applicable = (
+            manifest is None
+            or entry.check_id in selected
+            or (grader is None and _applicable(entry.check_id, manifest))
+        )
+        if entry.level <= max_level and entry.check_id not in present and applicable:
+            reason = "grader not implemented in this build"
+            if manifest is None:
+                reason = "unmet dependency: valid manifest"
+            elif entry.level is Level.SEMANTIC:
+                reason = "oracle execution is not implemented for served packages"
+            elif grader is not None and grader.depends_on:
+                reason = "unmet dependency: " + ", ".join(grader.depends_on)
+            elif grader is not None:
+                reason = "grader did not complete"
+            results.append(_outcome(entry.check_id, CheckStatus.SKIP, reason))
+
     if wants_runtime:
-        # Policy IDs are an inventory, not evidence that a grader exists. Keep the
-        # incomplete surface explicit throughout the staged implementation.
-        present = {result.check_id for result in results}
-        for entry in policy.entries_for_lane(Lane.LOCAL).values():
-            grader = graders.get(entry.check_id)
-            applicable = (
-                manifest is None
-                or entry.check_id in selected
-                or (grader is None and _applicable(entry.check_id, manifest))
-            )
-            if (
-                entry.level in {Level.RUNTIME, Level.SEMANTIC}
-                and entry.level <= max_level
-                and entry.check_id not in present
-                and applicable
-            ):
-                reason = "grader not implemented in this build"
-                if manifest is None:
-                    reason = "unmet dependency: valid manifest"
-                elif grader is not None and grader.depends_on:
-                    reason = "unmet dependency: " + ", ".join(grader.depends_on)
-                results.append(_outcome(entry.check_id, CheckStatus.SKIP, reason))
         source_problem = None
         if not digest_before:
             source_problem = "package source could not be verified before validation"
@@ -435,6 +766,12 @@ def run_validation(
                 )
         if source_problem is not None:
             invalidated = {"runtime.startup"}
+            # Independent discovery also depends on the verified package source.
+            invalidated.update(
+                grader.check_id
+                for grader in selected.values()
+                if grader.level is Level.RUNTIME
+            )
             for grader in order_graders(list(selected.values())):
                 if invalidated.intersection(grader.depends_on):
                     invalidated.add(grader.check_id)
@@ -466,7 +803,7 @@ def run_validation(
         report_schema_version="2"
         if report_type is ValidationReportV2
         else REPORT_SCHEMA_VERSION,
-        target=str(target),
+        target=str(target) if report_target is None else report_target,
         source_digest=digest_before,
         signature=signature,
         manifest=manifest,
@@ -484,5 +821,7 @@ def run_validation(
             evidence=evidence,
             provider=inspection,
             cleanup=cleanup,
+            isolation=isolation,
+            oracle_http=oracle_http,
         )
     return report

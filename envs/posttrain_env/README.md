@@ -125,9 +125,13 @@ and do not return the final step observation with reward and `service_spend`.
 
 If the score job itself fails, times out or is cancelled, the episode ends
 unscored: `reward` is `None` and `episode_end.reason` is `score_failed`, since
-the fault is the grader's. Trainers should drop such a rollout, not count it as
-zero, subject to acceptance of RFC 013 (#1256) and its final unscored-rollout
-semantics. Ending the episode cancels every live job. `reset` cancels the previous
+the fault is the grader's. Exclude such a rollout from reward-based training
+and reward estimates, rather than treating it as zero, while retaining its
+episode and spend for accounting. Under the current RFC 013 (#1256) proposal,
+pass its `None` reward and spend to the sampler's `update` before excluding it
+from reward-based training. RFC 013 remains a proposal until accepted; this
+integration is subject to its acceptance and final unscored-rollout semantics.
+Ending the episode cancels every live job. `reset` cancels the previous
 episode's jobs first and raises if HF Jobs does not confirm a cancellation,
 since that job may still be running and billing.
 
