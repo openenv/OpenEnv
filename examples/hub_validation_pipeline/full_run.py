@@ -45,7 +45,9 @@ def _budget(value):
         if number.is_finite() and number > 0:
             return Fraction(number)
     except InvalidOperation:
-        pass
+        raise ValueError(
+            "budget_usd must be a finite positive decimal string"
+        ) from None
     raise ValueError("budget_usd must be a finite positive decimal string")
 
 

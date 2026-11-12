@@ -341,6 +341,7 @@ def test_bootstrap_installs_and_checks_declared_sdk_before_worker(
                 env={"PYTHONPATH": str(metadata)},
                 **kwargs,
             )
+        return subprocess.CompletedProcess(command, 0)
 
     run = Mock(side_effect=run_command)
     monkeypatch.setattr(subprocess, "run", run)
@@ -526,7 +527,7 @@ def test_plan_tampering_stops_before_hub(inputs, tmp_path, section):
     api.dataset_info.assert_not_called()
 
 
-@pytest.mark.parametrize("fail", [False, True])
+@pytest.mark.parametrize("fail", [None, RuntimeError, KeyboardInterrupt, SystemExit])
 def test_worker_persists_report_and_partial_evidence_on_failure(
     inputs, tmp_path, monkeypatch, fail
 ):
@@ -539,7 +540,7 @@ def test_worker_persists_report_and_partial_evidence_on_failure(
         output.mkdir()
         (output / "evidence.json").write_text('{"attempted":1}\n')
         if fail:
-            raise RuntimeError(SECRETS["HF_TOKEN"])
+            raise fail(SECRETS["HF_TOKEN"])
         return {"accepted": False, "verdict": "skip"}
 
     if fail:
@@ -559,7 +560,7 @@ def test_worker_persists_report_and_partial_evidence_on_failure(
     assert report["status"] == ("error" if fail else "completed")
     assert report["accepted"] is False
     if fail:
-        assert report["error_type"] == "RuntimeError"
+        assert report["error_type"] == fail.__name__
     assert all(name.startswith(prefix) for name in operations)
     assert all(SECRETS["HF_TOKEN"].encode() not in data for data in operations.values())
 

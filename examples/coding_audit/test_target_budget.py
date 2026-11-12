@@ -1,4 +1,7 @@
-"""Budget stops preserve valid prefixes; provider violations remain errors."""
+"""Budget stops preserve valid prefixes; provider violations remain errors.
+
+The shared harness is imported to register its pytest fixture in this module.
+"""
 
 import hashlib
 import json

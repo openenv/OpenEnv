@@ -113,7 +113,7 @@ def run(
         for row in rows:
             if not isinstance(row["task_id"], str) or not row["task_id"].strip():
                 raise ValueError("Task IDs must be nonempty strings")
-            path, (plan, config, _, _) = _plan(root, row)
+            _, (plan, config, _, _) = _plan(root, row)
             if row["task_id"] in task_ids or plan["run_id"] in run_ids:
                 raise ValueError("Task IDs, run IDs and plan paths must be distinct")
             task_ids.add(row["task_id"])

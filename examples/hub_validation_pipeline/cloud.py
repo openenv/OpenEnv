@@ -1042,6 +1042,8 @@ def worker(root, *, bundle_sha=None, api=None, runner=None):
         )
         report["accepted"] = result.get("accepted") is True
     except BaseException as error:
+        # Interrupts must persist the same sanitized failure evidence before the
+        # worker exits unsuccessfully; they must never look like a completed run.
         failure = error
         report.update(status="error", accepted=False, error_type=type(error).__name__)
         # SDK exceptions can contain credentials; persist type, never raw repr.

@@ -1,4 +1,7 @@
-"""Target tool repair at the real solve, provider-message, and grading seams."""
+"""Target tool repair at the real solve, provider-message, and grading seams.
+
+The shared harness is imported to register its pytest fixture in this module.
+"""
 
 import json
 import time
