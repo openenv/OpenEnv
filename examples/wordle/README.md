@@ -22,4 +22,4 @@ uv run evaluate.py --model <user>/Qwen3-1.7B-Wordle-SFT-GRPO --thinking --max-ne
     --secrets "$(cat secrets30.txt)" --out grpo.jsonl
 ```
 
-GRPO plays 64 games at once, one environment session each. Duplicate the `openenv/wordle` Space and set `MAX_CONCURRENT_ENVS=64` on your copy before training.
+GRPO plays 64 games at once, one environment session each, plus the sessions still being closed between games. Duplicate the `openenv/wordle` Space and set `MAX_CONCURRENT_ENVS=96` on your copy before training.

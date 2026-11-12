@@ -182,7 +182,10 @@ The core promise is #778's verifier-sanity test, made precise:
 - **Floor is measured, not declared.** The floor is the measured reward of the reset/do-nothing
   state — the declared range minimum may sit below it (an agent that deletes the repo earns a
   legal sub-floor reward, not a validation anomaly). The contract is a **gap check**:
-  `reward(oracle) ≥ max − tolerance`, `reward(reset) = floor`, `max − floor ≥ margin`.
+  `reward(oracle) >= max - tolerance * width`, `reward(reset) = floor`,
+  `max - floor >= margin * width`, and
+  `reward(oracle) - floor >= margin * width`, where `width = max - min`.
+  Both floor gaps must hold for every oracle run.
 - **Oracle containment is required.** The oracle (state or script) must be withheld from or
   isolated against the agent at serve time, and validation checks that it is.
 - **Reward range is declared** in the manifest, defaulting to `[0, 1]`; graders normalize against
@@ -193,16 +196,26 @@ The core promise is #778's verifier-sanity test, made precise:
 
 **LLM-as-judge is an allowed reward.** Judged environments declare `llm_judged` and pin the judge
 configuration (model, version, params) in the manifest; the oracle check becomes
-`≥ max − declared tolerance` and determinism becomes variance-within-declared-bound rather than
-bit-exact. RFC 004 rubrics are **leveraged, not required**: the contract stays spec-neutral
+`>= max - declared tolerance * width`. Determinism becomes variance within the
+declared bound rather than bit-exact. RFC 004 rubrics are optional. The contract stays
+spec-neutral
 (graders read the manifest), but for the served OpenEnv format the rubric tree is the native
 satisfaction path — `LLMJudge` is the in-repo `llm_judged` implementation, and the
-introspectability and reward-attribution graders read `named_rubrics()` / `state_dict()` /
-per-child scores. Judge pinning stays a *manifest* declaration because the rubric object does not
-serialize model/version/params today.
+introspectability and reward-attribution graders read `named_rubrics()`, explicit
+`validation_config()` and fresh per-child scores. `state_dict()` is never serialized
+as validation configuration. Judge pinning stays a *manifest* declaration because
+the rubric object does not serialize model/version/params today.
 
 Tolerances, margins, and variance bounds are author-declared in the manifest, **bounded by the
 versioned severity policy**, and carried verbatim in reports so hubs can apply stricter ceilings.
+Oracle tolerance and floor margin are fractions of the declared reward range.
+Grader comparisons multiply each fraction by `width = max - min` using exact
+rational arithmetic. The declared range must be strictly increasing.
+
+| Semantic declaration | Policy bound | Reward-unit threshold |
+|---|---|---|
+| `oracle_tolerance` | At most 0.1 of the range | `oracle_tolerance * width` below max |
+| `floor_margin` | At least 0.1 of the range | `floor_margin * width` between rewards |
 
 ### Report and severity policy
 
@@ -605,26 +618,94 @@ limitations. Alternate DNS, unmatched addresses and unsupported address families
 must fail closed. This requires a separate reviewed enforcement implementation;
 parsing these declarations does not claim they are enforced.
 
-### Later runtime evidence contracts
+### Runtime replay evidence (PR5)
 
 Seed acceptance and empirical determinism are separate findings. A reset that
 silently drops its seed does not establish seed control, while a deterministic
-environment may legitimately behave identically under different seeds. Replay
-comparison includes observation, reward, done, tool output and state; only
-policy-owned volatile metadata can be excluded. Authors cannot exclude fields.
+environment may legitimately behave identically under different seeds. For served
+environments, replay comparison includes observation, reward, done, tool output and
+state. Only policy-owned volatile metadata can be excluded. Authors cannot exclude
+fields. The one-shot Harbor comparison is specified in the Harbor task binding below.
 For `llm_judged`, the bounded variance path uses 20 completed identical-input fresh
 replays and population reward variance in reward-squared units, compared to the
 declared bound. The total run budget bounds all samples; fewer than 20 is incomplete.
+An unscored non-terminal step contributes no reward variance. Its null position must
+agree across replays; a null/numeric mismatch is a divergence. Variance is measured
+separately at each numeric step position, and an entirely unscored episode is
+incomplete rather than passing. Terminal null rewards remain invalid.
 This procedure is a runtime check, not a statistical confidence claim.
 
+The initial implementation compares the baseline against a new session and an
+independently inspected new container, and separately requests a different seed.
+The judged sample count includes the completed baseline. Container identity must
+change while image identity remains fixed. There are no volatile-field exclusions
+in this version. Collection shares a 300-second deadline and retains at most
+32 MiB across baseline and replay evidence. Missing samples, missing provider
+capabilities and failed cleanup cannot produce a passing determinism finding.
+`replays.json` preserves completed traces, telemetry, identity and cleanup outcomes.
+
 Session telemetry for seed handling, named rubric/configuration, child attribution
-and subject-emitted record references is orchestrator-only. A future protocol
-slice must authorize access with an opt-in, random per-run/per-session capability
+and subject-emitted record references is orchestrator-only. The protocol
+authorizes access with an opt-in, random per-run/per-session capability
 attached to the **same** replay connection, reject unauthorized/cross-session
 reads and never expose telemetry as agent MCP tools. A second WebSocket creates
 another environment and cannot supply evidence for the measured instance.
 A validator transcript alone cannot pass subject-emitted trajectory recording.
-These authorization requirements do not add new public wire messages in this slice.
+The initial contracts slice added no public wire messages. PR4 implements the
+following opt-in protocol.
+
+#### Session telemetry protocol (PR4)
+
+The server opts in only when `OPENENV_VALIDATION_TOKEN` is provisioned explicitly
+by the validation supervisor. On its existing simulation `/ws` connection, the
+collector sends `validation_open` with `data: {schema_version: 1, token: ...}`.
+The reply returns a random capability bound to that connection. Subsequent
+`validation_read` messages carry that capability and return a `validation`
+snapshot. Disabled, unauthorized and cross-connection requests fail without
+echoing credentials. Closing the connection destroys the capability. MCP and
+production endpoints never expose these operations. Authentication exchanges
+are excluded from persisted evidence.
+
+Snapshots identify requested and actually forwarded seed arguments; successful
+reset alone is not acceptance. They include a named rubric tree rooted at `root`,
+explicit safe configuration, and per-step attribution with operation-local
+evaluation flags. Unevaluated gated children never reuse an earlier score.
+Stock container aggregation is named explicitly; custom rubrics may supply
+`validation_config()` to expose public JSON configuration. Arbitrary attributes
+and `state_dict()` are never serialized as configuration.
+Attribution compares each numeric step reward with its freshly evaluated root
+score. Null non-terminal rewards have no emitted score to compare; their records
+must still have the correct identity, unchanged configuration, and valid evaluated
+aggregation. An entirely unscored episode is incomplete rather than passing
+attribution. Terminal null rewards remain invalid.
+
+The subject server also emits a bounded record of the reset/step/state request
+and response envelopes it executed. The validator captures the wire separately
+and later compares the two. The record is bound to the authenticated session,
+limited to 100 steps/202 operations and 8 MiB, and marks truncation explicitly.
+Missing configuration, attribution or records cannot be inferred from other
+successful operations. This transport introduces no new passing grader by itself.
+
+#### Declaration and rubric evidence (PR6)
+
+The validator discovers MCP tools over the authenticated replay connection before
+reset and compares their names with the declaration, including an explicitly empty
+set. Task discovery queries split names and authoritative per-split counts, then
+reads at most two individual tasks per split. Preview length is never treated as
+the dataset size. Requests share the collection deadline and bounded response
+budgets; unavailable or malformed discovery cannot become an empty passing set.
+The task namespace comes from the server's single `/list_environments` entry,
+independently of the package name. Omitted tool/count declarations stay unknown;
+explicit `[]`/`{}` declarations assert zero tools/splits. A declared task API
+without declared counts leaves count accuracy incomplete.
+
+Rubric checks require the declared tree and explicit public configuration, then
+compare every observed step reward with its fresh root score and named child
+attribution. Built-in weighted, sequential and gated aggregation is checked using
+its published configuration. Unknown custom aggregation remains incomplete.
+Optional task and rubric checks are selected only when declared. `discovery.json`
+retains raw discovery results, availability and sanitized errors alongside session
+telemetry; ordinary discovery responses never enter the episode trajectory.
 
 Applicability predicates must distinguish empty declared sets from absent
 capabilities. Missing subject features, missing provider support and checks whose
@@ -649,6 +730,105 @@ transcripts and cleanup findings. CI separately asserts inventory and expected
 findings: a WARN exit 0 does not prove completeness. Product publish gating and
 operator certification remain outside this feature; the test workflow only proves
 the implementation's own acceptance cases.
+
+### Harbor task binding
+
+`task.toml` packages opt into the `harbor-semantic-v1` profile through an
+operator-supplied `validation/openenv.json` contract. The contract declares the
+reward key, range, oracle tolerance, floor margin, finite resource budgets and,
+optionally, a directory of canaries. Harbor metadata and observed rewards never
+supply these declarations. The normalized schema-2 execution kind is `harbor_task`,
+with a `process` agent boundary. Parsing uses Harbor's data-only Task loader and
+never creates a Trial or executes package code. Numeric strings in numeric fields,
+oversized integers and excessive JSON nesting fail `static.manifest`. Reward and
+resource numbers must retain their exact value when stored as floats.
+`resources.gpu_types` remains a list of strings.
+
+The profile requires Python 3.12 or newer and `harbor==0.25.0` alongside
+`openenv[harbor]`. A missing or mismatched Harbor installation is a validator
+environment error. It exits 3 and names `harbor==0.25.0`.
+
+The profile supports single-step Linux tasks with one main Docker service, a shared
+verifier and public networking. The image comes from one Dockerfile or from a
+digest-pinned `environment.docker_image` (`name@sha256:<digest>`), which the report
+records as `source_image`. Unsupported shapes include multi-step or non-Linux tasks,
+an `environment.docker_image` without a digest, tasks with neither a Dockerfile nor
+a pinned image, task-authored Compose files and separate verifier environments.
+GPU/TPU or external MCP requirements, credentials, non-public or differing phase
+networks, task environment variables, healthchecks, skills, verifier collection and
+artifact extensions are also unsupported. A supplied provider, including `--space`,
+is unsupported. Each case gives `runtime.startup` SKIP with a named reason and runs
+no trials. With valid static declarations and an oracle, the verdict is WARN and
+the exit code is 0. A missing `solution/solve.sh` still FAILs `semantic.oracle_max`
+at the semantic level, including with `--skip-build` or `--space`.
+
+Execution runs fresh Harbor Trials in a fixed order: a do-nothing (NOP) trial, the
+oracle (`solution/solve.sh`), an oracle replay, and one trial per declared canary.
+The NOP trial builds the image, or pulls the task's digest-pinned one. The validator
+inspects the actual agent container at `AGENT_START`, retains its immutable image
+under a run-owned tag, and pins every later trial to that image and its effective
+container configuration.
+
+The initial image build and environment start share a separate 600-second validator
+budget. Exceeding it gives `runtime.startup` ERROR. Later environment starts use the
+episode budget. There is no shared outer trial deadline. Harbor bounds setup, agent
+and verifier separately with the declared `resources.episode_timeout_s`. A timeout
+in one of these phases is a package FAIL that names the phase.
+
+The validator keeps `openenv-validation:<run id>` only when the run has no FAIL or
+ERROR and was not interrupted. It records the tag in `runtime.startup.measured`
+as `retained_image_tag`. Otherwise it removes the tag. The run-owned Compose build
+tag is removed on every run. Tag removal verifies image identity and uses
+`--no-prune`. A removal failure marks cleanup incomplete and gives a startup ERROR.
+During an abort, cleanup preserves the original exception and records the removal
+failure.
+
+Each trial runs on a private copy of the task whose digest must equal the validated
+source digest before any overlay. A canary trial replaces `solution/solve.sh` in its
+copy with the canary script and records the script's digest. Trials run with
+`delete=False` and `keep_containers=True`, so the validator removes the exact
+run-owned Compose projects, including anonymous volumes registered from the
+containers' actual mounts, and verifies their absence. The oracle's exit code is
+read at `AGENT_END`, before sandbox log synchronization can overwrite it, and a
+later change fails the run.
+
+For `harbor-semantic-v1`, one trial is a one-shot episode with no per-step
+observations. A fresh oracle replay that reproduces every reward and the oracle
+exit code establishes `runtime.episode_determinism`. This rule is specific to the
+Harbor binding. Served environments retain the general replay comparison of
+observation, reward, done, tool output and state.
+
+Results map to RFC check ids:
+
+| Check | Evidence |
+|---|---|
+| `runtime.startup` | Every trial ran from the pinned image in a fresh container, and cleanup was verified. |
+| `runtime.reward_well_formed` | Every raw reward map matches Harbor's result and is finite, nonboolean and in range. |
+| `runtime.episode_determinism` | The oracle replay reproduces every reward and the exit code. |
+| `semantic.oracle_max` | Both oracle runs exit 0 and meet the oracle bound in the semantic contract above. A task without `solution/solve.sh` fails. |
+| `semantic.floor_gap` | Both floor-gap conditions in the semantic contract above hold for every oracle run. |
+| `semantic.canary_floor` | Every declared canary earns no more than the measured floor. Selected only when canaries are declared. |
+
+The semantic ids depend on `runtime.episode_determinism`, so a diverging replay
+SKIPs them with the dependency named. Oracle tolerance and floor margin are fractions
+of the declared range, with `width = max - min`. Reward comparisons use exact
+rationals parsed from the raw verifier output. Every other local check is a named
+SKIP for this binding. It produces no WebSocket exchange, containment or resource
+measurement, second verification of one final state, or leakage scan. A passing run is therefore
+WARN, and full RFC qualification still rejects these SKIPs.
+
+Canaries are operator-declared, known-wrong `solve.sh` replacements, at most eight
+per task. They give local validation the package-shipped form of test #28.
+Generating wrong answers, for example by mutating the oracle, belongs to the
+adversarial panel of test #26, which remains unspecified.
+
+`harbor-evidence.json` records the contract digest, the Harbor version, and each
+trial's role, image identity, private-copy digests, overlays, raw reward file hashes
+and cleanup outcome. It and the raw reward and exit files are checksummed bundle
+artifacts beside the report.
+
+Served `openenv_ws` packages have no oracle execution contract yet, so their
+semantic checks are named SKIPs.
 
 ## Explicitly out of scope
 
