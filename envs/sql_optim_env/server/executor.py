@@ -28,16 +28,9 @@ import duckdb
 _instance: Optional["QueryExecutor"] = None
 _lock = threading.Lock()
 
-# Result sets larger than this are never pulled into Python: the row count is
-# computed inside DuckDB instead. `SELECT * FROM events` is a million rows, and
-# materializing that (three times, for the timing median) both dominated the
-# measurement and held the whole result in memory. Correctness does not depend
-# on this cap: `compare()` checks every result size inside DuckDB the same way.
-_MAX_MATERIALIZED_ROWS = 50_000
 # An `EXPLAIN ANALYZE` plan is a couple of rows; this only exists so the plan
 # fetch can never become an unbounded materialization of agent-chosen data.
 _MAX_PLAN_ROWS = 2_000
-_FETCH_BATCH = 10_000
 _TIMING_RUNS = 3
 # `EXPLAIN ANALYZE` prints seconds with four decimals, so 0.1 ms is the smallest
 # value it can express. Used as a floor so a sub-resolution query can never make
@@ -57,10 +50,13 @@ _TOTAL_TIME_RE = re.compile(r"Total Time:\s*([0-9]*\.?[0-9]+)\s*s")
 # rewrite like `FROM events a, events b` is a trillion-row cross join: without
 # a ceiling it can exhaust memory, fill the spill directory, and hold the
 # execution lock for hours while every other session waits behind it. DuckDB has
-# no statement-timeout option. These caps cover buffer-managed memory and spill
-# only; Python conversion and other allocations still need process isolation.
+# no statement-timeout option, so `_deadline()` interrupts engine work instead.
+# These caps cover buffer-managed memory and spill only, and neither they nor
+# the interrupt reach Python conversion, so agent results never enter Python.
+# Allocations DuckDB does not track, such as one huge `repeat()`, are bounded
+# only by the container, which may kill the server with an out-of-memory error.
 # Keep headroom in the 1024 MiB manifest budget, including RAM-backed /tmp in
-# docker-local validation. `_deadline()` interrupts engine work, not Python.
+# docker-local validation.
 _DUCKDB_CONFIG = {
     "threads": "2",
     "enable_external_access": "false",
@@ -148,10 +144,10 @@ def _single_statement_error(query: str) -> Optional[str]:
 
     Agent SQL gets `EXPLAIN ANALYZE ` prefixed onto it for timing. A prefix only
     binds to the first statement, so `SELECT 1; SELECT * FROM events` leaves the
-    real query running as a statement of its own and the plan fetch returns its
-    whole result set, past `_MAX_MATERIALIZED_ROWS`. The deadline does not save
-    us there, because `interrupt()` cannot stop rows that are already being
-    converted into Python objects.
+    real query running as a statement of its own and the plan fetch converts its
+    rows into Python instead of a plan. The deadline does not save us there,
+    because `interrupt()` cannot stop rows that are already being converted into
+    Python objects.
 
     DuckDB's own parser decides what counts as a statement, so a `;` inside a
     string literal, a leading `--` comment and a trailing terminator all stay
@@ -386,44 +382,11 @@ class QueryExecutor:
             released.set()
             thread.join()
 
-    def _probe(self, query: str) -> Tuple[Optional[List], Optional[str]]:
-        """
-        Fetch at most ``_MAX_MATERIALIZED_ROWS`` rows of *query*.
-
-        Returns (rows, error). ``rows`` is None when the result set is larger
-        than the cap — the caller then works from the in-engine row count
-        instead of holding the full result in Python.
-
-        This is also the authoritative error check: the query runs unwrapped on
-        the read-only connection, so a write (DDL/DML, inside a CTE, or after a
-        ``;``) still surfaces as a DuckDB error exactly as before. Multi-statement
-        input is rejected here, before anything executes, because ``_run`` stops
-        on this error and so never reaches the plan fetch it would abuse.
-        """
-        error = _single_statement_error(query)
-        if error is not None:
-            return None, error
-
-        try:
-            with self._exec_lock, self._session() as cur, self._deadline():
-                # The leftover rows of an over-cap result are released when the
-                # session closes, so nothing stays pending on `self.conn`.
-                head = cur.execute(query).fetchmany(_MAX_MATERIALIZED_ROWS + 1)
-        except duckdb.InterruptException:
-            return None, _TIMEOUT_ERROR
-        except Exception as exc:
-            return None, str(exc)
-        if len(head) > _MAX_MATERIALIZED_ROWS:
-            return None, None
-        return head, None
-
     def _row_count(self, query: str) -> Tuple[Optional[int], Optional[str]]:
         """
-        Exact row count for *query*, computed inside DuckDB — no rows cross into
-        Python. Falls back to a streaming drain (bounded to one batch of memory)
-        for the rare query that cannot be wrapped in a subquery, but never after
-        a timeout: the drain would be at least as expensive as the query that
-        just ran out of time.
+        Exact row count for *query*, computed inside DuckDB: no rows cross into
+        Python. A query that cannot be wrapped in a subquery (``CALL``, DDL) is
+        an error rather than a reason to fetch its rows.
         """
         try:
             with self._exec_lock, self._session() as cur, self._deadline():
@@ -433,35 +396,21 @@ class QueryExecutor:
                 )
         except duckdb.InterruptException:
             return None, _TIMEOUT_ERROR
-        except Exception:
-            pass
-
-        try:
-            count = 0
-            with self._exec_lock, self._session() as cur, self._deadline():
-                result = cur.execute(query)
-                while True:
-                    batch = result.fetchmany(_FETCH_BATCH)
-                    if not batch:
-                        break
-                    count += len(batch)
-            return count, None
-        except duckdb.InterruptException:
-            return None, _TIMEOUT_ERROR
         except Exception as exc:
             return None, str(exc)
 
-    def _engine_ms(self, query: str, runs: int) -> Optional[float]:
+    def _engine_ms(
+        self, query: str, runs: int
+    ) -> Tuple[Optional[float], Optional[str]]:
         """
-        Median DuckDB-side execution time in ms, or None if unavailable.
+        Median DuckDB-side execution time in ms, as (median_ms, error).
 
         ``EXPLAIN ANALYZE`` really executes the query and discards the result
         inside the engine, so this measures execution alone: no rows are
-        converted to Python objects and nothing is buffered client-side. Returns
-        None when the profile footer cannot be parsed (a DuckDB version whose
-        output differs), which makes the caller fall back to wall-clock timing.
-        A timeout propagates instead, so the caller does not answer it by
-        running the query yet again.
+        converted to Python objects and nothing is buffered client-side. Any
+        failure is returned as the error, including a profile footer that cannot
+        be parsed (a DuckDB version whose output differs): there is no fallback
+        that would fetch the rows instead.
         """
         timings: List[float] = []
         for _ in range(runs):
@@ -473,52 +422,29 @@ class QueryExecutor:
                         _MAX_PLAN_ROWS
                     )
             except duckdb.InterruptException:
-                raise
-            except Exception:
-                return None
+                return None, _TIMEOUT_ERROR
+            except Exception as exc:
+                return None, str(exc)
             match = _TOTAL_TIME_RE.search("\n".join(str(r[-1]) for r in rows))
             if match is None:
-                return None
+                return None, "EXPLAIN ANALYZE output has no total time"
             timings.append(float(match.group(1)) * 1000.0)
-
-        timings.sort()
-        return round(max(timings[len(timings) // 2], _MIN_MEASURABLE_MS), 3)
-
-    def _wall_ms(self, query: str, runs: int) -> Tuple[float, Optional[str]]:
-        """
-        Wall-clock fallback timing: time a streaming drain that discards rows.
-
-        Includes client-side conversion cost, so it is less faithful than
-        ``_engine_ms``, but memory stays bounded to a single batch instead of
-        the whole result set.
-        """
-        timings: List[float] = []
-        for _ in range(runs):
-            try:
-                with self._exec_lock, self._session() as cur, self._deadline():
-                    t0 = time.perf_counter()
-                    result = cur.execute(query)
-                    while result.fetchmany(_FETCH_BATCH):
-                        pass
-                    timings.append((time.perf_counter() - t0) * 1000.0)
-            except duckdb.InterruptException:
-                raise
-            except Exception as exc:
-                return 99_999.0, str(exc)
 
         timings.sort()
         return round(max(timings[len(timings) // 2], _MIN_MEASURABLE_MS), 3), None
 
     def _run(
         self, query: str, runs: int = _TIMING_RUNS
-    ) -> Tuple[float, Optional[int], Optional[List], Optional[str]]:
+    ) -> Tuple[float, Optional[int], Optional[str]]:
         """
         Execute *query* on the read-only connection and measure it.
 
-        Returns (median_ms, row_count, rows, error_or_None). ``row_count`` is
-        exact whenever there is no error; ``rows`` is None for result sets above
-        ``_MAX_MATERIALIZED_ROWS``. A write raises and is returned as the error
-        string.
+        Returns (median_ms, row_count, error_or_None). ``row_count`` is exact
+        whenever there is no error, and comes from a ``COUNT(*)`` wrap inside
+        DuckDB. No result value is converted into Python: one row can hold a
+        whole table (``SELECT list(e) FROM events e``), and the deadline cannot
+        interrupt that conversion. Any failure, including a query the wrap
+        cannot hold (``CALL``, DDL, a write), is returned as the error string.
 
         The timing comes from DuckDB's own profiler rather than from wrapping a
         ``fetchall()``, so it reflects query execution instead of the cost of
@@ -529,28 +455,19 @@ class QueryExecutor:
         cannot hold the execution lock — and with it every other session — for
         longer than ``_QUERY_TIMEOUT_S``.
         """
+        error = _single_statement_error(query)
+        if error is not None:
+            return 99_999.0, None, error
+
         with self._exec_lock, self._deadline():
-            try:
-                rows, error = self._probe(query)
-                if error is not None:
-                    return 99_999.0, None, None, error
+            row_count, error = self._row_count(query)
+            if error is not None:
+                return 99_999.0, None, error
+            median_ms, error = self._engine_ms(query, runs)
+            if error is not None:
+                return 99_999.0, None, error
 
-                if rows is not None:
-                    row_count: Optional[int] = len(rows)
-                else:
-                    row_count, error = self._row_count(query)
-                    if error is not None:
-                        return 99_999.0, None, None, error
-
-                median_ms = self._engine_ms(query, runs)
-                if median_ms is None:
-                    median_ms, error = self._wall_ms(query, runs)
-                    if error is not None:
-                        return 99_999.0, None, None, error
-            except duckdb.InterruptException:
-                return 99_999.0, None, None, _TIMEOUT_ERROR
-
-        return median_ms, row_count, rows, None
+        return median_ms, row_count, None
 
     @staticmethod
     def _output_schema(
@@ -634,14 +551,14 @@ class QueryExecutor:
         original = _strip_terminators(original)
         optimized = _strip_terminators(optimized)
 
-        orig_ms, orig_count, _, orig_err = self._run(original)
+        orig_ms, orig_count, orig_err = self._run(original)
 
         # The optimized query is agent-authored, but the read-only connection is
         # the guarantee: any write (DDL/DML, in a CTE, or after a `;`) is rejected
         # by the DuckDB engine and surfaces as `optimized_error`. No structural
         # pre-check is needed, which also avoids false rejections of valid
         # rewrites (leading comments, a `;` inside a string literal, etc.).
-        opt_ms, opt_count, _, opt_err = self._run(optimized)
+        opt_ms, opt_count, opt_err = self._run(optimized)
 
         # ── Correctness: do both queries return the same data? ────────
         # Different row counts settle it. Otherwise the exact comparison decides,

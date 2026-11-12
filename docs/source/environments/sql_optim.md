@@ -105,12 +105,13 @@ This is budget headroom, not a guarantee that every agent query fits.
 
 DuckDB's [memory limit covers its buffer manager](https://duckdb.org/docs/current/operations_manual/limits),
 not the Python heap or every DuckDB allocation. Its spill cap excludes the
-base database. The result-fetch row cap is not a byte cap, and the interrupt
-deadline cannot stop Python object conversion. Untrusted workloads still need
-external process/container memory and time enforcement; the resource-isolation
-policy remains a maintainer review gate. The Dockerfile and a direct `uvicorn`
-launch do not enforce the YAML budgets themselves: deployments must configure
-their runtime limits explicitly.
+base database. Agent query results never enter Python, where neither the memory
+limit nor the query deadline applies: rows are only counted, timed and compared
+inside DuckDB. Allocations DuckDB does not track, such as one huge `repeat()`,
+are bounded only by the container, which may kill the server with an
+out-of-memory error. The Dockerfile and a direct `uvicorn` launch do not enforce
+the YAML budgets themselves: deployments must configure their runtime limits
+explicitly.
 
 ## Tests
 

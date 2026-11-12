@@ -524,22 +524,16 @@ class TestResourceLimits:
         assert executor.table_stats["orders"] == 500_000
         assert executor.compare("SELECT 1", "SELECT 1")["results_match"] is True
 
-    def test_timeout_is_not_defeated_by_the_row_count_fallback(
-        self, executor, short_deadline
-    ):
-        """A cancelled count must not fall through to an unbounded drain.
+    def test_a_query_the_row_count_cannot_wrap_fails_closed(self, executor):
+        """A query the `COUNT(*)` wrap cannot hold is an error, with no fallback.
 
-        `_row_count` retries a streaming drain when the subquery wrap fails.
-        Treating a timeout as that kind of failure restarted the same runaway
-        query with the timer already spent, so the deadline bought nothing.
+        `CALL query(...)` returns rows but is not a subquery. Fetching them
+        instead would convert agent data into Python, which the deadline cannot
+        interrupt.
         """
-        start = time.perf_counter()
-        count, error = executor._row_count(self.RUNAWAY)
-        elapsed = time.perf_counter() - start
-
-        assert count is None
-        assert "Query cancelled" in (error or "")
-        assert elapsed < 30
+        res = executor.compare("SELECT 1", "CALL query('SELECT 1')")
+        assert res["optimized_error"]
+        assert res["results_match"] is False
 
     def test_deadline_releases_the_shared_execution_lock(
         self, executor, short_deadline
@@ -636,18 +630,16 @@ class TestLargeResultMeasurement:
 
     def test_large_result_is_not_materialized(self, executor):
         """A 1M-row query yields an exact count and no materialized rows."""
-        ms, count, rows, err = executor._run("SELECT * FROM events")
+        ms, count, err = executor._run("SELECT * FROM events")
         assert err is None
-        assert rows is None  # never held in Python
         assert count == 1_000_000  # still exact, computed inside DuckDB
         assert ms < 90_000  # a real measurement, not the error sentinel
 
     def test_small_result_is_still_compared_row_by_row(self, executor):
-        """Below the cap, rows are materialized and still compared precisely."""
-        ms, count, rows, err = executor._run("SELECT * FROM products")
+        """Small results are compared precisely too, not by their row count."""
+        ms, count, err = executor._run("SELECT * FROM products")
         assert err is None
         assert count == 1_000
-        assert rows is not None and len(rows) == 1_000
 
         # Precise comparison, not count-only: same rows in a different order
         # match, while an equal-sized result with different values does not.
@@ -691,9 +683,29 @@ class TestLargeResultMeasurement:
 
         assert result["results_match"] is True
         assert result["original_rows"] == 500_000
-        # Materializing 500k rows twice cost ~430 MB before; the cap keeps this
-        # to a couple of batches regardless of result size.
+        # Materializing 500k rows twice cost ~430 MB before; no result row
+        # reaches Python now.
         assert peak < 100 * 1024 * 1024
+
+    def test_a_one_row_result_is_not_converted_to_python(self, executor):
+        """One row can hold a whole table, so no result row is fetched at all.
+
+        A row cap does not bound its size, and converting it holds the GIL, so
+        the deadline could not interrupt it either.
+        """
+        tracemalloc.start()
+        try:
+            result = executor.compare(
+                TASKS["task_1_basic_antipatterns"]["sql_query"],
+                "SELECT list(e) AS l FROM events e WHERE id <= 200000",
+            )
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        assert result["optimized_error"] is None
+        assert result["optimized_rows"] == 1
+        assert peak < 5 * 1024 * 1024
 
     def test_timing_is_floored_at_the_profiler_resolution(self, executor):
         """A query faster than the profiler can express still gets a usable time.
@@ -739,9 +751,7 @@ class TestSessionIsolation:
         )
 
         assert executor.table_stats["users"] == baseline
-        rows, error = executor._probe("SELECT COUNT(*) FROM users")
-        assert error is None
-        assert rows[0][0] == baseline
+        assert executor._row_count("SELECT * FROM users") == (baseline, None)
 
     def test_a_shadowed_table_cannot_fake_a_later_episode(self, executor):
         """The reward-hacking path: poison once, then grade a later rewrite.
@@ -763,29 +773,19 @@ class TestSessionIsolation:
         assert result["optimized_rows"] == true_rows
 
     def test_ddl_submitted_as_a_rewrite_is_never_credited(self, executor):
-        """DDL is not an error any more, and does not need to be.
-
-        Before sessions were isolated, DDL surfaced as an error only by
-        accident: the temp table survived the first timing run, so the second
-        collided with it. Now each run gets a clean catalog and the statement
-        simply succeeds. That is harmless, because the grader gates speedup
-        credit on `results_match`, and a `CREATE` returns a row count rather
-        than the query's rows.
-        """
+        """DDL cannot be wrapped in the row count, so it fails closed."""
         info = executor.compare(
             "SELECT COUNT(*) FROM users",
             "CREATE TEMP TABLE scratch_pad AS SELECT 1",
         )
+        assert info["optimized_error"]
         assert not info["results_match"]
 
     def test_the_same_temp_name_can_be_reused_across_queries(self, executor):
         """No residue: a name is free again once its session ends."""
         for _ in range(3):
-            info = executor.compare(
-                "SELECT COUNT(*) FROM users",
-                "CREATE TEMP TABLE scratch_pad AS SELECT 1",
-            )
-            assert info["optimized_error"] is None
+            with executor._exec_lock, executor._session() as cur:
+                cur.execute("CREATE TEMP TABLE scratch_pad AS SELECT 1")
 
 
 class TestSingleStatement:
@@ -793,10 +793,10 @@ class TestSingleStatement:
 
     `_engine_ms` prefixes `EXPLAIN ANALYZE ` onto the agent's query. A second
     statement after a `;` survives that prefix, so DuckDB runs the real query
-    as its own statement and the plan fetch returns the whole result set
-    instead of a plan, bypassing `_MAX_MATERIALIZED_ROWS`. Timing out does not
-    help: `interrupt()` cannot stop rows already being converted into Python
-    objects, and the lock is held throughout.
+    as its own statement and the plan fetch converts its rows into Python
+    instead of a plan. Timing out does not help: `interrupt()` cannot stop rows
+    already being converted into Python objects, and the lock is held
+    throughout.
 
     The check uses `duckdb.extract_statements` rather than scanning for `;`,
     so comments and semicolons inside string literals do not false-reject the
