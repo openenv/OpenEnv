@@ -529,7 +529,9 @@ async def _trial(
         record["execution_task_digest"] = digest_before
         record["task_overlay"] = overlay
         budget = contract.resources.episode_timeout_s
-        build_budget = DockerValidationProvider().build_timeout_s
+        build_budget = (
+            DockerValidationProvider().build_timeout_s if not expected else budget
+        )
         config = TrialConfig(
             task=TaskConfig(path=task_copy.resolve()),
             agent=AgentConfig(
@@ -557,7 +559,7 @@ async def _trial(
         record["trial_config_digest"] = _digest(effective_config)
         record["resources"] = contract.resources.model_dump()
         trial = await _create_trial(config)
-        trial._environment_build_timeout_sec = build_budget if not expected else budget
+        trial._environment_build_timeout_sec = build_budget
         if not expected:
             record["build_timeout_s"] = build_budget
             start_environment = trial.agent_environment.start
@@ -629,8 +631,11 @@ async def _trial(
                     )
                 record["reward_error"] = True
                 raise NativeEvidenceError(f"Harbor verifier reward failed ({failure})")
+            if failure == "EnvironmentStartTimeoutError":
+                raise NativeEvidenceError(
+                    f"validator build/start exceeded its {build_budget:g}-second budget"
+                )
             subject_phase = {
-                "EnvironmentStartTimeoutError": "environment build/start",
                 "SandboxBuildFailedError": "environment build/start",
                 "AgentSetupTimeoutError": "agent setup",
                 "AgentTimeoutError": "agent",
@@ -670,8 +675,11 @@ async def _trial(
     except (Exception, KeyboardInterrupt) as exc:
         record["failure"] = type(exc).__name__
         if isinstance(exc, TimeoutError):
-            record["subject_error"] = phase
-            record["reason"] = f"Harbor subject timed out during {phase}"
+            record["reason"] = (
+                f"validator build/start exceeded its {build_budget:g}-second budget"
+                if phase == "environment build/start"
+                else f"unexpected Harbor timeout during {phase}"
+            )
         # Error categories are safe; task-authored exception messages/logs are not.
         if isinstance(exc, NativeEvidenceError):
             record["reason"] = str(exc)
@@ -945,6 +953,9 @@ def validate_harbor(
                                     for trial in broken
                                 ]
                             },
+                        )
+                        startup.evidence.extend(
+                            trial["reason"] for trial in broken if "reason" in trial
                         )
                         if malformed:
                             reward_result = _result(

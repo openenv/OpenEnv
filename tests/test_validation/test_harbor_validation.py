@@ -200,10 +200,16 @@ def boundary(monkeypatch, task):
                     await hook(None)
             if self.role == state.interrupt_role:
                 raise KeyboardInterrupt
-            await asyncio.wait_for(
-                asyncio.sleep(state.agent_delay),
-                timeout=self.config.agent.override_timeout_sec,
-            )
+            try:
+                await asyncio.wait_for(
+                    asyncio.sleep(state.agent_delay),
+                    timeout=self.config.agent.override_timeout_sec,
+                )
+            except TimeoutError:
+                return SimpleNamespace(
+                    exception_info=SimpleNamespace(exception_type="AgentTimeoutError"),
+                    verifier_result=None,
+                )
             if state.timeout:
                 raise TimeoutError()
             raw = state.rewards.get(self.role, state.rewards[self.agent])
@@ -685,16 +691,13 @@ def test_source_identity_exception_timeout_fail_closed(task, boundary, flag):
     setattr(boundary, flag, True)
     report = run_validation(task)
     assert report.verdict is Verdict.FAIL
-    assert result(report, "runtime.startup").status is (
-        CheckStatus.FAIL if flag == "timeout" else CheckStatus.ERROR
-    )
+    assert result(report, "runtime.startup").status is CheckStatus.ERROR
 
 
 @pytest.mark.parametrize(
     "exception_type,phase",
     [
         ("RuntimeError", "environment"),
-        ("EnvironmentStartTimeoutError", "environment"),
         ("AgentTimeoutError", "agent"),
         ("AgentSetupTimeoutError", "agent setup"),
         ("VerifierTimeoutError", "verifier"),
@@ -1019,11 +1022,17 @@ def test_nop_build_has_a_separate_supervisor_budget(
     artifacts = tmp_path / "build-budget"
     report = run_validation(task, artifacts_dir=artifacts)
     startup = result(report, "runtime.startup")
-    assert startup.status is (CheckStatus.FAIL if timeout_phase else CheckStatus.PASS)
+    assert startup.status is (
+        CheckStatus.ERROR
+        if timeout_phase == "build"
+        else CheckStatus.FAIL
+        if timeout_phase == "agent"
+        else CheckStatus.PASS
+    )
     if timeout_phase:
         assert len(boundary.trials) == 1
-        phase = "environment" if timeout_phase == "build" else "agent"
-        assert phase in startup.evidence[0]
+        phase = "build/start" if timeout_phase == "build" else "agent"
+        assert any(phase in reason for reason in startup.evidence)
         assert (
             result(report, "runtime.episode_determinism").status is not CheckStatus.PASS
         )
@@ -1032,6 +1041,35 @@ def test_nop_build_has_a_separate_supervisor_budget(
     native = json.loads((artifacts / "harbor-evidence.json").read_text())
     assert native["cleanup"]["verified"]
     assert native["trials"][0]["build_timeout_s"] == build_budget
+
+
+@pytest.mark.parametrize("timeout_source", ["supervisor", "harbor", "unexpected"])
+def test_validator_build_start_timeout_is_an_error(
+    task, boundary, monkeypatch, timeout_source
+):
+    from openenv.validation.providers import docker
+
+    monkeypatch.setattr(
+        docker,
+        "DockerValidationProvider",
+        lambda: SimpleNamespace(build_timeout_s=0.01),
+    )
+    if timeout_source == "supervisor":
+        boundary.start_delay = 0.1
+    elif timeout_source == "harbor":
+        boundary.exception_type = "EnvironmentStartTimeoutError"
+    else:
+        boundary.timeout = True
+    report = run_validation(task)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.ERROR
+    failures = startup.measured["failures"]
+    if timeout_source == "unexpected":
+        assert failures == ["unexpected Harbor timeout during agent"]
+    else:
+        assert failures == ["validator build/start exceeded its 0.01-second budget"]
+        assert failures[0] in startup.evidence
+    assert len(boundary.trials) == 1
 
 
 def test_harbor_report_preserves_resolved_space_target(task, boundary, tmp_path):
