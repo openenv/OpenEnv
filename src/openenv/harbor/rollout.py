@@ -150,6 +150,48 @@ def _finite_reward(key: str, value: Any) -> float:
     return number
 
 
+def _graded_nonzero_exit(info: Any, reward: float | None) -> bool:
+    """Whether a trial's exception is only the agent's exit code, after the verifier graded the run.
+
+    `opencode run` has been seen to exit 1 on runs that finished normally: the stream ends on a
+    `step_finish` with `reason: "stop"`, it carries no `error` event and stderr is empty. Harbor runs
+    the command under `set -o pipefail` and turns any non-zero status into
+    `NonZeroAgentExitCodeError` (agents/installed/base.py `_exec`), records it on the trial, and
+    still runs the verifier. Treating that record as the outcome failed solved and unsolved rollouts
+    alike.
+
+    Only the plain exit code qualifies. Harbor's own classifications of the same failure (`ApiError`
+    and its subclasses, refusals) keep failing, and so does an opencode stream that carries an
+    `error` event, since that run was cut short by the provider rather than finished.
+
+    Args:
+        info (`Any`):
+            The trial's `exception_info` (Harbor's `ExceptionInfo`).
+        reward (`float`, *optional*):
+            The headline reward already picked from the verifier, `None` when there is none.
+
+    Returns:
+        `bool`: `True` when the exception should be kept as a warning rather than a failure.
+    """
+    if reward is None:
+        return False
+    if getattr(info, "exception_type", None) != "NonZeroAgentExitCodeError":
+        return False
+    message = str(getattr(info, "exception_message", "") or "")
+    return (
+        message.startswith("Command failed (exit ") and '"type":"error"' not in message
+    )
+
+
+def _first_line(info: Any) -> str:
+    """The exception's type and the first line of its message, for a one-line finding."""
+    message = str(getattr(info, "exception_message", "") or "")
+    first = message.splitlines()[0] if message else ""
+    if len(first) > 200:
+        first = first[:200] + "..."
+    return f"{getattr(info, 'exception_type', None)}: {first}"
+
+
 def _pick_reward(
     rewards: dict[str, float], reward_key: str = ""
 ) -> tuple[float | None, str]:
@@ -209,12 +251,15 @@ def build_trial_config(
     force_build: bool = False,
     training: bool = False,
     harness_profile: str | None = None,
+    environment_kwargs: dict[str, Any] | None = None,
 ) -> Any:
     """Assemble Harbor's `TrialConfig` for one rollout.
 
     The seam decides how this particular agent learns about the proxy — an env var, a constructor
     kwarg, or a config file written by a subclass. That is the only per-agent knowledge involved;
     everything downstream is identical.
+
+    Backend kwargs in `environment_kwargs` pass to Harbor. `None` keeps Harbor's defaults.
     """
     from harbor.models.trial.config import (
         AgentConfig,
@@ -270,11 +315,25 @@ def build_trial_config(
             ),
             delete=not keep_sandbox,
             force_build=force_build,
+            **(
+                {"kwargs": environment_kwargs} if environment_kwargs is not None else {}
+            ),
         ),
         verifier=VerifierConfig(),
         trial_name=trial_name,
         trials_dir=Path(str(trials_dir)),
     )
+
+
+async def _run_trial(trial: Any, on_trial_created: Callable[[Any], None] | None) -> Any:
+    """Close Harbor's trial log when a trusted hook prevents execution."""
+    if on_trial_created is not None:
+        try:
+            on_trial_created(trial)
+        except BaseException:
+            trial._close_logger_handler()
+            raise
+    return await trial.run()
 
 
 async def run_rollout(
@@ -288,6 +347,7 @@ async def run_rollout(
     trials_dir: Path | str,
     dataset: str = "",
     reward_key: str = "",
+    local_intercept_url: str = "",
     require_reward: bool = True,
     keep_sandbox: bool = False,
     agent_timeout_sec: float | None = None,
@@ -302,6 +362,8 @@ async def run_rollout(
     eval_sampling: dict[str, Any] | None = None,
     harness_profile: str | None = None,
     on_session_created: Callable[[str], None] | None = None,
+    on_trial_created: Callable[[Any], None] | None = None,
+    environment_kwargs: dict[str, Any] | None = None,
 ) -> HarborRolloutResult:
     """Run one rollout end to end. Never raises.
 
@@ -316,6 +378,10 @@ async def run_rollout(
             The live capture registry; a session is minted here and its id becomes the agent's key.
         intercept_url (`str`):
             Public URL of the capture proxy, as the sandbox must reach it.
+        local_intercept_url (`str`, *optional*):
+            The proxy's loopback URL. A host-side agent (`Seam.host_side`) is handed this instead of
+            `intercept_url`: it calls the model from this process, and every public hop is one more
+            place a long completion can be cut. Empty keeps `intercept_url` for every agent.
         model (`str`):
             Served model id. Normalised per harness by the seam.
         trials_dir (`Path` or `str`):
@@ -344,6 +410,11 @@ async def run_rollout(
         on_session_created (`Callable[[str], None]`, *optional*):
             Receive this rollout's capture session ID before the agent starts. Live views must
             follow this ID rather than discover unrelated sessions from the shared registry.
+        on_trial_created (`Callable[[Any], None]`, *optional*):
+            Trusted infrastructure callback invoked with the native Harbor trial before it runs.
+            Exceptions fail the rollout and prevent trial execution. Not exposed through MCP.
+        environment_kwargs (`dict[str, Any]`, *optional*):
+            Backend kwargs passed to Harbor. `None` keeps Harbor's defaults.
 
     Returns:
         [`HarborRolloutResult`]: Reward, per-turn token ids and logprobs, and validation findings.
@@ -431,6 +502,14 @@ async def run_rollout(
 
             enable_shared_templates()
 
+            # A host-side agent calls the model from this process, so it takes the loopback URL. A
+            # public forward is one more hop that can cut a long completion: a gradio share link
+            # answers 502 after about a minute while the upstream is still generating, the agent
+            # retries, and the capture records the same prompt again as a new root.
+            seam = seams.get(harness, profile=harness_profile)
+            if local_intercept_url and seam.host_side:
+                intercept_url = local_intercept_url
+
             config_kwargs = dict(
                 task_dir=task_dir,
                 harness=harness,
@@ -446,6 +525,7 @@ async def run_rollout(
                 force_build=force_build,
                 training=sampling is not None,
                 harness_profile=harness_profile,
+                environment_kwargs=environment_kwargs,
             )
 
             # Held across construction because Harbor's wrappers read `os.environ` while building the
@@ -454,14 +534,13 @@ async def run_rollout(
             # I/O worth speaking of: the sandbox is booted later, by `trial.run()`, outside the lock.
             # Harbor's wrappers read `os.environ` while constructing the agent, so the seam's
             # process-level vars have to be in place across `Trial.create` and are put back after.
-            seam = seams.get(harness, profile=harness_profile)
             *_, proc_env = seam.resolve(
                 base_url=intercept_url, session=session.session_id, model=model
             )
             if not proc_env:
                 config = build_trial_config(**config_kwargs)
                 trial = await Trial.create(config)
-                trial_result = await trial.run()
+                trial_result = await _run_trial(trial, on_trial_created)
             else:
                 # The override has to span `run()`, not just construction. Harbor's goose wrapper reads
                 # `os.environ["OPENAI_API_KEY"]` inside its own `run` (goose.py:653), long after
@@ -493,7 +572,7 @@ async def run_rollout(
                     with ctx_env_overlay(proc_env):
                         config = build_trial_config(**config_kwargs)
                         trial = await Trial.create(config)
-                        trial_result = await trial.run()
+                        trial_result = await _run_trial(trial, on_trial_created)
                 else:
                     # Fallback: mutate the real environment under a lock, one rollout at a time.
                     await _acquire_proc_env()
@@ -501,7 +580,7 @@ async def run_rollout(
                         with process_env(seam.name, proc_env):
                             config = build_trial_config(**config_kwargs)
                             trial = await Trial.create(config)
-                            trial_result = await trial.run()
+                            trial_result = await _run_trial(trial, on_trial_created)
                     finally:
                         _PROC_ENV_LOCK.release()
         except Exception as exc:  # noqa: BLE001 - a rollout failure is a RESULT, never an exception
@@ -574,9 +653,17 @@ async def run_rollout(
                 )
             info = getattr(trial_result, "exception_info", None)
             if info is not None and result.error is None:
-                result.ok = False
-                result.exception_type = getattr(info, "exception_type", None)
-                result.error = str(getattr(info, "exception_message", ""))[:600]
+                if _graded_nonzero_exit(info, result.reward):
+                    # The agent's exit status is not the outcome when the verifier graded the run.
+                    # The capture checks below still decide `ok`, so an empty or broken capture fails.
+                    result.findings.append(
+                        "[WARN] agent exited non-zero after a graded run: "
+                        + _first_line(info)
+                    )
+                else:
+                    result.ok = False
+                    result.exception_type = getattr(info, "exception_type", None)
+                    result.error = str(getattr(info, "exception_message", ""))[:600]
 
         # --- capture --------------------------------------------------------
         try:

@@ -119,6 +119,7 @@ envs/
 │
 ├── harbor_env/              # Thin Harbor package and trainer session factory
 ├── thinkingbox_env/           # Stateful MCP business-workflow benchmark adapter
+├── posttrain_env/            # Post-training through brokered, budgeted HF Jobs (RFC 014)
 ├── coding_env/               # Python code execution environment
 ├── chat_env/                 # Conversational environment
 ├── textarena_env/            # Text-based games (TextArena)
@@ -210,7 +211,7 @@ rfcs/
 │   └── tester.md                 # Write high-signal, failing tests
 │
 └── hooks/                    # Automation scripts
-    ├── lint.sh                   # Run ruff format check
+    ├── lint.sh                   # Check CI import sort, format, and lint (src/ tests/)
     ├── test.sh                   # Run pytest
     ├── check-debug.sh            # Find debug code
     ├── post-push-pr.sh           # Validate PR after push (freshness, CI, conflicts)

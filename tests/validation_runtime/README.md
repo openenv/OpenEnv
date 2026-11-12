@@ -17,6 +17,18 @@ failure. The reference job uses Linux x86-64; Docker Desktop arm64 uses the same
 recipe but records its different platform. No host Python code from the subject
 is imported by the validator.
 
+Docker test execution has a thirty-minute budget for the full 58-case fault/control
+inventory, including the restored discovery and judged-replay cases. The Linux
+workflow allows 45 minutes for setup and all three suites. Fast and protocol
+suites retain their ten-minute budgets; per-case and replay deadlines are unchanged.
+
+The protocol suite also exercises the installed wheel over real loopback HTTP
+and WebSocket connections using a test-only process provider. It verifies
+authorized session telemetry, full collection/grading/reporting, and process
+cleanup on CPU-only Hugging Face Jobs. Its evidence explicitly records process
+isolation; it does not qualify Docker, resource or network isolation. No Hub or
+GitHub credentials are needed by those tests.
+
 The Docker suite snapshots the current source, builds its exact OpenEnv wheel,
 and installs that wheel into this dedicated non-editable test environment. It
 downloads only binary dependencies selected from the committed lock for the
@@ -26,17 +38,52 @@ with networking disabled. A cold cache is supported. The tests run outside the
 checkout with `PYTHONPATH` removed, exercising installed package data and the
 production OpenEnv `/ws` endpoint. Each launch uses a fresh subject.
 
-The image supports controlled `VALIDATION_FAULT` modes: `good`, `bad_reward`,
-`bad_observation`, `missing_done`, `bad_state`, `hung_step`, `slow_step`, and `startup_failure`. All fault
-switches and wire corruption remain inside test assets. They share one fixture
-and one public runtime plan, so a defect changes one property at a time.
+The image includes controlled faults for malformed observations/rewards/state,
+startup and timeout failures, ignored seeds, session drift, missing/mismatched
+records, tool/task declarations, rubric configuration and child attribution.
+`judged_stable` and `judged_noisy` exercise the bounded judge procedure. All fault
+switches and wire corruption remain inside test assets with one public runtime plan.
 
-The Docker suite contains 19 required cases: three provider lifecycle tests,
-five network-policy tests, ten CLI fault/control cases, and one real `echo_env`
+The fixture registers two real MCP tools and declares task counts of four train
+and two test tasks. Its task listing returns only one preview item; the collector
+uses `num_tasks` and samples at most two items per split. Empty tool declarations
+are checked through a real empty FastMCP registry. `discovery.json` preserves raw
+results and distinguishes failed discovery from an empty success. The protocol
+suite contains 64 required cases, including real tool calls and discovery/rubric
+faults through the installed-wheel process provider.
+The sticky modes retain a counter in memory, a file or a worker thread across
+reset. Fresh sessions start clean; `exposed_oracle` serves the fixture's harmless
+oracle canary at its declared path.
+
+
+Repeatability checks replay the original plan in a fresh session, with a different
+seed, and in an independently inspected fresh container. Controlled
+judge fixtures use exactly 20 identical-input samples and per-step population
+variance; they make no inference calls. `replays.json` retains each trace, subject
+telemetry, container identity and cleanup outcome. A process-only provider explicitly
+skips fresh-container determinism. Subject-emitted records are compared with the
+independently collected wire trace.
+
+The Docker suite contains 58 required cases: three provider lifecycle tests,
+five network-policy tests, eight host-containment tests, fourteen resource-bounds
+tests, twenty-seven CLI fault/control
+cases, and one real `echo_env`
 canary. The network tests run `public` and `no-network` subjects against a
 validator-owned sink, detect a subject launched on the bridge while declared
 `no-network`, and confirm the no-network helper serves `/health` and `/ws` without
-giving the subject a route out. The slow-step case completes a tool call taking more than five seconds within
+giving the subject a route out. The host-containment tests measure the hardened
+fixture in both network modes, detect a launch whose image root is writable,
+detect writable nested directories and existing regular files on `/dev`, leave
+owner-changeable permission denials inconclusive, and
+detect a root process started inside the subject. The resource-bounds tests read
+the subject's cgroup limits and complete filesystem inventory. Separate disposable
+subjects qualify memory, process, disk and exec-timeout cleanup. Tests detect
+limits above a smaller declaration even when storage measurement fails, an unaccounted writable root, nested device
+directories and regular files, false exit-137
+signals, and failed disposable subject or no-network helper cleanup, including
+failed startup and recovered exec-timeout removal failures. Forged escape text and
+descendant markers leave qualification unproven. The
+slow-step case completes a tool call taking more than five seconds within
 the declared episode budget. The hung-step case
 checks the episode deadline; the interruption case sends SIGINT only after a
 container log confirms the second step has begun. Both must retain the completed
@@ -57,6 +104,13 @@ boundary without changing Echo or coercing its rewards. Inspect
 Evidence is written to `outputs/validation-runtime/<run-id>/`, including source,
 fixture, lock and wheel hashes; the retained wheelhouse; platform and toolchain
 details; test results and bounded logs; provider cleanup evidence; and checksums.
+Reproduction bundles keep the measured session, the same-session A/B recording,
+the fresh isolation session, and bounded oracle HTTP responses in separate files.
+Each recording includes completion and redaction metadata. Oracle responses also
+record a digest of the retained bytes before redaction. Interrupted experiments
+keep their completed prefix, including HTTP probes and the current response's
+received bytes. Unsafe unstructured HTTP bodies are omitted with an explicit flag;
+their byte counts and original digests remain available.
 The validation subject never receives a host socket, host credentials or host
 directory mount. Tests verify run-owned containers disappear after normal completion,
 failed readiness and exec timeout. No global prune is used.
@@ -71,8 +125,15 @@ skip. Protocol and Docker runs must also execute every named case in the committ
 clears inherited `PYTEST_ADDOPTS` and copies the inventory and its digest into the
 bundle. Verify a bundle using its recorded source revision, since later revisions
 can add required cases. This checks the implemented slice's inventory, not completion of all RFC
-008 checks. A successful image build is not evidence for reproducible-build,
-containment or resource-validation graders. Those checks land in later slices.
+008 checks. A successful image build does not establish any runtime qualification. This layer
+measures host-containment settings, process privileges, the complete mount table
+and write access. Resource validation measures CPU, memory, PID and complete
+writable-storage ceilings with positive stress evidence and Docker exec descendant
+cleanup using a trusted kernel parent/child witness correlated by a fresh nonce
+before timeout. It does not qualify served-episode deadline enforcement. Reproducible-build
+qualification lands in a later slice. A host-read sentinel is not exercised: the current provider has
+no positive control for a file on the Docker daemon host, which can differ from
+the validator host on Docker Desktop or remote engines.
 
 For changes after the first sync, reinstall the local wheel before fast/protocol
 tests: `uv sync --project tests/validation_runtime --frozen --reinstall-package

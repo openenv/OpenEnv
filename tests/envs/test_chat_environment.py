@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from envs.chat_env.models import ChatAction
 from envs.chat_env.server.chat_environment import ChatEnvironment
 
 
@@ -47,3 +49,25 @@ def test_chat_reset_with_system_prompt_keeps_tokens_serializable() -> None:
         {"role": "system", "content": "You are a helpful AI assistant."}
     ]
     assert observation.tokens
+
+
+def test_chat_reset_and_step_track_episode_id_and_step_count() -> None:
+    env = ChatEnvironment(tokenizer=SimpleTokenizer())
+
+    env.reset(episode_id="ep-123")
+    assert env.state.episode_id == "ep-123"
+    assert env.state.step_count == 0
+
+    env.step(ChatAction(tokens=[72, 105]))
+    env.step(ChatAction(tokens=[33]))
+    assert env.state.step_count == 2
+
+    env.reset()
+    assert env.state.step_count == 0
+    assert env.state.episode_id not in (None, "ep-123")
+
+    episode_id = env.state.episode_id
+    env.step(ChatAction(tokens=[33]))
+    asyncio.run(env.reset_async(seed=1))
+    assert env.state.step_count == 0
+    assert env.state.episode_id != episode_id

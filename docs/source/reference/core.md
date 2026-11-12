@@ -291,3 +291,5 @@ See [Evaluating with Environments](../tutorials/evaluation-inspect) for a worked
 [[autodoc]] openenv.core.containers.runtime.novita_provider.NovitaSandboxProvider
 
 [[autodoc]] openenv.core.containers.runtime.hf_sandbox_provider.HFSandboxProvider
+
+[[autodoc]] openenv.core.containers.runtime.kubernetes_provider.KubernetesProvider

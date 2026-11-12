@@ -186,6 +186,24 @@ result = env.reset(split="test", index=12)
 
 The corresponding wire calls are `POST /reset` with `{"split": "test", "index": 12}`, or a WebSocket `{"type": "reset", "data": {"split": "test", "index": 12}}`. The server filters incoming keys against your `reset()` signature, so a key it does not declare is dropped silently unless the signature also has `**kwargs`. A misspelled parameter therefore shows up as "the environment ignored my selection" rather than an error — worth checking first when a task selection appears not to take effect.
 
+To let clients discover these parameters, declare them on a `ResetRequest` subclass and pass it as `reset_cls`. `/schema` publishes it under `reset`. It is a hint only: requests are not validated against it.
+
+```python
+from openenv.core.env_server.types import ResetRequest
+
+class LatexOCRResetRequest(ResetRequest):
+    split: str = "test"
+    index: Optional[int] = None
+
+app = create_app(
+    LatexOCREnvironment,
+    LatexOCRAction,
+    LatexOCRObservation,
+    env_name="latex_ocr_env",
+    reset_cls=LatexOCRResetRequest,
+)
+```
+
 When `index` is omitted, pick a row from `seed` so episodes stay reproducible.
 
 ### Streaming and very large splits
