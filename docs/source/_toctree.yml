@@ -169,6 +169,8 @@
     title: OR-Tools
   - local: environments/stripe_world
     title: Stripe World
+  - local: environments/harvest_rush
+    title: Harvest Rush
   title: Environments
 - isExpanded: false
   sections:
