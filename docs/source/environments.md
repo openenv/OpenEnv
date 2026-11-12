@@ -240,6 +240,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Spatial-Gym</div>
+      <p class="text-sm">SPaRC grid pathfinding puzzles solved one move per step, with the Spatial-Gym paper's prompts and a 1.0 reward for a line that follows every rule.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/spatial_gym" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">REPL</div>
       <p class="text-sm">Python REPL environment for code execution tasks based on the Recursive Language Models paradigm with sandboxed execution and context loading.</p>
       <div class="flex gap-2 mt-3">
