@@ -138,9 +138,7 @@ class E2BSandbox:
             # driving it, without the SDK installed.
             exit_code = getattr(exc, "exit_code", None)
             if exit_code is not None:
-                return _command_result(
-                    getattr(exc, "stdout", ""), getattr(exc, "stderr", ""), exit_code
-                )
+                return _command_result(exc.stdout, exc.stderr, exit_code)
             # No exit status: the command timed out, or the connection to it
             # broke. Ask E2B to stop it, but a kill signals the command's own
             # process, so a child of it can stay alive and still write to the
