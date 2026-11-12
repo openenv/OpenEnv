@@ -5,7 +5,12 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from ..manifest import ManifestError, NormalizedManifest, NormalizedManifestV2
+from ..manifest import (
+    ExecutionDeclaration,
+    ManifestError,
+    NormalizedManifest,
+    NormalizedManifestV2,
+)
 from ..types import SignatureKind
 
 VALIDATION_BLOCK_REMEDIATION = (
@@ -89,7 +94,15 @@ class OpenEnvYamlParser:
                 data[key] = value
 
         if has_execution:
-            data["execution"] = validation["execution"]
+            try:
+                data["execution"] = ExecutionDeclaration.model_validate(
+                    validation["execution"]
+                )
+            except ValidationError as exc:
+                raise ManifestError(
+                    [f"execution: {error}" for error in _format_validation_error(exc)],
+                    remediation=SCHEMA_REMEDIATION,
+                ) from exc
 
         try:
             model = NormalizedManifestV2 if has_execution else NormalizedManifest

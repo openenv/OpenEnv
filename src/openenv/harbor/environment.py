@@ -249,6 +249,22 @@ class HarborEnvironment(MCPEnvironment):
         from .models import HarborRolloutResult
         from .rollout import run_rollout as _run
 
+        # The client names the harness, and a `module:Class` name makes this server import that
+        # module. Only the import paths the operator allowed at startup are accepted.
+        allowed = {
+            entry.strip()
+            for entry in os.environ.get("OPENENV_HARBOR_ALLOW_HARNESS", "").split(",")
+            if entry.strip()
+        }
+        if ":" in harness and harness not in allowed:
+            return HarborRolloutResult(
+                ok=False,
+                error=f"harness {harness!r} is not allowed on this server: start it with "
+                f"`openenv harbor serve --allow-harness {harness}`",
+                harness=harness,
+                sandbox=sandbox,
+            ).model_dump_json()
+
         service = self._service()
         if service is None:
             return HarborRolloutResult(
@@ -310,6 +326,7 @@ class HarborEnvironment(MCPEnvironment):
                 sandbox=sandbox,
                 registry=service.capture.registry,
                 intercept_url=service.public_url,
+                local_intercept_url=service.local_url,
                 model=served,
                 trials_dir=_trials_dir(),
                 dataset=split,

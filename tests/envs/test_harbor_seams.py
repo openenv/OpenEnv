@@ -6,6 +6,10 @@ agent rather than on any rollout outcome.
 
 from __future__ import annotations
 
+import sys
+import types
+
+import pytest
 from openenv.harbor import seams
 
 # --- step limits --------------------------------------------------------------------------------
@@ -59,14 +63,37 @@ def test_a_step_limit_merges_instead_of_replacing_a_seams_own_config():
     assert kwargs["config"]["agent"]["step_limit"] == 7
 
 
-def test_a_harness_that_cannot_cap_steps_warns_rather_than_dropping_it(caplog):
+def test_a_harness_that_cannot_cap_steps_warns_rather_than_dropping_it(
+    caplog, monkeypatch
+):
     """Silently ignoring the cap would let a caller believe its rollouts are bounded."""
+    monkeypatch.setattr(seams, "_STEP_LIMIT_WARNED", set())
     with caplog.at_level("WARNING"):
         _, kwargs, _, _ = seams.get("opencode").resolve(
             base_url="http://proxy", session="s1", model="m", step_limit=20
         )
     assert "capture proxy enforces the model-call budget" in caplog.text
     assert "step_limit" not in str(kwargs)
+
+
+def test_the_step_limit_warning_is_said_once_per_harness(caplog, monkeypatch):
+    """A training run resolves a seam for every rollout; one line per harness is enough."""
+    monkeypatch.setattr(seams, "_STEP_LIMIT_WARNED", set())
+    with caplog.at_level("WARNING"):
+        for session in ("s1", "s2", "s3"):
+            seams.get("opencode").resolve(
+                base_url="http://proxy", session=session, model="m", step_limit=20
+            )
+        seams.get("qwen-coder").resolve(
+            base_url="http://proxy", session="s4", model="m", step_limit=20
+        )
+    warned = [
+        r.getMessage()
+        for r in caplog.records
+        if "no native step-limit" in r.getMessage()
+    ]
+    assert len(warned) == 2
+    assert warned[0].startswith("opencode") and warned[1].startswith("qwen-coder")
 
 
 def test_copilot_byok_routes_without_a_github_model_service():
@@ -91,6 +118,169 @@ def test_grok_primary_and_auxiliary_models_share_capture_endpoint():
     assert config["model"]["Qwen3.5-4B"]["base_url"] == "https://capture.test/v1"
     assert config["model"]["Qwen3.5-4B"]["env_key"] == "OPENAI_API_KEY"
     assert env["OPENAI_API_KEY"] == "session-key"
+
+
+@pytest.fixture
+def custom_agents(monkeypatch):
+    """A module of agents to name by import path: one host-side, one opencode subclass, one unknown
+    installed agent, and subclasses of Harbor's pi and of OpenEnv's `InterceptPi`."""
+    # Not bare "harbor": without Harbor (Python 3.11), `examples/harbor` imports under that name
+    # once another test puts `examples/` on sys.path.
+    pytest.importorskip("harbor.agents.base")
+    from harbor.agents.base import BaseAgent
+    from harbor.agents.installed.base import BaseInstalledAgent
+    from harbor.agents.installed.opencode import OpenCode
+    from harbor.agents.installed.pi import Pi
+    from openenv.harbor.install_fixes import InterceptPi
+
+    module = types.ModuleType("custom_agents_for_test")
+
+    class HostSideAgent(BaseAgent):
+        def __init__(self, *, api_base, api_key, **kwargs):
+            super().__init__(**kwargs)
+            self.api_base, self.api_key = api_base, api_key
+
+        @staticmethod
+        def name() -> str:
+            return "my-host-side-agent"
+
+    class SilentHostSideAgent(BaseAgent):
+        @staticmethod
+        def name() -> str:
+            return "silent-host-side-agent"
+
+    class MyOpenCode(OpenCode):
+        pass
+
+    class UnknownInstalledAgent(BaseInstalledAgent):
+        @staticmethod
+        def name() -> str:
+            return "my-installed-agent"
+
+    class MyPi(Pi):
+        pass
+
+    class MyInterceptPi(InterceptPi):
+        pass
+
+    for cls in (
+        HostSideAgent,
+        SilentHostSideAgent,
+        MyOpenCode,
+        UnknownInstalledAgent,
+        MyPi,
+        MyInterceptPi,
+    ):
+        setattr(module, cls.__name__, cls)
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    return module.__name__
+
+
+def test_a_host_side_agent_of_your_own_gets_the_proxy_as_kwargs(custom_agents):
+    """`--harness module:Class` is documented; it used to raise "no seam" for any import path."""
+    name = f"{custom_agents}:HostSideAgent"
+    seam = seams.get(name)
+    model, kwargs, agent_env, proc_env = seam.resolve(
+        base_url="https://capture.test", session="session-key", model="Qwen/Qwen3.5-9B"
+    )
+    assert seam.import_path == name
+    assert seam.host_side is True
+    assert seam.status == "untested"
+    assert model == "Qwen3.5-9B"
+    assert kwargs == {"api_base": "https://capture.test/v1", "api_key": "session-key"}
+    # Nothing in the sandbox's or our process's environment, so nothing can reach a grader.
+    assert agent_env == {} and proc_env == {}
+
+
+def test_a_subclass_of_a_known_agent_is_wired_like_it(custom_agents):
+    name = f"{custom_agents}:MyOpenCode"
+    seam = seams.get(name)
+    model, kwargs, _, _ = seam.resolve(
+        base_url="https://capture.test", session="session-key", model="m"
+    )
+    assert seam.import_path == name
+    assert model == seams.SEAMS["opencode"].model_fmt.format(model="m")
+    provider = kwargs["opencode_config"]["provider"][seams.OPENCODE_PROVIDER]
+    assert provider["options"]["apiKey"] == "session-key"
+
+
+def test_an_unknown_installed_agent_is_refused_rather_than_guessed(custom_agents):
+    with pytest.raises(ValueError, match="installed into the sandbox"):
+        seams.get(f"{custom_agents}:UnknownInstalledAgent")
+
+
+def test_a_subclass_must_keep_the_openenv_class_that_wires_its_agent(custom_agents):
+    """pi reaches the proxy through `InterceptPi`, which writes models.json in setup. A subclass of
+    Harbor's own `Pi` would skip that and fail on `intercept_config`, so it is refused."""
+    with pytest.raises(ValueError, match="install_fixes:InterceptPi"):
+        seams.get(f"{custom_agents}:MyPi")
+    seam = seams.get(f"{custom_agents}:MyInterceptPi")
+    _, kwargs, _, _ = seam.resolve(
+        base_url="https://capture.test", session="s", model="m"
+    )
+    assert seam.import_path == f"{custom_agents}:MyInterceptPi"
+    assert kwargs["intercept_config"]["api_key"] == "s"
+
+
+def test_a_bad_import_path_says_why():
+    pytest.importorskip("harbor.agents.base")
+    with pytest.raises(KeyError, match="cannot import harness"):
+        seams.get("no_such_module_xyz:Agent")
+
+
+def test_a_non_agent_class_is_refused():
+    pytest.importorskip("harbor.agents.base")
+    with pytest.raises(KeyError, match="must subclass harbor.agents.base.BaseAgent"):
+        seams.get("collections:OrderedDict")
+
+
+def test_runtime_refuses_host_side_agents_that_drop_capture_kwargs(custom_agents):
+    with pytest.raises(ValueError, match="must declare api_base, api_key"):
+        seams.get(f"{custom_agents}:SilentHostSideAgent")
+
+
+@pytest.mark.parametrize(
+    "allowed_harnesses",
+    [
+        "other:Agent,client_named_agent:Agent",
+        "other:Agent, client_named_agent:Agent ",
+        " , other:Agent,\tclient_named_agent:Agent , , ",
+    ],
+)
+async def test_serve_imports_only_the_harnesses_its_operator_allowed(
+    monkeypatch, tmp_path, allowed_harnesses
+):
+    """A client names the harness in `run_rollout`, and a `module:Class` name makes the server
+    import that module. Unless the operator allowed it at startup, it is refused before any import."""
+    import json
+
+    from openenv.harbor.environment import HarborEnvironment
+    from openenv.harbor.serving import HarborService
+
+    (tmp_path / "client_named_agent.py").write_text("class Agent:\n    pass\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(HarborService, "_instance", None)
+    monkeypatch.delenv("OPENENV_HARBOR_ALLOW_HARNESS", raising=False)
+    env = object.__new__(HarborEnvironment)
+
+    async def rollout_error() -> str:
+        result = await env._run_rollout(
+            split="",
+            task_index=0,
+            harness="client_named_agent:Agent",
+            sandbox="e2b",
+            reward_key="",
+            keep_sandbox=False,
+            force_build=False,
+        )
+        return json.loads(result)["error"]
+
+    assert "--allow-harness client_named_agent:Agent" in await rollout_error()
+    assert "client_named_agent" not in sys.modules
+
+    monkeypatch.setenv("OPENENV_HARBOR_ALLOW_HARNESS", allowed_harnesses)
+    # Past the check, the rollout stops at the next one: no capture proxy runs here.
+    assert "no capture proxy" in await rollout_error()
 
 
 def test_antigravity_uses_the_existing_native_google_endpoint_setting():
