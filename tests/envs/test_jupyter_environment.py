@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import contextlib
 import io
+import shlex
 import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from jupyter_env.models import JupyterState
+from jupyter_env.server import submission
 from jupyter_env.server.e2b_sandbox import CellResult, E2BSandbox
 from jupyter_env.server.jupyter_environment import JupyterEnvironment
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
@@ -428,10 +432,16 @@ class _Processes:
                 "timeout": timeout,
             }
         )
+        mapped = cmd.replace("/home/user", self.home).replace(
+            "/submission", f"{self.home}/submission"
+        )
         done = self._run(
-            ["/bin/bash", "-l", "-c", cmd.replace("/home/user", self.home)],
+            ["/bin/bash", "-l", "-c", mapped],
             cwd=(cwd or "").replace("/home/user", self.home) or None,
-            env={"PATH": "/usr/bin:/bin", "HOME": self.home},
+            env={
+                "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin",
+                "HOME": self.home,
+            },
             capture_output=True,
             text=True,
         )
@@ -466,11 +476,46 @@ class _Handle:
         return self._kill_result
 
 
-def _environment_on_real_sandbox(home, verify_commands):
+class _Files:
+    """E2B's file API over the temporary directory standing in for the sandbox."""
+
+    def __init__(self, home) -> None:
+        self.home = str(home)
+
+    def _local(self, path: str) -> Path:
+        if path.startswith("/submission"):
+            return Path(self.home) / "submission" / path[len("/submission/") :]
+        return Path(path.replace("/home/user", self.home, 1))
+
+    def read(self, path: str, format: str = "text"):
+        data = self._local(path).read_bytes()
+        # The SDK returns a bytearray for format="bytes".
+        return bytearray(data) if format == "bytes" else data.decode()
+
+    def write(self, path: str, content) -> None:
+        # Like the SDK, accepts str or bytes and refuses anything else.
+        target = self._local(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, bytes):
+            target.write_bytes(content)
+        elif isinstance(content, str):
+            target.write_text(content)
+        else:
+            raise TypeError(f"Unsupported data type for file {path}")
+
+
+def _sandbox_on(home, sandbox_id="fake-sandbox"):
     kernel, processes = _Kernel(), _Processes(home)
     sandbox = E2BSandbox.__new__(E2BSandbox)
-    sandbox._sbx = SimpleNamespace(run_code=kernel.run_code, commands=processes)
-    sandbox.sandbox_id = "fake-sandbox"
+    sandbox._sbx = SimpleNamespace(
+        run_code=kernel.run_code, commands=processes, files=_Files(home)
+    )
+    sandbox.sandbox_id = sandbox_id
+    return sandbox, kernel, processes
+
+
+def _environment_on_real_sandbox(home, verify_commands):
+    sandbox, kernel, processes = _sandbox_on(home)
     env = JupyterEnvironment()
     env._sandbox = sandbox
     env._state = JupyterState(
@@ -479,6 +524,24 @@ def _environment_on_real_sandbox(home, verify_commands):
         verify_commands=verify_commands,
     )
     return env, kernel, processes
+
+
+def _environment_with_a_verifier_sandbox(
+    agent_home, verifier_home, verify_commands, submit_paths, setup_commands=()
+):
+    """An episode whose verification runs in a second, untouched sandbox.
+
+    `/submission` and `/tests` live outside the mapped workspace, so the
+    verifier's temporary directory is its parent here.
+    """
+    env, kernel, processes = _environment_on_real_sandbox(agent_home, verify_commands)
+    env._state.submit_paths = list(submit_paths)
+    env._state.setup_commands = list(setup_commands)
+    verifier, verifier_kernel, verifier_processes = _sandbox_on(
+        verifier_home, "fake-verifier-sandbox"
+    )
+    env._new_sandbox = lambda: verifier
+    return env, processes, verifier, verifier_processes
 
 
 def _run_cell(env, code):
@@ -672,3 +735,314 @@ def test_a_poisoned_login_profile_still_defeats_a_failing_verify_command(
     # The verify command fails, the profile reports success for it anyway.
     assert [result.success for result in env.state.verify_results] == [True]
     assert env.state.last_reward == 1.0
+
+
+# The cases @zuraiz-anjum ran against `coding_tools_env` on #1232. The task
+# ships its own tests from setup; the agent submits an answer and nothing else.
+_WRONG_ANSWER = """\
+def add(a, b):
+    return a - b
+"""
+_RIGHT_ANSWER = """\
+def add(a, b):
+    return a + b
+"""
+_TASK_TESTS = """\
+from solution import add
+
+
+def test_add():
+    assert add(2, 3) == 5
+"""
+_CHEATING_CONFTEST = """\
+import pytest
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    outcome.get_result().outcome = "passed"
+"""
+
+
+def _setup_commands():
+    """What the task does in whichever sandbox verification runs in."""
+    return [
+        f"mkdir -p /home/user/tests && cat > /home/user/tests/test_add.py <<'PYEOF'\n{_TASK_TESTS}PYEOF"
+    ]
+
+
+def _verify_commands(submission_subdir=""):
+    source = f"/submission/{submission_subdir}".rstrip("/")
+    # The interpreter by path: some hosts' /etc/profile resets PATH for the
+    # login shell the stand-in runs.
+    return [
+        f"cd /home/user/tests && cp {source}/* . 2>/dev/null; "
+        f"{shlex.quote(sys.executable)} -m pytest -q -p no:cacheprovider test_add.py"
+    ]
+
+
+def _find_has_printf() -> bool:
+    done = subprocess.run(
+        ["find", ".", "-maxdepth", "0", "-printf", ""],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+    )
+    return done.returncode == 0
+
+
+# The listing uses GNU find, as E2B's template has; macOS ships BSD find.
+_needs_gnu_find = pytest.mark.skipif(
+    not _find_has_printf(), reason="the submission listing needs GNU find"
+)
+
+
+def _write_cell(path, text):
+    return f"open({str(path)!r}, 'w').write({text!r})"
+
+
+def _submission_episode(
+    tmp_path, cells, submit_paths, submission_subdir="", setup=None
+):
+    agent_home, verifier_home = tmp_path / "agent", tmp_path / "verifier"
+    agent_home.mkdir()
+    verifier_home.mkdir()
+    env, processes, verifier, verifier_processes = _environment_with_a_verifier_sandbox(
+        agent_home,
+        verifier_home,
+        _verify_commands(submission_subdir),
+        submit_paths,
+        setup_commands=_setup_commands() if setup is None else setup,
+    )
+    for code in cells:
+        _run_cell(env, code)
+    _submit_answer(env)
+    return env, agent_home, verifier_home, verifier_processes
+
+
+@_needs_gnu_find
+def test_a_wrong_answer_scores_zero_in_a_fresh_sandbox(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    agent = tmp_path / "agent"
+    env, _, _, _ = _submission_episode(
+        tmp_path,
+        [_write_cell(agent / "solution.py", _WRONG_ANSWER)],
+        submit_paths=("solution.py",),
+    )
+
+    assert env.state.last_reward == 0.0
+    assert env.state.submission_refused == []
+
+
+@_needs_gnu_find
+def test_a_right_answer_scores_one_in_a_fresh_sandbox(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    agent = tmp_path / "agent"
+    env, _, verifier_home, _ = _submission_episode(
+        tmp_path,
+        [_write_cell(agent / "solution.py", _RIGHT_ANSWER)],
+        submit_paths=("solution.py",),
+    )
+
+    assert env.state.last_reward == 1.0
+    assert (verifier_home / "submission/solution.py").read_text() == _RIGHT_ANSWER
+
+
+@_needs_gnu_find
+def test_a_cheating_conftest_under_a_declared_directory_is_left_behind(
+    monkeypatch, tmp_path
+):
+    """The case that takes a wrong answer to 1.0 when the verifier reads a
+    `conftest.py` the agent wrote."""
+    monkeypatch.chdir(tmp_path)
+    agent = tmp_path / "agent"
+    env, _, verifier_home, _ = _submission_episode(
+        tmp_path,
+        [
+            f"import os\nos.makedirs({str(agent / 'work')!r}, exist_ok=True)",
+            _write_cell(agent / "work/solution.py", _WRONG_ANSWER),
+            _write_cell(agent / "work/conftest.py", _CHEATING_CONFTEST),
+        ],
+        submit_paths=("work",),
+        submission_subdir="work",
+    )
+
+    assert env.state.last_reward == 0.0
+    assert any("conftest.py" in reason for reason in env.state.submission_refused)
+    assert not (verifier_home / "submission/work/conftest.py").exists()
+
+
+@_needs_gnu_find
+def test_a_rewritten_task_test_does_not_replace_the_one_setup_wrote(
+    monkeypatch, tmp_path
+):
+    """Setup runs before the submission arrives, and the submission lands
+    outside the workspace, so the task's own test file is what runs."""
+    monkeypatch.chdir(tmp_path)
+    agent = tmp_path / "agent"
+    env, _, verifier_home, _ = _submission_episode(
+        tmp_path,
+        [
+            _write_cell(agent / "solution.py", _WRONG_ANSWER),
+            f"import os\nos.makedirs({str(agent / 'tests')!r}, exist_ok=True)",
+            _write_cell(
+                agent / "tests/test_add.py", "def test_add():\n    assert True\n"
+            ),
+        ],
+        submit_paths=("solution.py", "tests"),
+    )
+
+    assert env.state.last_reward == 0.0
+    assert (verifier_home / "tests/test_add.py").read_text() == _TASK_TESTS
+    assert (verifier_home / "submission/tests/test_add.py").exists()
+
+
+def test_a_poisoned_login_profile_does_not_reach_a_fresh_sandbox(monkeypatch, tmp_path):
+    """What the fresh sandbox buys over #1233: the poisoned profile is in the
+    sandbox the verifier never uses."""
+    monkeypatch.chdir(tmp_path)
+    agent_home, verifier_home = tmp_path / "agent", tmp_path / "verifier"
+    agent_home.mkdir()
+    verifier_home.mkdir()
+    env, _, _, _ = _environment_with_a_verifier_sandbox(
+        agent_home, verifier_home, ["exit 1"], ["answer.txt"]
+    )
+
+    _run_cell(env, _write_cell(agent_home / ".bash_profile", _POISONED_PROFILE))
+    _run_cell(env, _write_cell(agent_home / "answer.txt", "42\n"))
+    _submit_answer(env)
+
+    assert [result.success for result in env.state.verify_results] == [False]
+    assert env.state.last_reward == 0.0
+
+
+@_needs_gnu_find
+@pytest.mark.parametrize(
+    "declared", ["/etc/passwd", "../outside.txt", "work/../../outside.txt"]
+)
+def test_a_path_outside_the_workspace_is_refused(monkeypatch, tmp_path, declared):
+    monkeypatch.chdir(tmp_path)
+    agent = tmp_path / "agent"
+    env, _, _, _ = _submission_episode(
+        tmp_path,
+        [_write_cell(agent / "solution.py", _RIGHT_ANSWER)],
+        submit_paths=("solution.py", declared),
+    )
+
+    assert any(declared in reason for reason in env.state.submission_refused)
+    assert env.state.last_reward == 1.0
+
+
+@_needs_gnu_find
+def test_a_symlink_is_reported_rather_than_followed(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    agent = tmp_path / "agent"
+    env, _, verifier_home, _ = _submission_episode(
+        tmp_path,
+        [
+            _write_cell(agent / "solution.py", _RIGHT_ANSWER),
+            f"import os\nos.symlink('/etc/passwd', {str(agent / 'secrets.txt')!r})",
+        ],
+        submit_paths=("solution.py", "secrets.txt"),
+    )
+
+    assert any("not a regular file" in r for r in env.state.submission_refused)
+    assert not (verifier_home / "submission/secrets.txt").exists()
+
+
+def test_a_listed_path_that_leaves_the_workspace_is_refused():
+    """The listing comes from the agent's sandbox, so a path in it gets the
+    same check as a declared one before anything is written to it."""
+    files, refusals = submission.parse_listing("work", "f\t5\t../../outside.txt\n")
+
+    assert files == []
+    assert refusals == ["leaves the workspace: 'work/../../outside.txt'"]
+
+
+def test_setup_in_the_verifier_sandbox_finds_the_verifier_log_directory(
+    monkeypatch, tmp_path
+):
+    """Reset creates it before setup runs, and so does the verifier sandbox."""
+    monkeypatch.chdir(tmp_path)
+    agent_home, verifier_home = tmp_path / "agent", tmp_path / "verifier"
+    agent_home.mkdir()
+    verifier_home.mkdir()
+    env, _, _, _ = _environment_with_a_verifier_sandbox(
+        agent_home,
+        verifier_home,
+        ["true"],
+        ["answer.txt"],
+        setup_commands=["test -d /home/user/logs/verifier"],
+    )
+
+    _submit_answer(env)
+
+    assert [result.success for result in env.state.verify_results] == [True]
+
+
+def test_no_declared_paths_keeps_verification_in_the_agent_sandbox(
+    monkeypatch, tmp_path
+):
+    """The opt-in guarantee: a task that declares nothing scores as it did."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.chdir(tmp_path)
+    env, _, _ = _environment_on_real_sandbox(home, ["true", "exit 1"])
+
+    def no_second_sandbox():
+        raise AssertionError("verification started a sandbox it should not have")
+
+    env._new_sandbox = no_second_sandbox
+    _submit_answer(env)
+
+    assert env.state.last_reward == 0.5
+    assert env.state.submission_refused == []
+
+
+def test_setup_failing_in_the_verifier_sandbox_is_not_a_reward(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    agent_home, verifier_home = tmp_path / "agent", tmp_path / "verifier"
+    agent_home.mkdir()
+    verifier_home.mkdir()
+    env, _, _, _ = _environment_with_a_verifier_sandbox(
+        agent_home, verifier_home, ["true"], ["answer.txt"], setup_commands=["exit 3"]
+    )
+
+    _run_cell(env, _write_cell(agent_home / "answer.txt", "42\n"))
+    obs = env.step(
+        CallToolAction(tool_name="final_answer", arguments={"answer": "done"})
+    )
+
+    assert "setup failed in the verifier sandbox" in obs.error.message
+    assert env.state.verify_results == []
+    assert env.state.last_reward is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".bash_profile",
+        ".bash_login",
+        ".profile",
+        ".bashrc",
+        ".bash_logout",
+        "sitecustomize.py",
+        "usercustomize.py",
+        "answer.pth",
+        "conftest.py",
+        "pytest.ini",
+        ".pytest.ini",
+        "pytest.toml",
+        ".pytest.toml",
+        "pyproject.toml",
+        "setup.cfg",
+        "tox.ini",
+    ],
+)
+def test_a_file_read_before_the_first_assertion_stays_behind(name):
+    """@zuraiz-anjum measured the pytest half of this list on #1579: each of
+    those files can carry `addopts = --co`, which collects without running and
+    reports success."""
+    assert submission.excluded_file(f"work/{name}")
+    # Naming one exactly is the task author's decision, so it is still allowed.
+    assert submission.check_declared_path(f"work/{name}") is None

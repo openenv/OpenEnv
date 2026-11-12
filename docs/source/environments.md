@@ -240,6 +240,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Spatial-Gym</div>
+      <p class="text-sm">SPaRC grid pathfinding puzzles solved one move per step, with the Spatial-Gym paper's prompts and a 1.0 reward for a line that follows every rule.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/spatial_gym" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">REPL</div>
       <p class="text-sm">Python REPL environment for code execution tasks based on the Recursive Language Models paradigm with sandboxed execution and context loading.</p>
       <div class="flex gap-2 mt-3">
@@ -358,6 +365,14 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       <div class="flex gap-2 mt-3">
         <a href="https://huggingface.co/spaces/reasoning-core/reasoning-core-openenv/blob/main/README.md" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
         <a href="https://huggingface.co/spaces/reasoning-core/reasoning-core-openenv" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Stripe World</div>
+      <p class="text-sm">Stateful copy of Stripe's Billing and Payments API with Stripe's MCP tools, a private account per episode, and a row-level change log in the state for grading. No built-in reward: grade from <code>state()</code>.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/stripe_world" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://huggingface.co/spaces/scosman/stripe_world" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">🤗 HF</a>
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">

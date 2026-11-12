@@ -763,6 +763,16 @@ def test_provider_requests_base_id_with_distinct_token_and_records_source_limit(
     assert "PRIVATE_CANARY_SENTINEL" not in repr(request)
     assert "test.sh" not in repr(request)
     metadata = generated["model_metadata"]
+    assert metadata["candidate_output_contract"] == {
+        "format": "bash_script",
+        "version": 2,
+        "submission_paths": ["/app/answer.txt"],
+    }
+    assert "creates or edits" in request["messages"][0]["content"]
+    assert (
+        'Required submission files: ["/app/answer.txt"]'
+        in request["messages"][1]["content"]
+    )
     assert metadata["source_revision"] == MODEL["revision"]
     assert metadata["served_weight_revision_pinned"] is False
     assert metadata["seed_supported"] is False
@@ -1228,17 +1238,18 @@ def test_candidate_context_binds_only_declared_public_bytes_to_prompt(
     assert "context_paths" not in h.inference.requests[0]
 
 
-def test_default_candidate_prompt_and_target_protocol_are_unchanged(harness):
+def test_candidate_contract_names_outputs_without_changing_target_instruction(harness):
     h = harness
     h.inference.responses = [response("true"), response("done")]
     generated = h.backend.generate_candidate(MODEL, 0)
     solved = h.backend.solve(MODEL, 1)
     assert generated["error"] is None and solved["error"] is None
     assert "candidate_context" not in generated
-    assert all(
-        request["messages"][1]["content"] == (h.root / "instruction.md").read_text()
-        for request in h.inference.requests
+    instruction = (h.root / "instruction.md").read_text()
+    assert h.inference.requests[0]["messages"][1]["content"] == (
+        instruction + '\n\nRequired submission files: ["/app/answer.txt"]'
     )
+    assert h.inference.requests[1]["messages"][1]["content"] == instruction
 
 
 @pytest.mark.parametrize(
@@ -1387,9 +1398,11 @@ def test_invalid_tool_name_is_not_executed(harness):
     h = harness
     call = terminal()
     call["function"]["name"] = "provider_request"
-    h.inference.responses = [response(None, calls=[call])]
+    h.inference.responses = [response(None, calls=[call]), response("cannot proceed")]
     record = h.backend.solve(MODEL, 0)
-    assert "invalid terminal" in record["error"] and not h.factory.created[0].commands
+    assert record["error"] is None and not h.factory.created[0].commands
+    assert record["model_metadata"]["tool_error_count"] == 1
+    assert json.loads(h.inference.requests[1]["messages"][-1]["content"])["error"]
 
 
 def test_output_and_token_limits_are_fail_closed(harness):
@@ -1491,6 +1504,43 @@ def test_deadline_interrupts_blocking_controller_and_restores_handler():
     assert time.monotonic() - started < 0.5
     assert signal.getsignal(signal.SIGALRM) == handler
     assert signal.getitimer(signal.ITIMER_REAL)[0] == 0
+
+
+@pytest.mark.parametrize("seconds", [0, -0.1, float("inf"), float("nan")])
+def test_expired_deadline_does_not_enter_or_change_parent_alarm(monkeypatch, seconds):
+    timer_calls = []
+    monkeypatch.setattr(signal, "getitimer", lambda *_: (10, 0))
+    monkeypatch.setattr(signal, "setitimer", lambda *args: timer_calls.append(args))
+    handler = signal.getsignal(signal.SIGALRM)
+    entered = []
+    with pytest.raises(HFBackendError, match="deadline"):
+        with _deadline(seconds):
+            entered.append(True)
+    assert not entered and not timer_calls
+    assert signal.getsignal(signal.SIGALRM) == handler
+
+
+def test_target_retains_billed_counts_before_malformed_usage_serialization(harness):
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "provider_extra": object(),
+    }
+    harness.inference.responses = [response(usage=usage)]
+    record = harness.backend.solve(MODEL, 0)
+    assert record["error"] and record["cleanup_verified"]
+    receipts = record["model_metadata"].get("responses", [])
+    assert len(receipts) == 1
+    assert receipts[0]["usage_counts"] == {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+    }
+    assert receipts[0]["usage_receipt_error"]
+    assert receipts[0]["discarded"] and not receipts[0]["response_validated"]
+    assert not harness.factory.created[0].commands
+    json.dumps(record, allow_nan=False)
 
 
 def test_strong_isolation_and_equal_credentials_rejected(harness):
@@ -1749,3 +1799,48 @@ def test_empty_or_non_bash_fence_does_not_create_a_candidate(harness, raw):
     h.inference.responses = [response(raw)]
     record = h.backend.generate_candidate(MODEL, 0)
     assert record["error"] and record["script"] == "" and not h.factory.created
+
+
+@pytest.mark.parametrize("phase", ["target", "candidate"])
+@pytest.mark.parametrize("status", [400, 401, 403, 429, 502, 503])
+def test_http_failure_retains_only_numeric_status_without_retry(
+    harness, monkeypatch, phase, status
+):
+    from unittest.mock import Mock
+
+    from huggingface_hub.errors import HfHubHTTPError
+
+    request = httpx.Request(
+        "POST",
+        "https://router.invalid/chat?private=url-sentinel",
+        headers={"Authorization": "Bearer inference-token-secret"},
+    )
+    response = httpx.Response(status, request=request, text="private-body-sentinel")
+    failure = HfHubHTTPError(
+        "private-body-sentinel inference-token-secret url-sentinel", response=response
+    )
+    call = Mock(side_effect=failure)
+    monkeypatch.setattr(harness.inference, "chat_completion", call)
+    record = (
+        harness.backend.solve(MODEL, 0)
+        if phase == "target"
+        else harness.backend.generate_candidate(MODEL, 0)
+    )
+    assert (
+        record["error"]
+        == f"HF backend operation failed (HfHubHTTPError; HTTP {status})"
+    )
+    assert len(record["model_metadata"]["requests"]) == 1 and call.call_count == 1
+    assert not record.get("files") and record.get("reward") is None
+    assert record["usage"] == {"input_tokens": 0, "output_tokens": 0}
+    assert "private-body-sentinel" not in json.dumps(record)
+    assert "url-sentinel" not in json.dumps(record)
+    assert "inference-token-secret" not in json.dumps(record)
+    if phase == "target":
+        assert record["cleanup_verified"]
+        assert (
+            len(harness.factory.created) == 1
+            and not harness.factory.created[0].commands
+        )
+    else:
+        assert not harness.factory.created

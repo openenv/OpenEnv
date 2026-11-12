@@ -69,6 +69,8 @@
   - sections:
     - local: tutorials/evaluation-inspect
       title: Evaluating with Environments
+    - local: tutorials/seahaven-environment
+      title: "Tool-Use Environments (Seahaven)"
     title: Evals
   title: Learn
 - isExpanded: false
@@ -143,6 +145,8 @@
     title: QED Math
   - local: environments/reasoning_gym
     title: Reasoning Gym
+  - local: environments/spatial_gym
+    title: Spatial-Gym
   - local: environments/tau2
     title: τ²-bench
   - local: environments/tbench2
@@ -163,6 +167,8 @@
     title: Sophistry Bench Sprint
   - local: environments/ortools
     title: OR-Tools
+  - local: environments/stripe_world
+    title: Stripe World
   - local: environments/harvest_rush
     title: Harvest Rush
   title: Environments
