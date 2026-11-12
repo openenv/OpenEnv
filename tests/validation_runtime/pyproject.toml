@@ -15,5 +15,11 @@ dependencies = [
 [tool.uv]
 package = false
 
+[dependency-groups]
+dev = [
+    # The Harbor task binding's tests import Harbor; a skip fails --require-complete.
+    "harbor==0.25.0",
+]
+
 [tool.uv.sources]
 openenv = { path = "../..", editable = false }

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import secrets
 from pathlib import Path
+from typing import Any, Callable
 
 from openenv.core.harness.capture import CaptureServer
 
@@ -44,6 +45,10 @@ async def run_batch(
     auth_header: str = "Authorization",
     provider: str = "openai",
     admin_key: str | None = None,
+    agent_timeout_sec: float | None = None,
+    agent_step_limit: int | None = None,
+    on_trial_created: Callable[[Any], None] | None = None,
+    environment_kwargs: dict[str, Any] | None = None,
 ) -> list[HarborRolloutResult]:
     """Run `task_indices` from `dataset` and print a per-rollout report.
 
@@ -64,6 +69,15 @@ async def run_batch(
             Key the capture proxy's session-management routes require. Defaults to
             `$OPENENV_CAPTURE_ADMIN_KEY`, else a random one minted for this batch. The proxy is
             published on a public URL, so these routes are never left open.
+        agent_timeout_sec (`float`, *optional*):
+            Override each agent's execution timeout in seconds.
+        agent_step_limit (`int`, *optional*):
+            Limit each rollout's agent steps and captured model calls.
+        on_trial_created (`Callable[[Any], None]`, *optional*):
+            Trusted infrastructure callback invoked with each native Harbor trial before it runs.
+            Exceptions fail that rollout and prevent trial execution. Not exposed through MCP.
+        environment_kwargs (`dict[str, Any]`, *optional*):
+            Backend kwargs passed to Harbor. `None` keeps Harbor's defaults.
 
     Returns:
         `list[HarborRolloutResult]`: One per index, in order.
@@ -164,9 +178,13 @@ async def run_batch(
                 # training path (`run_rollout`'s default) still refuses to pick a signal.
                 require_reward=False,
                 keep_sandbox=keep_sandbox,
+                agent_timeout_sec=agent_timeout_sec,
+                agent_step_limit=agent_step_limit,
                 force_build=force_build,
                 capture_level=capture_level,
                 inference=capture.inference,
+                on_trial_created=on_trial_created,
+                environment_kwargs=environment_kwargs,
             )
             results.append(result)
             print("   " + _summarise(result))

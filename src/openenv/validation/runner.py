@@ -39,6 +39,7 @@ from .graders.runtime.repeatability import (
 from .graders.static import StaticManifestGrader
 from .manifest import ManifestError, NormalizedManifest, NormalizedManifestV2
 from .parsers import ParserRegistry
+from .parsers.harbor_toml import HarborTaskParser
 from .parsers.openenv_yaml import OpenEnvYamlParser
 from .policy import apply_policy, load_policy, PolicyError, SeverityPolicy
 from .providers import CleanupError, ProviderError, StartupError, UnsupportedCapability
@@ -121,6 +122,7 @@ def default_parser_registry() -> ParserRegistry:
     """The parsers shipped in this build."""
     registry = ParserRegistry()
     registry.register(OpenEnvYamlParser())
+    registry.register(HarborTaskParser())
     return registry
 
 
@@ -685,6 +687,23 @@ def run_validation(
             )
         )
         if wants_runtime:
+            if (
+                isinstance(manifest, NormalizedManifestV2)
+                and manifest.execution.kind == "harbor_task"
+            ):
+                from .harbor import validate_harbor
+
+                return validate_harbor(
+                    subject,
+                    max_level=max_level,
+                    policy=policy,
+                    results=results,
+                    digest_before=digest_before,
+                    artifacts_dir=artifacts_dir,
+                    report_target=report_target,
+                    skip_build=skip_build,
+                    provider=provider,
+                )
             (
                 runtime_results,
                 attempted,
@@ -708,31 +727,29 @@ def run_validation(
             if attempted:
                 levels.append(Level.RUNTIME)
 
+    # Policy IDs are an inventory, not evidence that a grader exists. Name every
+    # requested check that did not run, so a PASS never hides missing coverage.
+    present = {result.check_id for result in results}
+    for entry in policy.entries_for_lane(Lane.LOCAL).values():
+        grader = graders.get(entry.check_id)
+        applicable = (
+            manifest is None
+            or entry.check_id in selected
+            or (grader is None and _applicable(entry.check_id, manifest))
+        )
+        if entry.level <= max_level and entry.check_id not in present and applicable:
+            reason = "grader not implemented in this build"
+            if manifest is None:
+                reason = "unmet dependency: valid manifest"
+            elif entry.level is Level.SEMANTIC:
+                reason = "oracle execution is not implemented for served packages"
+            elif grader is not None and grader.depends_on:
+                reason = "unmet dependency: " + ", ".join(grader.depends_on)
+            elif grader is not None:
+                reason = "grader did not complete"
+            results.append(_outcome(entry.check_id, CheckStatus.SKIP, reason))
+
     if wants_runtime:
-        # Policy IDs are an inventory, not evidence that a grader exists. Keep the
-        # incomplete surface explicit throughout the staged implementation.
-        present = {result.check_id for result in results}
-        for entry in policy.entries_for_lane(Lane.LOCAL).values():
-            grader = graders.get(entry.check_id)
-            applicable = (
-                manifest is None
-                or entry.check_id in selected
-                or (grader is None and _applicable(entry.check_id, manifest))
-            )
-            if (
-                entry.level in {Level.RUNTIME, Level.SEMANTIC}
-                and entry.level <= max_level
-                and entry.check_id not in present
-                and applicable
-            ):
-                reason = "grader not implemented in this build"
-                if manifest is None:
-                    reason = "unmet dependency: valid manifest"
-                elif grader is not None and grader.depends_on:
-                    reason = "unmet dependency: " + ", ".join(grader.depends_on)
-                elif grader is not None:
-                    reason = "grader did not complete"
-                results.append(_outcome(entry.check_id, CheckStatus.SKIP, reason))
         source_problem = None
         if not digest_before:
             source_problem = "package source could not be verified before validation"
