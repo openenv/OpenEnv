@@ -284,6 +284,11 @@ ThinkingBox examples: `example_usage.py` is a public-client smoke test, while `e
 
 ## Harbor integration
 
+`examples/coding_audit/` owns the supplemental operator coding audit, its standalone
+`python -m examples.coding_audit` CLI, and offline tests. It is separate from core
+RFC 008 validation. `examples/hub_validation_pipeline/` prepares and submits its
+frozen cloud bundles.
+
 `src/openenv/core/harness/capture/` records inference calls independently of a trainer or tokenizer. `src/openenv/harbor/` runs Harbor tasks, reconciles their trajectories, and exposes the shared training contract through clients and the Gradio playground. `envs/harbor_env/` is the installable environment wrapper. `examples/harbor/nemo_shell_profile/` provides the explicitly qualified NeMo shell workflow.
 
 See `docs/source/guides/harbor-provider-qualification.md` for provider and adapter evidence, `rfcs/012-harbor-capture-providers.md` for explicit evaluation/training and session ownership, and `tests/envs/test_harbor*.py` / `test_capture*.py` for deterministic capture regressions.
