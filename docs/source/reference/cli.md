@@ -76,10 +76,15 @@ and `harbor==0.25.0` installed alongside `openenv[harbor]`:
 pip install "openenv[harbor]" "harbor==0.25.0"
 ```
 
+A missing or mismatched Harbor installation exits 3 and names `harbor==0.25.0`.
+
 Add a `validation/openenv.json` contract with `profile: "harbor-semantic-v1"`,
 `reward_key`, `reward`, `resources` and `types`. The reward range, oracle tolerance
 and floor margin must be explicit. Oracle tolerance and floor margin are fractions
-of the declared reward range. This is a minimal complete contract:
+of the declared reward range. Numeric strings in numeric fields, oversized integers
+and excessive JSON nesting fail `static.manifest`. Reward and resource numbers must
+retain their exact value when stored as floats. `resources.gpu_types` remains a list
+of strings. This is a minimal complete contract:
 
 ```json
 {
@@ -110,10 +115,31 @@ the raw trial evidence in the report bundle. Other checks are named SKIPs, so a
 passing task still reports WARN. This validates task packages, not the outer
 `harbor_env` server.
 
-Task-declared `docker_image` values are refused. The do-nothing trial builds from
-the task's Dockerfile. The validator keeps `openenv-validation:<run id>` only when
-the run has no FAIL or ERROR and was not interrupted. It records the tag in
-`runtime.startup.measured` as `retained_image_tag`. Otherwise it removes the tag.
+Supported tasks use Linux, a single step, one Dockerfile, a shared verifier and
+public networking. Unsupported shapes include multi-step or non-Linux tasks,
+task-declared `environment.docker_image`, missing Dockerfiles, task-authored Compose
+files and separate verifier environments. GPU/TPU or external MCP requirements,
+credentials, non-public or differing phase networks, task environment variables,
+healthchecks, skills, verifier collection and artifact extensions are also
+unsupported. A supplied provider, including `--space`, is unsupported. Each case
+gives `runtime.startup` SKIP with a named reason and runs no trials. With valid
+static declarations and an oracle, the verdict is WARN and the exit code is 0.
+A missing `solution/solve.sh` still FAILs `semantic.oracle_max` at the semantic level,
+including with `--skip-build` or `--space`.
+
+The initial image build and environment start share a separate 600-second validator
+budget. Exceeding it gives `runtime.startup` ERROR. Later environment starts use the
+episode budget. There is no shared outer trial deadline. Harbor bounds setup, agent
+and verifier separately with the declared `resources.episode_timeout_s`. A timeout
+in one of these phases is a package FAIL that names the phase.
+
+The do-nothing trial builds from the task's Dockerfile. The validator keeps
+`openenv-validation:<run id>` only when the run has no FAIL or ERROR and was not
+interrupted. It records the tag in `runtime.startup.measured` as
+`retained_image_tag`. Otherwise it removes the tag. The run-owned Compose build tag
+is removed on every run. Tag removal verifies image identity and uses `--no-prune`.
+A removal failure marks cleanup incomplete and gives a startup ERROR. During an
+abort, cleanup preserves the original exception and records the removal failure.
 
 The 16 implemented runtime checks cover startup, rewards, observation schemas,
 state continuity, network policy, host containment, resource bounds, episode isolation,
