@@ -11,7 +11,7 @@ import threading
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
-from multiprocessing.connection import Connection
+from multiprocessing.connection import Connection, wait
 from queue import SimpleQueue
 from typing import Callable
 from uuid import uuid4
@@ -609,7 +609,13 @@ class ManagedChildBackend(DirectLMBackend):
             )
 
 
+def _exit_with_parent():
+    wait([multiprocessing.parent_process().sentinel])
+    os._exit(1)
+
+
 def _run_child(chat_factory, channel, shutdown, prompt, model, depth, options):
+    threading.Thread(target=_exit_with_parent, daemon=True).start()
     children = _RemoteChildren(channel, shutdown)
     try:
         channel.send(("ready",))

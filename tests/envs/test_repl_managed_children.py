@@ -1,24 +1,33 @@
 """Unit contracts and real-process cleanup coverage for managed child queries."""
 
 import functools
+import json
 import os
 import signal
+import socket
+import subprocess
 import sys
 import threading
 import time
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import requests
+from websockets.sync.client import connect
 
 pytest.importorskip("smolagents")
 
 import repl_env.runner as runner_module
+from openenv.core.env_server import create_app
 from repl_env import LocalREPLEnv, LocalRLMRunner
 from repl_env.managed_children import ChildCleanupError, ManagedChildConfig
+from repl_env.models import REPLAction, REPLObservation
 from repl_env.recursive_controller import create_server_recursive_controller
+from repl_env.server.repl_environment import REPLEnvironment
 
 
 pytestmark = pytest.mark.skipif(
@@ -116,6 +125,14 @@ def assert_reaped(pids):
             os.kill(pid, 0)
         with pytest.raises(ChildProcessError):
             os.waitpid(pid, os.WNOHANG)
+
+
+def running(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def start_call(function, name):
@@ -976,3 +993,80 @@ def test_callback_exceptions_do_not_stop_dispatcher(tmp_path, callback_phase):
         controller.close()
     controller.children._callback_thread.join(5)
     assert not controller.children._callback_thread.is_alive()
+
+
+def make_served_app():
+    directory = Path(os.environ["MANAGED_CHILDREN_DIR"])
+    return create_app(
+        lambda: REPLEnvironment(recursive_controller=make_controller(directory)),
+        REPLAction,
+        REPLObservation,
+    )
+
+
+@pytest.mark.parametrize(
+    "signum", [signal.SIGTERM, signal.SIGKILL], ids=["SIGTERM", "SIGKILL"]
+)
+def test_workers_exit_when_server_dies_during_wait(tmp_path, signum):
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    log_path = tmp_path / "server.log"
+    with log_path.open("w") as log:
+        server = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                f"{__name__}:make_served_app",
+                "--factory",
+                "--port",
+                str(port),
+                "--timeout-graceful-shutdown",
+                "1",
+            ],
+            env=dict(
+                os.environ,
+                MANAGED_CHILDREN_DIR=str(tmp_path),
+                PYTHONPATH=os.pathsep.join(sys.path),
+            ),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    pids = []
+    try:
+        deadline = time.monotonic() + 60
+        while True:
+            assert server.poll() is None, log_path.read_text()
+            try:
+                requests.get(f"http://127.0.0.1:{port}/health", timeout=1)
+                break
+            except requests.ConnectionError:
+                assert time.monotonic() < deadline, log_path.read_text()
+                time.sleep(0.1)
+        with connect(f"ws://127.0.0.1:{port}/ws") as ws:
+            ws.send(json.dumps({"type": "reset", "data": {}}))
+            assert json.loads(ws.recv(timeout=30))["type"] == "observation"
+            code = "child = rlm_query('launch-nested', blocking=False)"
+            ws.send(json.dumps({"type": "step", "data": {"code": code}}))
+            reply = json.loads(ws.recv(timeout=30))
+            assert reply["data"]["observation"]["result"]["success"], reply
+            pids = wait_ready(tmp_path, 2)
+            code = "rlm_wait(child, timeout_s=60)"
+            ws.send(json.dumps({"type": "step", "data": {"code": code}}))
+            with pytest.raises(TimeoutError):
+                ws.recv(timeout=1)
+            server.send_signal(signum)
+            server.wait(30)
+        deadline = time.monotonic() + 10
+        while pids and time.monotonic() < deadline:
+            time.sleep(0.1)
+            pids = [pid for pid in pids if running(pid)]
+        assert not pids, f"Workers outlived the server: {pids}"
+    finally:
+        Path(tmp_path, "release").touch()
+        server.kill()
+        server.wait(10)
+        for pid in pids:
+            with suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)

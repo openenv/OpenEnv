@@ -190,6 +190,9 @@ controller to `LocalREPLEnv` or `REPLEnvironment` via `recursive_controller=`.
 Configure its credentials and limits at construction, not through reset overrides;
 infrastructure can cancel a handle with `controller.children.cancel(handle)`.
 `managed_children` cannot be combined with a custom `backend_factory`.
+Workers exit with the server process, even on SIGKILL. A client disconnect
+releases them once the running step returns, so an active `rlm_wait` delays this
+by at most its `timeout_s`.
 
 ## Actions and Observations
 
