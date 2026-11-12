@@ -22,9 +22,11 @@ from openenv.core.env_server.mcp_environment import MCPEnvironment
 from openenv.core.env_server.types import Action, Observation
 
 try:
+    from . import submission
     from .e2b_sandbox import E2BSandbox
     from .notebook_tracker import NotebookTracker
 except ImportError:  # pragma: no cover
+    from server import submission
     from server.e2b_sandbox import E2BSandbox
     from server.notebook_tracker import NotebookTracker
 
@@ -223,7 +225,7 @@ class JupyterEnvironment(MCPEnvironment):
             )
 
         try:
-            self._sandbox = E2BSandbox(api_key=api_key)
+            self._sandbox = self._new_sandbox()
         except Exception as exc:  # noqa: BLE001
             self._state = self._JupyterState(
                 episode_id=episode_id or str(uuid4()),
@@ -251,6 +253,8 @@ class JupyterEnvironment(MCPEnvironment):
             kwargs.get("verify", kwargs.get("verify_scripts", []))
         )
         self._state.verify_commands = verify_commands
+        self._state.setup_commands = setup_commands
+        self._state.submit_paths = _coerce_commands(kwargs.get("submit_paths", []))
 
         if setup_commands:
             self._sandbox.run_shell("mkdir -p /home/user/logs/verifier")
@@ -390,21 +394,77 @@ class JupyterEnvironment(MCPEnvironment):
             for command in commands
         ]
 
+    def _new_sandbox(self) -> E2BSandbox:
+        return E2BSandbox(api_key=os.environ["E2B_API_KEY"])
+
+    def _copy_submission(self, verifier: E2BSandbox) -> list[str]:
+        """Copy the declared paths into the verifier sandbox, return refusals."""
+        refused: list[str] = []
+        found: list[submission.SubmissionFile] = []
+        for declared in self._state.submit_paths:
+            reason = submission.check_declared_path(declared)
+            if reason:
+                refused.append(reason)
+                continue
+            listing = self._sandbox.run_command(submission.listing_command(declared))
+            files, refusals = submission.parse_listing(declared, listing.stdout)
+            found.extend(files)
+            refused.extend(refusals)
+        found, capped = submission.apply_caps(found)
+        refused.extend(capped)
+
+        for entry in found:
+            content = self._sandbox.read_file(
+                f"{submission.WORKSPACE}/{entry.relative_path}"
+            )
+            verifier.write_file(
+                f"{submission.SUBMISSION_DIR}/{entry.relative_path}", content
+            )
+        return refused
+
+    def _verify_in_fresh_sandbox(self) -> dict[str, Any]:
+        """Verify the submission in a sandbox the agent has never touched.
+
+        The order is what makes it a boundary: the task's setup runs before the
+        submission arrives, the submission lands outside the workspace, and the
+        verify commands and the reward file belong to this sandbox alone.
+        """
+        verifier = self._new_sandbox()
+        try:
+            # As in reset, so setup finds the same directories in both sandboxes.
+            verifier.run_command("mkdir -p /home/user/logs/verifier")
+            setup_results = [
+                _command_result_from_cell_result(command, verifier.run_command(command))
+                for command in self._state.setup_commands
+            ]
+            failed = [result.command for result in setup_results if not result.success]
+            if failed:
+                raise RuntimeError(
+                    f"setup failed in the verifier sandbox: {failed[0]!r}"
+                )
+
+            self._state.submission_refused = self._copy_submission(verifier)
+            return self._score(verifier)
+        finally:
+            verifier.kill()
+
     def _run_verify_commands(self) -> dict[str, Any]:
         if not self._sandbox:
             return {"passed": 0, "total": 0, "reward": None}
+        if self._state.submit_paths:
+            return self._verify_in_fresh_sandbox()
+        return self._score(self._sandbox)
 
+    def _score(self, sandbox: E2BSandbox) -> dict[str, Any]:
         # Verification runs as separate sandbox processes, not in the notebook
         # kernel, so nothing a cell does to the kernel changes how verify
         # commands run or what they report.
-        self._sandbox.run_command("mkdir -p /home/user/logs/verifier")
+        sandbox.run_command("mkdir -p /home/user/logs/verifier")
         # The override is documented as verify-written, so drop anything the
         # policy wrote there during the episode before verification starts.
-        cleared = self._sandbox.run_command(_CLEAR_REWARD_FILE).success
+        cleared = sandbox.run_command(_CLEAR_REWARD_FILE).success
         verify_results = [
-            _command_result_from_cell_result(
-                command, self._sandbox.run_command(command)
-            )
+            _command_result_from_cell_result(command, sandbox.run_command(command))
             for command in self._state.verify_commands
         ]
         self._state.verify_results = verify_results
@@ -412,7 +472,7 @@ class JupyterEnvironment(MCPEnvironment):
         passed = sum(1 for result in verify_results if result.success)
         total = len(verify_results)
         reward, self._state.reward_override_ignored = _read_reward_override(
-            self._sandbox, cleared
+            sandbox, cleared
         )
         if reward is None and total:
             reward = passed / total
