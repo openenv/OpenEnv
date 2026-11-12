@@ -123,15 +123,18 @@ Done. Harbor `task.toml` packages validate through the `harbor-semantic-v1`
 profile and an operator-supplied `validation/openenv.json` contract. Fresh Docker
 trials run a do-nothing agent, the oracle, an oracle replay and declared canaries,
 all pinned to one immutable image. The binding requires Python 3.12 or newer and
-`harbor==0.25.0` alongside `openenv[harbor]`. It refuses task-declared `docker_image`
-values, so the NOP trial builds from the task's Dockerfile. The validator keeps
+`harbor==0.25.0` alongside `openenv[harbor]`. The NOP trial builds from the task's
+Dockerfile, or pulls a task-declared `docker_image` that is pinned by digest
+(`name@sha256:<digest>`). It refuses a `docker_image` without a digest, because a
+tag can move between validation and training. The validator keeps
 `openenv-validation:<run id>` only when the run has no FAIL or ERROR and was not
 interrupted. It records the tag in `runtime.startup.measured` as
 `retained_image_tag`. Otherwise it removes the tag.
 
-**Follow-up.** Tasks that ship only a prebuilt image cannot run under
-`harbor-semantic-v1`. Some Terminal Bench tasks are affected. Supporting them needs
-a reviewable Dockerfile path or digest-pinned image support.
+**Follow-up.** Tasks that declare a prebuilt image by tag still cannot run under
+`harbor-semantic-v1`. Some Terminal Bench tasks are affected. An operator can
+resolve the tag to its digest in a validation overlay and record the original
+bytes in `original_source_digest`. The validator does not resolve tags itself.
 
 **Remaining.** Decide which runtime ids apply to one-shot tasks. Containment,
 network policy, resource bounds and oracle containment could apply. Observation
