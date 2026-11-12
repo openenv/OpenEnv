@@ -32,8 +32,10 @@ class _FakeMachines:
         self.commands: list[str] = []
         self.exec_envs: list[dict | None] = []
         self.uploads: dict[str, bytes] = {}
+        self.commands_before_upload: dict[str, list[str]] = {}
         self.files = SimpleNamespace(upload=self._upload)
         self.fail_ready = False
+        self.url = URL
         self.delete_error: Exception | None = None
         self.run_exit = 0
         self.build_exit = 0
@@ -47,13 +49,14 @@ class _FakeMachines:
     def wait_until_ready(self, machine_id):
         if self.fail_ready:
             raise TimeoutError("not ready")
-        return SimpleNamespace(id=machine_id, access=SimpleNamespace(url=URL))
+        return SimpleNamespace(id=machine_id, access=SimpleNamespace(url=self.url))
 
     def set_bot_protection(self, machine_id, *, mode):
         self.bot_protection.append((machine_id, mode))
 
     def _upload(self, machine_id, path, data):
         self.uploads[path] = data
+        self.commands_before_upload[path] = list(self.commands)
         return len(data)
 
     def exec(self, machine_id, command, *, env=None, timeout=None):
@@ -115,6 +118,41 @@ def test_start_creates_an_isolated_machine_and_returns_its_url(client):
     assert provider.machine_id == "m-1"
 
 
+def test_machine_gets_a_one_hour_delete_after_by_default(client):
+    _provider(client).start_container(ECHO)
+    assert client.machines.created[0]["delete_after"] == 3600
+
+
+def test_delete_after_is_configurable_and_can_be_turned_off(client):
+    _provider(client, delete_after=600).start_container(ECHO)
+    other = _FakeClient()
+    _provider(other, delete_after=None).start_container(ECHO)
+    assert client.machines.created[0]["delete_after"] == 600
+    assert other.machines.created[0]["delete_after"] is None
+
+
+@pytest.mark.parametrize("delete_after", [0, -5, 1.5, True, "1h"])
+def test_invalid_delete_after_is_rejected(client, delete_after):
+    with pytest.raises(ValueError, match="delete_after"):
+        _provider(client, delete_after=delete_after)
+
+
+def test_failed_env_dir_deletes_the_machine(client):
+    original = client.machines.exec
+
+    def exec_(machine_id, command, **kwargs):
+        if command.startswith("install -d"):
+            client.machines.commands.append(command)
+            return SimpleNamespace(exit_code=1, stdout="", stderr="no space")
+        return original(machine_id, command, **kwargs)
+
+    client.machines.exec = exec_
+    with pytest.raises(RuntimeError, match="no space"):
+        _provider(client).start_container(ECHO, env_vars={"A": "1"})
+    assert client.machines.deleted == ["m-1"]
+    assert client.machines.uploads == {}
+
+
 def test_name_prefix(client):
     _provider(client, name_prefix="rollout").start_container(ECHO)
     assert client.machines.created[0]["name"].startswith("rollout-")
@@ -146,12 +184,15 @@ def _run_command(client):
 def test_env_values_go_in_an_env_file_not_on_a_command_line(client):
     _provider(client).start_container(ECHO, env_vars={"API_TOKEN": "s3cret"})
 
-    assert client.machines.uploads["/home/boxd/openenv-server.env"] == (
-        "API_TOKEN=s3cret\n"
-    )
+    env_file = "/home/boxd/openenv-env/server.env"
+    assert client.machines.uploads[env_file] == "API_TOKEN=s3cret\n"
+    # The file lands in a directory only its owner can read, created first.
+    assert client.machines.commands_before_upload[env_file] == [
+        "install -d -m 700 /home/boxd/openenv-env"
+    ]
     run = _run_command(client)
-    assert "--env-file /home/boxd/openenv-server.env" in run
-    assert "rm -f /home/boxd/openenv-server.env" in run
+    assert f"--env-file {env_file}" in run
+    assert "rm -rf /home/boxd/openenv-env" in run
     assert "s3cret" not in "".join(client.machines.commands)
     # The SDK turns exec env into a prefix of the command text, so the
     # provider never passes env to exec.
@@ -178,9 +219,9 @@ def test_constructor_image_and_env_vars_are_defaults(client):
     provider = _provider(client, image=ECHO, env_vars={"A": "1"})
     provider.start_container()
     assert _run_command(client).endswith(
-        f"{ECHO}; rc=$?; rm -f /home/boxd/openenv-server.env; exit $rc"
+        f"{ECHO}; rc=$?; rm -rf /home/boxd/openenv-env; exit $rc"
     )
-    assert client.machines.uploads["/home/boxd/openenv-server.env"] == "A=1\n"
+    assert client.machines.uploads["/home/boxd/openenv-env/server.env"] == "A=1\n"
 
 
 def test_requires_an_image(client):
@@ -348,8 +389,19 @@ def test_wait_for_ready_times_out(client):
         patch("time.sleep"),
         patch("time.time", side_effect=[0.0, 0.0, 10.0]),
     ):
-        with pytest.raises(TimeoutError, match="did not become ready"):
+        with pytest.raises(TimeoutError, match="did not become ready") as err:
             provider.wait_for_ready(url, timeout_s=5)
+    # The URL is the environment's address, so it stays out of errors.
+    assert url not in str(err.value)
+
+
+def test_non_https_url_is_refused_and_the_machine_deleted(client):
+    client.machines.url = "http://openenv-abc.fra.boxd.sh"
+    with pytest.raises(RuntimeError, match="non-HTTPS") as err:
+        _provider(client).start_container(ECHO)
+    assert "openenv-abc" not in str(err.value)
+    assert client.machines.deleted == ["m-1"]
+    assert not any("docker run" in c for c in client.machines.commands)
 
 
 def _env_dir(tmp_path):
@@ -417,9 +469,20 @@ def test_failed_build_deletes_the_machine(client, tmp_path):
     env = _env_dir(tmp_path)
     image = BoxdProvider.image_from_dockerfile(str(env / "server" / "Dockerfile"))
     client.machines.build_exit = 1
-    with pytest.raises(RuntimeError, match="docker build failed"):
+    with pytest.raises(RuntimeError, match="docker build failed") as err:
         _provider(client).start_container(image)
     assert client.machines.deleted == ["m-1"]
+    # Build output comes from the environment's own RUN steps: opt-in only.
+    assert "build broke" not in str(err.value)
+    assert "surface_server_logs=True" in str(err.value)
+
+
+def test_failed_build_output_with_surface_server_logs(client, tmp_path):
+    env = _env_dir(tmp_path)
+    image = BoxdProvider.image_from_dockerfile(str(env / "server" / "Dockerfile"))
+    client.machines.build_exit = 1
+    with pytest.raises(RuntimeError, match="build broke"):
+        _provider(client, surface_server_logs=True).start_container(image)
 
 
 def test_unregistered_dockerfile_uri(client):

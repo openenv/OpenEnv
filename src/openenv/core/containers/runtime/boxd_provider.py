@@ -31,9 +31,21 @@ _PORT = 8000
 _CONTAINER = "openenv-server"
 _BUILD_DIR = "/home/boxd/openenv-build"
 _BUILT_IMAGE = "openenv-env:latest"
-_ENV_FILE = "/home/boxd/openenv-server.env"
+_ENV_DIR = "/home/boxd/openenv-env"
+_ENV_FILE = f"{_ENV_DIR}/server.env"
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SKIP_IN_CONTEXT = {".git", ".venv", "__pycache__"}
+
+
+def _require_secure_url(url: Any) -> str:
+    """Refuse a base URL that is not https, so ``EnvClient`` never falls back
+    to plaintext ``ws://``. The URL itself stays out of the error."""
+    if not isinstance(url, str) or not url.lower().startswith("https://"):
+        raise RuntimeError(
+            "The boxd machine returned a non-HTTPS URL. OpenEnv requires an "
+            "https/wss base_url, so the provider refuses to connect."
+        )
+    return url
 
 
 class BoxdProvider(ContainerProvider):
@@ -55,6 +67,11 @@ class BoxdProvider(ContainerProvider):
     Only one machine is active per provider: calling ``start_container`` again
     before ``stop_container()``/``close()`` raises ``RuntimeError``.
     ``stop_container()`` deletes the machine.
+
+    As a backstop, boxd deletes the machine ``delete_after`` seconds after it
+    was created (one hour by default), even if ``stop_container()`` never
+    runs. This also covers a Ctrl-C during the create call itself, before the
+    provider knows the machine id and can delete it.
 
     Examples:
 
@@ -79,6 +96,7 @@ class BoxdProvider(ContainerProvider):
         vcpu: int | None = None,
         memory: str | None = None,
         name_prefix: str = "openenv",
+        delete_after: int | None = 3600,
         start_timeout: float = 900.0,
         surface_server_logs: bool = False,
         _client: Any = None,
@@ -107,13 +125,28 @@ class BoxdProvider(ContainerProvider):
                 ``"16G"`` or ``"32G"``).
             name_prefix (`str`, *optional*, defaults to `"openenv"`):
                 Prefix for the machine name. A random suffix is appended.
+            delete_after (`int`, *optional*, defaults to `3600`):
+                Seconds after creation when boxd deletes the machine, whatever
+                it is doing. Set it above the longest session you run. `None`
+                turns the timer off, so the machine lives until
+                ``stop_container()``.
             start_timeout (`float`, *optional*, defaults to `900.0`):
                 Seconds allowed for each of ``docker build`` (for a Dockerfile
                 image) and ``docker run`` (which pulls a registry image).
             surface_server_logs (`bool`, *optional*, defaults to `False`):
-                When `True`, startup-crash errors include the tail of the
+                When `True`, a failed ``docker build`` includes the tail of
+                its output, and startup-crash errors include the tail of the
                 container's output with injected env-var values redacted.
         """
+        if delete_after is not None and (
+            isinstance(delete_after, bool)
+            or not isinstance(delete_after, int)
+            or delete_after <= 0
+        ):
+            raise ValueError(
+                f"delete_after must be a positive number of seconds or None "
+                f"(got {delete_after!r})."
+            )
         if _client is None:
             from boxd import Boxd
 
@@ -125,6 +158,7 @@ class BoxdProvider(ContainerProvider):
         self._vcpu = vcpu
         self._memory = memory
         self._name_prefix = name_prefix
+        self._delete_after = delete_after
         self._start_timeout = start_timeout
         self._surface_server_logs = surface_server_logs
         self._machine_id: str | None = None
@@ -222,10 +256,17 @@ class BoxdProvider(ContainerProvider):
             timeout=self._start_timeout,
         )
         if result.exit_code != 0:
-            raise RuntimeError(
-                f"docker build failed in the boxd machine (exit {result.exit_code}):\n"
-                f"{(result.stdout + result.stderr)[-2000:]}"
+            message = (
+                f"docker build failed in the boxd machine (exit {result.exit_code})."
             )
+            if self._surface_server_logs:
+                message += f"\n{(result.stdout + result.stderr)[-2000:]}"
+            else:
+                message += (
+                    " Its output is not surfaced; construct the provider with "
+                    "surface_server_logs=True to include it."
+                )
+            raise RuntimeError(message)
         return _BUILT_IMAGE
 
     def start_container(
@@ -302,11 +343,13 @@ class BoxdProvider(ContainerProvider):
             labels={"managed-by": "openenv"},
             vcpu=self._vcpu,
             memory=self._memory,
+            delete_after=self._delete_after,
         )
         self._machine_id = machine.id
 
         try:
             ready = self._client.machines.wait_until_ready(machine.id)
+            url = _require_secure_url(ready.access.url)
             # EnvClient is not a browser, so the browser check on the
             # machine's URL is turned off.
             self._client.machines.set_bot_protection(machine.id, mode="off")
@@ -315,9 +358,16 @@ class BoxdProvider(ContainerProvider):
                 effective_image = self._build_image(build_meta)
 
             # Env values go in a file read by `docker run --env-file`, so they
-            # never appear on a command line. The file is removed after the run.
+            # never appear on a command line. The file is written into a
+            # directory only its owner can read, and removed after the run.
             env_flag = ""
             if effective_env_vars:
+                mkdir = self._exec(f"install -d -m 700 {_ENV_DIR}")
+                if mkdir.exit_code != 0:
+                    raise RuntimeError(
+                        f"Could not create {_ENV_DIR} in the boxd machine "
+                        f"(exit {mkdir.exit_code}): {mkdir.stderr[-500:]}"
+                    )
                 self._client.machines.files.upload(
                     machine.id,
                     _ENV_FILE,
@@ -327,7 +377,7 @@ class BoxdProvider(ContainerProvider):
             run = (
                 f"chmod 600 {_ENV_FILE} 2>/dev/null; docker run -d --name {_CONTAINER}"
                 f"{env_flag} -p {_PORT}:{_PORT} {shlex.quote(effective_image)};"
-                f" rc=$?; rm -f {_ENV_FILE}; exit $rc"
+                f" rc=$?; rm -rf {_ENV_DIR}; exit $rc"
             )
             result = self._exec(run, timeout=self._start_timeout)
             if result.exit_code != 0:
@@ -335,7 +385,7 @@ class BoxdProvider(ContainerProvider):
                     f"docker run failed in the boxd machine (exit {result.exit_code}):"
                     f"\n{result.stderr[-2000:]}"
                 )
-            self._base_url = ready.access.url
+            self._base_url = url
         except BaseException:
             try:
                 self.stop_container()
@@ -431,9 +481,7 @@ class BoxdProvider(ContainerProvider):
 
             time.sleep(1.0)
 
-        raise TimeoutError(
-            f"boxd machine at {base_url} did not become ready within {timeout_s}s"
-        )
+        raise TimeoutError(f"The boxd machine did not become ready within {timeout_s}s")
 
 
 __all__ = ["BoxdProvider"]

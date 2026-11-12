@@ -54,7 +54,7 @@ def main() -> int:
     ) as provider:
         logger.info("Starting boxd machine...")
         base_url = provider.start_container(image)
-        logger.info("Machine %s up at %s", provider.machine_id, base_url)
+        logger.info("Machine %s is up", provider.machine_id)
         provider.wait_for_ready(base_url, timeout_s=180)
         logger.info("Server ready.")
         asyncio.run(_interact(base_url))

@@ -188,7 +188,9 @@ boxd API key, as `api_key=` or the `BOXD_API_KEY` environment variable
 
 The provider creates one isolated machine per `start_container`, runs the
 image in it with `docker run`, and returns the machine's HTTPS URL. The URL is
-public, so treat it like the environment's address on the internet.
+reachable from the internet with no login in front of it, so treat it like a
+secret: anyone who has it can drive the environment. The provider keeps it out
+of its errors.
 `stop_container()` deletes the machine. `env_vars` reach the container through
 a `docker run --env-file` that is removed after the run.
 
@@ -204,6 +206,16 @@ built there with `docker build`:
 ```python
 image = BoxdProvider.image_from_dockerfile("envs/echo_env/server/Dockerfile")
 provider = BoxdProvider(image=image)
+```
+
+boxd also deletes the machine `delete_after` seconds after it was created, one
+hour by default, even when `stop_container()` never runs (a crashed script, or
+a Ctrl-C while the machine is being created). Set it above your longest
+session, or pass `delete_after=None` to keep the machine until
+`stop_container()`:
+
+```python
+provider = BoxdProvider(image="ghcr.io/huggingface/openenv-echo-env:latest", delete_after=4 * 3600)
 ```
 
 `vcpu` and `memory` pick the machine size (`1`/`"4G"`, `2`/`"8G"`, `4`/`"16G"`
