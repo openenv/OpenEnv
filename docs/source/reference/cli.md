@@ -115,10 +115,15 @@ the raw trial evidence in the report bundle. Other checks are named SKIPs, so a
 passing task still reports WARN. This validates task packages, not the outer
 `harbor_env` server.
 
-Supported tasks use Linux, a single step, one Dockerfile, a shared verifier and
-public networking. Unsupported shapes include multi-step or non-Linux tasks,
-task-declared `environment.docker_image`, missing Dockerfiles, task-authored Compose
-files and separate verifier environments. GPU/TPU or external MCP requirements,
+Supported tasks use Linux, a single step, a shared verifier and public networking.
+The image comes from one Dockerfile or from a digest-pinned
+`environment.docker_image`, such as `org/image@sha256:<64 hex digits>`. Harbor
+prefers a declared image over a Dockerfile, so the do-nothing trial pulls the pin
+and `runtime.startup` records it as `source_image`. The validator leaves the pulled
+image in the local Docker cache. Unsupported shapes include multi-step or non-Linux
+tasks, an `environment.docker_image` without a digest, tasks with neither a
+Dockerfile nor a pinned image, task-authored Compose files and separate verifier
+environments. GPU/TPU or external MCP requirements,
 credentials, non-public or differing phase networks, task environment variables,
 healthchecks, skills, verifier collection and artifact extensions are also
 unsupported. A supplied provider, including `--space`, is unsupported. Each case
@@ -133,9 +138,9 @@ episode budget. There is no shared outer trial deadline. Harbor bounds setup, ag
 and verifier separately with the declared `resources.episode_timeout_s`. A timeout
 in one of these phases is a package FAIL that names the phase.
 
-The do-nothing trial builds from the task's Dockerfile. The validator keeps
-`openenv-validation:<run id>` only when the run has no FAIL or ERROR and was not
-interrupted. It records the tag in `runtime.startup.measured` as
+The do-nothing trial builds from the task's Dockerfile, or pulls the digest-pinned
+image when the task declares one. The validator keeps `openenv-validation:<run id>`
+only when the run has no FAIL or ERROR and was not interrupted. It records the tag in `runtime.startup.measured` as
 `retained_image_tag`. Otherwise it removes the tag. The run-owned Compose build tag
 is removed on every run. Tag removal verifies image identity and uses `--no-prune`.
 A removal failure marks cleanup incomplete and gives a startup ERROR. During an

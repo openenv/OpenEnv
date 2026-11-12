@@ -153,9 +153,9 @@ def boundary(monkeypatch, task):
             )
             self.hooks = {}
             self._openenv_cancelled_compose = []
-            self._environment_build_timeout_sec = read_harbor_task(
-                config.task.path
-            ).config.environment.build_timeout_sec
+            environment = read_harbor_task(config.task.path).config.environment
+            self._environment_build_timeout_sec = environment.build_timeout_sec
+            self.docker_image = environment.docker_image
             state.excluded_copied.append(
                 (config.task.path / "environment/.worktrees").exists()
             )
@@ -1175,14 +1175,35 @@ def test_separate_verifier_is_named_unsupported(task, boundary):
     assert not boundary.trials
 
 
-def test_task_declared_image_is_refused_before_trials(task, boundary):
+def test_unpinned_task_image_is_refused_before_trials(task, boundary):
     with (task / "task.toml").open("a") as stream:
         stream.write('[environment]\ndocker_image="registry.example/image:latest"\n')
     report = run_validation(task)
     startup = result(report, "runtime.startup")
     assert startup.status is CheckStatus.SKIP
-    assert "docker_image" in startup.evidence[0]
+    assert "digest pin" in startup.evidence[0]
     assert not boundary.trials
+
+
+@pytest.mark.parametrize("layout", ["dockerfile", "no dockerfile", "no environment"])
+def test_digest_pinned_task_image_runs(task, boundary, tmp_path, layout):
+    pinned = "registry.example/image@sha256:" + "d" * 64
+    if layout != "dockerfile":
+        (task / "environment/Dockerfile").unlink()
+    if layout == "no environment":
+        (task / "environment").rmdir()
+    with (task / "task.toml").open("a") as stream:
+        stream.write(f'[environment]\ndocker_image="{pinned}"\n')
+    artifacts = tmp_path / "pinned"
+    report = run_validation(task, artifacts_dir=artifacts)
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.PASS
+    assert startup.measured["source_image"] == pinned
+    native = json.loads((artifacts / "harbor-evidence.json").read_text())
+    assert native["source_image"] == pinned
+    # The do-nothing trial pulls the pin; later trials run the image it retained.
+    images = [trial.docker_image for trial in boundary.trials]
+    assert images == [pinned, *[startup.measured["retained_image_tag"]] * 2]
 
 
 def test_explicit_contract_and_valid_toml_required(task, boundary):
