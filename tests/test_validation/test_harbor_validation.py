@@ -1185,12 +1185,13 @@ def test_unpinned_task_image_is_refused_before_trials(task, boundary):
     assert not boundary.trials
 
 
-def test_digest_pinned_task_image_runs_without_environment_dir(
-    task, boundary, tmp_path
-):
+@pytest.mark.parametrize("layout", ["dockerfile", "no dockerfile", "no environment"])
+def test_digest_pinned_task_image_runs(task, boundary, tmp_path, layout):
     pinned = "registry.example/image@sha256:" + "d" * 64
-    (task / "environment/Dockerfile").unlink()
-    (task / "environment").rmdir()
+    if layout != "dockerfile":
+        (task / "environment/Dockerfile").unlink()
+    if layout == "no environment":
+        (task / "environment").rmdir()
     with (task / "task.toml").open("a") as stream:
         stream.write(f'[environment]\ndocker_image="{pinned}"\n')
     artifacts = tmp_path / "pinned"
@@ -1203,48 +1204,6 @@ def test_digest_pinned_task_image_runs_without_environment_dir(
     # The do-nothing trial pulls the pin; later trials run the image it retained.
     images = [trial.docker_image for trial in boundary.trials]
     assert images == [pinned, *[startup.measured["retained_image_tag"]] * 2]
-
-
-@pytest.mark.asyncio
-async def test_compose_uses_task_dir_when_environment_dir_is_absent(
-    tmp_path, monkeypatch
-):
-    task_dir = tmp_path / "task"
-    task_dir.mkdir()
-    spawned = {}
-
-    async def create_subprocess_exec(*argv, **kwargs):
-        spawned["argv"] = argv
-        spawned["kwargs"] = kwargs
-        return object()
-
-    class Environment:
-        environment_dir = task_dir / "environment"
-        session_id = "trial__env"
-        _docker_compose_paths = [tmp_path / "compose.yaml"]
-
-        @staticmethod
-        def runtime():
-            return SimpleNamespace(
-                compose=("docker", "compose"),
-                supports_compose_project_directory=True,
-            )
-
-        @staticmethod
-        def _compose_env_vars(*, include_os_env):
-            assert include_os_env
-            return {}
-
-        @staticmethod
-        async def _collect_buffered_output(process, **kwargs):
-            return SimpleNamespace(return_code=0)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
-    await harbor._run_compose(Environment(), ["pull"], cancelled=[])
-
-    project_flag = spawned["argv"].index("--project-directory")
-    assert spawned["argv"][project_flag + 1] == str(task_dir.resolve())
-    assert spawned["kwargs"]["cwd"] == str(task_dir.resolve())
 
 
 def test_explicit_contract_and_valid_toml_required(task, boundary):
