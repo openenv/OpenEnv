@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-harvest-rush-env"
+version = "0.1.0"
+description = "OpenEnv wrapper for Harvest Rush (train): one priced contact decision per episode, programmatic reward"
+requires-python = ">=3.11"
+dependencies = [
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    # Canonical generator and reward, imported rather than reproduced here.
+    # Pinned to a release tag: a bump must re-run tests/envs/test_harvest_rush_environment.py.
+    "harvest-rush-train @ git+https://github.com/CompassionML/harvest-rush-train@v0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=0.21",
+    "pytest-cov",
+]
+
+[project.scripts]
+server = "harvest_rush_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["harvest_rush_env", "harvest_rush_env.server"]
+package-dir = { "harvest_rush_env" = ".", "harvest_rush_env.server" = "server" }
