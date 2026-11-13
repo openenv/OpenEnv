@@ -29,6 +29,8 @@
       title: The Task API
     - local: guides/customizing-web-ui
       title: Customizing the Web UI
+    - local: guides/request-security
+      title: Request Security
     title: Advanced Concepts
   title: Concepts
 - sections:
@@ -48,7 +50,9 @@
     - local: tutorials/end-to-end-walkthrough
       title: Train a Reasoning Model
     - local: tutorials/wordle-grpo
-      title: Play Wordle with GRPO
+      title: Train a Wordle Agent
+    - local: tutorials/sudoku-grpo
+      title: Train a Sudoku Agent
     - local: tutorials/rl-training-2048
       title: Play 2048 with GRPO
     - local: tutorials/sft-warmup
@@ -67,6 +71,8 @@
   - sections:
     - local: tutorials/evaluation-inspect
       title: Evaluating with Environments
+    - local: tutorials/seahaven-environment
+      title: "Tool-Use Environments (Seahaven)"
     title: Evals
   title: Learn
 - isExpanded: false
@@ -125,6 +131,8 @@
     title: DM Control
   - local: environments/finqa
     title: FinQA
+  - local: environments/fraud_triage
+    title: Fraud Triage
   - local: environments/grid_world
     title: Grid World
   - local: environments/julia
@@ -139,6 +147,8 @@
     title: QED Math
   - local: environments/reasoning_gym
     title: Reasoning Gym
+  - local: environments/spatial_gym
+    title: Spatial-Gym
   - local: environments/tau2
     title: τ²-bench
   - local: environments/tbench2
@@ -153,8 +163,18 @@
     title: Agent World Model
   - local: environments/pelican_svg
     title: Pelican SVG
+  - local: environments/posttrain
+    title: Post-training
   - local: environments/sophistry_bench_sprint
     title: Sophistry Bench Sprint
+  - local: environments/ortools
+    title: OR-Tools
+  - local: environments/stripe_world
+    title: Stripe World
+  - local: environments/harvest_rush
+    title: Harvest Rush
+  - local: environments/sql_optim
+    title: SQL Query Optimization
   title: Environments
 - isExpanded: false
   sections:

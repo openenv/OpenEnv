@@ -1183,7 +1183,7 @@ wheels = [
 
 [[package]]
 name = "openenv"
-version = "0.10.1.dev0"
+version = "0.13.1.dev0"
 source = { directory = "../../" }
 dependencies = [
     { name = "fastapi" },
@@ -1212,6 +1212,7 @@ requires-dist = [
     { name = "azure-identity", marker = "extra == 'aca'", specifier = ">=1.23.0" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.136.0" },
     { name = "fastapi", specifier = ">=0.133.0" },
+    { name = "fastapi-guard", marker = "extra == 'security'", specifier = ">=8.0.3,<9.0.0" },
     { name = "fastmcp", specifier = ">=4.0.10,<5.0.0" },
     { name = "gradio", specifier = ">=4.0.0" },
     { name = "harbor", extras = ["e2b", "modal", "daytona", "gke", "ec2", "runloop", "novita", "blaxel", "beam", "islo", "opensandbox", "cwsandbox", "use-computer", "cua"], marker = "python_full_version >= '3.12' and extra == 'harbor'", specifier = ">=0.22.0" },
@@ -1219,7 +1220,8 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=1.29.0" },
     { name = "inspect-ai", marker = "extra == 'inspect'", specifier = ">=0.3.0" },
     { name = "jsonschema", specifier = ">=4.20.0" },
-    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.4.0" },
+    { name = "kubernetes", marker = "extra == 'kubernetes'", specifier = ">=29.0.0" },
+    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.6.3" },
     { name = "novita-sandbox", marker = "extra == 'novita'", specifier = ">=2.1.1" },
     { name = "openai", specifier = ">=2.7.2" },
     { name = "packaging", specifier = ">=24.2" },
@@ -1236,7 +1238,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.24.0" },
     { name = "websockets", specifier = ">=15.0.1" },
 ]
-provides-extras = ["daytona", "aca", "modal", "novita", "inspect", "harbor"]
+provides-extras = ["daytona", "aca", "modal", "kubernetes", "novita", "inspect", "security", "harbor"]
 
 [package.metadata.requires-dev]
 dev = [

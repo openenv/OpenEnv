@@ -82,7 +82,10 @@ class ProviderCapability(str, Enum):
     """Capabilities a validation provider may declare; graders require them by name."""
 
     NETWORK_POLICY = "network_policy"
+    INSPECTED_ISOLATION = "inspected_isolation"
+    RESOURCE_ENFORCEMENT = "resource_enforcement"
     EXEC = "exec"
     IMAGE_BUILD = "image_build"
     GPU = "gpu"
     REMOTE = "remote"
+    FRESH_CONTAINER = "fresh_container"

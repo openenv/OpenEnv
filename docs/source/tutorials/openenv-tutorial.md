@@ -1,10 +1,10 @@
 # Hello World
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/openenv/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb)
 
 This tutorial runs an OpenEnv environment on your machine and then builds a small one from scratch. You will install OpenEnv, start an environment server, connect to it with a client, and write the four files every environment is made of: the models, the environment, the server app and the client.
 
-Everything runs on a CPU. You do not need a GPU or Docker. The page and the [notebook](https://github.com/huggingface/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb) have the same code, so you can follow either one top to bottom.
+Everything runs on a CPU. You do not need a GPU or Docker. The page and the [notebook](https://github.com/openenv/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb) have the same code, so you can follow either one top to bottom.
 
 This page is based on the original OpenEnv tutorial by Sanyam Bhutani.
 
@@ -33,7 +33,7 @@ Actions, observations and state are Pydantic models, so both sides agree on thei
 Install OpenEnv and the Echo environment, a minimal environment that ships in the OpenEnv repository:
 
 ```bash
-pip install openenv "openenv-echo-env @ git+https://github.com/huggingface/OpenEnv.git#subdirectory=envs/echo_env"
+pip install openenv "openenv-echo-env @ git+https://github.com/openenv/OpenEnv.git#subdirectory=envs/echo_env"
 ```
 
 The next cells start servers in the background. This helper launches a server with `uvicorn` and waits until its `/health` endpoint answers:
@@ -296,4 +296,4 @@ You wrote these files by hand to see each part. `openenv init my_env` generates 
 - [Rewards](../guides/rewards) and [Rubrics](rubrics) cover how environments compute rewards.
 - [Training with OpenEnv](../guides/training) lists every training framework that works with OpenEnv environments, with an example for each.
 
-OpenEnv is openly governed. See [GOVERNANCE.md](https://github.com/huggingface/OpenEnv/blob/main/GOVERNANCE.md) for how decisions are made.
+OpenEnv is openly governed. See [GOVERNANCE.md](https://github.com/openenv/OpenEnv/blob/main/GOVERNANCE.md) for how decisions are made.

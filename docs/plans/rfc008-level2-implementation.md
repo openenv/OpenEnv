@@ -3,7 +3,7 @@
 Planning baseline: 2026-09-16, `huggingface/OpenEnv` main at
 `e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615`.
 
-Delivery tracker: [Level 2 umbrella #1177](https://github.com/huggingface/OpenEnv/issues/1177).
+Delivery tracker: [Level 2 umbrella #1177](https://github.com/openenv/OpenEnv/issues/1177).
 This document describes the full roadmap. The first delivery implements PRs 1–3;
 subsequent slices remain planned. See the umbrella and the shared case catalog for
 current implementation coverage and validation evidence.
@@ -419,12 +419,12 @@ Completion requires all of the following:
 
 ## Sources
 
-- [RFC 008 at the planning revision](https://github.com/huggingface/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/rfcs/008-environment-auto-validation.md)
-- [Validation provider contract](https://github.com/huggingface/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/src/openenv/validation/providers/__init__.py)
-- [Grader/Subject contract](https://github.com/huggingface/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/src/openenv/validation/graders/__init__.py)
-- [Core Docker provider](https://github.com/huggingface/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/src/openenv/core/containers/runtime/providers.py)
-- [Server transport and schemas](https://github.com/huggingface/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/src/openenv/core/env_server/http_server.py)
-- [Task API and bounded previews](https://github.com/huggingface/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/docs/source/guides/task-api.md)
+- [RFC 008 at the planning revision](https://github.com/openenv/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/rfcs/008-environment-auto-validation.md)
+- [Validation provider contract](https://github.com/openenv/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/src/openenv/validation/providers/__init__.py)
+- [Grader/Subject contract](https://github.com/openenv/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/src/openenv/validation/graders/__init__.py)
+- [Core Docker provider](https://github.com/openenv/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/src/openenv/core/containers/runtime/providers.py)
+- [Server transport and schemas](https://github.com/openenv/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/src/openenv/core/env_server/http_server.py)
+- [Task API and bounded previews](https://github.com/openenv/OpenEnv/blob/e3eb3fa5bc11ff0a019c30c7a7b1b7039eb8b615/docs/source/guides/task-api.md)
 - [Docker network-none semantics](https://docs.docker.com/engine/network/drivers/none/)
 - [Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/)
 - [Docker tmpfs behavior](https://docs.docker.com/engine/storage/tmpfs/)

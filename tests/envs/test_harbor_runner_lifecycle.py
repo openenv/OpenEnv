@@ -27,6 +27,7 @@ import asyncio
 import pytest
 
 runner = pytest.importorskip("openenv.harbor.runner")
+HarborRolloutResult = pytest.importorskip("openenv.harbor.models").HarborRolloutResult
 
 
 class FakeCaps:
@@ -191,3 +192,77 @@ def test_run_batch_honours_the_admin_key_env_var(monkeypatch, tmp_path):
     run_empty_batch()
 
     assert built[0]["admin_key"] == "from-env"
+
+
+# --- a verifier that ran is not a verifier that never ran -------------------
+# Harbor verifiers write either one reward (`reward.txt`) or several named ones (`reward.json`), and
+# real datasets mix both in one split. When `--reward-key` names none of a task's keys, the old summary
+# said "FAILED (error)" and "the verifier never ran", although the verifier had run and its rewards
+# were in `result.rewards`.
+
+MULTI = {"correctness": 1.0, "submission": 1.0, "tool_efficiency": 0.4}
+
+
+def test_run_batch_keeps_an_ambiguous_reward_as_a_finding_not_a_failure(
+    monkeypatch, tmp_path
+):
+    """`rollout` is the look-at path: it must not fail a graded rollout over the headline key."""
+    wire(monkeypatch, tmp_path, Quiet)
+    seen: dict = {}
+
+    async def fake_run_rollout(**kwargs):
+        seen.update(kwargs)
+        return HarborRolloutResult(rewards=MULTI, rollout_type="eval")
+
+    monkeypatch.setattr(runner, "run_rollout", fake_run_rollout)
+
+    asyncio.run(
+        runner.run_batch(
+            llm_url="http://x/v1",
+            dataset="d",
+            task_indices=[0],
+            reward_key="correctness",
+        )
+    )
+
+    assert seen["require_reward"] is False
+    assert seen["reward_key"] == "correctness"
+
+
+def test_report_separates_no_headline_reward_from_a_verifier_that_never_ran():
+    results = [
+        HarborRolloutResult(reward=1.0, rewards={"reward": 1.0}),
+        HarborRolloutResult(rewards=MULTI),
+        HarborRolloutResult(ok=False, error="sandbox died"),
+    ]
+
+    report = runner._report(results)
+
+    assert "solved    1/1 graded" in report
+    assert (
+        "1 ungraded: the verifier ran but no headline reward among "
+        "['correctness', 'submission', 'tool_efficiency']" in report
+    )
+    assert "1 ungraded: the verifier never ran" in report
+
+
+def test_report_does_not_claim_the_verifier_never_ran_when_it_did():
+    report = runner._report([HarborRolloutResult(rewards=MULTI)])
+
+    assert "never ran" not in report
+    assert "capture   1/1 usable" in report
+
+
+def test_summary_line_shows_the_rewards_the_verifier_wrote():
+    line = runner._summarise(HarborRolloutResult(rewards=MULTI))
+
+    assert line.startswith("ok ")
+    assert "FAILED" not in line
+    assert "correctness" in line and "--reward-key" in line
+
+
+def test_summary_line_is_unchanged_for_a_graded_rollout():
+    line = runner._summarise(HarborRolloutResult(reward=0.0, rewards={"reward": 0.0}))
+
+    assert "reward=0.00" in line
+    assert "--reward-key" not in line

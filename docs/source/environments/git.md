@@ -77,7 +77,7 @@ docker exec openenv-gitea curl -X POST \
   -u gitea:gitea123 \
   -H 'Content-Type: application/json' \
   -d '{
-    "clone_addr": "https://github.com/huggingface/OpenEnv",
+    "clone_addr": "https://github.com/openenv/OpenEnv",
     "repo_name": "OpenEnv",
     "repo_owner": "gitea",
     "service": "github"
@@ -178,7 +178,7 @@ docker run \
 
 Then in your training code, environments automatically reset to the configured state.
 
-See [`examples/local_git_env.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/local_git_env.py) for a complete
+See [`examples/local_git_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/local_git_env.py) for a complete
 synchronous example that resolves the Docker bootstrap handle with `.sync()`.
 
 ## Project Structure

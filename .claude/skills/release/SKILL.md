@@ -15,7 +15,7 @@ This skill orchestrates the repo-embedded deployment tooling and documents the `
 ## Primary Flow
 1. **Stage envs with `scripts/prepare_hf_deployment.sh`.** Default arguments deploy every *deployable* env from `envs/`. Pass `--env <name>` to target a subset. The script:
    - Resolves the requested OpenEnv ref for staged dependency rewrites. If `0.2.2` is only a release-candidate label and no `v0.2.2` tag exists yet, the script should fall back to `main` for env dependency rewrites while keeping the Hub suffix at `-0.2.2`.
-   - Rewrites loose `openenv-core[core]>=...` specs and direct Dockerfile installs to `git+https://github.com/huggingface/OpenEnv.git@<resolved-ref>` so the sweep does not silently install `0.2.1` from PyPI.
+   - Rewrites loose `openenv-core[core]>=...` specs and direct Dockerfile installs to `git+https://github.com/openenv/OpenEnv.git@<resolved-ref>` so the sweep does not silently install `0.2.1` from PyPI.
    - Builds a staging tree with `src/`, `envs/<env>/`, and a rewritten `Dockerfile` that sets `BASE_IMAGE` to `ghcr.io/huggingface/openenv-base:latest` unless a hash is supplied.
    - Generates a README with Hub metadata, enforces `openenv`/`openenv-<version>` tags, and adds the `HUB_TAG` used in collection sync.
    - Uses `hf repo create`/`hf upload` plus visibility flags to push Docker spaces.

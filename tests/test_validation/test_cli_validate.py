@@ -1,9 +1,11 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from conftest import FIXTURES
-from openenv.validation.report import ValidationReport
+from openenv.validation.report import ValidationReport, ValidationReportV2
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 
@@ -22,7 +24,7 @@ def test_valid_package_exits_zero():
         str(FIXTURES / "served_min_pass"), "--level", "static", "--skip-build"
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Verdict: PASS" in result.stdout
+    assert "Verdict: WARN" in result.stdout
 
 
 def test_echo_env_exits_zero():
@@ -35,7 +37,8 @@ def test_echo_env_exits_zero():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     report = ValidationReport.model_validate_json(result.stdout)
-    assert report.verdict.value == "pass"
+    # Static graders other than static.manifest are named SKIPs: WARN, exit 0.
+    assert report.verdict.value == "warn"
     assert any(r.check_id == "static.manifest" for r in report.results)
 
 
@@ -45,7 +48,8 @@ def test_json_report_is_schema_valid():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     report = ValidationReport.model_validate_json(result.stdout)
-    assert report.verdict.value == "pass"
+    # Static graders other than static.manifest are named SKIPs: WARN, exit 0.
+    assert report.verdict.value == "warn"
 
 
 def test_output_writes_the_json_report(tmp_path):
@@ -100,12 +104,13 @@ def test_unrecognized_package_exits_two():
     assert "unrecognized" in result.stderr
 
 
-def test_format_without_a_parser_exits_two():
+def test_harbor_without_trusted_contract_fails_manifest_validation():
     result = _validate(
         str(FIXTURES / "harbor_task_min"), "--level", "static", "--skip-build"
     )
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert "unrecognized" in result.stderr
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "static.manifest" in result.stdout
+    assert "Harbor contract" in result.stdout
 
 
 def test_nonexistent_path_exits_two(tmp_path):
@@ -129,3 +134,56 @@ def test_unpinned_judge_fails_static_manifest():
     )
     assert result.returncode == 1
     assert "judge pin" in result.stdout
+
+
+def test_served_package_cannot_claim_harbor_execution(tmp_path):
+    source = (FIXTURES / "served_min_pass/openenv.yaml").read_text()
+    (tmp_path / "openenv.yaml").write_text(
+        source + "  execution:\n    kind: harbor_task\n    agent_boundary: process\n"
+    )
+
+    result = _validate(str(tmp_path), "--json")
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    report = ValidationReportV2.model_validate_json(result.stdout)
+    manifest_result = next(r for r in report.results if r.check_id == "static.manifest")
+    assert manifest_result.status.value == "fail"
+    assert "openenv_ws" in " ".join(manifest_result.evidence)
+    assert "Internal error" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (["--sandbox", "nope"], "unknown sandbox"),
+        (["--sandbox", "hf-sandbox", "--space", "org/env"], "--sandbox cannot be"),
+        (["--sandbox", "hf-sandbox", "--url", "http://localhost:8000"], "--sandbox"),
+        (["http://localhost:8000", "--sandbox", "hf-sandbox"], "--sandbox cannot be"),
+        (["--namespace", "org"], "--namespace requires --sandbox hf-sandbox"),
+        (["--flavor", "t4-small"], "--flavor requires --space or --sandbox"),
+        (["--revision", "main"], "--revision requires --space"),
+    ],
+)
+def test_sandbox_flags_must_be_used_together(args, message):
+    result = _validate(*args)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert message in result.stderr
+
+
+def test_hf_sandbox_reports_served_packages_as_unsupported():
+    result = _validate(
+        str(FIXTURES / "served_min_pass"),
+        "--sandbox",
+        "hf-sandbox",
+        "--level",
+        "runtime",
+        "--json",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    startup = next(
+        check
+        for check in json.loads(result.stdout)["results"]
+        if check["check_id"] == "runtime.startup"
+    )
+    assert startup["status"] == "skip"
+    assert "runs native Harbor tasks only" in startup["evidence"][0]

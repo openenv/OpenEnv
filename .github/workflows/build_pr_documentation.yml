@@ -10,10 +10,11 @@ concurrency:
 jobs:
   build:
     if: github.event.pull_request.draft == false
-    uses: huggingface/doc-builder/.github/workflows/build_pr_documentation.yml@90ddd199e07144a13408c523680c76987343c95f  # main
+    uses: huggingface/doc-builder/.github/workflows/build_pr_documentation.yml@9b0e5b334b65d006b59e0b1a022a33122f7e12aa  # main
     with:
       commit_sha: ${{ github.event.pull_request.head.sha }}
       pr_number: ${{ github.event.number }}
       package: openenv
+      repo_owner: openenv
       version_tag_suffix: ""
 # doc-builder registry now provides tomli for the light install

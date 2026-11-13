@@ -52,12 +52,16 @@ def load_atif(trial_dir: str | Path) -> dict[str, Any] | None:
 
 
 def _pi_session_as_atif(trial_dir: Path) -> dict[str, Any] | None:
-    """pi's own session log, reshaped into the two ATIF fields reconciliation reads.
+    """pi's own session log, reshaped into the ATIF fields reconciliation reads.
 
     pi writes no `trajectory.json`, but it does write `agent/pi/sessions/*.jsonl`, and every
     assistant record there carries `usage.output`: the completion-token count for that call, which
     is exactly what `metrics.completion_tokens` provides in ATIF. So the cross-check is available
     for pi after all, just under a different name and shape.
+
+    The text and tool calls are kept too. pi logs the proxy's budget stop like any other reply,
+    and `reconcile` can only tell it apart by its text; without it, every pi rollout that hits a
+    step or context limit fails reconciliation and cannot be trained on.
     """
     sessions = sorted((trial_dir / "agent" / "pi" / "sessions").glob("*.jsonl"))
     if not sessions:
@@ -72,9 +76,26 @@ def _pi_session_as_atif(trial_dir: Path) -> dict[str, Any] | None:
         if record.get("type") != "message" or message.get("role") != "assistant":
             continue
         usage = message.get("usage") or {}
+        content = message.get("content") or []
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
         steps.append(
             {
                 "source": "agent",
+                "message": "".join(
+                    part.get("text") or ""
+                    for part in content
+                    if part.get("type") == "text"
+                ),
+                "tool_calls": [
+                    {
+                        "tool_call_id": part.get("id"),
+                        "function_name": part.get("name"),
+                        "arguments": part.get("arguments"),
+                    }
+                    for part in content
+                    if part.get("type") == "toolCall"
+                ],
                 "metrics": {"completion_tokens": int(usage.get("output") or 0)},
             }
         )
@@ -325,6 +346,26 @@ def reconcile(document: dict[str, Any], atif: dict[str, Any] | None) -> Report:
             )
         return report
 
+    subagents = atif.get("subagent_trajectories") or []
+    if subagents:
+        # FATAL, not WARN. The old text said subagent turns "must not be trained with the parent
+        # rollout's reward" and then did nothing to stop it: no node ids were collected, no role was
+        # changed, so if a subagent's calls landed in the same session as `agent` roots they shipped as
+        # trainable carrying the parent's reward — the exact outcome the sentence forbade. The aux path
+        # below demotes; this one only complained.
+        #
+        # Refusing rather than guessing which roots belong to the subagent: ATIF gives trajectories,
+        # not the node ids that would let us demote precisely, and picking roots by shape here would be
+        # inventing an attribution. A rollout whose reward cannot be attributed is not trainable.
+        report.add(
+            FATAL,
+            "atif_subagents",
+            f"ATIF reports {len(subagents)} subagent trajectory(ies) and the graph has "
+            f"{document['stats']['n_roots']} root(s). Subagent turns must not be trained with the "
+            "parent rollout's reward, and ATIF does not say which captured calls are theirs, so "
+            "this rollout cannot be attributed. Run this harness without subagents to train on it.",
+        )
+
     # Compare against EVERY call the agent made, in arrival order, across ALL agent roots.
     #
     # Two reasons this is the right comparison rather than the surviving training path:
@@ -473,25 +514,6 @@ def reconcile(document: dict[str, Any], atif: dict[str, Any] | None) -> Report:
             f"Graph found {document['stats']['n_discarded']} discarded turn(s).",
         )
 
-    subagents = atif.get("subagent_trajectories") or []
-    if subagents:
-        # FATAL, not WARN. The old text said subagent turns "must not be trained with the parent
-        # rollout's reward" and then did nothing to stop it: no node ids were collected, no role was
-        # changed, so if a subagent's calls landed in the same session as `agent` roots they shipped as
-        # trainable carrying the parent's reward — the exact outcome the sentence forbade. The aux path
-        # right above demotes; this one only complained.
-        #
-        # Refusing rather than guessing which roots belong to the subagent: ATIF gives trajectories,
-        # not the node ids that would let us demote precisely, and picking roots by shape here would be
-        # inventing an attribution. A rollout whose reward cannot be attributed is not trainable.
-        report.add(
-            FATAL,
-            "atif_subagents",
-            f"ATIF reports {len(subagents)} subagent trajectory(ies) and the graph has "
-            f"{document['stats']['n_roots']} root(s). Subagent turns must not be trained with the "
-            "parent rollout's reward, and ATIF does not say which captured calls are theirs, so "
-            "this rollout cannot be attributed. Run this harness without subagents to train on it.",
-        )
     return report
 
 
