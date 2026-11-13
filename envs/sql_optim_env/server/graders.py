@@ -52,15 +52,17 @@ class GradeMask:
 
 
 # Endings a keyword may carry and still name the same thing: plurals, tenses,
-# and the -ate/-ation family that the deliberate stems (`aggreg`, `concatenat`)
-# are written to reach. Any other letter or digit after a keyword means it is
-# only the start of a different word (`star` in `started`, `join` in `joint`).
+# `-ly` adverbs (`explicitly`), and the -ate/-ation family that the deliberate
+# stems (`aggreg`, `concatenat`) are written to reach. Any other letter or digit
+# after a keyword means it is only the start of a different word (`star` in
+# `started`, `join` in `joint`).
 _KW_SUFFIXES = (
     "s",
     "es",
     "d",
     "ed",
     "e",
+    "ly",
     "ing",
     "ion",
     "ions",
@@ -71,11 +73,14 @@ _KW_SUFFIXES = (
     "ated",
     "ating",
 )
+# A final consonant can double before -ing/-ed (`scan` -> `scanning`,
+# `map` -> `mapped`).
+_KW_CONSONANTS = frozenset("bcdfghjklmnpqrstvz")
 
 
 @functools.lru_cache(maxsize=None)
 def _kw_pattern(keyword: str) -> "re.Pattern[str]":
-    """Compile *keyword* to match as a whole word, allowing `_KW_SUFFIXES`.
+    """Compile *keyword* to match as a whole word, allowing its usual endings.
 
     The boundary is a letter or digit, not `\\w`: an underscore separates words
     here, so a structured `issue_type` such as `select_star` still matches
@@ -87,7 +92,10 @@ def _kw_pattern(keyword: str) -> "re.Pattern[str]":
     if kw[:1].isalnum():
         pattern = r"(?<![a-z0-9])" + pattern
     if kw[-1:].isalnum():
-        pattern += r"(?:" + "|".join(_KW_SUFFIXES) + r")?(?![a-z0-9])"
+        endings = list(_KW_SUFFIXES)
+        if kw[-1] in _KW_CONSONANTS:
+            endings.append(re.escape(kw[-1]) + r"(?:ing|ed)")
+        pattern += r"(?:" + "|".join(endings) + r")?(?![a-z0-9])"
     return re.compile(pattern)
 
 
