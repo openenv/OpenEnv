@@ -274,7 +274,7 @@ def _applicable(check_id, manifest):
     return True
 
 
-def _runtime(subject, graders, *, skip_build, provider):
+def _runtime(subject, graders, *, skip_build, provider, sandbox):
     """Own build/start/collection/stop and retain failure evidence through teardown."""
     manifest = subject.manifest
     plan = None
@@ -292,6 +292,11 @@ def _runtime(subject, graders, *, skip_build, provider):
         if skip_build:
             raise UnsupportedCapability(
                 "--skip-build: build-dependent runtime checks skipped"
+            )
+        if sandbox != "docker":
+            raise UnsupportedCapability(
+                f"{sandbox} runs native Harbor tasks only; "
+                + "validate a served Space with --space"
             )
         if not isinstance(manifest, NormalizedManifestV2):
             raise UnsupportedCapability(
@@ -586,6 +591,9 @@ def run_validation(
     provider=None,
     artifacts_dir: Path | None = None,
     report_target: str | None = None,
+    sandbox: str = "docker",
+    flavor: str = "cpu-basic",
+    namespace: str | None = None,
 ) -> ValidationReport | ValidationReportV2:
     """
     Validate a package end to end and return the report.
@@ -595,7 +603,7 @@ def run_validation(
     [`~openenv.validation.signature.UnsupportedPackageError`] for
     recognized-but-unsupported ones (CLI exit code 2). A package whose declarations
     fail the manifest schema yields a normal report with a `static.manifest` FAIL
-    (exit code 1).
+    (exit code 1). An unknown `sandbox` raises `ValueError` before validation.
 
     Args:
         target (`Path`):
@@ -612,10 +620,22 @@ def run_validation(
             Write a redacted reproduction bundle to this directory.
         report_target (`str`, *optional*):
             Durable source identity for the report; defaults to the package path.
+        sandbox (`str`, *optional*, defaults to `"docker"`):
+            Where native Harbor trials run: `"docker"` on the local daemon or
+            `"hf-sandbox"`, one Hugging Face Job per trial. Served packages run
+            on `"docker"` or `provider` only.
+        flavor (`str`, *optional*, defaults to `"cpu-basic"`):
+            HF Jobs hardware flavor for `"hf-sandbox"` trials, as listed by
+            `hf jobs hardware`.
+        namespace (`str`, *optional*):
+            User or organization that owns the `"hf-sandbox"` jobs; defaults to
+            the token's user.
 
     Returns:
         [`~openenv.validation.report.ValidationReport`]: the completed report.
     """
+    if sandbox not in ("docker", "hf-sandbox"):
+        raise ValueError(f"unknown sandbox {sandbox!r}; expected docker or hf-sandbox")
     target = Path(target)
     wants_runtime = max_level >= Level.RUNTIME
     policy = policy or load_policy("v2" if wants_runtime else "v1")
@@ -703,6 +723,9 @@ def run_validation(
                     report_target=report_target,
                     skip_build=skip_build,
                     provider=provider,
+                    sandbox=sandbox,
+                    flavor=flavor,
+                    namespace=namespace,
                 )
             (
                 runtime_results,
@@ -722,6 +745,7 @@ def run_validation(
                 ],
                 skip_build=skip_build,
                 provider=provider,
+                sandbox=sandbox,
             )
             results.extend(runtime_results)
             if attempted:

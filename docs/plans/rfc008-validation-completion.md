@@ -43,7 +43,8 @@ Three limits apply across bindings:
 - **Providers.** Docker-local enforces `public` and `no-network` networking and
   refuses allowlists and GPUs. The HF Sandbox provider refuses every launch with
   `missing provider capability: immutable_image`, because nothing yet binds a Space
-  revision to an image digest.
+  revision to an image digest. Harbor tasks with a digest-pinned image can run
+  their trials on HF Jobs with `--sandbox hf-sandbox`.
 - **Served oracles.** RFC 008 does not yet say how to execute an oracle against a
   served WebSocket environment, so served packages report their semantic checks as
   named SKIPs.
@@ -92,7 +93,7 @@ or GPU time. Owners are suggestions for discussion.
 | 3 | Verifier strength | #28, #26 procedure | Harbor canaries done; panel open | M, then L | Validation core and Hub pipeline |
 | 4 | Determinism, replay and leakage graders | #30, #39, #40, #44 | Open | M | Validation core |
 | 5 | Static graders and complete reports | #1, #3, #4, #8, #9, #10, #12, #41, #42 | Reports done; graders open | S to M | Any contributor |
-| 6 | Cloud execution on HF Sandbox | Provider qualification | Open | M | Hub pipeline |
+| 6 | Cloud execution on HF Sandbox | Provider qualification | Harbor done; Spaces open | M | Hub pipeline |
 | 7 | Statistical reference procedure | #13 to #16, #27 | Open | L | Hub pipeline |
 | 8 | Wider task shapes | Workspace handoff, multi-container, credentials | Open | M to L | Hub pipeline and validation core |
 | 9 | Training signal | #17 | Open | L | Validation experiments and RFC 013 |
@@ -208,9 +209,14 @@ contributor; these make good first issues.
 ### 6. Cloud execution on HF Sandbox
 
 The HF Sandbox provider refuses every launch because it has no immutable image
-binding. Runtime and semantic checks therefore cannot run in the cloud, or on GPUs,
-through the RFC provider interface. Cloud audits work around this with their own
-runner.
+binding. Runtime and semantic checks for served Spaces therefore cannot run in the
+cloud, or on GPUs, through the RFC provider interface.
+
+Harbor tasks do not have this gap when they pin `environment.docker_image` by
+digest, because the task declares its own immutable image. `openenv validate
+--sandbox hf-sandbox` now runs their trials as HF Jobs through Harbor's
+`hf-sandbox` environment, so cloud audits can call `openenv validate` instead of
+their own runner. The remaining work below covers served Spaces.
 
 **Approach.** Resolve a Space revision to the registry digest of the image it
 builds, verify it, and launch by digest. Qualify public Space images first, then add
