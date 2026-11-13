@@ -1435,7 +1435,7 @@ class HTTPEnvServer:
                         return JsonRpcResponse.success(
                             result={
                                 "tools": [
-                                    t.model_dump()
+                                    t.model_dump(by_alias=True)
                                     if hasattr(t, "model_dump")
                                     else dict(t)
                                     for t in tools

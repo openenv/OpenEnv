@@ -99,6 +99,33 @@ class MyEnv(MCPEnvironment):
             return "Used by live MCP clients"
 ```
 
+## FastMCP Runtime and Sessions
+
+OpenEnv uses FastMCP 4 and creates its internal client with `mode="legacy"`.
+This selects FastMCP's session-based handshake so `ctx.get_state()` and
+`ctx.set_state()` persist across tool calls within a managed OpenEnv session.
+HTTP sessions hold the MCP connection until the session closes; WebSocket
+sessions hold it for the connection lifetime. A standalone tool call without
+a persistent session does not provide this cross-call state guarantee.
+
+FastMCP's Python tool descriptors use `input_schema`; MCP tool discovery
+responses continue to use the wire field `inputSchema`.
+
+### Harness sampling
+
+FastMCP 4 removes `Context.sample()` even on legacy connections. A tool that
+needs the harness client's model now returns an `InputRequiredResult` containing
+a `CreateMessageRequest`, then reads the answer from `ctx.input_responses` on
+the next invocation. The client's `sampling_handler` registration is unchanged.
+See FastMCP's [guard pattern](https://gofastmcp.com/servers/elicitation#sampling-and-roots).
+
+Sampling guards require a modern MCP connection (`Client(..., mode="auto")`).
+The harness bridge mirrors the front connection's protocol onto its backend,
+including when tools are renamed. Legacy harness connections still retain
+per-session state; a modern guard is not supported by the legacy internal
+client used for OpenEnv-managed tool calls. Tools that generate with their own
+model credentials can instead call their model provider directly.
+
 ## Harness Environments: `WS /harness`
 
 When the environment factory produces a [`HarnessEnvironment`](https://github.com/openenv/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md) (an agent harness such as Claude Code running inside the environment), production mode also registers a `/harness` WebSocket, so clients talk to the harness itself:

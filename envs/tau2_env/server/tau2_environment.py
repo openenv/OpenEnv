@@ -33,8 +33,7 @@ from typing import Any, Optional
 
 import tau2.evaluator.evaluator_nl_assertions as nl_assertions
 from fastmcp import FastMCP
-from fastmcp.tools import Tool
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import Tool, ToolResult
 from openenv.core.env_server.mcp_environment import MCPEnvironment
 from openenv.core.env_server.types import Action, Observation
 from tau2.data_model.message import AssistantMessage
