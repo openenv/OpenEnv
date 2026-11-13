@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 # Multi-stage build using openenv-base.
-ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest
+ARG BASE_IMAGE=ghcr.io/openenv/openenv-base:latest
 FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app

@@ -53,7 +53,7 @@ from browsergym_env import BrowserGymEnv, BrowserGymAction
 
 # Create environment for MiniWoB training task
 env = BrowserGymEnv.from_docker_image(
-    "ghcr.io/huggingface/openenv-browsergym-env:latest",
+    "ghcr.io/openenv/openenv-browsergym-env:latest",
     environment={
         "BROWSERGYM_BENCHMARK": "miniwob",
         "BROWSERGYM_TASK_NAME": "click-test",  # or "click-button", "click-dialog", etc.
@@ -256,7 +256,7 @@ from envs.browsergym_env import BrowserGymEnv, BrowserGymAction
 
 # Create environment for WebArena evaluation
 env = BrowserGymEnv.from_docker_image(
-    "ghcr.io/huggingface/openenv-browsergym-env:latest",
+    "ghcr.io/openenv/openenv-browsergym-env:latest",
     environment={
         "BROWSERGYM_BENCHMARK": "webarena",
         "BROWSERGYM_TASK_NAME": "0",  # Task ID
