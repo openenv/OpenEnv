@@ -1714,7 +1714,7 @@ wheels = [
 
 [[package]]
 name = "openenv"
-version = "0.4.2"
+version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -1722,7 +1722,9 @@ dependencies = [
     { name = "gradio" },
     { name = "httpx" },
     { name = "huggingface-hub" },
+    { name = "jsonschema" },
     { name = "openai" },
+    { name = "packaging" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -1734,9 +1736,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/56/f1/68bc2696dbb3014dcbc7e1a8ed24242aee195f5a16a8119bdb0a32080231/openenv-0.4.2.tar.gz", hash = "sha256:92d45d39b210a7cec438e5fa6187889051dc34331ba152cab61ffd6d2e3f27ea", size = 205526, upload-time = "2026-09-09T08:39:13.537Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/05/8b974ed3850344c6ec65d9139f9087c49f6d7ec50f5c76ef0315fb6f79a8/openenv-0.13.0.tar.gz", hash = "sha256:358cd949d5103c73f4c0dcf25f7e693edbbe2f33865b7a6ef6194bb69d709f91", size = 692221, upload-time = "2026-11-12T06:33:50.144Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/ca/5e02a3ef2b3a40616b222d4bd9c5dc48acfad85d8da6933d90e903044e16/openenv-0.4.2-py3-none-any.whl", hash = "sha256:9b2575e1521f1ad45dfbc474ee6399b1d6e9768bfe43d793f6579cc5a71c038f", size = 239602, upload-time = "2026-09-09T08:39:11.946Z" },
+    { url = "https://files.pythonhosted.org/packages/02/6b/f534473eb87e2746b4ec60e94dfab51b8484528ed8a674edf4ce098ef248/openenv-0.13.0-py3-none-any.whl", hash = "sha256:d5dc26191246242d9b10bc87571de0f62350072502545f2f789fed8b3e056aa4", size = 811183, upload-time = "2026-11-12T06:33:48.294Z" },
 ]
 
 [[package]]
@@ -1763,7 +1765,7 @@ dev = [
 requires-dist = [
     { name = "duckdb", specifier = ">=0.10.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "openenv", specifier = ">=0.4.1" },
+    { name = "openenv", specifier = ">=0.5.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.1.0" },
