@@ -10,18 +10,29 @@ Tables populated:
   orders   — 500,000 rows
   products —  1,000 rows
   events   — 1,000,000 rows
+
+Agent SQL never runs in the server process. The server builds the database,
+then hands every query to a worker process (this file, run as a script) that it
+kills when the deadline passes or the worker dies, so a runaway query costs the
+worker instead of the server. This file must therefore import only the standard
+library and duckdb.
 """
 
 import atexit
 import contextlib
+import json
+import multiprocessing
 import os
 import re
 import shutil
 import string
+import subprocess
+import sys
 import tempfile
 import threading
 import time
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from multiprocessing.connection import Connection
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import duckdb
 
@@ -50,11 +61,12 @@ _TOTAL_TIME_RE = re.compile(r"Total Time:\s*([0-9]*\.?[0-9]+)\s*s")
 # rewrite like `FROM events a, events b` is a trillion-row cross join: without
 # a ceiling it can exhaust memory, fill the spill directory, and hold the
 # execution lock for hours while every other session waits behind it. DuckDB has
-# no statement-timeout option, so `_deadline()` interrupts engine work instead.
-# These caps cover buffer-managed memory and spill only, and neither they nor
-# the interrupt reach Python conversion, so agent results never enter Python.
-# Allocations DuckDB does not track, such as one huge `repeat()`, are bounded
-# only by the container, which may kill the server with an out-of-memory error.
+# no statement-timeout option, and `interrupt()` is only checked between units
+# of work, so the server kills the worker process when the deadline passes.
+# These caps cover buffer-managed memory and spill only. Agent results are
+# never converted into Python, in the worker or the server: only counts,
+# timings and plans cross the process boundary. Allocations DuckDB does not
+# track, such as one huge `repeat()`, are bounded only by the container.
 # Keep headroom in the 1024 MiB manifest budget, including RAM-backed /tmp in
 # docker-local validation.
 _DUCKDB_CONFIG = {
@@ -70,9 +82,10 @@ _QUERY_TIMEOUT_S = 15.0
 _TIMEOUT_ERROR = (
     f"Query cancelled: exceeded the {_QUERY_TIMEOUT_S:.0f}s execution limit"
 )
-# An interrupt sent to an idle connection is not remembered, so once a deadline
-# has expired it is re-sent at this interval until the deadline is released.
-_INTERRUPT_RETRY_S = 0.01
+_WORKER_FAILED_ERROR = "Query aborted: the query process ran out of memory or crashed"
+# Starting the worker is trusted work and is not charged to any query's deadline.
+_WORKER_START_TIMEOUT_S = 30.0
+_TABLES = ("users", "orders", "products", "events")
 # Output column names compare case-insensitively the way DuckDB identifiers do,
 # which folds ASCII letters only (`X` matches `x`, `Ä` does not match `ä`).
 # `str.lower()` and `str.casefold()` fold far more than that.
@@ -173,6 +186,174 @@ def _single_statement_error(query: str) -> Optional[str]:
     return None
 
 
+# ── Worker side: runs in the query process ───────────────────────────────
+
+
+@contextlib.contextmanager
+def _session(conn: duckdb.DuckDBPyConnection) -> Iterator[duckdb.DuckDBPyConnection]:
+    """Yield a short-lived cursor to run one statement on.
+
+    `cursor()` opens another connection to the same database with its own
+    temporary catalog, so session DDL an agent smuggles in
+    (`CREATE TEMP TABLE orders AS SELECT 1`, which a read-only database
+    still permits) is discarded when the cursor closes instead of shadowing
+    a base table for every later query the worker runs.
+    """
+    cursor = conn.cursor()
+    try:
+        yield cursor
+    finally:
+        try:
+            cursor.close()
+        except Exception:
+            pass
+
+
+def _row_count(conn: duckdb.DuckDBPyConnection, query: str) -> int:
+    """
+    Exact row count for *query*, computed inside DuckDB: no rows are converted
+    into Python. A query that cannot be wrapped in a subquery (``CALL``, DDL) is
+    an error rather than a reason to fetch its rows.
+    """
+    with _session(conn) as cur:
+        return cur.execute(_as_subquery(query, "COUNT(*)")).fetchone()[0]
+
+
+def _engine_ms(conn: duckdb.DuckDBPyConnection, query: str, runs: int) -> float:
+    """
+    Median DuckDB-side execution time of *query* in ms.
+
+    ``EXPLAIN ANALYZE`` really executes the query and discards the result
+    inside the engine, so this measures execution alone: no rows are converted
+    to Python objects and nothing is buffered client-side. Any failure raises,
+    including a profile footer that cannot be parsed (a DuckDB version whose
+    output differs): there is no fallback that would fetch the rows instead.
+    """
+    timings: List[float] = []
+    for _ in range(runs):
+        with _session(conn) as cur:
+            # Bounded on purpose: a plan is tiny, so anything larger is not a
+            # plan and must not be pulled into Python wholesale.
+            rows = cur.execute(f"EXPLAIN ANALYZE {query}").fetchmany(_MAX_PLAN_ROWS)
+        match = _TOTAL_TIME_RE.search("\n".join(str(r[-1]) for r in rows))
+        if match is None:
+            raise RuntimeError("EXPLAIN ANALYZE output has no total time")
+        timings.append(float(match.group(1)) * 1000.0)
+
+    timings.sort()
+    return round(max(timings[len(timings) // 2], _MIN_MEASURABLE_MS), 3)
+
+
+def _output_schema(cur: duckdb.DuckDBPyConnection, query: str) -> List[Tuple[str, str]]:
+    """Return the output columns of *query* as (name, type) pairs, in order.
+
+    ``DESCRIBE <query>`` binds the query without running it, so it is cheap
+    however expensive the query is, and it reports the names the query
+    itself produces. Describing a wrapper such as ``SELECT * FROM (<query>)``
+    would not do: the wrapper deduplicates ``SELECT 1 x, 2 x`` into
+    ``(x, x_1)``, which would make it look identical to ``SELECT 1 x, 2 x_1``.
+
+    Names are folded with ASCII-only case folding. Type strings are kept
+    exactly as DuckDB prints them, which already canonicalizes aliases
+    (``INT4`` is reported as ``INTEGER``, including inside nested types) but
+    keeps the case of struct field names and decimal precision and scale.
+    """
+    return [
+        (name.translate(_ASCII_LOWER), column_type)
+        for name, column_type, *_ in cur.execute(f"DESCRIBE {query}").fetchall()
+    ]
+
+
+def _same_results(
+    conn: duckdb.DuckDBPyConnection, original: str, optimized: str
+) -> bool:
+    """Return whether two queries produce the same result.
+
+    The equality rule, the same for every result size, empty results
+    included:
+
+    - Same output schema, compared by position: the same number of columns,
+      the same names (ASCII case-insensitive) and identical DuckDB types.
+    - The same rows as a multiset: row order is ignored, duplicate
+      multiplicity is not. Values are compared with DuckDB's own equality,
+      with no float tolerance, so ``-0.0`` equals ``0.0``, ``NaN`` equals
+      ``NaN`` and ``NULL`` equals ``NULL``. Engine equality is not byte
+      identity: ``INTERVAL '1 month'`` equals ``INTERVAL '30 days'``.
+
+    The schema check comes first because it is what keeps the set operation
+    from coercing values: without it ``true`` would equal ``1`` and a
+    ``BIGINT`` would equal a ``DOUBLE`` that cannot represent it. Only the
+    count of differing rows comes back to Python. Any error raises; the
+    server treats it as a mismatch, with no fallback. This compares fresh
+    executions of both queries, so it does not establish equivalence for
+    volatile queries such as ones using ``random()``.
+    """
+    with _session(conn) as cur:
+        schemas = [_output_schema(cur, query) for query in (original, optimized)]
+        if schemas[0] != schemas[1]:
+            return False
+        sql = _symmetric_difference_sql(original, optimized)
+        return cur.execute(sql).fetchone()[0] == 0
+
+
+def _handle(conn: duckdb.DuckDBPyConnection, job: Dict[str, Any]) -> Dict[str, Any]:
+    """Run one job from the server and return its JSON-serializable reply.
+
+    A failure is a reply, never an exception. ``fatal`` marks an out-of-memory
+    failure, after which the server replaces the worker rather than trust a
+    process whose allocator has already failed once.
+    """
+    try:
+        op = job["op"]
+        if op == "measure":
+            rows = _row_count(conn, job["query"])
+            ms = _engine_ms(conn, job["query"], job["runs"])
+            return {"ok": True, "ms": ms, "rows": rows}
+        if op == "equal":
+            equal = _same_results(conn, job["original"], job["optimized"])
+            return {"ok": True, "equal": equal}
+        if op == "explain":
+            with _session(conn) as cur:
+                rows = cur.execute(f"EXPLAIN {job['query']}").fetchall()
+            return {"ok": True, "plan": "\n".join(str(r[1]) for r in rows)}
+        if op == "stats":
+            with _session(conn) as cur:
+                stats = {
+                    t: cur.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                    for t in _TABLES
+                }
+            return {"ok": True, "stats": stats}
+        raise ValueError(f"Unknown query worker job: {op!r}")
+    except Exception as exc:
+        fatal = isinstance(exc, (duckdb.OutOfMemoryException, MemoryError))
+        return {"ok": False, "error": str(exc), "fatal": fatal}
+
+
+def _worker_main(fd: int) -> None:
+    """Serve jobs from the server over the pipe at *fd* until it closes."""
+    pipe = Connection(fd)
+    try:
+        setup = json.loads(pipe.recv_bytes())
+        conn = duckdb.connect(setup["path"], read_only=True, config=setup["config"])
+        conn.execute("SELECT 1").fetchall()
+    except Exception as exc:
+        error = f"Query process failed to start: {exc}"
+        with contextlib.suppress(OSError):
+            pipe.send_bytes(json.dumps({"ok": False, "error": error}).encode())
+        return
+    try:
+        pipe.send_bytes(json.dumps({"ok": True}).encode())
+        while True:
+            job = json.loads(pipe.recv_bytes())
+            pipe.send_bytes(json.dumps(_handle(conn, job)).encode())
+    except (EOFError, OSError):
+        # The server closed its end, or went away: nothing left to serve.
+        return
+
+
+# ── Server side ──────────────────────────────────────────────────────────
+
+
 class QueryExecutor:
     """
     Runs SQL against an in-memory DuckDB database with realistic
@@ -181,42 +362,36 @@ class QueryExecutor:
     """
 
     def __init__(self) -> None:
-        # Build the tables once on a writable connection to a temp file, then
-        # reopen the database read-only. Every query — trusted task SQL and
-        # agent rewrites alike — runs against the read-only database, so the
-        # DuckDB engine itself rejects any *persistent* write (no keyword
-        # heuristics, and DML inside a CTE cannot slip through on any DuckDB
-        # version) and, per `_DUCKDB_CONFIG`, cannot reach the filesystem
-        # either.
+        # Build the tables once on a writable connection to a temp file. Every
+        # query — trusted task SQL and agent rewrites alike — then runs in the
+        # worker process on a read-only connection to that file, so the DuckDB
+        # engine itself rejects any *persistent* write (no keyword heuristics,
+        # and DML inside a CTE cannot slip through on any DuckDB version) and,
+        # per `_DUCKDB_CONFIG`, cannot reach the filesystem either.
         #
         # Read-only is not sufficient on its own: DuckDB still accepts
         # session-scoped DDL, so `CREATE TEMP TABLE users AS ...` succeeds and
         # shadows a base table for every later query on the same connection.
-        # Queries therefore run on a short-lived cursor (`_session`), whose
-        # temporary catalog dies with it, rather than directly on `self.conn`.
-        # A lock serializes access because a single DuckDB connection is not
-        # safe for concurrent use by the server's worker pool.
+        # The worker therefore runs each statement on a short-lived cursor
+        # (`_session`), whose temporary catalog dies with it.
+        #
+        # One worker serves every session, one job at a time: the lock
+        # serializes them, and parallel workers would compete for the same
+        # CPUs and add noise to the timings the reward is built on.
         self._dir = tempfile.mkdtemp(prefix="sql_optim_")
         self._path = os.path.join(self._dir, "sql_optim.duckdb")
         builder = duckdb.connect(self._path, config=_DUCKDB_CONFIG)
         self._build_tables(builder)
         builder.close()
 
-        self.conn = duckdb.connect(self._path, read_only=True, config=_DUCKDB_CONFIG)
-        # Innermost-last stack of the cursors currently executing, so a deadline
-        # armed at any nesting level cancels whatever is actually running.
-        self._sessions: List[duckdb.DuckDBPyConnection] = []
-        # Reentrant so `_run` can hold the lock across a whole measurement while
-        # the helpers it calls still take it individually.
-        self._exec_lock = threading.RLock()
+        self._worker: Optional[subprocess.Popen] = None
+        self._pipe: Optional[Connection] = None
+        self._exec_lock = threading.Lock()
         atexit.register(self._cleanup)
 
     def _cleanup(self) -> None:
-        """Close the connection and remove the temp database directory."""
-        try:
-            self.conn.close()
-        except Exception:
-            pass
+        """Stop the worker and remove the temp database directory."""
+        self._kill_worker()
         shutil.rmtree(self._dir, ignore_errors=True)
 
     # ── Schema Setup ─────────────────────────────────────────────────────
@@ -287,164 +462,106 @@ class QueryExecutor:
             FROM generate_series(1, 1000000) t(i)
         """)
 
+    # ── Worker process ────────────────────────────────────────────────────
+
+    def _start_worker(self) -> Optional[str]:
+        """Make sure a live worker is ready; return an error if none can start.
+
+        Replaces a worker that died since the last job before anything is sent
+        to it. Starting one is trusted work, bounded by its own timeout rather
+        than any query's deadline.
+        """
+        if self._worker is not None and self._worker.poll() is None:
+            return None
+        self._kill_worker()
+
+        server_end, worker_end = multiprocessing.Pipe()
+        fd = worker_end.fileno()
+        try:
+            # `-P` keeps this directory off `sys.path`, so the worker imports
+            # only what this file imports. A new session keeps a Ctrl-C meant
+            # for the server from reaching the worker mid-job; it exits by
+            # itself once the server's end of the pipe closes.
+            self._worker = subprocess.Popen(
+                [sys.executable, "-P", os.path.abspath(__file__), str(fd)],
+                pass_fds=(fd,),
+                start_new_session=True,
+            )
+        finally:
+            worker_end.close()
+        self._pipe = server_end
+
+        setup = {"path": self._path, "config": _DUCKDB_CONFIG}
+        try:
+            server_end.send_bytes(json.dumps(setup).encode())
+            if server_end.poll(_WORKER_START_TIMEOUT_S):
+                reply = json.loads(server_end.recv_bytes())
+            else:
+                reply = {"ok": False, "error": "Query process did not start in time"}
+        except (EOFError, OSError):
+            reply = {"ok": False, "error": _WORKER_FAILED_ERROR}
+        if not reply["ok"]:
+            self._kill_worker()
+            return reply["error"]
+        return None
+
+    def _kill_worker(self) -> None:
+        """Kill and reap the worker, if there is one. Safe to call repeatedly."""
+        worker, pipe = self._worker, self._pipe
+        self._worker = self._pipe = None
+        if pipe is not None:
+            pipe.close()
+        if worker is not None:
+            if worker.poll() is None:
+                worker.kill()
+            worker.wait()
+
+    def _call(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        """Run *job* in the worker under the query deadline and return its reply.
+
+        Agent SQL only ever runs here, in the worker process. When the deadline
+        passes the worker is killed, whatever it is doing: DuckDB checks
+        ``interrupt()`` only between units of work, so one long operation inside
+        the engine could otherwise run on while holding the lock. A worker
+        that dies, or runs out of memory, is replaced the same way. Every
+        failure comes back as ``{"ok": False, "error": ...}``, which callers
+        treat as an error with no credit.
+
+        Nothing from a killed worker can leak into a later job: the reply is
+        only read before the deadline, and the worker that might still send one
+        is gone.
+        """
+        with self._exec_lock:
+            error = self._start_worker()
+            if error is not None:
+                return {"ok": False, "error": error}
+            expires = time.monotonic() + _QUERY_TIMEOUT_S
+            try:
+                self._pipe.send_bytes(json.dumps(job).encode())
+                if self._pipe.poll(max(0.0, expires - time.monotonic())):
+                    reply = json.loads(self._pipe.recv_bytes())
+                else:
+                    reply = {"ok": False, "error": _TIMEOUT_ERROR, "fatal": True}
+            except (EOFError, OSError):
+                reply = {"ok": False, "error": _WORKER_FAILED_ERROR, "fatal": True}
+            if reply.get("fatal"):
+                self._kill_worker()
+            return reply
+
     # ── Execution helpers ─────────────────────────────────────────────────
-
-    @contextlib.contextmanager
-    def _session(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        """Yield a short-lived cursor to run one statement on.
-
-        `cursor()` opens another connection to the same database with its own
-        temporary catalog, so session DDL an agent smuggles in
-        (`CREATE TEMP TABLE orders AS SELECT 1`, which a read-only database
-        still permits) is discarded when the cursor closes instead of shadowing
-        a base table for every later episode in the process.
-
-        Registered on `_sessions` while it runs so `_deadline` can cancel it.
-        """
-        cursor = self.conn.cursor()
-        self._sessions.append(cursor)
-        try:
-            yield cursor
-        finally:
-            self._sessions.pop()
-            try:
-                cursor.close()
-            except Exception:
-                pass
-
-    def _interrupt_active(self) -> None:
-        """Cancel the innermost running session, if any.
-
-        Resolved when the timer fires rather than when it is armed, so a
-        deadline set around a whole measurement still cancels the individual
-        statement that a helper is running underneath it.
-        """
-        # Read once: the owning thread can pop the last session between an
-        # emptiness check and the index.
-        try:
-            target = self._sessions[-1]
-        except IndexError:
-            target = self.conn
-        try:
-            target.interrupt()
-        except Exception:
-            pass
-
-    @contextlib.contextmanager
-    def _deadline(self) -> Iterator[Callable[[], bool]]:
-        """Cancel whatever is running on the connection after the time limit.
-
-        DuckDB has no statement timeout, but ``interrupt()`` cancels the running
-        query from another thread and leaves the connection usable, raising
-        ``duckdb.InterruptException`` in the thread that issued it.
-
-        Armed by every helper that executes agent SQL *and* around the whole of
-        ``_run``, so a helper is bounded whoever calls it while the measurement
-        as a whole is bounded too. Nesting is harmless: each level stops its
-        own watchdog, and the earliest one to expire wins.
-
-        Must be entered while already holding ``_exec_lock`` — every call site
-        does, as ``with self._exec_lock, self._deadline():``. That ordering is
-        what makes the unavoidable cancel race benign: the watchdog can fire in
-        the window between the statement finishing and the context exiting. It
-        is joined before the lock is released, so an interrupt already in
-        flight cannot target a later session. With the lock held, no other
-        session can have a query in flight, so the stray ``interrupt()`` lands on
-        an idle connection and does nothing.
-
-        Callers must not treat the interrupt as a reason to try a different
-        strategy: the deadline has already expired.
-
-        An interrupt that reaches an idle connection is not remembered, so a
-        single one is not enough for a caller that runs several statements:
-        expiring in the gap between two of them would let the next one run
-        unbounded. Once expired, the watchdog therefore keeps re-sending the
-        interrupt until the context exits. It also yields an ``expired()``
-        check, which multi-statement callers use before each stage and before
-        trusting a result, since a statement can complete just as the deadline
-        passes.
-        """
-        expires = time.monotonic() + _QUERY_TIMEOUT_S
-        released = threading.Event()
-
-        def watchdog() -> None:
-            if released.wait(_QUERY_TIMEOUT_S):
-                return
-            while not released.is_set():
-                self._interrupt_active()
-                released.wait(_INTERRUPT_RETRY_S)
-
-        thread = threading.Thread(target=watchdog, daemon=True)
-        thread.start()
-        try:
-            yield lambda: time.monotonic() >= expires
-        finally:
-            released.set()
-            thread.join()
-
-    def _row_count(self, query: str) -> Tuple[Optional[int], Optional[str]]:
-        """
-        Exact row count for *query*, computed inside DuckDB: no rows cross into
-        Python. A query that cannot be wrapped in a subquery (``CALL``, DDL) is
-        an error rather than a reason to fetch its rows.
-        """
-        try:
-            with self._exec_lock, self._session() as cur, self._deadline():
-                return (
-                    cur.execute(_as_subquery(query, "COUNT(*)")).fetchone()[0],
-                    None,
-                )
-        except duckdb.InterruptException:
-            return None, _TIMEOUT_ERROR
-        except Exception as exc:
-            return None, str(exc)
-
-    def _engine_ms(
-        self, query: str, runs: int
-    ) -> Tuple[Optional[float], Optional[str]]:
-        """
-        Median DuckDB-side execution time in ms, as (median_ms, error).
-
-        ``EXPLAIN ANALYZE`` really executes the query and discards the result
-        inside the engine, so this measures execution alone: no rows are
-        converted to Python objects and nothing is buffered client-side. Any
-        failure is returned as the error, including a profile footer that cannot
-        be parsed (a DuckDB version whose output differs): there is no fallback
-        that would fetch the rows instead.
-        """
-        timings: List[float] = []
-        for _ in range(runs):
-            try:
-                with self._exec_lock, self._session() as cur, self._deadline():
-                    # Bounded on purpose: a plan is tiny, so anything larger is
-                    # not a plan and must not be pulled into Python wholesale.
-                    rows = cur.execute(f"EXPLAIN ANALYZE {query}").fetchmany(
-                        _MAX_PLAN_ROWS
-                    )
-            except duckdb.InterruptException:
-                return None, _TIMEOUT_ERROR
-            except Exception as exc:
-                return None, str(exc)
-            match = _TOTAL_TIME_RE.search("\n".join(str(r[-1]) for r in rows))
-            if match is None:
-                return None, "EXPLAIN ANALYZE output has no total time"
-            timings.append(float(match.group(1)) * 1000.0)
-
-        timings.sort()
-        return round(max(timings[len(timings) // 2], _MIN_MEASURABLE_MS), 3), None
 
     def _run(
         self, query: str, runs: int = _TIMING_RUNS
     ) -> Tuple[float, Optional[int], Optional[str]]:
         """
-        Execute *query* on the read-only connection and measure it.
+        Execute *query* in the worker and measure it.
 
         Returns (median_ms, row_count, error_or_None). ``row_count`` is exact
         whenever there is no error, and comes from a ``COUNT(*)`` wrap inside
         DuckDB. No result value is converted into Python: one row can hold a
-        whole table (``SELECT list(e) FROM events e``), and the deadline cannot
-        interrupt that conversion. Any failure, including a query the wrap
-        cannot hold (``CALL``, DDL, a write), is returned as the error string.
+        whole table (``SELECT list(e) FROM events e``). Any failure, including a
+        query the wrap cannot hold (``CALL``, DDL, a write), is returned as the
+        error string.
 
         The timing comes from DuckDB's own profiler rather than from wrapping a
         ``fetchall()``, so it reflects query execution instead of the cost of
@@ -459,81 +576,24 @@ class QueryExecutor:
         if error is not None:
             return 99_999.0, None, error
 
-        with self._exec_lock, self._deadline():
-            row_count, error = self._row_count(query)
-            if error is not None:
-                return 99_999.0, None, error
-            median_ms, error = self._engine_ms(query, runs)
-            if error is not None:
-                return 99_999.0, None, error
-
-        return median_ms, row_count, None
-
-    @staticmethod
-    def _output_schema(
-        cur: duckdb.DuckDBPyConnection, query: str
-    ) -> List[Tuple[str, str]]:
-        """Return the output columns of *query* as (name, type) pairs, in order.
-
-        ``DESCRIBE <query>`` binds the query without running it, so it is cheap
-        however expensive the query is, and it reports the names the query
-        itself produces. Describing a wrapper such as ``SELECT * FROM (<query>)``
-        would not do: the wrapper deduplicates ``SELECT 1 x, 2 x`` into
-        ``(x, x_1)``, which would make it look identical to ``SELECT 1 x, 2 x_1``.
-
-        Names are folded with ASCII-only case folding. Type strings are kept
-        exactly as DuckDB prints them, which already canonicalizes aliases
-        (``INT4`` is reported as ``INTEGER``, including inside nested types) but
-        keeps the case of struct field names and decimal precision and scale.
-        """
-        return [
-            (name.translate(_ASCII_LOWER), column_type)
-            for name, column_type, *_ in cur.execute(f"DESCRIBE {query}").fetchall()
-        ]
+        reply = self._call({"op": "measure", "query": query, "runs": runs})
+        if not reply["ok"]:
+            return 99_999.0, None, reply["error"]
+        return reply["ms"], reply["rows"], None
 
     def _results_equal(self, original: str, optimized: str) -> bool:
         """Return whether two queries produce the same result.
 
-        The equality rule, the same for every result size, empty results
-        included:
-
-        - Same output schema, compared by position: the same number of columns,
-          the same names (ASCII case-insensitive) and identical DuckDB types.
-        - The same rows as a multiset: row order is ignored, duplicate
-          multiplicity is not. Values are compared with DuckDB's own equality,
-          with no float tolerance, so ``-0.0`` equals ``0.0``, ``NaN`` equals
-          ``NaN`` and ``NULL`` equals ``NULL``. Engine equality is not byte
-          identity: ``INTERVAL '1 month'`` equals ``INTERVAL '30 days'``.
-
-        The schema check comes first because it is what keeps the set operation
-        from coercing values: without it ``true`` would equal ``1`` and a
-        ``BIGINT`` would equal a ``DOUBLE`` that cannot represent it. Only the
-        count of differing rows comes back to Python.
-
-        Schema inspection and comparison share one session, lock and deadline,
-        and the deadline is checked before each stage and before a match is
-        reported. Any error or timeout is a mismatch with no fallback: a result
-        that cannot be verified earns no correctness credit. This compares fresh
-        executions of both queries, so it does not establish equivalence for
-        volatile queries such as ones using ``random()``.
+        See `_same_results` for the equality rule. Any error, timeout or worker
+        failure is a mismatch with no fallback: a result that cannot be
+        verified earns no correctness credit.
         """
         if _single_statement_error(original) or _single_statement_error(optimized):
             return False
-        try:
-            with self._exec_lock, self._session() as cur, self._deadline() as expired:
-                schemas = []
-                for query in (original, optimized):
-                    if expired():
-                        return False
-                    schemas.append(self._output_schema(cur, query))
-                if schemas[0] != schemas[1] or expired():
-                    return False
-                sql = _symmetric_difference_sql(original, optimized)
-                differing = cur.execute(sql).fetchone()[0]
-                return differing == 0 and not expired()
-        except Exception:
-            # Includes `duckdb.InterruptException`.
-            return False
+        reply = self._call(
+            {"op": "equal", "original": original, "optimized": optimized}
+        )
+        return bool(reply["ok"] and reply["equal"])
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -607,31 +667,24 @@ class QueryExecutor:
         """Return EXPLAIN output for a query.
 
         Plain ``EXPLAIN`` only plans the query, but it is still agent-authored,
-        so it runs under the same deadline as everything else.
+        so it runs in the worker under the same deadline as everything else.
         """
-        error = _single_statement_error(_strip_terminators(query))
+        query = _strip_terminators(query)
+        error = _single_statement_error(query)
         if error is not None:
             return f"EXPLAIN error: {error}"
 
-        try:
-            with self._exec_lock, self._session() as cur, self._deadline():
-                rows = cur.execute(f"EXPLAIN {_strip_terminators(query)}").fetchall()
-            return "\n".join(str(r[1]) for r in rows)
-        except duckdb.InterruptException:
-            return f"EXPLAIN error: {_TIMEOUT_ERROR}"
-        except Exception as exc:
-            return f"EXPLAIN error: {exc}"
+        reply = self._call({"op": "explain", "query": query})
+        if not reply["ok"]:
+            return f"EXPLAIN error: {reply['error']}"
+        return reply["plan"]
 
     @property
     def table_stats(self) -> Dict[str, int]:
-        tables = ["users", "orders", "products", "events"]
-        # No deadline: these are fixed, trusted queries, so arming one would only
-        # add a window in which a stray interrupt could cancel them.
-        with self._exec_lock, self._session() as cur:
-            return {
-                t: cur.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-                for t in tables
-            }
+        reply = self._call({"op": "stats"})
+        if not reply["ok"]:
+            raise RuntimeError(reply["error"])
+        return reply["stats"]
 
 
 # ── Singleton accessor ────────────────────────────────────────────────────
@@ -645,3 +698,7 @@ def get_executor() -> QueryExecutor:
             if _instance is None:
                 _instance = QueryExecutor()
     return _instance
+
+
+if __name__ == "__main__":
+    _worker_main(int(sys.argv[1]))

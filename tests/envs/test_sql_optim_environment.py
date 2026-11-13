@@ -50,6 +50,22 @@ def executor():
     return get_executor()
 
 
+@pytest.fixture(scope="module")
+def ro_conn(executor):
+    """A read-only connection configured exactly like the query worker's.
+
+    For tests of the DuckDB configuration and the worker-side helpers, which
+    can run in this process; agent SQL in the environment only runs in the
+    worker.
+    """
+    import duckdb
+    from envs.sql_optim_env.server.executor import _DUCKDB_CONFIG
+
+    conn = duckdb.connect(executor._path, read_only=True, config=_DUCKDB_CONFIG)
+    yield conn
+    conn.close()
+
+
 def _good_action() -> SQLOptimAction:
     """A result-preserving task-1 rewrite: sargable predicates, projection kept."""
     return SQLOptimAction(
@@ -417,15 +433,17 @@ class TestSandboxAndCorrectnessCredit:
         assert not written.exists()  # nothing was exfiltrated
         assert not (tmp_path / "dump").exists()
 
-    def test_sandbox_also_holds_on_the_timing_path(self, executor, tmp_path):
+    def test_sandbox_also_holds_on_the_timing_path(self, ro_conn, tmp_path):
         """`_engine_ms` re-runs the query under `EXPLAIN ANALYZE` — still sandboxed."""
+        import duckdb
+
         written = tmp_path / "profiled.csv"
         for escape in (
             f"COPY (SELECT 1) TO '{written}'",
             "SELECT * FROM read_text('/etc/hostname')",
         ):
-            with pytest.raises(Exception):
-                executor.conn.execute(f"EXPLAIN ANALYZE {escape}").fetchall()
+            with pytest.raises(duckdb.Error):
+                ro_conn.execute(f"EXPLAIN ANALYZE {escape}").fetchall()
         assert not written.exists()
 
     def test_agent_sql_cannot_re_enable_external_access(self, executor):
@@ -466,12 +484,14 @@ class TestSandboxAndCorrectnessCredit:
         assert identical["results_match"] is True
 
     def test_unverifiable_large_result_earns_no_correctness_credit(
-        self, executor, monkeypatch
+        self, ro_conn, monkeypatch
     ):
         """A comparison that errors is a mismatch, and is not retried another way.
 
         Equal row counts are not evidence of equal data, so a failed comparison
-        must not fall back to them, or to any other strategy.
+        must not fall back to them, or to any other strategy. The comparison
+        runs in the worker, so this drives the worker's job handler directly;
+        `_results_equal` turns any reply that is not ok into a mismatch.
         """
         from envs.sql_optim_env.server import executor as ex_mod
 
@@ -481,16 +501,19 @@ class TestSandboxAndCorrectnessCredit:
             calls.append((original, optimized))
             return "SELECT * FRM nowhere"
 
+        job = {
+            "op": "equal",
+            "original": "SELECT id FROM events",
+            "optimized": "SELECT id FROM events",
+        }
         monkeypatch.setattr(ex_mod, "_symmetric_difference_sql", broken)
-        res = executor.compare("SELECT id FROM events", "SELECT id FROM events")
-        assert res["original_rows"] == res["optimized_rows"] == 1_000_000
-        assert res["original_error"] is None and res["optimized_error"] is None
-        assert res["results_match"] is False
+        reply = ex_mod._handle(ro_conn, job)
+        assert reply["ok"] is False
+        assert "equal" not in reply
         assert len(calls) == 1
 
-        monkeypatch.undo()  # the executor fixture is module-scoped: restore it
-        res = executor.compare("SELECT id FROM events", "SELECT id FROM events")
-        assert res["results_match"] is True
+        monkeypatch.undo()
+        assert ex_mod._handle(ro_conn, job) == {"ok": True, "equal": True}
 
 
 class TestResourceLimits:
@@ -585,7 +608,7 @@ class TestResourceLimits:
             "events": 1_000_000,
         }
 
-    def test_memory_and_spill_leave_runtime_headroom(self, executor):
+    def test_memory_and_spill_leave_runtime_headroom(self, executor, ro_conn):
         """Include tmpfs-backed spill and the real seed DB in the memory budget."""
         from pathlib import Path
 
@@ -598,10 +621,7 @@ class TestResourceLimits:
         mib = 1024 * 1024
         limits = {}
         for option in ("memory_limit", "max_temp_directory_size"):
-            with executor._exec_lock:
-                value = executor.conn.execute(
-                    f"SELECT current_setting('{option}')"
-                ).fetchone()[0]
+            value = ro_conn.execute(f"SELECT current_setting('{option}')").fetchone()[0]
             amount, unit = value.split()
             limits[option] = float(amount) * {"MiB": mib, "GiB": 1024 * mib}[unit]
 
@@ -618,6 +638,101 @@ class TestResourceLimits:
         assert (
             limits["memory_limit"] + writable_bytes <= resources["memory_mb"] * mib / 2
         )
+
+
+class TestProcessBoundary:
+    """Agent SQL runs in a worker process the server can kill.
+
+    DuckDB only checks `interrupt()` between units of work, so a deadline that
+    merely interrupts cannot stop one long operation inside the engine. The
+    server instead kills the worker when the deadline passes, and starts a new
+    one for the next query.
+    """
+
+    RUNAWAY = "SELECT COUNT(*) FROM events a, events b"
+
+    @pytest.fixture
+    def deadline(self, monkeypatch):
+        """Set the executor deadline to a given number of seconds."""
+        from envs.sql_optim_env.server import executor as ex_mod
+
+        def set_deadline(seconds):
+            monkeypatch.setattr(ex_mod, "_QUERY_TIMEOUT_S", seconds)
+
+        return set_deadline
+
+    def test_timeout_kills_and_replaces_the_worker(self, executor, deadline):
+        executor._run("SELECT 1")
+        pid = executor._worker.pid
+        deadline(1.0)
+
+        res = executor.compare("SELECT 1", self.RUNAWAY)
+
+        assert "Query cancelled" in (res["optimized_error"] or "")
+        assert res["results_match"] is False
+        assert executor.compare("SELECT 1", "SELECT 1")["results_match"] is True
+        assert executor._worker.pid != pid
+
+    def test_worker_death_during_a_job_fails_closed(self, executor):
+        import signal
+        import threading
+
+        from envs.sql_optim_env.server import executor as ex_mod
+
+        executor._run("SELECT 1")
+        pid = executor._worker.pid
+        result = {}
+
+        def run():
+            result["r"] = executor._run(self.RUNAWAY)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        time.sleep(0.5)
+        os.kill(pid, signal.SIGKILL)
+        thread.join(30)
+
+        assert result["r"] == (99_999.0, None, ex_mod._WORKER_FAILED_ERROR)
+        assert executor.table_stats["orders"] == 500_000
+
+    def test_worker_death_between_jobs_is_recovered(self, executor):
+        import signal
+
+        executor._run("SELECT 1")
+        worker = executor._worker
+        os.kill(worker.pid, signal.SIGKILL)
+        worker.wait(5)
+
+        assert executor.table_stats["orders"] == 500_000
+
+    def test_spawn_time_is_not_charged_to_the_deadline(self, executor, deadline):
+        executor._kill_worker()
+        deadline(0.05)
+
+        assert executor._run("SELECT 1")[2] is None
+
+    def test_worker_start_failure_is_an_error_not_a_hang(self, executor, monkeypatch):
+        executor._kill_worker()
+        monkeypatch.setattr(executor, "_path", "/nonexistent/sql_optim.duckdb")
+
+        start = time.perf_counter()
+        error = executor._run("SELECT 1")[2]
+
+        assert error
+        assert time.perf_counter() - start < 35
+        executor._kill_worker()
+        monkeypatch.undo()
+        assert executor._run("SELECT 1")[2] is None
+
+    def test_worker_exits_when_the_server_side_closes(self, executor):
+        executor._run("SELECT 1")
+        worker = executor._worker
+
+        executor._pipe.close()
+
+        assert worker.wait(timeout=5) is not None
+        executor._kill_worker()
+        assert executor._run("SELECT 1")[2] is None
 
 
 class TestLargeResultMeasurement:
@@ -655,12 +770,11 @@ class TestLargeResultMeasurement:
         assert altered["results_match"] is False
         assert altered["original_rows"] == altered["optimized_rows"] == 1_000
 
-    def test_timing_excludes_python_materialization(self, executor):
+    def test_timing_excludes_python_materialization(self, executor, ro_conn):
         """The reported time tracks DuckDB execution, not tuple construction."""
         query = "SELECT * FROM events"
         start = time.perf_counter()
-        with executor._exec_lock:
-            fetched = executor.conn.execute(query).fetchall()
+        fetched = ro_conn.execute(query).fetchall()
         fetchall_ms = (time.perf_counter() - start) * 1000.0
         assert len(fetched) == 1_000_000
         del fetched
@@ -751,7 +865,7 @@ class TestSessionIsolation:
         )
 
         assert executor.table_stats["users"] == baseline
-        assert executor._row_count("SELECT * FROM users") == (baseline, None)
+        assert executor._run("SELECT * FROM users")[1:] == (baseline, None)
 
     def test_a_shadowed_table_cannot_fake_a_later_episode(self, executor):
         """The reward-hacking path: poison once, then grade a later rewrite.
@@ -781,10 +895,12 @@ class TestSessionIsolation:
         assert info["optimized_error"]
         assert not info["results_match"]
 
-    def test_the_same_temp_name_can_be_reused_across_queries(self, executor):
+    def test_the_same_temp_name_can_be_reused_across_queries(self, ro_conn):
         """No residue: a name is free again once its session ends."""
+        from envs.sql_optim_env.server.executor import _session
+
         for _ in range(3):
-            with executor._exec_lock, executor._session() as cur:
+            with _session(ro_conn) as cur:
                 cur.execute("CREATE TEMP TABLE scratch_pad AS SELECT 1")
 
 
@@ -907,39 +1023,6 @@ def test_large_result_checksum_preserves_duplicate_multiplicity(executor, value)
     assert result["results_match"] is (value == 1)
 
 
-def test_expired_deadline_finishes_before_releasing_execution_lock(
-    executor, monkeypatch
-):
-    import threading
-
-    from envs.sql_optim_env.server import executor as module
-
-    fired = threading.Event()
-    finish_interrupt = threading.Event()
-    released = threading.Event()
-
-    def delayed_interrupt():
-        fired.set()
-        finish_interrupt.wait(5)
-
-    def run():
-        with executor._exec_lock, executor._deadline():
-            assert fired.wait(2)
-        released.set()
-
-    monkeypatch.setattr(module, "_QUERY_TIMEOUT_S", 0.01)
-    monkeypatch.setattr(executor, "_interrupt_active", delayed_interrupt)
-    worker = threading.Thread(target=run)
-    worker.start()
-    try:
-        assert fired.wait(2)
-        assert not released.wait(0.1)
-    finally:
-        finish_interrupt.set()
-        worker.join(2)
-    assert released.is_set()
-
-
 class TestExactComparison:
     """`results_match` follows one exact equality rule at every result size.
 
@@ -1058,15 +1141,14 @@ class TestExactComparison:
     ):
         assert executor.compare(original, rewritten)["results_match"] is expected
 
-    def test_each_operand_is_materialized_once(self, executor):
+    def test_each_operand_is_materialized_once(self, ro_conn):
         """Both `EXCEPT ALL` arms read one evaluation of each query."""
         from envs.sql_optim_env.server.executor import _symmetric_difference_sql
 
         sql = _symmetric_difference_sql("SELECT id FROM users", "SELECT id FROM orders")
-        with executor._exec_lock, executor._session() as cur:
-            plan = "\n".join(
-                str(r[1]) for r in cur.execute(f"EXPLAIN {sql}").fetchall()
-            )
+        plan = "\n".join(
+            str(r[1]) for r in ro_conn.execute(f"EXPLAIN {sql}").fetchall()
+        )
         # One base-table scan per query, read by two CTE scans each.
         assert plan.count("SEQ_SCAN") == 2
         assert plan.count("CTE_SCAN") == 4
@@ -1084,27 +1166,6 @@ class TestExactComparison:
             executor._results_equal("SELECT 1 AS x", "SELECT 1 AS x; SELECT 2") is False
         )
 
-    def test_expired_deadline_keeps_interrupting_between_statements(
-        self, executor, deadline
-    ):
-        """An interrupt on an idle connection is not remembered, so it is re-sent.
-
-        With a single timer, a deadline that expired between two statements let
-        the second one run unbounded.
-        """
-        import duckdb
-
-        deadline(0.01)
-        start = time.perf_counter()
-        with executor._exec_lock, executor._session() as cur:
-            with executor._deadline() as expired:
-                cur.execute("DESCRIBE SELECT 1").fetchall()
-                time.sleep(0.05)  # idle while the deadline passes
-                assert expired()
-                with pytest.raises(duckdb.InterruptException):
-                    cur.execute(self.RUNAWAY).fetchone()
-        assert time.perf_counter() - start < 30
-
     def test_interruption_during_materialization_then_recovery(
         self, executor, deadline
     ):
@@ -1116,52 +1177,6 @@ class TestExactComparison:
 
         assert executor._results_equal("SELECT 1 AS x", "SELECT 1 AS x") is True
         assert executor.table_stats["events"] == 1_000_000
-
-    def test_expiry_between_stages_stops_the_comparison(
-        self, executor, deadline, monkeypatch
-    ):
-        """Schema inspection outlives the deadline: no comparison, no credit."""
-        from envs.sql_optim_env.server import executor as ex_mod
-
-        compared = []
-        real_schema = ex_mod.QueryExecutor._output_schema
-
-        def slow_schema(cur, query):
-            schema = real_schema(cur, query)
-            time.sleep(0.3)
-            return schema
-
-        def recording(original, optimized):
-            compared.append(True)
-            return "SELECT 0"
-
-        deadline(0.1)
-        monkeypatch.setattr(executor, "_output_schema", slow_schema)
-        monkeypatch.setattr(ex_mod, "_symmetric_difference_sql", recording)
-        assert executor._results_equal("SELECT 1 AS x", "SELECT 1 AS x") is False
-        assert compared == []
-
-    def test_expiry_during_comparison_earns_no_credit(
-        self, executor, deadline, monkeypatch
-    ):
-        """A comparison that completes after the deadline is not trusted."""
-        from envs.sql_optim_env.server import executor as ex_mod
-
-        real_sql = ex_mod._symmetric_difference_sql
-
-        def slow_sql(original, optimized):
-            time.sleep(0.3)  # the deadline passes after the last pre-stage check
-            return real_sql(original, optimized)
-
-        deadline(0.1)
-        # No interrupt lands, so the statement itself completes with a match.
-        monkeypatch.setattr(executor, "_interrupt_active", lambda: None)
-        monkeypatch.setattr(ex_mod, "_symmetric_difference_sql", slow_sql)
-        assert executor._results_equal("SELECT 1 AS x", "SELECT 1 AS x") is False
-
-        deadline(15.0)
-        monkeypatch.setattr(ex_mod, "_symmetric_difference_sql", real_sql)
-        assert executor._results_equal("SELECT 1 AS x", "SELECT 1 AS x") is True
 
 
 class TestIssueDetectionMatching:
