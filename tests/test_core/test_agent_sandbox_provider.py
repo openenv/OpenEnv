@@ -619,7 +619,9 @@ def test_wait_for_ready_returns_on_healthy(fake_sdk):
     try:
         with patch("requests.get", return_value=MagicMock(status_code=200)) as get:
             provider.wait_for_ready(url, timeout_s=5)
-        get.assert_called_once_with(f"{url}/health", timeout=5.0)
+        get.assert_called_once_with(
+            f"{url}/health", timeout=5.0, proxies={"http": None, "https": None}
+        )
     finally:
         provider.stop_container()
 
@@ -669,6 +671,19 @@ def test_wait_for_ready_survives_transient_health_errors(fake_sdk):
             provider.wait_for_ready(url, timeout_s=5)
     finally:
         provider.stop_container()
+
+
+def test_wait_for_ready_ignores_env_proxy(fake_router, monkeypatch):
+    # The probe goes to the loopback auth proxy, so a cluster's HTTP_PROXY
+    # must not apply to it.
+    for name in ("NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")
+    provider = AgentSandboxProvider(
+        warmpool="openenv-echo-pool", gateway_name="external-http-gateway"
+    )
+    provider.wait_for_ready(fake_router.url, timeout_s=3)
 
 
 # --- Review fixes: redirect rejection, sanitized handshake failures,

@@ -590,6 +590,8 @@ class AgentSandboxProvider(ContainerProvider):
             RuntimeError: If the sandbox handle was closed or deactivated.
         """
         deadline = time.time() + timeout_s
+        # base_url is the loopback auth proxy, so bypass any HTTP(S)_PROXY.
+        proxies = {"http": None, "https": None}
         while time.time() < deadline:
             if self._sandbox is not None and not self._sandbox.is_active:
                 raise RuntimeError(
@@ -597,7 +599,10 @@ class AgentSandboxProvider(ContainerProvider):
                     "environment server did not become ready."
                 )
             try:
-                if requests.get(f"{base_url}/health", timeout=5.0).status_code == 200:
+                response = requests.get(
+                    f"{base_url}/health", timeout=5.0, proxies=proxies
+                )
+                if response.status_code == 200:
                     return
             except requests.RequestException:
                 pass
