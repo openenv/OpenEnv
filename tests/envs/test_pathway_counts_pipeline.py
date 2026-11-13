@@ -190,3 +190,30 @@ def test_plain_and_gzip_gtf_produce_identical_gene_maps(tmp_path):
         )
         outputs.append(result.read_text())
     assert outputs == ["T1\tABC\nT2\tG2\n"] * 2
+
+
+def test_featurecounts_ids_are_mapped_to_symbols(tmp_path):
+    featurecounts = tmp_path / "featureCounts.txt"
+    featurecounts.write_text(
+        "Geneid\tChr\tStart\tEnd\tStrand\tLength\t/abs/a.bam\t/abs/b.bam\n"
+        "ENSG1\t1\t1\t2\t+\t100\t10\t11\n"
+        "ENSG2\t1\t2\t3\t+\t100\t20\t21\n",
+        encoding="utf-8",
+    )
+    gtf = tmp_path / "genes.gtf"
+    gtf.write_text(
+        'chr1\ttest\texon\t1\t20\t.\t+\t.\tgene_id "ENSG1"; gene_name "TP53";\n'
+        'chr1\ttest\texon\t1\t20\t.\t+\t.\tgene_id "ENSG2"; gene_name "MDM2";\n',
+        encoding="utf-8",
+    )
+    mapping = pipeline.build_geneid_to_symbol_from_gtf(gtf)
+    out = tmp_path / "counts.csv"
+    pipeline.featurecounts_to_openenv_counts(
+        featurecounts_txt=featurecounts,
+        sample_ids=["a", "b"],
+        out_counts_csv_gz=out,
+        gene_id_to_symbol=mapping,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert "TP53" in text and "MDM2" in text
+    assert "ENSG1" not in text and "ENSG2" not in text

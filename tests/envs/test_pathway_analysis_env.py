@@ -46,6 +46,13 @@ def test_load_pipeline_case():
     assert case["true_pathway"] == "MAPK signaling"
 
 
+def test_state_does_not_expose_true_pathway():
+    env = PathwayEnvironment(case_file="toy_case_001.json")
+    env.reset()
+    state_payload = env.state.model_dump()
+    assert "true_pathway" not in state_payload
+
+
 def test_load_gse235417_case_is_pipeline_mode():
     case = load_case("gse235417_case.json")
     assert "counts_file" in case

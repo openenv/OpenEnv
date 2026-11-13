@@ -148,6 +148,33 @@ def build_tx2gene_from_gtf(*, gtf_gz: Path, out_tsv: Path) -> Path:
     return out_tsv
 
 
+def build_geneid_to_symbol_from_gtf(gtf_path: Path) -> Dict[str, str]:
+    """Return a best-effort gene_id -> gene_name mapping parsed from GTF attributes."""
+    if not gtf_path.exists():
+        return {}
+    re_gn = re.compile(r'gene_name "([^"]+)"')
+    re_gid = re.compile(r'gene_id "([^"]+)"')
+    mapping: Dict[str, str] = {}
+    opener = gzip.open if str(gtf_path).endswith(".gz") else open
+    with opener(gtf_path, "rt", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line or line.startswith("#"):
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 9:
+                continue
+            attrs = parts[8]
+            gid_match = re_gid.search(attrs)
+            if not gid_match:
+                continue
+            gn_match = re_gn.search(attrs)
+            if not gn_match:
+                continue
+            gid = gid_match.group(1)
+            mapping.setdefault(gid, gn_match.group(1))
+    return mapping
+
+
 def _fasterq_dump_one(
     s: Sample, *, out_dir: Path, threads_per_job: int
 ) -> Tuple[str, str, Tuple[Path, Optional[Path]]]:
@@ -446,6 +473,7 @@ def featurecounts_to_openenv_counts(
     featurecounts_txt: Path,
     sample_ids: List[str],
     out_counts_csv_gz: Path,
+    gene_id_to_symbol: Optional[Dict[str, str]] = None,
 ) -> None:
     """
     Convert featureCounts output into OpenEnv-compatible counts:
@@ -462,6 +490,12 @@ def featurecounts_to_openenv_counts(
         raise ValueError(f"featureCounts produced {len(count_cols)} sample columns, expected {len(sample_ids)}")
 
     out = df[["Geneid"] + count_cols].copy()
+    if gene_id_to_symbol:
+        out["Geneid"] = out["Geneid"].map(
+            lambda gid: gene_id_to_symbol.get(str(gid), str(gid))
+        )
+        # Multiple Ensembl IDs can map to the same symbol; aggregate their counts.
+        out = out.groupby("Geneid", as_index=False)[count_cols].sum()
     out.columns = ["gene"] + sample_ids
     out = out.set_index("gene")
     _ensure_dir(out_counts_csv_gz.parent)
@@ -700,6 +734,7 @@ def main() -> None:
         featurecounts_txt=fc_out,
         sample_ids=sample_ids_sorted,
         out_counts_csv_gz=counts_out,
+        gene_id_to_symbol=build_geneid_to_symbol_from_gtf(args.gtf),
     )
 
     if args.write_case_json:

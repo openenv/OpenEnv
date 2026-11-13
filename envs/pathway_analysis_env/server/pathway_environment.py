@@ -156,7 +156,6 @@ class PathwayEnvironment(Environment[PathwayAction, PathwayObservation, PathwayS
         self._state = PathwayState(
             episode_id=eid,
             step_count=0,
-            true_pathway=self._case["true_pathway"],
             conditions=list(self._case.get("conditions", [])),
             pipeline_mode=pipeline,
             strict_mode=strict,
@@ -979,7 +978,7 @@ class PathwayEnvironment(Environment[PathwayAction, PathwayObservation, PathwayS
     def _step_submit(self, action: PathwayAction) -> PathwayObservation:
         s = self._state
         proposed = (action.hypothesis or "").strip().lower()
-        correct = proposed == s.true_pathway.lower()
+        correct = proposed == str(self._case.get("true_pathway", "")).lower()
         s.is_done = True
         self._trace(
             "submit",

@@ -69,7 +69,6 @@ class PathwayObservation(Observation):
 class PathwayState(State):
     """Episode state including pipeline mode flags and expert budget."""
 
-    true_pathway: str = ""
     conditions: List[str] = Field(default_factory=list)
     de_run: bool = False
     enrichment_run: bool = False

@@ -73,7 +73,6 @@ class PathwayEnv(EnvClient[PathwayAction, PathwayObservation, PathwayState]):
         return PathwayState(
             episode_id=payload.get("episode_id", ""),
             step_count=payload.get("step_count", 0),
-            true_pathway=payload.get("true_pathway", ""),
             conditions=payload.get("conditions", []),
             de_run=payload.get("de_run", False),
             enrichment_run=payload.get("enrichment_run", False),
