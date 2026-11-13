@@ -1,0 +1,41 @@
+{
+  "case_id": "GSE128911_mda_mb_134_vi_fulvestrant_vs_dmso",
+  "strict_mode": false,
+  "experiment_metadata": {
+    "accession": "GSE128911",
+    "reference": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE128911",
+    "summary": "Dataset 2 count matrix subset (MDA-MB-134-VI; 2\u00d72 DMSO vs Fulvestrant)."
+  },
+  "counts_file": "geo_eval/gse128911_mda_mb_134_vi_fulvestrant_vs_dmso/gse128911_dataset2_subset_counts.csv.gz",
+  "sample_ids": [
+    "SAM24360838",
+    "SAM24360839",
+    "SAM24360844",
+    "SAM24360845"
+  ],
+  "sample_metadata": {
+    "SAM24360838": "dmso",
+    "SAM24360839": "dmso",
+    "SAM24360844": "fulvestrant",
+    "SAM24360845": "fulvestrant"
+  },
+  "conditions": [
+    "dmso",
+    "fulvestrant"
+  ],
+  "default_contrast": {
+    "reference": "dmso",
+    "alternate": "fulvestrant"
+  },
+  "analysis_options": {
+    "min_total_count": 10,
+    "padj_alpha": 0.05,
+    "de_query_direction": "both"
+  },
+  "enrichr_libraries": [
+    "MSigDB_Hallmark_2020",
+    "KEGG_2021_Human",
+    "Reactome_2022"
+  ],
+  "true_pathway": "Unknown (GEO benchmark)"
+}

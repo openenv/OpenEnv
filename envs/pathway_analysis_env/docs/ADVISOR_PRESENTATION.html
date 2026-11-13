@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenEnv & Pathway Analysis — Advisor Briefing</title>
+  <style>
+    :root {
+      --bg: #f7f5f2;
+      --bg-slide: #ffffff;
+      --ink: #1c1b19;
+      --muted: #5c5854;
+      --accent: #0d5c63;
+      --accent-soft: #e8f4f3;
+      --gold: #b8860b;
+      --shadow: 0 12px 40px rgba(13, 92, 99, 0.08);
+      --radius: 14px;
+      --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--ink);
+      overflow: hidden;
+    }
+    .deck {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .topbar {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.55rem 1.25rem;
+      background: linear-gradient(105deg, var(--accent) 0%, #0a3d44 100%);
+      color: #fff;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .topbar span { opacity: 0.9; }
+    .progress {
+      flex: 1;
+      max-width: 220px;
+      height: 4px;
+      background: rgba(255,255,255,0.25);
+      border-radius: 4px;
+      margin: 0 1rem;
+      overflow: hidden;
+    }
+    .progress i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: #fff;
+      border-radius: 4px;
+      transition: width 0.35s ease;
+    }
+    .stage {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem 2rem 2.5rem;
+      position: relative;
+    }
+    .slide {
+      display: none;
+      width: min(1040px, 100%);
+      min-height: min(580px, 78vh);
+      background: var(--bg-slide);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 2.5rem 3rem;
+      position: relative;
+      animation: fadeIn 0.45s ease;
+    }
+    .slide.active { display: block; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .slide-num {
+      position: absolute;
+      bottom: 1rem;
+      right: 1.25rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-weight: 600;
+      font-size: clamp(1.85rem, 4vw, 2.65rem);
+      margin: 0 0 0.5rem;
+      color: var(--accent);
+      line-height: 1.15;
+    }
+    h2 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.35rem, 2.8vw, 1.85rem);
+      margin: 0 0 1rem;
+      color: var(--ink);
+      font-weight: 600;
+    }
+    .subtitle {
+      font-size: 1.15rem;
+      color: var(--muted);
+      margin-bottom: 1.5rem;
+      max-width: 42rem;
+      line-height: 1.45;
+    }
+    .tag {
+      display: inline-block;
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 0.2rem 0.65rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+    }
+    ul {
+      margin: 0.5rem 0 0;
+      padding-left: 1.15rem;
+      line-height: 1.55;
+      font-size: 1.02rem;
+    }
+    li { margin-bottom: 0.45rem; }
+    li strong { color: var(--accent); }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+      margin-top: 0.75rem;
+    }
+    @media (max-width: 720px) {
+      .two-col { grid-template-columns: 1fr; }
+      .slide { padding: 1.5rem; }
+    }
+    .card {
+      border: 1px solid #e5e0d8;
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+      background: #faf9f7;
+    }
+    .card h3 {
+      margin: 0 0 0.5rem;
+      font-size: 0.95rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .quote {
+      font-family: var(--font-serif);
+      font-size: 1.08rem;
+      line-height: 1.65;
+      border-left: 4px solid var(--gold);
+      padding: 0.75rem 0 0.75rem 1.25rem;
+      margin: 1rem 0;
+      background: linear-gradient(90deg, #fffbf0 0%, transparent 100%);
+      color: #3a3428;
+    }
+    .cover {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 520px;
+      background: linear-gradient(145deg, #0a3d44 0%, #0d5c63 40%, #1a7a82 100%);
+      color: #fff;
+      border: none;
+      box-shadow: 0 20px 60px rgba(10, 61, 68, 0.35);
+    }
+    .cover h1 {
+      color: #fff;
+      font-size: clamp(2rem, 5vw, 2.85rem);
+      text-shadow: 0 2px 20px rgba(0,0,0,0.15);
+    }
+    .cover .subtitle { color: rgba(255,255,255,0.88); max-width: 36rem; margin: 1rem auto 0; }
+    .cover .meta {
+      margin-top: 2.5rem;
+      font-size: 0.95rem;
+      opacity: 0.85;
+      letter-spacing: 0.02em;
+    }
+    .section-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--gold);
+      margin-bottom: 0.35rem;
+    }
+    svg.diagram { width: 100%; max-height: 280px; }
+    .nav-hint {
+      position: fixed;
+      bottom: 0.75rem;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.72rem;
+      color: var(--muted);
+      background: rgba(255,255,255,0.92);
+      padding: 0.35rem 0.85rem;
+      border-radius: 999px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+      z-index: 10;
+    }
+    kbd {
+      font-family: ui-monospace, monospace;
+      font-size: 0.68em;
+      border: 1px solid #ccc;
+      padding: 0.08rem 0.28rem;
+      border-radius: 4px;
+      background: #f4f4f4;
+    }
+    table.simple {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+      margin-top: 0.5rem;
+    }
+    table.simple th, table.simple td {
+      border: 1px solid #e5e0d8;
+      padding: 0.55rem 0.65rem;
+      text-align: left;
+    }
+    table.simple th { background: var(--accent-soft); color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <div class="topbar">
+      <span>OpenEnv · Pathway analysis environment</span>
+      <div class="progress"><i id="prog"></i></div>
+      <span id="counter">1 / 0</span>
+    </div>
+    <div class="stage" id="stage"></div>
+    <div class="nav-hint">Use <kbd>→</kbd> <kbd>←</kbd> or <kbd>Space</kbd> · <kbd>Home</kbd> / <kbd>End</kbd> · Swipe on trackpad</div>
+  </div>
+
+  <script>
+(function () {
+  const slides = [
+    { type: "cover", title: "OpenEnv & computational biology", subtitle: "How I packaged a real RNA-seq to differential expression to pathway workflow so AI systems can be trained and evaluated like assays, with public GEO data as the anchor.", meta: "Parul Sarma Aryasomayajula - Advisor meeting" },
+    { type: "content", section: "Start here", title: "Modern molecular biology is already computational", bullets: ["RNA-seq, single-cell, spatial, proteomics: design is only half the story.", "Analysis choices (contrasts, filtering, gene sets) change biological conclusions.", "We are entering an era of AI copilots for analysis: who checks whether they are right?"] },
+    { type: "content", section: "Vocabulary", title: "What do we mean by an environment here?", bullets: ["Not a wet lab bench: a <strong>packaged computational workflow</strong> with defined inputs, allowed actions, and measurable outcomes.", "Often compared to a <strong>flight simulator</strong> for analysis: realistic tasks, repeated runs, structured logging.", "An <strong>AI agent</strong> is software that takes actions inside that world (inspect data, run DE, run enrichment, explain)."] },
+    { type: "content", section: "One sentence", title: "What is OpenEnv?", bullets: ["OpenEnv (Meta / PyTorch ecosystem) is a framework for building these worlds so agents can be <strong>trained and evaluated on real tasks</strong>, not toy multiple-choice problems.", "It emphasizes <strong>clear boundaries</strong> (what the agent may do) and <strong>honest scoring</strong> (how success is defined inside the environment)."] },
+    { type: "content", section: "Why you should care", title: "Three reasons this matters for molecular biologists", bullets: ["<strong>Reproducibility:</strong> the same protocol, data layout, and scoring, every time.", "<strong>Fair comparison:</strong> two AI approaches can be judged on identical biology and rules.", "<strong>Public anchors:</strong> GEO-style datasets ground claims in what the field actually deposits, not only curated demos."] },
+    { type: "two-col", section: "Intuition", title: "Two analogies (not perfect, but useful)", leftTitle: "Assay validation", left: ["Protocol + controls + acceptance criteria.", "If the ELISA drifts, you notice because the <em>assay</em> is standardized.", "Here: the <em>analysis episode</em> is standardized."], rightTitle: "Model systems (loose)", right: ["A model organism is simplified but structured.", "This environment is simplified but structured for <em>analysis questions</em>.", "You still interpret biology; the package makes questions repeatable."] },
+    { type: "content", section: "Your build", title: "What I built: pathway_analysis_env", bullets: ["Wraps a familiar post-genomics path: <strong>gene-level data to differential expression to pathway / gene-set enrichment</strong>.", "Uses real statistical machinery (e.g. <strong>PyDESeq2-style</strong> DE, configurable thresholds).", "Pathway layer uses <strong>ORA</strong> (over-representation) via Enrichr libraries through gseapy (Hallmark, KEGG, Reactome, etc.).", "A <strong>Gradio UI</strong> lets you demonstrate the workflow without reading code: good for teaching and review."] },
+    { type: "table", section: "Contrast", title: "Scripts vs OpenEnv-style environments", headers: ["Traditional script", "OpenEnv-style environment"], rows: [["Runs once on a laptop", "Same workflow packaged for many runs"], ["Hard to compare AI tools fairly", "Same inputs, actions, and scoring for every competitor"], ["It worked for me", "Clear interfaces: what is allowed, what is measured"]] },
+    { type: "content", section: "Design", title: "Why this is more than another DESeq2 wrapper", bullets: ["<strong>Agents, not one-off runs:</strong> systems that inspect, choose steps, recover, and justify, under constraints.", "<strong>Rewards live in the environment:</strong> reduces cheating and keeps grading aligned with biology intent.", "<strong>Traces and failure codes:</strong> episodes can be reviewed like lab notebooks, important for training and debugging."] },
+    { type: "content", section: "Benchmarks", title: "GEO benchmark ladder (honest about data reality)", bullets: ["<strong>Study 1 (GSE128911):</strong> true integer counts from GEO to gold-standard DESeq2 + enrichment.", "<strong>Study 2 (GSE227102):</strong> author DE tables when counts are absent to enrichment plus clearly labeled <em>counts-like</em> parity tests.", "<strong>Study 3 (GSE235350):</strong> SRA FASTQs to Salmon (Docker) to counts to DESeq2 (heavy; true-counts path).", "<strong>Study 4 (GSE111151):</strong> merged per-sample count supplements to pooled tamoxifen resistance vs parental.", "<strong>Study 5 (GSE216540):</strong> TPM-only supplement to <em>pseudo-counts</em> for pipeline testing, explicitly not raw-count truth."] },
+    { type: "content", section: "Novel contribution", title: "Three layers of contribution", bullets: ["<strong>Layer A - Real biology in OpenEnv:</strong> DE + pathway analysis with real tools and inspectable outputs, not toy arithmetic.", "<strong>Layer B - GEO-grounded benchmarks:</strong> a ladder of study types matching messy public submissions, with documented limitations.", "<strong>Layer C - Methods-grade engineering:</strong> Dockerized heavy RNA-seq tools, reproducible runners, clear failure modes and docs."] },
+    { type: "diagram", section: "Big picture", title: "How the pieces fit (whiteboard version)" },
+    { type: "quote", section: "Elevator pitch", title: "The 60-90 second version", html: "<p>OpenEnv packages real computational workflows so AI agents can be trained and evaluated the way we evaluate assays, with explicit protocols and scoring.</p><p>My pathway environment grounds agents in RNA-seq differential expression and enrichment using real statistics, not toy math.</p><p>What I believe is new is the <strong>combination</strong>: that credible workflow <em>inside</em> OpenEnv, plus a <strong>GEO-grounded benchmark ladder</strong> that mirrors how messy public data actually are, with reproducible runners and Dockerized heavy steps.</p><p>Without standardized environments and public benchmarks, we cannot tell which AI copilots are safe, which hallucinate pathways, and which only work on demo data.</p>" },
+    { type: "content", section: "Results (qualitative)", title: "What success looks like biologically", bullets: ["Where true counts exist, signatures can be checked for <strong>face validity</strong> (e.g. estrogen-pathway biology in ER-related contrasts when appropriate).", "Counts-like parity metrics quantify agreement with author tables, useful, but labeled as <strong>approximate</strong>, not FASTQ truth.", "Pathway hits should be interpreted as <strong>hypothesis generators</strong>, especially with small <em>n</em>; the environment supports that discipline."] },
+    { type: "content", section: "Limitations", title: "Honest limitations build credibility", bullets: ["Small replicate numbers lead to noisy DE; pathway themes can still be informative.", "TPM-derived pseudo-counts are for <strong>workflow testing</strong>, not publication-grade DESeq2 assumptions.", "SRA + full indexing is <strong>compute-heavy</strong> under Docker emulation; wall time is real.", "Agents can overfit benchmarks if rewards are poorly designed; design matters as much as biology."] },
+    { type: "content", section: "Near term", title: "Next 3-6 months (concrete)", bullets: ["Expand GEO archetypes with one-page biological interpretation per study.", "Agent tasks framed as <strong>lab-meeting questions</strong> (e.g. is this enrichment plausible given the contrast?).", "Teaching mode: sandbox for trainees without risking production pipelines."] },
+    { type: "content", section: "Medium and long term", title: "Where this class of environment goes", bullets: ["<strong>Paper-style reproduction challenges:</strong> DE + pathways + sanity checks on known genes in one scored episode.", "<strong>Human-AI collaboration metrics:</strong> time saved, uncertainty flagged, not only top pathway correct.", "<strong>Cross-environment curricula:</strong> design to analysis to literature evidence, with handoffs between tasks."] },
+    { type: "content", section: "Q&A", title: "Likely advisor questions (short answers)", bullets: ["<strong>Just GEO + DESeq2?</strong> No: those are components. The contribution is the packaged benchmark + agent interface + honest data ladder.", "<strong>Replace bioinformaticians?</strong> Unlikely: shifts work toward framing, auditing, and interpreting; benchmarks make that shift safer.", "<strong>Closest analogy?</strong> Proficiency testing / challenge studies: standardized tasks, public data, reported metrics.", "<strong>What do you need to scale?</strong> Compute for large SRA studies, pinned versions for long-term reproducibility, optional ML-evaluation co-advising."] },
+    { type: "cover", title: "Discussion", subtitle: "Which direction is most compelling for a first paper or fellowship narrative: deeper GEO benchmarks, richer agent tasks, or teaching deployment?", meta: "Thank you" }
+  ];
+
+  const stage = document.getElementById("stage");
+  const prog = document.getElementById("prog");
+  const counter = document.getElementById("counter");
+  let idx = 0;
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function diagramSVG() {
+    return `<svg class="diagram" viewBox="0 0 720 220" xmlns="http://www.w3.org/2000/svg" aria-label="workflow diagram">
+      <defs>
+        <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" style="stop-color:#0d5c63"/>
+          <stop offset="100%" style="stop-color:#1a7a82"/>
+        </linearGradient>
+      </defs>
+      <rect x="10" y="20" width="130" height="70" rx="10" fill="#f0ebe3" stroke="#c9c2b8"/>
+      <text x="75" y="48" text-anchor="middle" font-size="11" fill="#333">GEO / SRA</text>
+      <text x="75" y="68" text-anchor="middle" font-size="9" fill="#666">public data</text>
+      <path d="M 145 55 L 185 55" stroke="#0d5c63" stroke-width="2" marker-end="url(#arr)"/>
+      <rect x="185" y="20" width="120" height="70" rx="10" fill="#e8f4f3" stroke="#0d5c63"/>
+      <text x="245" y="48" text-anchor="middle" font-size="11" fill="#0d5c63">Docker (optional)</text>
+      <text x="245" y="68" text-anchor="middle" font-size="9" fill="#333">Salmon / SRA</text>
+      <path d="M 310 55 L 350 55" stroke="#0d5c63" stroke-width="2"/>
+      <rect x="350" y="15" width="200" height="160" rx="12" fill="#fff" stroke="#b8860b" stroke-width="1.5"/>
+      <text x="450" y="38" text-anchor="middle" font-size="12" font-weight="bold" fill="#0a3d44">OpenEnv pathway env</text>
+      <text x="370" y="62" font-size="10" fill="#444">• Counts + metadata</text>
+      <text x="370" y="80" font-size="10" fill="#444">• Differential expression</text>
+      <text x="370" y="98" font-size="10" fill="#444">• Pathway enrichment</text>
+      <text x="370" y="116" font-size="10" fill="#444">• Traces + scoring</text>
+      <path d="M 555 90 L 595 90" stroke="#0d5c63" stroke-width="2"/>
+      <rect x="595" y="55" width="115" height="70" rx="10" fill="#faf9f7" stroke="#5c5854"/>
+      <text x="652" y="88" text-anchor="middle" font-size="11" fill="#333">AI agent</text>
+      <text x="652" y="108" text-anchor="middle" font-size="9" fill="#666">plan · act · justify</text>
+      <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><polygon points="0 0, 6 3, 0 6" fill="#0d5c63"/></marker></defs>
+    </svg>`;
+  }
+
+  function renderSlide(s, i) {
+    if (s.type === "cover") {
+      return `<article class="slide cover" data-i="${i}">
+        <div class="tag">Advisor briefing</div>
+        <h1>${esc(s.title)}</h1>
+        <p class="subtitle">${esc(s.subtitle)}</p>
+        <p class="meta">${esc(s.meta || "")}</p>
+        <span class="slide-num">${i + 1} / ${slides.length}</span>
+      </article>`;
+    }
+    if (s.type === "two-col") {
+      return `<article class="slide" data-i="${i}">
+        <div class="section-label">${esc(s.section)}</div>
+        <h1>${esc(s.title)}</h1>
+        <div class="two-col">
+          <div class="card"><h3>${esc(s.leftTitle)}</h3><ul>${s.left.map((t) => `<li>${t}</li>`).join("")}</ul></div>
+          <div class="card"><h3>${esc(s.rightTitle)}</h3><ul>${s.right.map((t) => `<li>${t}</li>`).join("")}</ul></div>
+        </div>
+        <span class="slide-num">${i + 1} / ${slides.length}</span>
+      </article>`;
+    }
+    if (s.type === "table") {
+      const rows = s.rows.map((r) => `<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td></tr>`).join("");
+      return `<article class="slide" data-i="${i}">
+        <div class="section-label">${esc(s.section)}</div>
+        <h1>${esc(s.title)}</h1>
+        <table class="simple"><tr><th>${esc(s.headers[0])}</th><th>${esc(s.headers[1])}</th></tr>${rows}</table>
+        <span class="slide-num">${i + 1} / ${slides.length}</span>
+      </article>`;
+    }
+    if (s.type === "diagram") {
+      return `<article class="slide" data-i="${i}">
+        <div class="section-label">${esc(s.section)}</div>
+        <h1>${esc(s.title)}</h1>
+        ${diagramSVG()}
+        <p class="subtitle" style="margin-top:0.75rem">Narration: public data may enter directly as counts or through an optional Docker “instrument room” for raw reads; the environment exposes the same scientific steps as in papers—packaged for consistent agent training and scoring.</p>
+        <span class="slide-num">${i + 1} / ${slides.length}</span>
+      </article>`;
+    }
+    if (s.type === "quote") {
+      return `<article class="slide" data-i="${i}">
+        <div class="section-label">${esc(s.section)}</div>
+        <h1>${esc(s.title)}</h1>
+        <div class="quote">${s.html}</div>
+        <span class="slide-num">${i + 1} / ${slides.length}</span>
+      </article>`;
+    }
+    const bullets = (s.bullets || []).map((b) => `<li>${b}</li>`).join("");
+    return `<article class="slide" data-i="${i}">
+      <div class="section-label">${esc(s.section)}</div>
+      <h1>${esc(s.title)}</h1>
+      ${s.subtitle ? `<p class="subtitle">${esc(s.subtitle)}</p>` : ""}
+      <ul>${bullets}</ul>
+      <span class="slide-num">${i + 1} / ${slides.length}</span>
+    </article>`;
+  }
+
+  function update() {
+    stage.querySelectorAll(".slide").forEach((el, i) => {
+      el.classList.toggle("active", i === idx);
+    });
+    prog.style.width = ((idx + 1) / slides.length * 100) + "%";
+    counter.textContent = (idx + 1) + " / " + slides.length;
+  }
+
+  stage.innerHTML = slides.map((s, i) => renderSlide(s, i)).join("");
+  update();
+
+  function go(d) { idx = (idx + d + slides.length) % slides.length; update(); }
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") { e.preventDefault(); go(1); }
+    if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); go(-1); }
+    if (e.key === "Home") { idx = 0; update(); }
+    if (e.key === "End") { idx = slides.length - 1; update(); }
+  });
+  let tx = null;
+  stage.addEventListener("touchstart", (e) => { tx = e.changedTouches[0].screenX; }, { passive: true });
+  stage.addEventListener("touchend", (e) => {
+    if (tx == null) return;
+    const dx = e.changedTouches[0].screenX - tx;
+    tx = null;
+    if (dx < -40) go(1);
+    if (dx > 40) go(-1);
+  }, { passive: true });
+})();
+  </script>
+</body>
+</html>
