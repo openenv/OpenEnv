@@ -55,7 +55,7 @@ In the **first phase** of this project, we will focus **exclusively** on the nar
    - RFC 004: CodeAct support (agents write executable code)
    - RFC 005: MCP as the universal interface (policy and rationale)
 4. Establishing tool registry and distribution patterns via Hugging Face Hub (upcoming RFC).
-5. Enabling production performance simulation to minimize training-production delta (RFC 006).
+5. Enabling production performance simulation to minimize training-production delta (upcoming RFC).
 6. Exploring MCP protocol interception for observability (RFC 007).
 7. Exploring RPC communication patterns beyond HTTP for long-running sessions (particularly for interpreted languages like Python, Bash, Ruby, etc.). Coming in an upcoming RFC.
 
