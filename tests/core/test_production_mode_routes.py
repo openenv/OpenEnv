@@ -2423,6 +2423,178 @@ class TestHTTPMCPSessionReaper:
         assert server._reaper_task is None
 
 
+class TestWebSocketSessionReaper:
+    """The idle-session reaper running against plain `/ws` sessions.
+
+    The reaper polls every `max(timeout / 4, 5)` seconds, so with a 1 s
+    timeout its first check runs 5 s after app startup.
+    """
+
+    @staticmethod
+    def make_server(env_cls):
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        server = HTTPEnvServer(
+            env_cls,
+            MinimalAction,
+            Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1, session_timeout=1.0
+            ),
+        )
+        app = FastAPI()
+        server.register_routes(app)
+        return app, server
+
+    @staticmethod
+    def wait_until_reaped(server, deadline_s=8.0):
+        import time
+
+        deadline = time.monotonic() + deadline_s
+        while server.active_sessions and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.active_sessions == 0
+
+    def test_step_spanning_reaper_check_is_not_reaped(self):
+        import asyncio
+
+        envs = []
+
+        class SlowStepEnvironment(MinimalEnvironment):
+            def __init__(self):
+                super().__init__()
+                self.busy = False
+                self.closed_mid_step = False
+                envs.append(self)
+
+            async def step_async(self, action, **kwargs):
+                self.busy = True
+                # Longer than the timeout, and spans the reaper's first check.
+                await asyncio.sleep(5.5)
+                self.busy = False
+                return MinimalObservation(response="slow", reward=1.0)
+
+            def close(self):
+                if self.busy:
+                    self.closed_mid_step = True
+
+        app, server = self.make_server(SlowStepEnvironment)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "reset", "data": {}})
+            assert ws.receive_json()["type"] == "observation"
+
+            ws.send_json({"type": "step", "data": {"message": "slow"}})
+            response = ws.receive_json()
+
+            assert response["type"] == "observation"
+            assert response["data"]["observation"]["response"] == "slow"
+            assert not envs[0].closed_mid_step
+            assert server.active_sessions == 1
+
+    def test_reaped_websocket_session_stops_serving(self):
+        from starlette.websockets import WebSocketDisconnect
+
+        app, server = self.make_server(MinimalEnvironment)
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.send_json({"type": "reset", "data": {}})
+                assert ws.receive_json()["type"] == "observation"
+                self.wait_until_reaped(server)
+
+                ws.send_json({"type": "step", "data": {"message": "hi"}})
+                response = ws.receive_json()
+                assert response["type"] == "error"
+                assert response["data"]["code"] == "SESSION_ERROR"
+                with pytest.raises(WebSocketDisconnect):
+                    ws.receive_json()
+
+            # The released slot is free for a new session.
+            with client.websocket_connect("/ws") as ws2:
+                ws2.send_json({"type": "reset", "data": {}})
+                assert ws2.receive_json()["type"] == "observation"
+                assert server.active_sessions == 1
+
+    def test_idle_session_is_reaped_after_failed_step(self):
+        envs = []
+
+        class FailingStepEnvironment(MinimalEnvironment):
+            def __init__(self):
+                super().__init__()
+                self.closed = False
+                envs.append(self)
+
+            def step(self, action):
+                raise RuntimeError("step failed")
+
+            def close(self):
+                self.closed = True
+
+        app, server = self.make_server(FailingStepEnvironment)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "reset", "data": {}})
+            assert ws.receive_json()["type"] == "observation"
+            ws.send_json({"type": "step", "data": {"message": "hi"}})
+            assert ws.receive_json()["data"]["code"] == "EXECUTION_ERROR"
+
+            self.wait_until_reaped(server)
+            assert envs[0].closed
+
+    def test_second_socket_on_session_keeps_step_in_flight(self):
+        import asyncio
+        import time
+
+        envs = []
+
+        class SlowStepEnvironment(MinimalEnvironment):
+            def __init__(self):
+                super().__init__()
+                self.busy = False
+                self.closed_mid_step = False
+                envs.append(self)
+
+            async def step_async(self, action, **kwargs):
+                self.busy = True
+                await asyncio.sleep(5.5)
+                self.busy = False
+                return MinimalObservation(response="slow", reward=1.0)
+
+            def close(self):
+                if self.busy:
+                    self.closed_mid_step = True
+
+        app, server = self.make_server(SlowStepEnvironment)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "reset", "data": {}})
+            assert ws.receive_json()["type"] == "observation"
+            # A /ws client can learn its session ID and attach a second socket.
+            ws.send_json(
+                {
+                    "type": "mcp",
+                    "data": {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "openenv/session/create",
+                        "params": {},
+                    },
+                }
+            )
+            session_id = ws.receive_json()["data"]["result"]["session_id"]
+
+            ws.send_json({"type": "step", "data": {"message": "slow"}})
+            deadline = time.monotonic() + 2
+            while not envs[0].busy and time.monotonic() < deadline:
+                time.sleep(0.01)
+            # The second socket's message ends while the step is still running.
+            with client.websocket_connect(f"/ws?session_id={session_id}") as ws2:
+                ws2.send_json({"type": "state"})
+                assert ws2.receive_json()["type"] == "state"
+
+            response = ws.receive_json()
+            assert response["data"]["observation"]["response"] == "slow"
+            assert not envs[0].closed_mid_step
+            assert server.active_sessions == 1
+
+
 class TestWebSocketMCP:
     """Tests for WebSocket MCP message handling."""
 
