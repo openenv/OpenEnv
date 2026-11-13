@@ -1,12 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Azure Container Apps Sandbox provider for OpenEnv environments.
-
-Note: the ``RFC 002 security invariant S<n>`` references in this module point to
-the **proposed** "Cloud Sandbox Providers" amendment to RFC 002, which is pending
-review/sign-off by the RFC authors. They describe the security properties this
-provider enforces; treat them as proposed (not yet ratified) until that sign-off.
-"""
+"""Azure Container Apps Sandbox provider for OpenEnv environments."""
 
 from __future__ import annotations
 
