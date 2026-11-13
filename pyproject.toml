@@ -60,6 +60,11 @@ kubernetes = [
 novita = [
     "novita-sandbox>=2.1.1",
 ]
+tensorlake = [
+    # Oldest release the TensorlakeProvider is tested against.
+    "tensorlake>=0.5.161",
+    "pyyaml>=6.0",
+]
 inspect = [
     "inspect-ai>=0.3.0",
 ]
