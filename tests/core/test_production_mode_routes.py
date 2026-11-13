@@ -2595,6 +2595,130 @@ class TestWebSocketSessionReaper:
             assert server.active_sessions == 1
 
 
+class TestMCPSessionReaper:
+    """The idle-session reaper running against MCP sessions (`/mcp`).
+
+    The reaper polls every `max(timeout / 4, 5)` seconds, so with a 1 s
+    timeout its first check runs 5 s after app startup.
+    """
+
+    @staticmethod
+    def make_server():
+        import asyncio
+
+        from fastmcp import FastMCP
+        from openenv.core.env_server.mcp_environment import MCPEnvironment
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        mcp = FastMCP("slow-test")
+        calls = {"busy": False, "closed_mid_call": False}
+
+        @mcp.tool
+        async def slow() -> str:
+            """Take longer than the idle timeout."""
+            calls["busy"] = True
+            # Longer than the timeout, and spans the reaper's first check.
+            await asyncio.sleep(5.5)
+            calls["busy"] = False
+            return "done"
+
+        class SlowToolEnv(MCPEnvironment):
+            SUPPORTS_CONCURRENT_SESSIONS = True
+
+            def __init__(self):
+                super().__init__(mcp)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def _step_impl(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def close(self):
+                if calls["busy"]:
+                    calls["closed_mid_call"] = True
+                super().close()
+
+        server = HTTPEnvServer(
+            SlowToolEnv,
+            None,
+            None,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1, session_timeout=1.0
+            ),
+        )
+        app = FastAPI()
+        server.register_routes(app)
+        return app, server, calls
+
+    @staticmethod
+    def rpc(method, params=None, request_id=1):
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params or {},
+        }
+
+    def test_websocket_tool_call_spanning_reaper_check_is_not_reaped(self):
+        app, server, calls = self.make_server()
+        with TestClient(app) as client, client.websocket_connect("/mcp") as ws:
+            ws.send_json(self.rpc("tools/call", {"name": "slow", "arguments": {}}))
+            response = ws.receive_json()
+
+            assert "done" in str(response.get("result")), response
+            assert not calls["closed_mid_call"]
+            assert server.active_sessions == 1
+
+    def test_http_session_tool_call_spanning_reaper_check_is_not_reaped(self):
+        app, server, calls = self.make_server()
+        with TestClient(app) as client:
+            created = client.post("/mcp", json=self.rpc("openenv/session/create"))
+            session_id = created.json()["result"]["session_id"]
+            response = client.post(
+                "/mcp",
+                json=self.rpc(
+                    "tools/call",
+                    {"name": "slow", "arguments": {}, "session_id": session_id},
+                ),
+            ).json()
+
+            assert "done" in str(response.get("result")), response
+            assert not calls["closed_mid_call"]
+            assert server.active_sessions == 1
+
+    def test_reaped_websocket_session_stops_serving(self):
+        import time
+
+        from starlette.websockets import WebSocketDisconnect
+
+        app, server, _ = self.make_server()
+        with TestClient(app) as client:
+            with client.websocket_connect("/mcp") as ws:
+                ws.send_json(self.rpc("tools/list"))
+                assert "tools" in ws.receive_json()["result"]
+                deadline = time.monotonic() + 8.0
+                while server.active_sessions and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                assert server.active_sessions == 0
+
+                ws.send_json(self.rpc("tools/list", request_id=2))
+                response = ws.receive_json()
+                assert response["error"]["code"] == -32000, response
+                with pytest.raises(WebSocketDisconnect):
+                    ws.receive_json()
+
+            # The released slot is free for a new session.
+            with client.websocket_connect("/mcp") as ws2:
+                ws2.send_json(self.rpc("tools/list"))
+                assert "tools" in ws2.receive_json()["result"]
+                assert server.active_sessions == 1
+
+
 class TestWebSocketMCP:
     """Tests for WebSocket MCP message handling."""
 
