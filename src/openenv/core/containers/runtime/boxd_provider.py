@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import pathlib
 import re
 import shlex
@@ -31,8 +30,7 @@ _PORT = 8000
 _CONTAINER = "openenv-server"
 _BUILD_DIR = "/home/boxd/openenv-build"
 _BUILT_IMAGE = "openenv-env:latest"
-_ENV_DIR = "/home/boxd/openenv-env"
-_ENV_FILE = f"{_ENV_DIR}/server.env"
+_ENV_FILE = "/home/boxd/openenv-server.env"
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SKIP_IN_CONTEXT = {".git", ".venv", "__pycache__"}
 
@@ -50,17 +48,22 @@ def _require_secure_url(url: Any) -> str:
 
 class BoxdProvider(ContainerProvider):
     """
-    Container provider that runs environments in [boxd](https://boxd.sh?ref=OpenEnv)
+    Container provider that runs environments in [boxd](https://boxd.sh)
     machines.
 
     Each ``start_container`` creates one isolated machine, runs the environment
-    image in it with Docker, and returns the machine's public ``https://`` URL.
+    image in it with Docker, and returns the machine's ``https://`` URL.
     ``image`` is either a registry reference (``"ghcr.io/org/echo-env:latest"``)
     or a ``"dockerfile:<path>"`` reference returned by
-    [`~BoxdProvider.image_from_dockerfile`], which is built inside the machine.
+    [`~openenv.core.containers.runtime.boxd_provider.BoxdProvider.image_from_dockerfile`],
+    which is built inside the machine.
+
+    The URL is public: anyone who has it can drive the environment, with no
+    login in front of it. The provider therefore requires ``public=True``.
 
     The environment runs untrusted code, so the machine is always created
     isolated: it joins no private network and holds no boxd credentials.
+    Outbound internet is open unless ``egress_allow`` restricts it.
     Server output is kept out of raised errors unless
     ``surface_server_logs=True``.
 
@@ -68,15 +71,15 @@ class BoxdProvider(ContainerProvider):
     before ``stop_container()``/``close()`` raises ``RuntimeError``.
     ``stop_container()`` deletes the machine.
 
-    As a backstop, boxd deletes the machine ``delete_after`` seconds after it
-    was created (one hour by default), even if ``stop_container()`` never
-    runs. This also covers a Ctrl-C during the create call itself, before the
-    provider knows the machine id and can delete it.
+    Idle suspend and hibernation are turned off, so a quiet session is not
+    dropped. As a backstop, boxd deletes the machine ``delete_after`` seconds
+    after it was created (one hour by default), even if ``stop_container()``
+    never runs, for example when the process is killed.
 
     Examples:
 
     ```python
-    with BoxdProvider(region="fra") as provider:
+    with BoxdProvider(public=True, region="fra") as provider:
         base_url = provider.start_container("ghcr.io/huggingface/openenv-echo-env:latest")
         provider.wait_for_ready(base_url)
     # machine deleted on exit
@@ -88,6 +91,7 @@ class BoxdProvider(ContainerProvider):
     def __init__(
         self,
         *,
+        public: bool = False,
         image: str | None = None,
         env_vars: dict[str, str] | None = None,
         api_key: str | None = None,
@@ -97,12 +101,17 @@ class BoxdProvider(ContainerProvider):
         memory: str | None = None,
         name_prefix: str = "openenv",
         delete_after: int | None = 3600,
+        egress_allow: list[str] | None = None,
         start_timeout: float = 900.0,
         surface_server_logs: bool = False,
         _client: Any = None,
     ):
         """
         Args:
+            public (`bool`, *optional*, defaults to `False`):
+                Must be `True`. Confirms that the machine's URL is public:
+                anyone who has it can drive the environment while the machine
+                runs.
             image (`str`, *optional*):
                 Registry image or ``"dockerfile:<path>"`` source to use when
                 ``start_container()`` is called without an image.
@@ -112,8 +121,8 @@ class BoxdProvider(ContainerProvider):
             api_key (`str`, *optional*):
                 boxd API key. Falls back to the ``BOXD_API_KEY`` env var.
             org (`str`, *optional*):
-                boxd organization to create the machine in. Falls back to
-                ``BOXD_ORG``, then to the key's own organization.
+                boxd organization to create the machine in. Defaults to the
+                key's own organization.
             region (`str`, *optional*):
                 boxd region, ``"fra"`` or ``"nyc"``. Falls back to
                 ``BOXD_REGION``, then to the account default.
@@ -125,19 +134,32 @@ class BoxdProvider(ContainerProvider):
                 ``"16G"`` or ``"32G"``).
             name_prefix (`str`, *optional*, defaults to `"openenv"`):
                 Prefix for the machine name. A random suffix is appended.
-            delete_after (`int`, *optional*, defaults to `3600`):
+            delete_after (`int` or `None`, *optional*, defaults to `3600`):
                 Seconds after creation when boxd deletes the machine, whatever
                 it is doing. Set it above the longest session you run. `None`
                 turns the timer off, so the machine lives until
                 ``stop_container()``.
+            egress_allow (`list[str]`, *optional*):
+                Hostnames (``"api.example.com"``, ``"*.example.com"``) and
+                public IPv4 addresses or CIDRs the machine may reach. Applied
+                after the image is pulled or built and before the container
+                starts, so the environment never runs with open egress.
+                ``["none"]`` blocks all outbound traffic. When `None`,
+                outbound internet is open.
             start_timeout (`float`, *optional*, defaults to `900.0`):
-                Seconds allowed for each of ``docker build`` (for a Dockerfile
-                image) and ``docker run`` (which pulls a registry image).
+                Seconds allowed for ``docker build`` (for a Dockerfile image)
+                or ``docker pull`` (for a registry image).
             surface_server_logs (`bool`, *optional*, defaults to `False`):
                 When `True`, a failed ``docker build`` includes the tail of
                 its output, and startup-crash errors include the tail of the
-                container's output with injected env-var values redacted.
+                container's output with injected env-var values and the
+                machine's hostname redacted.
         """
+        if not public:
+            raise ValueError(
+                "BoxdProvider requires public=True: the machine's URL is "
+                "reachable from the internet with no login in front of it."
+            )
         if delete_after is not None and (
             isinstance(delete_after, bool)
             or not isinstance(delete_after, int)
@@ -154,11 +176,12 @@ class BoxdProvider(ContainerProvider):
         self._client = _client
         self._image = image
         self._env_vars = env_vars
-        self._org = org or os.environ.get("BOXD_ORG") or None
+        self._org = org
         self._vcpu = vcpu
         self._memory = memory
         self._name_prefix = name_prefix
         self._delete_after = delete_after
+        self._egress_allow = egress_allow
         self._start_timeout = start_timeout
         self._surface_server_logs = surface_server_logs
         self._machine_id: str | None = None
@@ -172,7 +195,7 @@ class BoxdProvider(ContainerProvider):
         context_dir: str | None = None,
     ) -> str:
         """Validate a Dockerfile and return a ``dockerfile:`` URI for
-        [`~BoxdProvider.start_container`].
+        [`~openenv.core.containers.runtime.boxd_provider.BoxdProvider.start_container`].
 
         The build context is uploaded to the machine and built there with
         ``docker build`` when the provider starts.
@@ -223,10 +246,8 @@ class BoxdProvider(ContainerProvider):
         }
         return f"dockerfile:{src}"
 
-    def _exec(self, command: str, *, timeout: float = 30.0, env=None) -> Any:
-        return self._client.machines.exec(
-            self._machine_id, command, env=env, timeout=timeout
-        )
+    def _exec(self, command: str, *, timeout: float = 30.0) -> Any:
+        return self._client.machines.exec(self._machine_id, command, timeout=timeout)
 
     def _build_image(self, meta: Dict[str, str]) -> str:
         """Upload the registered build context and build it in the machine."""
@@ -283,11 +304,11 @@ class BoxdProvider(ContainerProvider):
             image (`str`, *optional*):
                 Registry image (e.g. ``"ghcr.io/org/echo-env:latest"``) or
                 ``"dockerfile:<path>"`` returned by
-                [`~BoxdProvider.image_from_dockerfile`]. May be omitted when
-                supplied to the constructor.
+                [`~openenv.core.containers.runtime.boxd_provider.BoxdProvider.image_from_dockerfile`].
+                May be omitted when supplied to the constructor.
             port (`int`, *optional*):
-                Must be `None` or `8000`. The machine's HTTPS URL routes to
-                port 8000; other ports raise ``ValueError``.
+                Must be `None` or `8000`. The provider pins the machine's
+                HTTPS URL to port 8000; other ports raise ``ValueError``.
             env_vars (`dict`, *optional*):
                 Environment variables passed to the container. Names must be
                 shell identifiers and values must be single lines.
@@ -305,7 +326,7 @@ class BoxdProvider(ContainerProvider):
         if port is not None and port != _PORT:
             raise ValueError(
                 f"BoxdProvider only supports port {_PORT} (got {port}). The "
-                f"machine's HTTPS URL routes to port {_PORT}."
+                f"machine's HTTPS URL is pinned to port {_PORT}."
             )
         if kwargs:
             raise TypeError(f"Unsupported start_container options: {sorted(kwargs)}")
@@ -336,50 +357,63 @@ class BoxdProvider(ContainerProvider):
                 )
         self._redact_values = {v for v in effective_env_vars.values() if v}
 
-        machine = self._client.machines.create(
-            f"{self._name_prefix}-{uuid.uuid4().hex[:12]}",
-            org=self._org,
-            isolated=True,
-            labels={"managed-by": "openenv"},
-            vcpu=self._vcpu,
-            memory=self._memory,
-            delete_after=self._delete_after,
-        )
-        self._machine_id = machine.id
-
+        name = f"{self._name_prefix}-{uuid.uuid4().hex[:12]}"
+        # Until create answers, the name is the only handle on the machine.
+        self._machine_id = name
         try:
+            # Idle suspend is off, so a quiet session is not dropped;
+            # delete_after bounds the machine's lifetime instead.
+            machine = self._client.machines.create(
+                name,
+                org=self._org,
+                isolated=True,
+                labels={"managed-by": "openenv"},
+                vcpu=self._vcpu,
+                memory=self._memory,
+                auto_suspend_timeout=0,
+                delete_after=self._delete_after,
+            )
+            self._machine_id = machine.id
             ready = self._client.machines.wait_until_ready(machine.id)
             url = _require_secure_url(ready.access.url)
+            # The host is the secret part of the URL: keep it out of debug logs.
+            self._redact_values.add(url.removeprefix("https://"))
+            self._client.machines.set_auto_hibernate_timeout(machine.id, 0)
+            # Pin the URL to the server's port, whatever else listens later.
+            self._client.machines.proxies.set_port(machine.id, _PORT)
             # EnvClient is not a browser, so the browser check on the
             # machine's URL is turned off.
             self._client.machines.set_bot_protection(machine.id, mode="off")
 
             if build_meta is not None:
                 effective_image = self._build_image(build_meta)
+            else:
+                pull = self._exec(
+                    f"docker pull -q {shlex.quote(effective_image)}",
+                    timeout=self._start_timeout,
+                )
+                if pull.exit_code != 0:
+                    raise RuntimeError(
+                        f"docker pull failed in the boxd machine (exit {pull.exit_code}):"
+                        f"\n{pull.stderr[-2000:]}"
+                    )
+            if self._egress_allow is not None:
+                self._client.machines.set_egress_allow(machine.id, self._egress_allow)
 
             # Env values go in a file read by `docker run --env-file`, so they
-            # never appear on a command line. The file is written into a
-            # directory only its owner can read, and removed after the run.
+            # never appear on a command line. The file is removed after the run.
             env_flag = ""
             if effective_env_vars:
-                mkdir = self._exec(f"install -d -m 700 {_ENV_DIR}")
-                if mkdir.exit_code != 0:
-                    raise RuntimeError(
-                        f"Could not create {_ENV_DIR} in the boxd machine "
-                        f"(exit {mkdir.exit_code}): {mkdir.stderr[-500:]}"
-                    )
                 self._client.machines.files.upload(
                     machine.id,
                     _ENV_FILE,
                     "".join(f"{k}={v}\n" for k, v in effective_env_vars.items()),
                 )
                 env_flag = f" --env-file {_ENV_FILE}"
-            run = (
-                f"chmod 600 {_ENV_FILE} 2>/dev/null; docker run -d --name {_CONTAINER}"
-                f"{env_flag} -p {_PORT}:{_PORT} {shlex.quote(effective_image)};"
-                f" rc=$?; rm -rf {_ENV_DIR}; exit $rc"
+            result = self._exec(
+                f"docker run -d --name {_CONTAINER}{env_flag} -p {_PORT}:{_PORT}"
+                f" {shlex.quote(effective_image)}; rc=$?; rm -f {_ENV_FILE}; exit $rc"
             )
-            result = self._exec(run, timeout=self._start_timeout)
             if result.exit_code != 0:
                 raise RuntimeError(
                     f"docker run failed in the boxd machine (exit {result.exit_code}):"
@@ -391,9 +425,8 @@ class BoxdProvider(ContainerProvider):
                 self.stop_container()
             except Exception:
                 logger.warning(
-                    "Could not delete boxd machine %s after a failed start; "
-                    "delete it with stop_container() or in the boxd console.",
-                    machine.id,
+                    "Could not delete the boxd machine after a failed start; "
+                    "retry stop_container() or close()."
                 )
             raise
 
@@ -402,8 +435,8 @@ class BoxdProvider(ContainerProvider):
     def stop_container(self) -> None:
         """Delete the boxd machine.
 
-        The machine id is kept when the delete fails, so calling this again
-        retries it. A machine that is already gone counts as deleted.
+        The machine's handle is kept when the delete fails, so calling this
+        again retries it. A machine that is already gone counts as deleted.
         """
         if self._machine_id is None:
             self._redact_values = set()
@@ -428,7 +461,12 @@ class BoxdProvider(ContainerProvider):
 
     @property
     def machine_id(self) -> str:
-        """Id of the boxd machine started by the last ``start_container``."""
+        """Id of the boxd machine started by the last ``start_container``.
+
+        After a failed start whose cleanup also failed, this is the handle
+        ``stop_container()`` retries with (the machine's name when the create
+        call itself never answered).
+        """
         if self._machine_id is None:
             raise RuntimeError("BoxdProvider has no active machine.")
         return self._machine_id
@@ -442,7 +480,7 @@ class BoxdProvider(ContainerProvider):
                 "to include a redacted excerpt."
             )
         log = self._exec(f"docker logs --tail 100 {_CONTAINER} 2>&1").stdout
-        for value in self._redact_values:
+        for value in sorted(self._redact_values, key=len, reverse=True):
             log = log.replace(value, "***")
         return f"{base}\nLog (redacted):\n{log[-2000:]}"
 
@@ -463,23 +501,25 @@ class BoxdProvider(ContainerProvider):
         import requests
 
         health_url = f"{base_url}/health"
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout_s
+        while (remaining := deadline - time.monotonic()) > 0:
             try:
-                response = requests.get(health_url, timeout=5.0)
+                response = requests.get(health_url, timeout=min(5.0, remaining))
                 if response.status_code == 200:
                     return
             except requests.RequestException:
                 pass
 
-            if self._machine_id is not None:
+            remaining = deadline - time.monotonic()
+            if self._machine_id is not None and remaining > 0:
                 state = self._exec(
-                    f"docker inspect -f '{{{{.State.Status}}}}' {_CONTAINER}"
+                    f"docker inspect -f '{{{{.State.Status}}}}' {_CONTAINER}",
+                    timeout=min(30.0, remaining),
                 ).stdout.strip()
                 if state in ("exited", "dead"):
                     raise RuntimeError(self._server_died_message())
 
-            time.sleep(1.0)
+            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
 
         raise TimeoutError(f"The boxd machine did not become ready within {timeout_s}s")
 

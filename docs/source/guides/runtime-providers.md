@@ -181,23 +181,25 @@ provider = ACASandboxProvider(
 
 ### BoxdProvider
 
-Runs the server in a [boxd](https://boxd.sh?ref=OpenEnv) machine, a microVM
-with Docker installed. Install with `pip install openenv[boxd]`. Requires a
-boxd API key, as `api_key=` or the `BOXD_API_KEY` environment variable
-(optionally `org=`/`BOXD_ORG` and `region=`/`BOXD_REGION`, `fra` or `nyc`).
+Runs the server in a [boxd](https://boxd.sh) machine, a microVM with Docker
+installed. Install with `pip install openenv[boxd]`. Requires a boxd API key,
+as `api_key=` or the `BOXD_API_KEY` environment variable. `org=` picks the
+organization (the key's own by default), and `region=` or `BOXD_REGION` picks
+the region, `fra` or `nyc`.
 
 The provider creates one isolated machine per `start_container`, runs the
-image in it with `docker run`, and returns the machine's HTTPS URL. The URL is
-reachable from the internet with no login in front of it, so treat it like a
-secret: anyone who has it can drive the environment. The provider keeps it out
-of its errors.
+image in it with `docker run`, and returns the machine's HTTPS URL, pinned to
+port 8000. The URL is reachable from the internet with no login in front of
+it: anyone who has it can drive the environment. The provider therefore
+requires `public=True`, and raises `ValueError` without it. Treat the URL like
+a secret. The provider keeps it out of its errors and logs.
 `stop_container()` deletes the machine. `env_vars` reach the container through
 a `docker run --env-file` that is removed after the run.
 
 ```python
 from openenv.core.containers.runtime.boxd_provider import BoxdProvider
 
-provider = BoxdProvider(image="ghcr.io/huggingface/openenv-echo-env:latest")
+provider = BoxdProvider(public=True, image="ghcr.io/huggingface/openenv-echo-env:latest")
 ```
 
 A local Dockerfile works too. The build context is uploaded to the machine and
@@ -205,17 +207,41 @@ built there with `docker build`:
 
 ```python
 image = BoxdProvider.image_from_dockerfile("envs/echo_env/server/Dockerfile")
-provider = BoxdProvider(image=image)
+provider = BoxdProvider(public=True, image=image)
 ```
 
-boxd also deletes the machine `delete_after` seconds after it was created, one
-hour by default, even when `stop_container()` never runs (a crashed script, or
-a Ctrl-C while the machine is being created). Set it above your longest
-session, or pass `delete_after=None` to keep the machine until
-`stop_container()`:
+The machine is isolated: it joins no private network, has no boxd metadata
+endpoint and holds no boxd credentials or integrations, so code in the
+environment cannot act on your boxd account. A request to
+`http://169.254.169.254/` from inside the container fails. Outbound
+internet is open by default. `egress_allow` restricts it to the hostnames,
+public IPv4 addresses and CIDRs you list. The provider applies the list after
+the image is pulled or built and before the container starts, so the
+environment never runs with open egress. `["none"]` blocks all outbound
+traffic. Requests to the machine's URL keep working either way:
 
 ```python
-provider = BoxdProvider(image="ghcr.io/huggingface/openenv-echo-env:latest", delete_after=4 * 3600)
+provider = BoxdProvider(
+    public=True,
+    image="ghcr.io/huggingface/openenv-echo-env:latest",
+    egress_allow=["api.example.com"],
+)
+```
+
+The provider turns idle suspend and hibernation off, so the machine keeps
+running between `start_container()` and the first connect, and through quiet
+stretches of a session. What bounds its lifetime is `delete_after`: boxd
+deletes the machine that many seconds after it was created, one hour by
+default, even when `stop_container()` never runs (a crashed or killed script).
+The delete closes any open session. Set it above your longest session, or pass
+`delete_after=None` to keep the machine running until `stop_container()`:
+
+```python
+provider = BoxdProvider(
+    public=True,
+    image="ghcr.io/huggingface/openenv-echo-env:latest",
+    delete_after=4 * 3600,
+)
 ```
 
 `vcpu` and `memory` pick the machine size (`1`/`"4G"`, `2`/`"8G"`, `4`/`"16G"`

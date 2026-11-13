@@ -3,11 +3,12 @@
 
 Creates a boxd machine via ``BoxdProvider``, runs the echo-env image in it with
 Docker, then talks to it through ``EchoEnv`` over the machine's HTTPS URL
-(https/wss). The machine is deleted when the provider closes.
+(https/wss). The URL is public, which ``public=True`` confirms. The machine is
+deleted when the provider closes.
 
 Usage:
     pip install "openenv[boxd]"
-    export BOXD_API_KEY=...   (https://boxd.sh?ref=OpenEnv)
+    export BOXD_API_KEY=...   (https://boxd.sh)
     PYTHONPATH=src:envs uv run python examples/boxd_echo_env.py
 
 Optional environment variables:
@@ -42,6 +43,8 @@ async def _interact(base_url: str) -> None:
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # httpx logs every request URL at INFO, and the machine's URL is public.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     image = os.environ.get(
         "OPENENV_IMAGE", "ghcr.io/huggingface/openenv-echo-env:latest"
@@ -50,6 +53,7 @@ def main() -> int:
         image = BoxdProvider.image_from_dockerfile("envs/echo_env/server/Dockerfile")
 
     with BoxdProvider(
+        public=True,
         name_prefix=os.environ.get("OPENENV_NAME_PREFIX", "openenv"),
     ) as provider:
         logger.info("Starting boxd machine...")
