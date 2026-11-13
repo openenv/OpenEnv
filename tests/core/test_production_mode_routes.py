@@ -2539,6 +2539,61 @@ class TestWebSocketSessionReaper:
             self.wait_until_reaped(server)
             assert envs[0].closed
 
+    def test_second_socket_on_session_keeps_step_in_flight(self):
+        import asyncio
+        import time
+
+        envs = []
+
+        class SlowStepEnvironment(MinimalEnvironment):
+            def __init__(self):
+                super().__init__()
+                self.busy = False
+                self.closed_mid_step = False
+                envs.append(self)
+
+            async def step_async(self, action, **kwargs):
+                self.busy = True
+                await asyncio.sleep(5.5)
+                self.busy = False
+                return MinimalObservation(response="slow", reward=1.0)
+
+            def close(self):
+                if self.busy:
+                    self.closed_mid_step = True
+
+        app, server = self.make_server(SlowStepEnvironment)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "reset", "data": {}})
+            assert ws.receive_json()["type"] == "observation"
+            # A /ws client can learn its session ID and attach a second socket.
+            ws.send_json(
+                {
+                    "type": "mcp",
+                    "data": {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "openenv/session/create",
+                        "params": {},
+                    },
+                }
+            )
+            session_id = ws.receive_json()["data"]["result"]["session_id"]
+
+            ws.send_json({"type": "step", "data": {"message": "slow"}})
+            deadline = time.monotonic() + 2
+            while not envs[0].busy and time.monotonic() < deadline:
+                time.sleep(0.01)
+            # The second socket's message ends while the step is still running.
+            with client.websocket_connect(f"/ws?session_id={session_id}") as ws2:
+                ws2.send_json({"type": "state"})
+                assert ws2.receive_json()["type"] == "state"
+
+            response = ws.receive_json()
+            assert response["data"]["observation"]["response"] == "slow"
+            assert not envs[0].closed_mid_step
+            assert server.active_sessions == 1
+
 
 class TestWebSocketMCP:
     """Tests for WebSocket MCP message handling."""

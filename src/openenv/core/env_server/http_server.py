@@ -282,8 +282,9 @@ class HTTPEnvServer:
         self._session_modes: Dict[str, Optional[str]] = {}
         self._session_websocket_attachments: set[str] = set()
         self._session_pending_closes: set[str] = set()
-        # Sessions with a WebSocket message being handled; never idle-reaped.
-        self._session_operations_in_flight: set[str] = set()
+        # WebSocket messages being handled, per session; such sessions are never
+        # idle-reaped. A count, since an attached socket can share the session.
+        self._session_operations_in_flight: Dict[str, int] = {}
         self._session_lock = asyncio.Lock()
 
         # Create thread pool for running sync code in async context
@@ -2186,7 +2187,8 @@ all schema information needed to interact with the environment.
                                     "Rubric introspection unavailable"
                                 )
 
-                        self._session_operations_in_flight.add(session_id)
+                        in_flight = self._session_operations_in_flight
+                        in_flight[session_id] = in_flight.get(session_id, 0) + 1
                         self._update_session_activity(session_id)
                         try:
                             match msg_type:
@@ -2357,7 +2359,9 @@ all schema information needed to interact with the environment.
                             )
                             await websocket.send_text(error_resp.model_dump_json())
                         finally:
-                            self._session_operations_in_flight.discard(session_id)
+                            in_flight[session_id] -= 1
+                            if in_flight[session_id] == 0:
+                                del in_flight[session_id]
                             self._update_session_activity(session_id)
 
             except WebSocketDisconnect:
