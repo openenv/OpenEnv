@@ -216,6 +216,7 @@ class ManagedChildren:
                 "result_truncation_limit": self.limits.result_truncation_limit,
                 **self.runner_options,
             }
+            # Daemon, so a normal host exit terminates workers instead of joining them.
             process = context.Process(
                 target=_run_child,
                 args=(
@@ -227,6 +228,7 @@ class ManagedChildren:
                     depth + 1,
                     options,
                 ),
+                daemon=True,
             )
             try:
                 process.start()
@@ -469,12 +471,14 @@ class ManagedChildren:
             + 1
         )
         for job in jobs:
-            if job.status == "cleanup_failed" and job.finished.is_set():
-                job.finished.clear()
-                job.thread = threading.Thread(
-                    target=self._watch, args=(job,), daemon=True
-                )
-                job.thread.start()
+            # Concurrent callers must not start a second watcher for one retry.
+            with self._lock:
+                if job.status == "cleanup_failed" and job.finished.is_set():
+                    job.finished.clear()
+                    job.thread = threading.Thread(
+                        target=self._watch, args=(job,), daemon=True
+                    )
+                    job.thread.start()
             if (
                 not job.finished.wait(max(0, deadline - time.monotonic()))
                 or job.exitcode is None

@@ -500,6 +500,54 @@ def test_cleanup_failure_prevents_reuse_and_can_be_retried(tmp_path, monkeypatch
     assert len(completions) == 1
 
 
+def test_concurrent_cleanup_retries_share_one_watcher(tmp_path, monkeypatch):
+    controller = make_controller(tmp_path)
+    manager = controller.children
+    send_signal = manager._signal
+    both_retrying = threading.Barrier(2)
+    watchers = []
+    watch = manager._watch
+
+    class RetryGate(threading.Event):
+        # Hold a retry until a second caller could make the same decision.
+        def clear(self):
+            with suppress(threading.BrokenBarrierError):
+                both_retrying.wait(1)
+            super().clear()
+
+    def counted_watch(job):
+        watchers.append(threading.current_thread())
+        watch(job)
+
+    try:
+        handle = manager.spawn("blocked ignore-term")
+        pids = wait_ready(tmp_path, manager=manager)
+        job = manager._jobs[handle]
+        monkeypatch.setattr(manager, "_signal", lambda *args: None)
+        with pytest.raises(ChildCleanupError):
+            manager.cancel(handle)
+        monkeypatch.setattr(manager, "_signal", send_signal)
+        job.finished = RetryGate()
+        job.finished.set()
+        monkeypatch.setattr(manager, "_watch", counted_watch)
+        calls = [
+            start_call(lambda: manager.cancel(handle), "retry-cancel"),
+            start_call(manager.stop, "retry-stop"),
+        ]
+        for _, done, errors in calls:
+            assert done.wait(15)
+            assert not errors
+        for watcher in watchers:
+            watcher.join(5)
+        assert len(watchers) == 1
+        assert job.status != "cleanup_failed"
+        manager.check_ready()
+    finally:
+        monkeypatch.setattr(manager, "_signal", send_signal)
+        controller.close()
+    assert_reaped(pids)
+
+
 def test_nested_recursion_shares_child_budget(tmp_path):
     controller = make_controller(tmp_path, max_children_total=1)
     try:
@@ -993,6 +1041,32 @@ def test_callback_exceptions_do_not_stop_dispatcher(tmp_path, callback_phase):
         controller.close()
     controller.children._callback_thread.join(5)
     assert not controller.children._callback_thread.is_alive()
+
+
+def test_workers_do_not_block_host_exit(tmp_path):
+    script = (
+        "from pathlib import Path\n"
+        f"from {__name__} import make_controller, wait_ready\n"
+        f"directory = Path({str(tmp_path)!r})\n"
+        "controller = make_controller(directory)\n"
+        "controller.children.spawn('blocked')\n"
+        "print(*wait_ready(directory), flush=True)\n"
+    )
+    host = subprocess.Popen(
+        [sys.executable, "-c", script],
+        env=dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path)),
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        pids = [int(pid) for pid in host.stdout.readline().split()]
+        host.wait(15)
+    finally:
+        Path(tmp_path, "release").touch()
+        host.kill()
+        host.wait(10)
+        host.stdout.close()
+    assert pids and not any(running(pid) for pid in pids)
 
 
 def make_served_app():
