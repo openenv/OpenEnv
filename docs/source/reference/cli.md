@@ -106,7 +106,8 @@ of strings. This is a minimal complete contract:
 ```
 
 The `harbor-semantic-v1` binding runs
-fresh Harbor trials in Docker: a do-nothing agent, the oracle (`solution/solve.sh`),
+fresh Harbor trials, in local Docker unless `--sandbox hf-sandbox` moves them to
+HF Jobs: a do-nothing agent, the oracle (`solution/solve.sh`),
 an oracle replay and any canaries declared in the contract. A canary is a known-wrong
 `solve.sh` replacement. The results report under `runtime.startup`,
 `runtime.reward_well_formed`, `runtime.episode_determinism`, `semantic.oracle_max`,
@@ -126,7 +127,7 @@ Dockerfile nor a pinned image, task-authored Compose files and separate verifier
 environments. GPU/TPU or external MCP requirements,
 credentials, non-public or differing phase networks, task environment variables,
 healthchecks, skills, verifier collection and artifact extensions are also
-unsupported. A supplied provider, including `--space`, is unsupported. Each case
+unsupported. A served-package provider, including `--space`, is unsupported. Each case
 gives `runtime.startup` SKIP with a named reason and runs no trials. With valid
 static declarations and an oracle, the verdict is WARN and the exit code is 0.
 A missing `solution/solve.sh` still FAILs `semantic.oracle_max` at the semantic level,
@@ -145,6 +146,38 @@ only when the run has no FAIL or ERROR and was not interrupted. It records the t
 is removed on every run. Tag removal verifies image identity and uses `--no-prune`.
 A removal failure marks cleanup incomplete and gives a startup ERROR. During an
 abort, cleanup preserves the original exception and records the removal failure.
+
+`--sandbox hf-sandbox` runs the same trials on Hugging Face Jobs instead, one job
+per trial, through Harbor's `hf-sandbox` environment:
+
+```bash
+openenv validate path/to/task --sandbox hf-sandbox
+openenv validate path/to/task --sandbox hf-sandbox --flavor cpu-upgrade --namespace my-org
+```
+
+A sandbox cannot build a Dockerfile, so the task must pin a pullable image as
+`environment.docker_image = "name@sha256:<digest>"`. Build and push the image
+first, then pin its digest. The image needs `/bin/bash`, which Harbor uses to run
+commands, and either `sha256sum` or `openssl`, which the sandbox server uses to
+verify its own download. With nothing
+to build, every trial starts at once. `--flavor` and `--namespace` mean what they
+mean for `hf jobs run`: the flavor sets the hardware, and the namespace is the user
+or organization that owns and pays for the jobs, by default the token's user. The
+flavor must provide the CPU, memory and disk the contract declares, or
+`runtime.startup` reports ERROR before any job starts. Tasks that set an agent or
+verifier user are unsupported, because the sandbox cannot switch users.
+
+Each job carries `openenv-validation-run` and `openenv-validation-role` labels. At
+`AGENT_START` the validator reads the job back and requires the pinned image, the
+requested flavor and a `RUNNING` stage. After each trial it cancels any labelled
+job that is still running and waits up to 60 seconds for all of them to stop.
+Otherwise cleanup is unverified and `runtime.startup` reports ERROR.
+`runtime.startup.measured` records the flavor, namespace and job IDs, and
+`harbor-evidence.json` states that the image is the digest requested from HF Jobs,
+not one measured inside the sandbox. Check IDs, graders and thresholds are the
+same as on Docker, and no image is retained. A served package gives a named
+`runtime.startup` SKIP with `--sandbox hf-sandbox`; validate a served Space with
+`--space` instead.
 
 The 16 implemented runtime checks cover startup, rewards, observation schemas,
 state continuity, network policy, host containment, resource bounds, episode isolation,

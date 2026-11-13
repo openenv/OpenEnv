@@ -29,6 +29,8 @@
       title: The Task API
     - local: guides/customizing-web-ui
       title: Customizing the Web UI
+    - local: guides/request-security
+      title: Request Security
     title: Advanced Concepts
   title: Concepts
 - sections:
