@@ -359,6 +359,10 @@ pass `allow_out=[]`. To block more destinations, pass `deny_out=[...]`.
 
 Full example: [`examples/tensorlake_echo_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/tensorlake_echo_env.py).
 
+**Owner:** the Tensorlake team (support@tensorlake.ai) and Shanshan Wang
+([@cooltx7eel](https://github.com/cooltx7eel)) own this provider. Report SDK
+breakage in a GitHub issue and mention the owner.
+
 ### UVProvider
 
 Runs the server as a local process via `uv`, without a container. Useful for
