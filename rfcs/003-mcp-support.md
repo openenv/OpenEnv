@@ -1,6 +1,6 @@
 # RFC: MCP (Model Context Protocol) Support
 
-**Status**: In Review **Created**: 10/21/2025 **Amended**: November 15, 2025 **Authors**: @Darktex, @pankit-eng **RFC ID:** 003
+**Status**: Implemented **Created**: 10/21/2025 **Amended**: November 15, 2025 **Authors**: @Darktex, @pankit-eng **RFC ID:** 003
 
 ## Amendment History
 

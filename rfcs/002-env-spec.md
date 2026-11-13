@@ -1,6 +1,6 @@
 # RFC: OpenEnv Framework Spec for agent execution environments
 
-**Status**: In Review
+**Status**: Implemented
 **Created**: 10/14/2025
 **Amended**: November 12, 2025 _(a "Cloud Sandbox Providers" amendment is proposed below, pending author sign-off — see Amendment History)_
 **Authors**: @Darktex, @pankit-eng, @jspisak, @zkwentz
