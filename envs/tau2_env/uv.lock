@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
@@ -1122,18 +1122,17 @@ wheels = [
 
 [[package]]
 name = "gradio"
-version = "7.0.0.dev0"
+version = "6.32.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
     { name = "brotli" },
-    { name = "cryptography" },
     { name = "fastapi" },
     { name = "gradio-client" },
     { name = "groovy" },
     { name = "hf-gradio" },
-    { name = "httpx2" },
+    { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "jinja2" },
     { name = "markupsafe" },
@@ -1142,7 +1141,6 @@ dependencies = [
     { name = "packaging" },
     { name = "pandas" },
     { name = "pillow" },
-    { name = "psutil" },
     { name = "pydantic" },
     { name = "pydub" },
     { name = "python-multipart" },
@@ -1156,24 +1154,25 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/5c/cc3b0535b578652d2888e9760d7ec15bc855a208718a24571ad28fa2f875/gradio-7.0.0.dev0.tar.gz", hash = "sha256:a79d415c64140b626b9f729d4449d2215aea8f8784f248596954e09997030dff", size = 45236646, upload-time = "2026-11-09T22:31:15.423Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/56/fbb4a33648aa72a362b6daf7cee0218c9b1b54b13226daa29219ca08e63d/gradio-6.32.0.tar.gz", hash = "sha256:4a5250eaf622154a28217f5d18d50c01b1a949842e11ebe2b1f8055a2fc92849", size = 45140071, upload-time = "2026-11-12T20:36:51.168Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/d2/67de79beb653a8843ef4a89d68cbb7ef903f30636e6018432b5fa6020195/gradio-7.0.0.dev0-py3-none-any.whl", hash = "sha256:82754fd52de81fabf81a7f6cd230ce80907a1779839c885a2cada3670309aec7", size = 31449707, upload-time = "2026-11-09T22:31:11.417Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/a1/b9fd9e9ca76ebb88ae503a2383661bbb3a37db87f51a457fcc6090e3d974/gradio-6.32.0-py3-none-any.whl", hash = "sha256:0d5170c3dfa445ee932979ecf0abac43a3814b603868d4d2c6efec5b5605372c", size = 31390743, upload-time = "2026-11-12T20:36:47.971Z" },
 ]
 
 [[package]]
 name = "gradio-client"
-version = "2.8.0.dev0"
+version = "2.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec" },
-    { name = "httpx2" },
+    { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "packaging" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/91/e7/50957281eefe7a49a5f8e5e65781377d5006b70289b4756fdd2cfdffc205/gradio_client-2.8.0.dev0.tar.gz", hash = "sha256:a7565ab89b423f9f666932ab8f7e446eafd3ead36c5df20945a88a7cff271c62", size = 67059, upload-time = "2026-11-09T22:31:27.628Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/5d/f8747239d3c87749512709dd3193f8626a02661cb29823370c95ce5e1f3c/gradio_client-2.7.2.tar.gz", hash = "sha256:5b568b8189b86cfdacab39fecc2ee66900348cdd83a1c0bb968a98c83eafc198", size = 63553, upload-time = "2026-10-02T18:35:44.64Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/25/32/39482c89859e8175713d3942d169f314e3a91070b4ff40cea41fc2b350ac/gradio_client-2.8.0.dev0-py3-none-any.whl", hash = "sha256:1158c0cf6309cf816d27ff873f91e93ff04cc97922ae27a75f321d98350b2db1", size = 67980, upload-time = "2026-11-09T22:31:26.11Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/56/ce1104ac287709af37628c4bd3b24f0e78c925facda3dc8915d10b787846/gradio_client-2.7.2-py3-none-any.whl", hash = "sha256:12c9d2d940df28eb8dce58eef61f5e808265ad87bbbca53704d1330aa701e5e2", size = 64458, upload-time = "2026-10-02T18:35:43.078Z" },
 ]
 
 [[package]]
@@ -1273,8 +1272,8 @@ name = "httpcore2"
 version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11" },
-    { name = "truststore" },
+    { name = "h11", marker = "sys_platform != 'emscripten'" },
+    { name = "truststore", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cb/f3/1db7aa2bc2524062192bb0e0323969492d1883152a232fe36eea65f4e35c/httpcore2-2.13.1.tar.gz", hash = "sha256:e0aa977abe17e69a3b820a24542a6fa88702676d83880b8d194dcd18408e5103", size = 68071, upload-time = "2026-09-23T07:47:22.372Z" }
 wheels = [
@@ -3037,14 +3036,14 @@ wheels = [
 
 [[package]]
 name = "safehttpx"
-version = "0.2.0"
+version = "0.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "httpx2" },
+    { name = "httpx" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/90/85fcebcef2005822fa1724c6669518c552b2a2ae293089610aa5b657da22/safehttpx-0.2.0.tar.gz", hash = "sha256:bd698a5a1730777040ccfdac0aef7a7bdb10f59931796c4c99c003dc90dff281", size = 10644, upload-time = "2026-09-28T20:02:05.217Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/d1/4282284d9cf1ee873607a46442da977fc3c985059315ab23610be31d5885/safehttpx-0.1.7.tar.gz", hash = "sha256:db201c0978c41eddb8bb480f3eee59dd67304fdd91646035e9d9a720049a9d23", size = 10385, upload-time = "2025-10-24T18:30:09.783Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/c3/4ad7c04204494996a6945223ab07e551f19a5d2f35ed59e658e7febe6494/safehttpx-0.2.0-py3-none-any.whl", hash = "sha256:ffb8a246ea541abd79febba40591e3fc380380636f75376c0dff0aed6e3d7e29", size = 9149, upload-time = "2026-09-28T20:02:04.204Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/a3/0f0b7d78e2f1eb9e8e1afbff1d2bff8d60144aee17aca51c065b516743dd/safehttpx-0.1.7-py3-none-any.whl", hash = "sha256:c4f4a162db6993464d7ca3d7cc4af0ffc6515a606dfd220b9f82c6945d869cde", size = 8959, upload-time = "2025-10-24T18:30:08.733Z" },
 ]
 
 [[package]]
@@ -3052,8 +3051,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
