@@ -1170,8 +1170,9 @@ class TestIssueDetectionMatching:
     Ground-truth keywords were matched as plain substrings, so `star` (for
     `SELECT *`) matched `started`, and a summary that never mentioned the issue
     still earned its share of the 25% detection slice. A keyword may still carry
-    an inflection (`joins`, `ranking`), and the deliberate stems (`aggreg`,
-    `concatenat`) still reach the words they were written for.
+    an inflection (`joins`, `ranking`, `explicitly`, `scanning`), and the
+    deliberate stems (`aggreg`, `concatenat`) still reach the words they were
+    written for.
     """
 
     @pytest.mark.parametrize(
@@ -1210,6 +1211,11 @@ class TestIssueDetectionMatching:
             ("select *", "SELECT * reads every column"),
             ("like '%", "LIKE '%buy%' scans"),
             ("CTE", "move it into a CTE"),
+            ("explicit", "explicitly join the tables"),
+            ("implicit", "the comma implicitly cross joins"),
+            ("full scan", "a full scanning pass"),
+            ("zone map", "zone mapping is disabled"),
+            ("zone map", "the column is zone mapped"),
         ],
     )
     def test_whole_words_inflections_and_stems_still_match(self, keyword, text):
