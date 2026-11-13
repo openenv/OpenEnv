@@ -1,0 +1,113 @@
+{
+  "target": "http://127.0.0.1:44969",
+  "validation_type": "running_environment",
+  "standard_version": "1.0.0",
+  "standard_profile": "openenv-http/1.x",
+  "mode": "simulation",
+  "passed": true,
+  "summary": {
+    "passed_count": 6,
+    "total_count": 6,
+    "failed_criteria": [],
+    "required_passed_count": 6,
+    "required_total_count": 6
+  },
+  "criteria": [
+    {
+      "id": "openapi_version_available",
+      "description": "GET /openapi.json returns OpenAPI info.version",
+      "passed": true,
+      "required": true,
+      "expected": {
+        "status_code": 200,
+        "info.version": "string"
+      },
+      "actual": {
+        "status_code": 200,
+        "info.version": "1.0.0"
+      }
+    },
+    {
+      "id": "health_endpoint",
+      "description": "GET /health returns healthy status",
+      "passed": true,
+      "required": true,
+      "expected": {
+        "status_code": 200,
+        "status": "healthy"
+      },
+      "actual": {
+        "status_code": 200,
+        "status": "healthy"
+      }
+    },
+    {
+      "id": "metadata_endpoint",
+      "description": "GET /metadata returns name and description",
+      "passed": true,
+      "required": true,
+      "expected": {
+        "status_code": 200,
+        "fields": [
+          "name",
+          "description"
+        ]
+      },
+      "actual": {
+        "status_code": 200,
+        "name": "CapacityEnvironment",
+        "description": "CapacityEnvironment environment"
+      }
+    },
+    {
+      "id": "schema_endpoint",
+      "description": "GET /schema returns action, observation, and state schemas",
+      "passed": true,
+      "required": true,
+      "expected": {
+        "status_code": 200,
+        "fields": [
+          "action",
+          "observation",
+          "state"
+        ]
+      },
+      "actual": {
+        "status_code": 200,
+        "has_action": true,
+        "has_observation": true,
+        "has_state": true
+      }
+    },
+    {
+      "id": "mcp_endpoint",
+      "description": "POST /mcp is reachable and returns JSON-RPC payload",
+      "passed": true,
+      "required": true,
+      "expected": {
+        "status_code": 200,
+        "jsonrpc": "2.0"
+      },
+      "actual": {
+        "status_code": 200,
+        "jsonrpc": "2.0"
+      }
+    },
+    {
+      "id": "mode_endpoint_consistency",
+      "description": "OpenAPI endpoint set matches OpenEnv mode contract",
+      "passed": true,
+      "required": true,
+      "expected": {
+        "/reset": true,
+        "/step": true,
+        "/state": true
+      },
+      "actual": {
+        "/reset": true,
+        "/step": true,
+        "/state": true
+      }
+    }
+  ]
+}

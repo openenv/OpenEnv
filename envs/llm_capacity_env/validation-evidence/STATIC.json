@@ -1,0 +1,88 @@
+{
+  "report_schema_version": "1",
+  "target": ".",
+  "source_digest": "b2da2b4b8f52251a7e7270d537805f872f4d69d7318a647a02b8d2934eb56c17",
+  "signature": "openenv.yaml",
+  "manifest": {
+    "manifest_schema_version": "1",
+    "name": "llm_capacity_env",
+    "version": "0.1.0",
+    "signature": "openenv.yaml",
+    "reward": {
+      "range": [
+        -2.0,
+        0.0
+      ],
+      "oracle_tolerance": 0.0,
+      "floor_margin": 0.1,
+      "variance_tolerance": null
+    },
+    "judge": null,
+    "resources": {
+      "cpu": 1.0,
+      "memory_mb": 2048,
+      "disk_mb": 2048,
+      "episode_timeout_s": 120.0,
+      "gpus": 0,
+      "gpu_types": []
+    },
+    "task_distribution": null,
+    "network": {
+      "mode": "public",
+      "allowed_hosts": []
+    },
+    "capabilities": {
+      "oracle": null,
+      "verifier": {
+        "kind": "reward_channel",
+        "entry": null
+      },
+      "set_state": false,
+      "llm_judged": false,
+      "rubric_tree": false,
+      "task_api": false,
+      "canaries": null,
+      "declared_tools": [
+        "observe_demand_history",
+        "reserve_capacity"
+      ],
+      "declared_task_count": {}
+    },
+    "types": {
+      "tags": [
+        "resource-allocation",
+        "llm-serving",
+        "trace-replay"
+      ]
+    }
+  },
+  "policy_version": "v1",
+  "lane": "local",
+  "levels_run": [
+    1
+  ],
+  "results": [
+    {
+      "check_id": "static.manifest",
+      "status": "pass",
+      "measured": {
+        "oracle_tolerance": 0.0,
+        "floor_margin": 0.1,
+        "variance_tolerance": null,
+        "episode_timeout_s": 120.0,
+        "bounds": {
+          "max_oracle_tolerance": 0.1,
+          "min_floor_margin": 0.1,
+          "max_variance_tolerance": 0.2,
+          "max_episode_timeout_s": 3600.0
+        }
+      },
+      "evidence": [
+        "manifest is schema-valid and within policy bounds"
+      ],
+      "remediation": null,
+      "duration_s": 0.000020341016352176666
+    }
+  ],
+  "verdict": "pass"
+}

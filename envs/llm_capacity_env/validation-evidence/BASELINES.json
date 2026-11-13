@@ -1,0 +1,66 @@
+{
+  "train": {
+    "zero": {
+      "episodes": 116,
+      "mean_episode_modeled_cost": 2018.314526413793,
+      "min_episode_modeled_cost": 1452.1436899999997,
+      "max_episode_modeled_cost": 2610.3991
+    },
+    "previous_day": {
+      "episodes": 116,
+      "mean_episode_modeled_cost": 1154.9779910905172,
+      "min_episode_modeled_cost": 843.1868445,
+      "max_episode_modeled_cost": 1524.8604745
+    },
+    "fixed_quantile": {
+      "episodes": 116,
+      "mean_episode_modeled_cost": 980.7528306982758,
+      "min_episode_modeled_cost": 784.989487,
+      "max_episode_modeled_cost": 1331.6915149999998
+    },
+    "rolling_quantile": {
+      "episodes": 116,
+      "mean_episode_modeled_cost": 972.5475007155172,
+      "min_episode_modeled_cost": 727.6256804999999,
+      "max_episode_modeled_cost": 1311.583203
+    },
+    "perfect_information": {
+      "episodes": 116,
+      "mean_episode_modeled_cost": 504.57863160344823,
+      "min_episode_modeled_cost": 363.0359224999999,
+      "max_episode_modeled_cost": 652.599775
+    }
+  },
+  "test": {
+    "zero": {
+      "episodes": 35,
+      "mean_episode_modeled_cost": 2432.3559464571426,
+      "min_episode_modeled_cost": 365.502916,
+      "max_episode_modeled_cost": 4831.748251999999
+    },
+    "previous_day": {
+      "episodes": 35,
+      "mean_episode_modeled_cost": 1293.0767134285713,
+      "min_episode_modeled_cost": 285.496541,
+      "max_episode_modeled_cost": 2394.1370875000002
+    },
+    "fixed_quantile": {
+      "episodes": 35,
+      "mean_episode_modeled_cost": 1304.4481380571428,
+      "min_episode_modeled_cost": 514.2208139999999,
+      "max_episode_modeled_cost": 2576.3113289999997
+    },
+    "rolling_quantile": {
+      "episodes": 35,
+      "mean_episode_modeled_cost": 1240.3135452,
+      "min_episode_modeled_cost": 408.18815750000005,
+      "max_episode_modeled_cost": 2230.9706635
+    },
+    "perfect_information": {
+      "episodes": 35,
+      "mean_episode_modeled_cost": 608.0889866142857,
+      "min_episode_modeled_cost": 91.375729,
+      "max_episode_modeled_cost": 1207.9370629999999
+    }
+  }
+}
