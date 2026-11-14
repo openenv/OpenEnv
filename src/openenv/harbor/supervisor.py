@@ -185,7 +185,9 @@ class SandboxSupervisor:
                 await asyncio.wait({box.start_task}, timeout=_START_GRACE_S)
                 if not box.start_task.done():
                     box.start_task.cancel()
-                elif not box.start_task.cancelled():
+                    # The backend can finish creating the sandbox while the start unwinds.
+                    await asyncio.wait({box.start_task})
+                if not box.start_task.cancelled():
                     # A start failure is the trial's to report; retrieved so asyncio stays quiet.
                     box.start_task.exception()
             await real_stop(delete=delete)

@@ -174,6 +174,39 @@ async def test_cancel_during_start_stops_only_after_the_start_finishes():
     await asyncio.wait_for(nxt.start(force_build=False), 1)
 
 
+async def test_stop_deletes_a_sandbox_created_while_its_start_is_cancelled(monkeypatch):
+    # The backend finishes creating the sandbox while its start unwinds.
+    monkeypatch.setattr(supervisor_mod, "_START_GRACE_S", 0)
+    release = asyncio.Event()
+
+    class SlowCancelEnv(FakeEnv):
+        async def start(self, force_build: bool) -> None:
+            self.log.append((self.name, "start"))
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                await release.wait()
+                self.log.append((self.name, "created"))
+                raise
+
+    log: list = []
+    sup = supervisor_mod.SandboxSupervisor()
+    env = SlowCancelEnv(log)
+    sup.adopt(make_trial(env))
+    starting = asyncio.ensure_future(env.start(force_build=False))
+    await asyncio.sleep(0.01)
+    stopping = asyncio.ensure_future(env.stop(delete=True))
+    await asyncio.sleep(0.01)
+    release.set()
+    await asyncio.wait_for(stopping, 1)
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+
+    # The stop must come after the creation, or the sandbox outlives cleanup.
+    assert log == [("env", "start"), ("env", "created"), ("env", "stop", True)]
+    assert sup.owned == 0
+
+
 async def test_cancel_while_waiting_for_a_permit_owns_nothing():
     log: list = []
     sup = SandboxSupervisor(max_starts=1)
