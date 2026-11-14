@@ -340,6 +340,86 @@ async def test_signal_a_loop_delivers_by_itself_is_not_delivered_again():
         opaque.close()
 
 
+async def test_signal_stops_a_sandbox_started_on_a_worker_thread():
+    # The UI runs each rollout under `asyncio.run` in a worker thread. A start there cannot install
+    # handlers, so the server installs them on the main thread, and cleanup reaches the worker loop.
+    log: list = []
+    seen: list[int] = []
+    started = threading.Event()
+    stop_threads: list[str] = []
+
+    class WorkerEnv(FakeEnv):
+        async def stop(self, delete: bool) -> None:
+            stop_threads.append(threading.current_thread().name)
+            await super().stop(delete)
+
+    def previous(sig, frame):
+        log.append(("previous", "called"))
+        seen.append(sig)
+
+    signal.signal(signal.SIGTERM, previous)
+    sup = SandboxSupervisor()
+    env = WorkerEnv(log)
+    sup.adopt(make_trial(env))
+
+    async def rollout() -> None:
+        await env.start(force_build=False)
+        started.set()
+        while not stops(log):  # the rollout is still running when the signal arrives
+            await asyncio.sleep(0.01)
+
+    worker = threading.Thread(target=asyncio.run, args=(rollout(),), name="rollout")
+    worker.start()
+    await asyncio.to_thread(started.wait, 2)
+    # The worker could not install them.
+    assert signal.getsignal(signal.SIGTERM) is previous
+
+    assert sup.install_signal_handlers()
+    signal.raise_signal(signal.SIGTERM)
+    await _until(lambda: seen)
+    worker.join(2)
+
+    assert log[-2:] == [("env", "stop", True), ("previous", "called")]
+    assert stop_threads == ["rollout"]
+
+
+def test_signal_cleanup_outlasts_the_wait_for_an_in_flight_start():
+    # `stop()` waits up to `_START_GRACE_S` for a start still in flight before deleting anything; a
+    # shorter signal budget would chain the fatal signal with the sandbox still being created.
+    assert supervisor_mod._CLEANUP_TIMEOUT_S > supervisor_mod._START_GRACE_S
+
+
+async def test_signal_during_start_deletes_before_reaching_the_previous_handler(
+    monkeypatch,
+):
+    monkeypatch.setattr(supervisor_mod, "_START_GRACE_S", 2.0)
+    monkeypatch.setattr(supervisor_mod, "_CLEANUP_TIMEOUT_S", 2.5)
+    log: list = []
+    seen: list[int] = []
+
+    def previous(sig, frame):
+        log.append(("previous", "called"))
+        seen.append(sig)
+
+    signal.signal(signal.SIGTERM, previous)
+    sup = SandboxSupervisor()
+    env = FakeEnv(log, start_s=0.3)
+    sup.adopt(make_trial(env))
+    starting = asyncio.ensure_future(env.start(force_build=False))
+    await _until(lambda: ("env", "start") in log)
+
+    signal.raise_signal(signal.SIGTERM)
+    await _until(lambda: seen)
+    await starting
+
+    assert log == [
+        ("env", "start"),
+        ("env", "started"),
+        ("env", "stop", True),
+        ("previous", "called"),
+    ]
+
+
 def test_max_starts_comes_from_the_environment(monkeypatch):
     monkeypatch.setattr(supervisor_mod, "_supervisor", None)
     monkeypatch.setenv("OPENENV_HARBOR_MAX_SANDBOX_STARTS", "lots")

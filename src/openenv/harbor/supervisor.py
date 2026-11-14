@@ -26,13 +26,15 @@ import signal
 import threading
 from typing import Any
 
-# How long a cleanup triggered by a signal may take before the signal is passed on anyway. A wedged
-# backend must not turn Ctrl-C into a hang; a second signal skips the wait entirely.
-_CLEANUP_TIMEOUT_S = 60.0
-
 # How long `stop()` waits for a start that is still in flight. Stopping first is what leaks, so it
 # waits; but a start that never returns must not hold teardown forever.
 _START_GRACE_S = 120.0
+
+# How long a cleanup triggered by a signal may take before the signal is passed on anyway. A wedged
+# backend must not turn Ctrl-C into a hang; a second signal skips the wait entirely. It covers a stop
+# that first waits out an in-flight start, or a signal during creation would end the process with
+# the start still running and nothing deleted.
+_CLEANUP_TIMEOUT_S = _START_GRACE_S + 60.0
 
 _SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
@@ -194,7 +196,7 @@ class SandboxSupervisor:
         env._openenv_sandbox = box
         return trial
 
-    async def aclose(self, timeout: float = _CLEANUP_TIMEOUT_S) -> None:
+    async def aclose(self, timeout: float | None = None) -> None:
         """Stop every sandbox this supervisor owns. Safe to call more than once, and concurrently.
 
         From the first call on, new starts are refused, so a rollout still queued for a creation
@@ -202,7 +204,7 @@ class SandboxSupervisor:
 
         Each stop runs on the loop that started the sandbox, since backends hold loop-bound handles
         (docker's are asyncio subprocesses). A sandbox whose loop has already closed cannot be
-        reached from here and is left alone.
+        reached from here and is left alone. `timeout` defaults to `_CLEANUP_TIMEOUT_S`.
         """
         with self._lock:
             # Same lock as the registration in `start`, so every sandbox is either in this snapshot
@@ -221,7 +223,9 @@ class SandboxSupervisor:
                 pending.append(asyncio.wrap_future(future))
         if not pending:
             return
-        done, _ = await asyncio.wait(pending, timeout=timeout)
+        done, _ = await asyncio.wait(
+            pending, timeout=_CLEANUP_TIMEOUT_S if timeout is None else timeout
+        )
         for task in done:
             task.exception()  # stop failures belong to the trial; retrieved so asyncio stays quiet
 
@@ -230,8 +234,10 @@ class SandboxSupervisor:
 
         Called automatically when the first sandbox starts. Only the main thread can install signal
         handlers, so this returns `False` elsewhere; a process that starts every sandbox from worker
-        threads should call it once from the main thread. Installing late is deliberate: a server
-        such as uvicorn replaces handlers when it starts serving, and this one has to wrap its.
+        threads should call it once from the main thread. The Harbor server does, at app startup
+        (`serving.build_app`), because the UI runs each rollout in a worker thread. Installing late
+        is deliberate: a server such as uvicorn replaces handlers when it starts serving, and this
+        one has to wrap its.
 
         A handler registered with `loop.add_signal_handler` (uvicorn before 0.29) is delivered by
         the loop through the wakeup fd, whatever `signal.signal` holds, so wrapping that would let

@@ -121,6 +121,30 @@ def test_harbor_app_serves_its_own_state_class(monkeypatch):
     assert state.json()["llm_url"] == UNUSED_LLM
 
 
+def test_harbor_app_installs_sandbox_signal_handlers_at_startup(monkeypatch):
+    """UI rollouts start sandboxes on worker threads, so the app installs the handlers itself."""
+    from fastapi.testclient import TestClient
+    from openenv.harbor.environment import HarborEnvironment
+
+    monkeypatch.setenv("ENABLE_WEB_INTERFACE", "false")
+    monkeypatch.setattr(HarborService, "_instance", None)
+    for name in ("_datasets", "_llm_url", "_model", "_llm"):
+        monkeypatch.setattr(HarborEnvironment, name, getattr(HarborEnvironment, name))
+    calls: list[str] = []
+
+    class Spy:
+        def install_signal_handlers(self) -> bool:
+            calls.append("install")
+            return True
+
+    monkeypatch.setattr(serving, "get_supervisor", lambda: Spy())
+
+    app = serving.build_app(datasets=[], llm_url=UNUSED_LLM)
+    assert calls == []
+    with TestClient(app):
+        assert calls == ["install"]
+
+
 def test_a_failed_forwarder_does_not_leave_the_capture_server_running(monkeypatch):
     """A half-started service poisons every later attempt.
 
