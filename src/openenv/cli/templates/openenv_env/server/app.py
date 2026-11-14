@@ -10,7 +10,7 @@ Endpoints:
     - POST /reset: Reset the environment
     - POST /step: Execute an action
     - GET /state: Get current environment state
-    - GET /schema: Get action/observation schemas
+    - GET /schema: Get action/observation/state/reset schemas
     - WS /ws: WebSocket endpoint for persistent sessions
 
 Usage:

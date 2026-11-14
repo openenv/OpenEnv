@@ -625,6 +625,135 @@ class TestCollectRunner:
         assert payloads[3]["episode_id"] == "ep-000003"
         assert payloads[3]["task"] == "d"
 
+    @pytest.mark.parametrize(
+        "tasks", [["a", "b", "c", "d"], ("a", "b", "c", "d"), None]
+    )
+    def test_reusing_runner_preserves_task_to_episode_alignment(self, tmp_path, tasks):
+        factory = _FakeFactory()
+        serializer = RolloutSerializer(tmp_path)
+        runner = CollectRunner(
+            session_factory=factory,
+            harness_adapter=_FakeAdapter(),
+            serializer=serializer,
+            tasks=tasks,
+        )
+        runner.run(model_step=_noop_model_step, num_episodes=2)
+
+        result = runner.run(model_step=_noop_model_step, num_episodes=4)
+
+        expected = list(tasks) if tasks is not None else [None] * 4
+        assert result.num_collected == 2
+        assert result.num_skipped == 2
+        assert result.num_failed == 0
+        assert [call["task"] for call in factory.created] == expected
+        payloads = [
+            json.loads(line)
+            for line in serializer.results_path.read_text().splitlines()
+        ]
+        assert [(row["episode_id"], row["task"]) for row in payloads] == [
+            (f"ep-{index:06d}", task) for index, task in enumerate(expected)
+        ]
+
+    @pytest.mark.parametrize("resume", [True, False])
+    def test_reusing_one_shot_tasks_refuses_before_accessing_results(
+        self, tmp_path, resume
+    ):
+        consumed = []
+
+        def tasks():
+            for task in ["a", "b", "c", "d"]:
+                consumed.append(task)
+                yield task
+
+        factory = _FakeFactory()
+        serializer = RolloutSerializer(tmp_path)
+        runner = CollectRunner(
+            session_factory=factory,
+            harness_adapter=_FakeAdapter(),
+            serializer=serializer,
+            tasks=tasks(),
+        )
+        runner.run(model_step=_noop_model_step, num_episodes=2)
+        assert consumed == ["a", "b"]
+        original = serializer.results_path.read_bytes()
+
+        with (
+            patch.object(serializer, "collected_episode_ids") as read,
+            patch.object(serializer, "write_episode") as write,
+            patch.object(runner, "_reset_results_file") as reset,
+            pytest.raises(ValueError, match="one-shot.*fresh iterator"),
+        ):
+            runner.run(model_step=_noop_model_step, num_episodes=4, resume=resume)
+
+        read.assert_not_called()
+        write.assert_not_called()
+        reset.assert_not_called()
+        assert consumed == ["a", "b"]
+        assert len(factory.created) == 2
+        assert serializer.results_path.read_bytes() == original
+
+    @pytest.mark.parametrize("restart", ["new_prefix", "no_resume"])
+    def test_reusable_tasks_restart_for_a_new_collection(self, tmp_path, restart):
+        factory = _FakeFactory()
+        serializer = RolloutSerializer(tmp_path)
+        runner = CollectRunner(
+            session_factory=factory,
+            harness_adapter=_FakeAdapter(),
+            serializer=serializer,
+            tasks=["a", "b", "c", "d"],
+        )
+        runner.run(model_step=_noop_model_step, num_episodes=2)
+
+        if restart == "no_resume":
+            with pytest.warns(RuntimeWarning, match="moved existing results file"):
+                runner.run(model_step=_noop_model_step, num_episodes=2, resume=False)
+        else:
+            runner.run(
+                model_step=_noop_model_step, num_episodes=2, episode_id_prefix="new"
+            )
+
+        assert [call["task"] for call in factory.created] == ["a", "b", "a", "b"]
+        payloads = [
+            json.loads(line)
+            for line in serializer.results_path.read_text().splitlines()
+        ]
+        assert [row["task"] for row in payloads[-2:]] == ["a", "b"]
+
+    def test_reusing_runner_retries_failed_episode_with_original_task(self, tmp_path):
+        class FailOnce(_FakeAdapter):
+            failed = False
+
+            def run_white_box(self, model_step, session, limits=None):
+                if session.task == "b" and not self.failed:
+                    self.failed = True
+                    raise RuntimeError("transient rollout failure")
+                return super().run_white_box(model_step, session, limits)
+
+        factory = _FakeFactory()
+        serializer = RolloutSerializer(tmp_path)
+        runner = CollectRunner(
+            session_factory=factory,
+            harness_adapter=FailOnce(),
+            serializer=serializer,
+            tasks=["a", "b", "c"],
+        )
+        first = runner.run(model_step=_noop_model_step, num_episodes=3)
+        assert first.num_failed == 1
+        assert first.num_collected == 2
+
+        second = runner.run(model_step=_noop_model_step, num_episodes=3)
+
+        assert second.num_skipped == 2
+        assert second.num_collected == 1
+        assert second.num_failed == 0
+        assert [call["task"] for call in factory.created] == ["a", "b", "c", "b"]
+        payloads = [
+            json.loads(line)
+            for line in serializer.results_path.read_text().splitlines()
+        ]
+        assert payloads[-1]["episode_id"] == "ep-000001"
+        assert payloads[-1]["task"] == "b"
+
     def test_collect_result_reports_success_rate(self, tmp_path: Path):
         factory = _FakeFactory(reward_map={0: 1.0, 1: 0.0, 2: 1.0, 3: 1.0})
         runner = CollectRunner(

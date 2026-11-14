@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -563,11 +564,32 @@ class TestGetProblemPayload:
         assert "problem_id" in payload
         assert "reference_solution" not in payload
 
-    def test_answer_mode_includes_reference_solution(self):
+    def test_answer_mode_hides_reference_solution(self):
         env = _make_env_with_problem(ANSWER_PROBLEM)
-        env.reset()
+        obs = env.reset()
+        assert obs.reference_solution == ""
         payload = env.get_problem_payload()
-        assert payload["reference_solution"] == r"\boxed{4}"
+        assert "reference_solution" not in payload
+        assert r"\boxed{4}" not in str(payload)
+
+    def test_auto_detected_answer_mode_hides_reference_solution(self):
+        # A row without a rubric is routed to answer mode automatically.
+        env = _make_env_with_problem({"problem": "What is 17*23?", "answer": "391"})
+        obs = env.reset()
+        assert obs.problem_type == "answer"
+        assert obs.reference_solution == ""
+        assert "391" not in str(env.get_problem_payload())
+
+    @pytest.mark.asyncio
+    async def test_answer_mode_correct_answer_still_scores(self):
+        env = _make_env_with_problem(ANSWER_PROBLEM)
+        try:
+            env.reset()
+            payload = await env.submit_proof_payload(r"The answer is \boxed{4}.")
+            assert payload["reward"] == pytest.approx(1.0)
+            assert payload["is_correct"] is True
+        finally:
+            await env._verifier_service.stop()
 
     def test_grading_guidelines_payload_without_reset(self):
         env = _make_env()
@@ -1136,6 +1158,43 @@ class TestVerifyAnswerWorker:
         assert response.status in {"correct", "wrong"}
 
 
+class TestVerifierImports:
+    def test_worker_import_does_not_load_environment_dependencies(self):
+        # A fresh interpreter follows the same import path as a spawned worker.
+        script = (
+            "import sys; "
+            "import qed_math_env.server.math_verify_service; "
+            "assert 'qed_math_env.client' not in sys.modules; "
+            "assert 'qed_math_env.models' not in sys.modules; "
+            "assert 'qed_math_env.server.qed_math_environment' not in sys.modules; "
+            "assert 'datasets' not in sys.modules; "
+            "assert 'fastmcp' not in sys.modules; "
+            "assert 'openai' not in sys.modules"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_public_exports_preserve_identity(self):
+        import qed_math_env
+        import qed_math_env.server as server
+        from qed_math_env import models
+        from qed_math_env.client import QEDMathEnv
+
+        for name in qed_math_env.__all__:
+            expected = QEDMathEnv if name == "QEDMathEnv" else getattr(models, name)
+            assert getattr(qed_math_env, name) is expected
+        assert server.QEDMathEnvironment is QEDMathEnvironment
+        for module in (qed_math_env, server):
+            with pytest.raises(AttributeError, match="no attribute"):
+                getattr(module, "missing_export")
+
+
 class TestMathVerifierService:
     """Tests for the MathVerifierService async interface."""
 
@@ -1235,6 +1294,44 @@ class TestMathVerifierService:
             assert response.request_id.startswith("req-")
         finally:
             await service.stop()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cancel_request", [False, True])
+    async def test_busy_worker_deadline_and_cancellation(self, cancel_request):
+        import asyncio
+        import time
+
+        service = MathVerifierService(max_workers=1, max_retries=0)
+        try:
+            warmup = await service.verify_answer(r"\boxed{4}", "4")
+            assert warmup.status == "correct"
+            # Keep the real worker busy after startup; queueing still counts
+            # against the request deadline, and cancellation releases admission.
+            busy = asyncio.get_running_loop().run_in_executor(
+                service._executor, time.sleep, 1
+            )
+            service.request_timeout_seconds = 0.05
+            task = asyncio.create_task(service.verify_answer(r"\boxed{4}", "4"))
+            if cancel_request:
+                service.request_timeout_seconds = 5
+                await asyncio.sleep(0.05)
+                assert not task.done()
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                response = await task
+                assert response.status == "timeout"
+                assert response.error_type == "ClientTimeout"
+                assert response.retry_count == 0
+            assert service._inflight_requests == 0
+            await busy
+            service.request_timeout_seconds = 5
+            recovered = await service.verify_answer(r"\boxed{4}", "4")
+            assert recovered.status == "correct"
+        finally:
+            await service.stop()
+        assert service._executor is None
 
     @pytest.mark.asyncio
     async def test_concurrent_requests(self):

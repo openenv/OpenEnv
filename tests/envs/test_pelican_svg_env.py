@@ -10,8 +10,10 @@ as a judge that raises and must not end up inflating the reward.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import math
 import pathlib
+import sys
 import threading
 
 import pytest
@@ -28,7 +30,10 @@ from envs.pelican_svg_env.server.geometry import (
     parse_transform,
     significant_shapes,
 )
-from envs.pelican_svg_env.server.pelican_svg_environment import PelicanSvgEnvironment
+from envs.pelican_svg_env.server.pelican_svg_environment import (
+    _judge_from_env,
+    PelicanSvgEnvironment,
+)
 from envs.pelican_svg_env.server.render import image_stats, render_png, RenderError
 from envs.pelican_svg_env.server.rubric import build_rubric
 from envs.pelican_svg_env.server.scoring import (
@@ -50,7 +55,11 @@ from envs.pelican_svg_env.server.tasks import (
     sample_task,
     task_from_ids,
 )
-from envs.pelican_svg_env.server.vision_judge import VisionJudge
+from envs.pelican_svg_env.server.vision_judge import (
+    DEFAULT_JUDGE_MODEL,
+    HFVisionClient,
+    VisionJudge,
+)
 
 FIXTURES = pathlib.Path(__file__).resolve().parents[2] / "envs/pelican_svg_env/fixtures"
 
@@ -890,3 +899,157 @@ class TestEnvironment:
         )
         assert "embedded_raster" in observation.violations
         assert observation.reward == 0.0
+
+
+class TestJudgeConfiguration:
+    """Which judge `_judge_from_env` builds, and what it is allowed to send."""
+
+    @staticmethod
+    def _clear(monkeypatch):
+        for name in (
+            "PELICAN_SVG_DISABLE_JUDGE",
+            "PELICAN_SVG_JUDGE_MODEL",
+            "PELICAN_SVG_JUDGE_BASE_URL",
+            "PELICAN_SVG_JUDGE_API_KEY",
+            "HF_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setattr(
+            "envs.pelican_svg_env.server.pelican_svg_environment.get_token",
+            lambda: None,
+        )
+
+    def test_no_token_and_no_endpoint_runs_offline(self, monkeypatch):
+        self._clear(monkeypatch)
+        assert _judge_from_env() is None
+
+    def test_endpoint_enables_the_judge_without_a_token(self, monkeypatch):
+        self._clear(monkeypatch)
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_BASE_URL", "http://localhost:8000/v1")
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
+
+        judge = _judge_from_env()
+
+        assert judge is not None
+        assert judge._client.base_url == "http://localhost:8000/v1"
+        assert judge._client.model == "Qwen/Qwen2.5-VL-7B-Instruct"
+
+    def test_endpoint_without_a_model_is_an_error(self, monkeypatch):
+        self._clear(monkeypatch)
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_BASE_URL", "http://localhost:8000/v1")
+
+        with pytest.raises(ValueError, match="PELICAN_SVG_JUDGE_MODEL"):
+            _judge_from_env()
+
+    def test_disable_wins_over_an_endpoint(self, monkeypatch):
+        self._clear(monkeypatch)
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_BASE_URL", "http://localhost:8000/v1")
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
+        monkeypatch.setenv("PELICAN_SVG_DISABLE_JUDGE", "1")
+
+        assert _judge_from_env() is None
+
+    def test_hosted_judge_is_unchanged(self, monkeypatch):
+        self._clear(monkeypatch)
+        monkeypatch.setenv("HF_TOKEN", "hf_token_value")
+
+        judge = _judge_from_env()
+
+        assert judge is not None
+        assert judge._client.base_url is None
+        assert judge._client.model == DEFAULT_JUDGE_MODEL
+
+    def test_hugging_face_token_is_never_sent_to_an_endpoint(self, monkeypatch):
+        self._clear(monkeypatch)
+        monkeypatch.setenv("HF_TOKEN", "hf_token_value")
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_BASE_URL", "http://localhost:8000/v1")
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
+
+        client = _judge_from_env()._client
+
+        assert "hf_token_value" not in str(vars(client).values())
+        assert client._api_key == "EMPTY"
+
+    def test_server_refuses_to_start_with_an_endpoint_but_no_model(self, monkeypatch):
+        """Otherwise every session fails with an opaque factory error."""
+        self._clear(monkeypatch)
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_BASE_URL", "http://localhost:8000/v1")
+        monkeypatch.delitem(
+            sys.modules, "envs.pelican_svg_env.server.app", raising=False
+        )
+
+        with pytest.raises(ValueError, match="PELICAN_SVG_JUDGE_MODEL"):
+            importlib.import_module("envs.pelican_svg_env.server.app")
+
+    def test_server_starts_normally_with_a_hosted_judge(self, monkeypatch):
+        """The startup check must not get in the way of the default setup."""
+        self._clear(monkeypatch)
+        monkeypatch.setenv("HF_TOKEN", "hf_token_value")
+        monkeypatch.delitem(
+            sys.modules, "envs.pelican_svg_env.server.app", raising=False
+        )
+
+        module = importlib.import_module("envs.pelican_svg_env.server.app")
+
+        assert module.app is not None
+
+    def test_endpoint_api_key_is_used_when_given(self, monkeypatch):
+        self._clear(monkeypatch)
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_BASE_URL", "http://gateway/v1")
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_MODEL", "vision-model")
+        monkeypatch.setenv("PELICAN_SVG_JUDGE_API_KEY", "sk-endpoint")
+
+        assert _judge_from_env()._client._api_key == "sk-endpoint"
+
+
+class TestVisionClientRequest:
+    """What `HFVisionClient` hands to the inference client."""
+
+    @staticmethod
+    def _capture(monkeypatch):
+        seen: dict[str, object] = {}
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                seen["init"] = kwargs
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def chat_completion(self, **kwargs):
+                seen["call"] = kwargs
+                message = type("M", (), {"content": "a pelican"})
+                choice = type("C", (), {"message": message})
+                return type("R", (), {"choices": [choice]})
+
+        monkeypatch.setattr(
+            "huggingface_hub.AsyncInferenceClient", FakeClient, raising=False
+        )
+        return seen
+
+    def test_hosted_client_gets_no_base_url(self, monkeypatch):
+        seen = self._capture(monkeypatch)
+        client = HFVisionClient(model="model-id", api_key="hf_token_value")
+
+        asyncio.run(client.complete_with_image("what is this?", b"png"))
+
+        assert "base_url" not in seen["init"]
+        assert seen["init"]["api_key"] == "hf_token_value"
+        assert seen["call"]["model"] == "model-id"
+
+    def test_endpoint_client_routes_to_the_base_url(self, monkeypatch):
+        seen = self._capture(monkeypatch)
+        client = HFVisionClient(
+            model="served-model", base_url="http://localhost:8000/v1"
+        )
+
+        asyncio.run(client.complete_with_image("what is this?", b"png"))
+
+        assert seen["init"]["base_url"] == "http://localhost:8000/v1"
+        # The endpoint reads the model from the body, not from the URL.
+        assert seen["call"]["model"] == "served-model"
+        assert seen["call"]["temperature"] == 0.0

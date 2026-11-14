@@ -251,7 +251,9 @@ def compute_reward(
                 pred_num, truth_num, pred_str, truth_str, tolerance, max_absolute_diff
             ):
                 # Fallback: try without % conversion (for percentage points like "4.5%" vs "4.5")
-                pred_num_no_pct, _ = normalize_answer(pred_val, convert_percent=False)
+                pred_num_no_pct, _ = normalize_answer(
+                    pred_val_cleaned, convert_percent=False
+                )
                 if not compare_single_values(
                     pred_num_no_pct,
                     truth_num,

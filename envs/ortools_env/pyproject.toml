@@ -1,0 +1,40 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-ortools-env"
+version = "0.1.0"
+description = "OR-Tools Environment for OpenEnv - design solutions and algorithms for hard operations research problems"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.3.1",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    "requests>=2.31.0",
+    # Reference solvers and the RCPSP parser.
+    "ortools>=9.12",
+    # Available to the agent's code in the sandbox.
+    "numpy>=1.26",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[project.scripts]
+server = "ortools_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["ortools_env", "ortools_env.server", "ortools_env.problems"]
+package-dir = { "ortools_env" = ".", "ortools_env.server" = "server", "ortools_env.problems" = "problems" }

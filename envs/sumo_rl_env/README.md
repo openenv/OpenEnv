@@ -15,6 +15,8 @@ tags:
 
 Integration of traffic signal control with the OpenEnv framework via SUMO (Simulation of Urban MObility) and SUMO-RL.
 
+Try it on the [`openenv/sumo_rl_env`](https://huggingface.co/spaces/openenv/sumo_rl_env) Space, or connect a client to `https://openenv-sumo-rl-env.hf.space`.
+
 ## Overview
 
 This environment enables reinforcement learning for **traffic signal control** using SUMO, a microscopic traffic simulation package. Train RL agents to optimize traffic light timing and minimize vehicle delays.

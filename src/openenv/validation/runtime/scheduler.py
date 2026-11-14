@@ -24,8 +24,7 @@ def order_graders(graders: list) -> list:
 
 
 def execute_graders(graders, subject, *, provider_capabilities=frozenset(), prior=()):
-    """Run independent checks despite failures, and name unmet dependencies in SKIPs."""
-    results = []
+    """Yield completed checks despite failures, and name unmet dependencies in SKIPs."""
     outcomes = {result.check_id: result for result in prior}
     for grader in order_graders(graders):
         blocked = [
@@ -66,5 +65,4 @@ def execute_graders(graders, subject, *, provider_capabilities=frozenset(), prio
                     duration_s=time.monotonic() - started,
                 )
         outcomes[grader.check_id] = result
-        results.append(result)
-    return results
+        yield result

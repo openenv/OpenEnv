@@ -1,0 +1,18 @@
+{
+  "profile": "harbor-semantic-v1",
+  "reward_key": "reward",
+  "reward": {
+    "range": [0, 1],
+    "oracle_tolerance": 0,
+    "floor_margin": 0.1
+  },
+  "resources": {
+    "cpu": 1,
+    "memory_mb": 512,
+    "disk_mb": 1024,
+    "episode_timeout_s": 120
+  },
+  "types": {"tags": ["swe"]},
+  "requires_credentials": false,
+  "canaries": "validation/canaries"
+}

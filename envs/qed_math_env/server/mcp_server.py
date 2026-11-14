@@ -9,8 +9,8 @@ MCP tool definitions for the QED Math Environment.
 
 Tools are registered on the environment's FastMCP instance inside
 QEDMathEnvironment.__init__:
-- get_problem(): Return current problem and metadata; reference solution is
-    only included for answer-mode evaluation.
+- get_problem(): Return current problem and metadata. The reference solution
+    is not included; it stays server-side and is only used for grading.
 - submit_proof(proof): Grade proof via MathProofRubric and return score/reward.
 - get_grading_guidelines(): Return the rubric for the current problem.
 

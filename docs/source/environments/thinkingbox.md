@@ -42,10 +42,10 @@ async with ThinkingBoxEnv(base_url="http://127.0.0.1:8000") as env:
 
 ## Examples
 
-- [Public client example](https://github.com/huggingface/OpenEnv/blob/main/examples/thinkingbox/example_usage.py):
+- [Public client example](https://github.com/openenv/OpenEnv/blob/main/examples/thinkingbox/example_usage.py):
   reset a server-visible task and inspect its public task and tool observations
   without loading benchmark implementation data on the client.
-- [Evaluation wrapper](https://github.com/huggingface/OpenEnv/blob/main/examples/thinkingbox/eval_testlist.py):
+- [Evaluation wrapper](https://github.com/openenv/OpenEnv/blob/main/examples/thinkingbox/eval_testlist.py):
   invoke the packaged `thinkingbox-eval` CLI for native model orchestration,
   repetition IDs, privacy-reviewed canonical JSONL, and strict aggregation.
 

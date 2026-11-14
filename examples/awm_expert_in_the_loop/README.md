@@ -1,7 +1,7 @@
 # AWM expert-in-the-loop
 
 This example ports the dynamic expert-in-the-loop idea from
-[huggingface/OpenEnv#428](https://github.com/huggingface/OpenEnv/pull/428) onto
+[openenv/OpenEnv#428](https://github.com/openenv/OpenEnv/pull/428) onto
 the current, hardened `agent_world_model_env`.
 
 The expert is a client-side virtual tool named `ask_expert`. It is never

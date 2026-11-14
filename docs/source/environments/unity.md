@@ -12,8 +12,8 @@ LICENSE file in the root directory of this source tree.
 OpenEnv wrapper for [Unity ML-Agents](https://github.com/Unity-Technologies/ml-agents) environments.
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/huggingface/OpenEnv/main/envs/unity_env/assets/unity_pushblock.gif" alt="PushBlock" width="400"/>
-  <img src="https://raw.githubusercontent.com/huggingface/OpenEnv/main/envs/unity_env/assets/unity_3dball.gif" alt="3DBall" width="400"/>
+  <img src="https://raw.githubusercontent.com/openenv/OpenEnv/main/envs/unity_env/assets/unity_pushblock.gif" alt="PushBlock" width="400"/>
+  <img src="https://raw.githubusercontent.com/openenv/OpenEnv/main/envs/unity_env/assets/unity_3dball.gif" alt="3DBall" width="400"/>
 </div>
 
 ## Supported Environments
@@ -86,7 +86,7 @@ Docker mode doesn't work on Apple Silicon: the Unity binaries are x86_64 only an
 
 ### Example script
 
-[`examples/unity_simple.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/unity_simple.py) runs episodes in any of the three modes:
+[`examples/unity_simple.py`](https://github.com/openenv/OpenEnv/blob/main/examples/unity_simple.py) runs episodes in any of the three modes:
 
 ```bash
 python examples/unity_simple.py --direct --env 3DBall --episodes 5

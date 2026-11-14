@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "profile": "harbor-coding-audit-v1",
+  "target": {
+    "model_id": "Qwen/Qwen3.8-27B",
+    "revision": "37561816e66b5b9153b1b64c10968c18c1e6f4a0",
+    "provider": "deepinfra",
+    "supports_seed": false,
+    "supports_tools": true,
+    "temperature": 0.7,
+    "max_steps": 16,
+    "max_tokens": 2048,
+    "max_total_tokens": 16384
+  },
+  "execution": {
+    "agent_image": "docker.io/library/python@sha256:48d884813cf44e927cf64c5529dd630dd3b18338c6dc727991eef9b71e934a20",
+    "verifier_image": "docker.io/library/python@sha256:48d884813cf44e927cf64c5529dd630dd3b18338c6dc727991eef9b71e934a20",
+    "flavor": "cpu-basic",
+    "timeout_seconds": 120,
+    "workdir": "/app",
+    "submission_paths": [
+      "/app/answer.txt"
+    ],
+    "private_paths": [
+      "/tests",
+      "/solution"
+    ],
+    "verifier_command": [
+      "/bin/bash",
+      "/tests/test.sh"
+    ],
+    "reward_path": "/logs/verifier/reward.txt",
+    "reward_key": "reward"
+  },
+  "validation": {
+    "reference_repeats": 3,
+    "target_attempts": 8,
+    "reward_min": 0,
+    "reward_max": 1,
+    "oracle_tolerance": 0,
+    "floor_margin": 0.1,
+    "wrong_answer_max": 0,
+    "required_negative_cases": [
+      "wrong-value",
+      "empty-answer",
+      "near-miss"
+    ]
+  },
+  "generation": {
+    "candidate_count": 2
+  },
+  "negative_cases": [
+    {
+      "id": "wrong-value",
+      "script": "mkdir -p /app; printf '0\\n' > /app/answer.txt"
+    },
+    {
+      "id": "empty-answer",
+      "script": "mkdir -p /app; : > /app/answer.txt"
+    },
+    {
+      "id": "near-miss",
+      "script": "mkdir -p /app; printf '41\\n' > /app/answer.txt"
+    }
+  ],
+  "seeds": [
+    1001,
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007,
+    1008
+  ],
+  "cloud": {
+    "results_repo": "example-org/private-audit-results",
+    "flavor": "cpu-basic",
+    "timeout_seconds": 1800,
+    "max_sandboxes": 64,
+    "max_inference_calls": 160
+  }
+}

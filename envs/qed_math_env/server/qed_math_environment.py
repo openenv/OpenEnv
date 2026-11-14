@@ -520,8 +520,8 @@ class QEDMathEnvironment(MCPEnvironment):
     Math proof environment with MCP tools and rubric-based grading.
 
     This environment provides MCP tools for:
-    - get_problem(): Return current problem statement, reference solution,
-      and grading guidelines.
+    - get_problem(): Return current problem statement and grading guidelines.
+      The reference solution stays server-side and is only used for grading.
     - submit_proof(proof): Grade a proof via MathProofRubric and return
       score (0-7) and normalized reward.
     - get_grading_guidelines(): Return the rubric for the current problem.
@@ -728,7 +728,7 @@ class QEDMathEnvironment(MCPEnvironment):
         **kwargs: Any,
     ) -> Any:
         """Async step override — fixes the run_async_safely event-loop deadlock
-        described in https://github.com/huggingface/OpenEnv/issues/455.
+        described in https://github.com/openenv/OpenEnv/issues/455.
 
         The WebSocket server detects this override and calls it directly on the
         outer event loop instead of dispatching step() into a thread executor,
@@ -829,8 +829,9 @@ class QEDMathEnvironment(MCPEnvironment):
             ProblemObservation with problem details.
 
         Loads a problem from the dataset and returns a ProblemObservation
-        with problem, reference_solution, grading_guidelines, problem_id,
-        and dataset_source.
+        with problem, grading_guidelines, problem_id, and dataset_source.
+        reference_solution is left empty: the reference stays server-side
+        and is only used for grading.
         """
         selected_problem_id = kwargs.pop("problem_id", None)
         self._refresh_gold_cache_if_needed()
@@ -887,11 +888,9 @@ class QEDMathEnvironment(MCPEnvironment):
 
         return ProblemObservation(
             problem=self._current_problem.get("problem", ""),
-            reference_solution=(
-                self._current_problem.get("reference_solution", "")
-                if self._current_problem.get("evaluation_mode", "proof") == "answer"
-                else ""
-            ),
+            # The reference solution is the grading key in both modes, so it is
+            # never sent to the agent. Grading reads it from the server-side problem.
+            reference_solution="",
             grading_guidelines=parse_schema(
                 self._current_problem.get("grading_guidelines", "") or ""
             ),
@@ -1084,15 +1083,10 @@ class QEDMathEnvironment(MCPEnvironment):
             }
 
         problem_type = self._current_problem.get("problem_type", "proof")
-        evaluation_mode = self._current_problem.get("evaluation_mode")
-        if isinstance(evaluation_mode, str):
-            evaluation_mode = evaluation_mode.strip().lower()
-        else:
-            evaluation_mode = "answer" if problem_type == "answer" else "proof"
-        if evaluation_mode not in {"proof", "answer"}:
-            evaluation_mode = "proof"
 
-        payload = {
+        # The reference solution is the grading key in both modes, so it is
+        # not part of the payload the agent sees.
+        return {
             "problem": self._current_problem.get("problem", ""),
             "grading_guidelines": self._current_grading_guidelines_text(),
             "problem_id": self._current_problem.get("problem_id", ""),
@@ -1103,15 +1097,6 @@ class QEDMathEnvironment(MCPEnvironment):
             "done": False,
             "reward": 0.0,
         }
-
-        # Keep answer-mode parity with QED-Nano while preventing proof-mode
-        # agents from seeing the grading key via MCP.
-        if evaluation_mode == "answer":
-            payload["reference_solution"] = self._current_problem.get(
-                "reference_solution", ""
-            )
-
-        return payload
 
     @staticmethod
     def _verify_math(

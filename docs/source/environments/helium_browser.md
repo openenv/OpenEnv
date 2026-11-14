@@ -15,7 +15,7 @@ focus.
 
 ## How to run the browser agent
 
-The actual browser loop is [browser.py](https://github.com/huggingface/OpenEnv/blob/main/envs/helium_browser_env/browser.py). You can run it with following steps. First publish the environment. Make sure to authenticate yourself with a write token.
+The actual browser loop is [browser.py](https://github.com/openenv/OpenEnv/blob/main/envs/helium_browser_env/browser.py). You can run it with following steps. First publish the environment. Make sure to authenticate yourself with a write token.
 
 ```bash
 hf auth login

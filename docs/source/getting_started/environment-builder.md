@@ -17,7 +17,7 @@ See the [CLI reference](../reference/cli.md) for every command and flag.
 
 Declare Python dependencies in the environment's `pyproject.toml` and regenerate `uv.lock` with `uv lock`. Install anything else (system packages, binaries) in `server/Dockerfile`, before the step that removes temporary files.
 
-The template's [`server/Dockerfile`](https://github.com/huggingface/OpenEnv/blob/main/src/openenv/cli/templates/openenv_env/server/Dockerfile) is a multi-stage build on `ghcr.io/huggingface/openenv-base` that installs your dependencies with `uv sync` and serves `server.app:app` on port 8000. Keep building from `openenv-base` so shared tooling stays available.
+The template's [`server/Dockerfile`](https://github.com/openenv/OpenEnv/blob/main/src/openenv/cli/templates/openenv_env/server/Dockerfile) is a multi-stage build on `ghcr.io/huggingface/openenv-base` that installs your dependencies with `uv sync` and serves `server.app:app` on port 8000. Keep building from `openenv-base` so shared tooling stays available.
 
 ## Build the image
 

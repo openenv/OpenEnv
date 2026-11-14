@@ -46,7 +46,7 @@ The [tutorials](tutorials/index) include a 5-part Getting Started series that ne
 
 ## Contributing
 
-OpenEnv is openly governed by a technical committee that coordinates project direction, RFCs and releases through the public [GitHub repository](https://github.com/huggingface/OpenEnv). The [charter](https://github.com/huggingface/OpenEnv/blob/main/GOVERNANCE.md) explains how it works, and the [README](https://github.com/huggingface/OpenEnv#community-support--acknowledgments) lists the committee members and supporters. Bug reports, feature requests and new environments are welcome as issues or pull requests, see [Contributing](contributing). For the changelog, see [GitHub Releases](https://github.com/huggingface/OpenEnv/releases).
+OpenEnv is openly governed by a technical committee that coordinates project direction, RFCs and releases through the public [GitHub repository](https://github.com/openenv/OpenEnv). The [charter](https://github.com/openenv/OpenEnv/blob/main/GOVERNANCE.md) explains how it works, and the [README](https://github.com/openenv/OpenEnv#community-support--acknowledgments) lists the committee members and supporters. Bug reports, feature requests and new environments are welcome as issues or pull requests, see [Contributing](contributing). For the changelog, see [GitHub Releases](https://github.com/openenv/OpenEnv/releases).
 
 > [!NOTE]
 > OpenEnv is in early development, so APIs may still change. Bug fixes are welcome. For larger changes, open or claim an issue first so the change can be discussed.

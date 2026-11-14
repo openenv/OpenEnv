@@ -28,7 +28,7 @@ Connects via a manually-built `UVProvider` + `GenericEnvClient` rather than
 `from_env()` + `.sync()`: this env only allows one concurrent session
 (`SUPPORTS_CONCURRENT_SESSIONS = False`), and `from_env()` + `.sync()` can
 leave behind an orphaned first connection that occupies that single slot (see
-https://github.com/huggingface/OpenEnv/pull/854). Needs the `project_path`
+https://github.com/openenv/OpenEnv/pull/854). Needs the `project_path`
 git-clone fix from that PR; until it's released, override the `openenv`
 dependency above with a git ref of it.
 
