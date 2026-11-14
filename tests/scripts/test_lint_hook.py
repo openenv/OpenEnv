@@ -25,6 +25,7 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 LINT_HOOK = REPO_ROOT / ".claude" / "hooks" / "lint.sh"
+TEST_HOOK = REPO_ROOT / ".claude" / "hooks" / "test.sh"
 
 # The stub stands in for `uv`. In check mode it reports whether any target file
 # still carries the marker; otherwise it rewrites them, standing in for a
@@ -108,6 +109,10 @@ def repo(tmp_path: pathlib.Path) -> pathlib.Path:
     stub = bin_dir / "uv"
     stub.write_text(STUB_UV)
     stub.chmod(0o755)
+    # Stock macOS has no `timeout`, which test.sh calls.
+    timeout = bin_dir / "timeout"
+    timeout.write_text('#!/bin/bash\nshift\nexec "$@"\n')
+    timeout.chmod(0o755)
     return work
 
 
@@ -313,3 +318,28 @@ def test_git_hooks_leave_uncommitted_work_alone(repo: pathlib.Path, hook: str) -
         f"The {hook} hook changed the working tree or the index. It must leave "
         "formatting to lint.sh, which only reports."
     )
+    # src/mod.py is still unformatted, so the hook must still block.
+    assert result.returncode != 0
+
+
+def test_test_hook_clears_git_hook_environment(repo: pathlib.Path) -> None:
+    """test.sh must not pass the git hook environment on to the tests.
+
+    pre-push runs test.sh, and git exports `GIT_DIR` to hooks in a linked
+    worktree. Tests that run git in a throwaway repo then commit to and
+    configure the developer's repository instead.
+    """
+    (repo.parent / "stubbin" / "uv").write_text("#!/bin/bash\nenv\n")
+    git_env = {
+        "GIT_DIR": str(repo / ".git"),
+        "GIT_WORK_TREE": str(repo),
+        "GIT_INDEX_FILE": str(repo / ".git" / "index"),
+    }
+
+    result = _run_hook(repo, TEST_HOOK, **git_env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    passed_on = [
+        line for line in result.stdout.splitlines() if line.split("=")[0] in git_env
+    ]
+    assert passed_on == [], f"test.sh passed {passed_on} on to pytest."
