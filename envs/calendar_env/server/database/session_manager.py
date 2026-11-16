@@ -4,13 +4,32 @@ Calendar Session Manager - Database session handling for Calendar services using
 
 import logging
 import os
+import re
+import sqlite3
 from typing import Dict
 
 from database.models import Base
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 logger = logging.getLogger(__name__)
+
+# A database id becomes a file name, so it may not hold a path.
+_DATABASE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _deny_other_files(action: int, *_args) -> int:
+    """Clients send SQL; ATTACH, DETACH and VACUUM INTO would open or write other files."""
+    if action in (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH):
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
+
+def connect_database(db_path: str) -> sqlite3.Connection:
+    """Open a session database for SQL that may come from a client."""
+    conn = sqlite3.connect(db_path)
+    conn.set_authorizer(_deny_other_files)
+    return conn
 
 
 class CalendarSessionManager:
@@ -22,6 +41,10 @@ class CalendarSessionManager:
 
     def get_db_path(self, db_id: str) -> str:
         """Get database path for a specific session ID"""
+        if not _DATABASE_ID.fullmatch(db_id):
+            raise ValueError(
+                f"Invalid database id {db_id!r}: use letters, digits, _ and -"
+            )
         databases_dir = "./mcp_databases"
         os.makedirs(databases_dir, exist_ok=True)
         return os.path.join(databases_dir, f"calendar_{db_id}.sqlite")
@@ -37,6 +60,11 @@ class CalendarSessionManager:
                 connect_args={"check_same_thread": False},  # Needed for SQLite
                 pool_pre_ping=True,  # Verify connections before using them
                 pool_recycle=3600,  # Recycle connections after 1 hour
+            )
+            event.listen(
+                self._engines[db_id],
+                "connect",
+                lambda conn, _record: conn.set_authorizer(_deny_other_files),
             )
         return self._engines[db_id]
 
