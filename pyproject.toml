@@ -41,7 +41,7 @@ dependencies = [
 # `pip install openenv` includes the full runtime; the extras below are
 # optional integrations.
 daytona = [
-    "daytona>=0.136.0",
+    "daytona>=0.136.0,<1",
     "pyyaml>=6.0",
 ]
 aca = [
