@@ -17,12 +17,12 @@ from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction, T
 from openenv.core.env_server.types import Action, State
 
 from ..models import AWMListToolsObservation, AWMObservation
+from .config import DEFAULT_REWARD_CONFIG
 from .data_loader import AWMDataLoader, normalize_scenario_name
 from .db_manager import cleanup_session_dir, create_database, save_snapshot
 from .scenario_manager import ScenarioProcess
 from .session_registry import registry as _registry
 from .verifier import run_llm_judge, run_verifier
-from .config import DEFAULT_REWARD_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -163,8 +163,14 @@ class AWMEnvironment(Environment):
             reward_config.copy() if reward_config else DEFAULT_REWARD_CONFIG.copy()
         )
 
-        self._llm_base_url = llm_base_url or os.environ.get("OPENENV_AWM_LLM_BASE_URL")
-        self._llm_api_key = llm_api_key or os.environ.get("OPENENV_AWM_LLM_API_KEY")
+        # The server key only ever goes to the server URL: a client that names its own
+        # endpoint must bring its own key.
+        if llm_base_url:
+            self._llm_base_url = llm_base_url
+            self._llm_api_key = llm_api_key
+        else:
+            self._llm_base_url = os.environ.get("OPENENV_AWM_LLM_BASE_URL")
+            self._llm_api_key = llm_api_key or os.environ.get("OPENENV_AWM_LLM_API_KEY")
         self._llm_model = llm_model or os.environ.get("OPENENV_AWM_LLM_MODEL")
 
         if task is not None:

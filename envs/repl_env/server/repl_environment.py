@@ -200,6 +200,9 @@ class REPLEnvironment(Environment):
         client = InferenceClient(model=default_model, token=hf_token, timeout=300)
 
         def chat_fn(messages: list[dict[str, str]], model: str | None = None) -> str:
+            # `model` comes from the agent's code; a URL would receive the token.
+            if (model or "").startswith(("http://", "https://")):
+                return "Error: model must be a model id, not a URL"
             try:
                 response = client.chat.completions.create(
                     model=model or default_model,
@@ -320,6 +323,14 @@ class REPLEnvironment(Environment):
         model_changed = has_runtime_llm and resolved_model != self._current_llm_model
         token_provided = hf_token is not None
         if not self.llm_query_fn or model_changed or token_provided:
+            # InferenceClient sends its token to a model given as a URL, so the server's
+            # token never goes with an endpoint the client picked.
+            if not token_provided and (llm_model or "").startswith(
+                ("http://", "https://")
+            ):
+                raise ValueError(
+                    "llm_model can be a URL only together with your own hf_token"
+                )
             effective_token = (
                 hf_token if hf_token is not None else os.environ.get("HF_TOKEN")
             )

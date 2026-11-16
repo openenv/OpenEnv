@@ -293,3 +293,36 @@ def test_antigravity_uses_the_existing_native_google_endpoint_setting():
     assert env["GOOGLE_GEMINI_BASE_URL"] == "https://capture.test"
     assert env["GEMINI_API_KEY"] == "session-key"
     assert env["AGY_ADC_AUTH"] == "false"
+
+
+async def test_run_rollout_keeps_server_env_tasks_on_the_server_endpoint(monkeypatch):
+    """Harbor fills `${VAR}` in a task from this server's environment. With a caller's `llm_url`,
+    that caller's model reads the sandbox, so `run_rollout` refuses such tasks like the web UI."""
+    import json
+    from types import SimpleNamespace
+
+    from openenv.harbor import ui_data
+    from openenv.harbor.environment import HarborEnvironment
+
+    monkeypatch.delenv("OPENENV_HARBOR_ALLOW_HARNESS", raising=False)
+    env = object.__new__(HarborEnvironment)
+    env._datasets = ["org/x"]
+    env._provider = SimpleNamespace(task_dir=lambda split, index: "/tasks/x")
+    monkeypatch.setattr(env, "_service", lambda: object())
+    monkeypatch.setattr(ui_data, "reads_environment", lambda spec, index: True)
+
+    result = json.loads(
+        await env._run_rollout(
+            split="org/x",
+            task_index=0,
+            harness="opencode",
+            sandbox="e2b",
+            reward_key="",
+            keep_sandbox=False,
+            force_build=False,
+            llm_url="https://attacker.example",
+        )
+    )
+
+    assert result["ok"] is False
+    assert "server's own endpoint" in result["error"]
