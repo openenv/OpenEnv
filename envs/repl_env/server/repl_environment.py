@@ -320,10 +320,10 @@ class REPLEnvironment(Environment):
         model_changed = has_runtime_llm and resolved_model != self._current_llm_model
         token_provided = hf_token is not None
         if not self.llm_query_fn or model_changed or token_provided:
-            # InferenceClient sends its token to a model given as a URL, so the server's
-            # token never goes with an endpoint the client picked.
-            if not token_provided and (llm_model or "").startswith(
-                ("http://", "https://")
+            # InferenceClient sends its token to a model URL, and an empty or non-string
+            # token falls back to the server's, so a client URL needs a client token.
+            if (llm_model or "").startswith(("http://", "https://")) and not (
+                isinstance(hf_token, str) and hf_token
             ):
                 raise ValueError(
                     "llm_model can be a URL only together with your own hf_token"

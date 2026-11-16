@@ -95,13 +95,14 @@ def test_reset_preserves_constructor_llm_functions(monkeypatch):
     assert env.llm_query_fn("prompt") == "custom: prompt"
 
 
-def test_reset_refuses_a_url_model_with_the_server_token(monkeypatch):
-    """`InferenceClient` sends its token to a model given as a URL, so the server's token never
-    goes with an endpoint the client picked."""
+@pytest.mark.parametrize("hf_token", [None, "", True, 0])
+def test_reset_refuses_a_url_model_with_the_server_token(monkeypatch, hf_token):
+    """`InferenceClient` sends its token to a model given as a URL and falls back to the server's
+    `HF_TOKEN` for an empty or non-string one, so a client URL needs the client's own token."""
     monkeypatch.setenv("HF_TOKEN", "env-tok")
     env = REPLEnvironment()
     with pytest.raises(ValueError, match="own hf_token"):
-        env.reset(llm_model="https://attacker.example")
+        env.reset(llm_model="https://attacker.example", hf_token=hf_token)
 
 
 def test_reset_accepts_a_url_model_with_the_client_token(monkeypatch):
