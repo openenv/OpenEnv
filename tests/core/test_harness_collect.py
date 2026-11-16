@@ -1039,6 +1039,24 @@ class TestPushToHfHub:
 
         assert url == "https://huggingface.co/datasets/user/ttt-sft-v1"
 
+    def test_uploads_results_with_secrets_redacted(self, tmp_path: Path):
+        output = _populated_output_dir(tmp_path)
+        secret = "hf_" + "x" * 34
+        with (output / "results.jsonl").open("a") as f:
+            f.write(json.dumps({"messages": [{"content": f"env: {secret}"}]}) + "\n")
+        uploaded = []
+        mock_api = MagicMock()
+        mock_api.upload_folder.side_effect = lambda **kwargs: uploaded.append(
+            (Path(kwargs["folder_path"]) / "results.jsonl").read_text()
+        )
+
+        with patch("huggingface_hub.HfApi", return_value=mock_api):
+            with pytest.warns(UserWarning, match="Redacted 1 secret"):
+                push_to_hf_hub(output, "user/ds")
+
+        assert secret not in uploaded[0]
+        assert "<REDACTED>" in uploaded[0]
+
     def test_private_flag_propagates(self, tmp_path: Path):
         output = _populated_output_dir(tmp_path)
         mock_api = MagicMock()

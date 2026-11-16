@@ -4,6 +4,7 @@
 
 import asyncio
 import concurrent.futures
+import os
 import re
 
 
@@ -71,3 +72,39 @@ def hf_space_subdomain(repo_id: str) -> str:
         The Space subdomain.
     """
     return re.sub(r"[^a-z0-9]", "-", repo_id.lower())
+
+
+_SECRET_PATTERN = re.compile(
+    r"hf_[A-Za-z0-9]{30,}"
+    r"|sk-[A-Za-z0-9_-]{20,}"
+    r"|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}"
+    r"|(?:AKIA|ASIA)[A-Z0-9]{16}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+    re.DOTALL,
+)
+_SECRET_ENV_NAME = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD)(_|$)", re.IGNORECASE)
+
+
+def redact_secrets(text: str) -> tuple[str, int]:
+    """
+    Replace credentials in `text` with `<REDACTED>`.
+
+    Covers Hugging Face, OpenAI/Anthropic, GitHub and AWS keys, private key blocks, and the value of
+    every environment variable of this process with `TOKEN`, `KEY`, `SECRET` or `PASSWORD` as a part
+    of its name (`HF_TOKEN`, `OPENAI_API_KEY`). Agent traces can hold any of them: a model that runs `env` or reads a config file
+    puts the value in its own output.
+
+    Args:
+        text (`str`):
+            Text to scan.
+
+    Returns:
+        `tuple[str, int]`: The redacted text and the number of secrets replaced.
+    """
+    count = 0
+    for name, value in os.environ.items():
+        if _SECRET_ENV_NAME.search(name) and len(value) >= 8 and value in text:
+            count += text.count(value)
+            text = text.replace(value, "<REDACTED>")
+    text, matches = _SECRET_PATTERN.subn("<REDACTED>", text)
+    return text, count + matches
