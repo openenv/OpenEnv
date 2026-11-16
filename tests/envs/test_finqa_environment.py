@@ -92,6 +92,11 @@ class TestLatexPercentages:
         """Test LaTeX format with dollar sign wrappers."""
         assert compute_reward("57.73", r"$\boxed{57.730}$") == 1.0
 
+    def test_latex_text_inside_boxed(self):
+        r"""Test \text{} annotations inside \boxed{}."""
+        assert compute_reward(r"\boxed{6.118\text{ million}}", r"\boxed{6.118}") == 1.0
+        assert compute_reward(r"\boxed{7.118\text{ million}}", r"\boxed{6.118}") == 0.0
+
 
 class TestDecimalPrecisionMatching:
     """Test decimal precision matching within tolerance for percentages."""
