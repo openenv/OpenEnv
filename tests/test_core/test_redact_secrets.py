@@ -31,9 +31,11 @@ def test_values_of_secret_env_vars_are_redacted(monkeypatch):
     assert count == 2
 
 
-def test_env_values_are_redacted_inside_json(monkeypatch):
+@pytest.mark.parametrize(
+    "value", ['pa"ss\\wörd-1234', "secret-1234\\", "\\secret-1234"]
+)
+def test_env_values_are_redacted_inside_json(monkeypatch, value):
     """Traces are JSON, so a value with quotes, backslashes or non-ASCII appears escaped."""
-    value = 'pa"ss\\wörd-1234'
     monkeypatch.setenv("DB_PASSWORD", value)
     text, count = redact_secrets(json.dumps({"content": f"env says {value}"}))
     assert json.loads(text) == {"content": "env says <REDACTED>"}

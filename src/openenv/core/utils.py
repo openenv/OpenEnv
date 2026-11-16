@@ -106,8 +106,9 @@ def redact_secrets(text: str) -> tuple[str, int]:
     for name, value in os.environ.items():
         if not _SECRET_ENV_NAME.search(name) or len(value) < 8:
             continue
-        # Traces are JSON, where quotes, backslashes and non-ASCII characters are escaped.
-        for form in {value, json.dumps(value)[1:-1]}:
+        # Traces are JSON, where quotes, backslashes and non-ASCII characters are escaped. The
+        # escaped form goes first: it can contain the raw one (a value ending in a backslash).
+        for form in (json.dumps(value)[1:-1], value):
             count += text.count(form)
             text = text.replace(form, "<REDACTED>")
     text, matches = _SECRET_PATTERN.subn("<REDACTED>", text)
