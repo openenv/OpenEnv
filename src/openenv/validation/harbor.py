@@ -426,13 +426,14 @@ class HFJobsInspector:
 def _unsupported(task, contract, sandbox):
     config = task.config
     env = config.environment
+    verifier_env = config.verifier.environment
+    environments = (env,) if verifier_env is None else (env, verifier_env)
     if task.has_steps:
         return "multi-step Harbor tasks"
-    if env.os.value != "linux":
+    if any(environment.os.value != "linux" for environment in environments):
         return "non-Linux Harbor tasks"
     if env.docker_image is not None and not _PINNED_IMAGE.fullmatch(env.docker_image):
         return "task-declared environment.docker_image without a sha256 digest pin"
-    verifier_env = config.verifier.environment
     separate = verifier_env is not None or (
         config.verifier.environment_mode is not None
         and config.verifier.environment_mode.value != "shared"
@@ -448,7 +449,10 @@ def _unsupported(task, contract, sandbox):
         for path in (task.task_dir / "environment").rglob("*")
     ):
         return "tasks without one Dockerfile or pinned image, or with task-authored Compose"
-    if contract.resources.gpus or env.gpus or env.tpu or env.mcp_servers:
+    if contract.resources.gpus or any(
+        environment.gpus or environment.tpu or environment.mcp_servers
+        for environment in environments
+    ):
         return "GPU/TPU or external MCP requirements"
     if contract.requires_credentials:
         return "external credential requirements"
@@ -458,9 +462,19 @@ def _unsupported(task, contract, sandbox):
         if phase is not None
     ):
         return "non-public or differing phase network policies"
-    if env.env or config.verifier.env or config.solution.env:
+    if (
+        any(environment.env for environment in environments)
+        or config.verifier.env
+        or config.solution.env
+    ):
         return "task environment variables (including host credential substitutions)"
-    if env.healthcheck or env.skills_dir or config.verifier.collect:
+    if (
+        any(
+            environment.healthcheck or environment.skills_dir
+            for environment in environments
+        )
+        or config.verifier.collect
+    ):
         return "healthcheck, skills or collect extensions"
     if config.artifacts and sandbox != "hf-sandbox":
         return "artifact extensions outside hf-sandbox"

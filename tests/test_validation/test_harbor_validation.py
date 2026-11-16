@@ -1581,6 +1581,36 @@ def test_hf_sandbox_refuses_tasks_it_cannot_run(task, boundary, shape, reason):
 
 
 @pytest.mark.parametrize(
+    "declaration,reason",
+    [
+        ('os = "windows"', "non-Linux"),
+        ('env = { TOKEN = "secret" }', "environment variables"),
+        ("gpus = 1", "GPU/TPU"),
+        ('tpu = { type = "v5e", topology = "2x2" }', "GPU/TPU"),
+        (
+            'mcp_servers = [{ name = "tools", url = "https://example.com" }]',
+            "GPU/TPU",
+        ),
+        ('healthcheck = { command = "true" }', "healthcheck"),
+        ('skills_dir = "skills"', "healthcheck"),
+    ],
+)
+def test_hf_sandbox_applies_restrictions_to_verifier_environment(
+    task, boundary, declaration, reason
+):
+    if declaration == 'os = "windows"':
+        (task / "tests/test.bat").write_text("@exit /b 0\n")
+    (task / "task.toml").write_text(
+        SEPARATE_VERIFIER + f"[verifier.environment]\n{declaration}\n"
+    )
+    report = run_validation(task, sandbox="hf-sandbox")
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.SKIP
+    assert reason in startup.evidence[0]
+    assert not boundary.trials
+
+
+@pytest.mark.parametrize(
     "flavor,cpu,reason",
     [
         ("cpu-basic", 4, "smaller than the contract resources"),
