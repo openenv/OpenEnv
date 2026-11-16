@@ -4,6 +4,7 @@
 
 import asyncio
 import concurrent.futures
+import json
 import os
 import re
 
@@ -91,8 +92,8 @@ def redact_secrets(text: str) -> tuple[str, int]:
 
     Covers Hugging Face, OpenAI/Anthropic, GitHub and AWS keys, private key blocks, and the value of
     every environment variable of this process with `TOKEN`, `KEY`, `SECRET` or `PASSWORD` as a part
-    of its name (`HF_TOKEN`, `OPENAI_API_KEY`). Agent traces can hold any of them: a model that runs `env` or reads a config file
-    puts the value in its own output.
+    of its name (`HF_TOKEN`, `OPENAI_API_KEY`), also in its JSON-escaped form. Agent traces can hold
+    any of them: a model that runs `env` or reads a config file puts the value in its own output.
 
     Args:
         text (`str`):
@@ -103,8 +104,11 @@ def redact_secrets(text: str) -> tuple[str, int]:
     """
     count = 0
     for name, value in os.environ.items():
-        if _SECRET_ENV_NAME.search(name) and len(value) >= 8 and value in text:
-            count += text.count(value)
-            text = text.replace(value, "<REDACTED>")
+        if not _SECRET_ENV_NAME.search(name) or len(value) < 8:
+            continue
+        # Traces are JSON, where quotes, backslashes and non-ASCII characters are escaped.
+        for form in {value, json.dumps(value)[1:-1]}:
+            count += text.count(form)
+            text = text.replace(form, "<REDACTED>")
     text, matches = _SECRET_PATTERN.subn("<REDACTED>", text)
     return text, count + matches

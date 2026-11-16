@@ -2,6 +2,8 @@
 
 """Tests for `redact_secrets`, run on agent traces before they leave the machine."""
 
+import json
+
 import pytest
 from openenv.core.utils import redact_secrets
 
@@ -27,6 +29,15 @@ def test_values_of_secret_env_vars_are_redacted(monkeypatch):
     )
     assert text == "printenv: <REDACTED>, twice: <REDACTED>"
     assert count == 2
+
+
+def test_env_values_are_redacted_inside_json(monkeypatch):
+    """Traces are JSON, so a value with quotes, backslashes or non-ASCII appears escaped."""
+    value = 'pa"ss\\wörd-1234'
+    monkeypatch.setenv("DB_PASSWORD", value)
+    text, count = redact_secrets(json.dumps({"content": f"env says {value}"}))
+    assert json.loads(text) == {"content": "env says <REDACTED>"}
+    assert count == 1
 
 
 def test_other_env_vars_are_kept(monkeypatch):
