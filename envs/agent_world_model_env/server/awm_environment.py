@@ -17,12 +17,12 @@ from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction, T
 from openenv.core.env_server.types import Action, State
 
 from ..models import AWMListToolsObservation, AWMObservation
-from .config import DEFAULT_REWARD_CONFIG
 from .data_loader import AWMDataLoader, normalize_scenario_name
 from .db_manager import cleanup_session_dir, create_database, save_snapshot
 from .scenario_manager import ScenarioProcess
 from .session_registry import registry as _registry
 from .verifier import run_llm_judge, run_verifier
+from .config import DEFAULT_REWARD_CONFIG
 
 logger = logging.getLogger(__name__)
 

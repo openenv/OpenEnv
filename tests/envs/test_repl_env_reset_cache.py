@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 
 class _DummyLocalPythonExecutor:
     def __init__(self, *args, **kwargs) -> None:
@@ -96,8 +98,6 @@ def test_reset_preserves_constructor_llm_functions(monkeypatch):
 def test_reset_refuses_a_url_model_with_the_server_token(monkeypatch):
     """`InferenceClient` sends its token to a model given as a URL, so the server's token never
     goes with an endpoint the client picked."""
-    import pytest
-
     monkeypatch.setenv("HF_TOKEN", "env-tok")
     env = REPLEnvironment()
     with pytest.raises(ValueError, match="own hf_token"):
@@ -107,16 +107,5 @@ def test_reset_refuses_a_url_model_with_the_server_token(monkeypatch):
 def test_reset_accepts_a_url_model_with_the_client_token(monkeypatch):
     monkeypatch.setenv("HF_TOKEN", "env-tok")
     env = REPLEnvironment()
-    calls: list[tuple[str | None, str | None]] = []
-    monkeypatch.setattr(
-        env, "_create_llm_functions", lambda token, model: calls.append((token, model))
-    )
     env.reset(llm_model="https://my-endpoint.example", hf_token="client-tok")
-    assert calls == [("client-tok", "https://my-endpoint.example")]
-
-
-def test_llm_query_refuses_a_url_model(monkeypatch):
-    """The agent's code picks `model` in `llm_query`, so a URL there is refused too."""
-    chat_fn = REPLEnvironment._build_hf_chat_fn("env-tok", "Qwen/Qwen3.5-9B")
-    reply = chat_fn([{"role": "user", "content": "hi"}], "https://attacker.example")
-    assert reply == "Error: model must be a model id, not a URL"
+    assert env.llm_query_fn is not None

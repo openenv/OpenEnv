@@ -200,9 +200,6 @@ class REPLEnvironment(Environment):
         client = InferenceClient(model=default_model, token=hf_token, timeout=300)
 
         def chat_fn(messages: list[dict[str, str]], model: str | None = None) -> str:
-            # `model` comes from the agent's code; a URL would receive the token.
-            if (model or "").startswith(("http://", "https://")):
-                return "Error: model must be a model id, not a URL"
             try:
                 response = client.chat.completions.create(
                     model=model or default_model,

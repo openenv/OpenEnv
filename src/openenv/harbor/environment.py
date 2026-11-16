@@ -287,13 +287,7 @@ class HarborEnvironment(MCPEnvironment):
         if llm_url:
             from .ui_data import reads_environment
 
-            try:
-                reads_env = reads_environment(split, int(task_index))
-            except Exception as exc:  # noqa: BLE001 - a task that cannot be read cannot be run
-                return HarborRolloutResult(
-                    ok=False, error=str(exc)[:400], harness=harness, sandbox=sandbox
-                ).model_dump_json()
-            if reads_env:
+            if reads_environment(split, int(task_index)):
                 return HarborRolloutResult(
                     ok=False,
                     error="this task passes the server's environment variables or files into "

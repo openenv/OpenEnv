@@ -295,25 +295,30 @@ def test_antigravity_uses_the_existing_native_google_endpoint_setting():
     assert env["AGY_ADC_AUTH"] == "false"
 
 
-async def test_run_rollout_keeps_server_env_tasks_on_the_server_endpoint(monkeypatch):
+async def test_run_rollout_keeps_server_env_tasks_on_the_server_endpoint(
+    monkeypatch, tmp_path
+):
     """Harbor fills `${VAR}` in a task from this server's environment. With a caller's `llm_url`,
     that caller's model reads the sandbox, so `run_rollout` refuses such tasks like the web UI."""
     import json
-    from types import SimpleNamespace
 
-    from openenv.harbor import ui_data
     from openenv.harbor.environment import HarborEnvironment
 
-    monkeypatch.delenv("OPENENV_HARBOR_ALLOW_HARNESS", raising=False)
-    env = object.__new__(HarborEnvironment)
-    env._datasets = ["org/x"]
-    env._provider = SimpleNamespace(task_dir=lambda split, index: "/tasks/x")
+    task = tmp_path / "tasks" / "reads-env"
+    (task / "environment").mkdir(parents=True)
+    (task / "instruction.md").write_text("Say hi.\n")
+    (task / "environment" / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    (task / "task.toml").write_text(
+        'version = "1.0"\n[verifier.env]\nHUB = "${HF_TOKEN}"\n'
+    )
+    monkeypatch.setattr(HarborEnvironment, "_datasets", [str(tmp_path)])
+    env = HarborEnvironment()
+    # The rollout needs a running capture proxy, which a unit test cannot start.
     monkeypatch.setattr(env, "_service", lambda: object())
-    monkeypatch.setattr(ui_data, "reads_environment", lambda spec, index: True)
 
     result = json.loads(
         await env._run_rollout(
-            split="org/x",
+            split=str(tmp_path),
             task_index=0,
             harness="opencode",
             sandbox="e2b",
