@@ -215,10 +215,12 @@ endpoint and holds no boxd credentials or integrations, so code in the
 environment cannot act on your boxd account. A request to
 `http://169.254.169.254/` from inside the container fails. Outbound
 internet is open by default. `egress_allow` restricts it to the hostnames,
-public IPv4 addresses and CIDRs you list. The provider applies the list after
-the image is pulled or built and before the container starts, so the
-environment never runs with open egress. `["none"]` blocks all outbound
-traffic. Requests to the machine's URL keep working either way:
+public IPv4 addresses and CIDRs you list. The provider sets the list on the
+new machine after the image is pulled or built and before the container
+starts. New rules can take about a second to apply, so the container's first
+moments may still reach the network. `["none"]` blocks all outbound traffic.
+An empty list raises `ValueError`. Requests to the machine's URL keep working
+either way:
 
 ```python
 provider = BoxdProvider(

@@ -212,6 +212,19 @@ def test_egress_is_left_open_by_default(client):
     assert client.machines.egress == []
 
 
+def test_empty_egress_allow_is_rejected_before_any_machine(client):
+    fake_boxd = types.ModuleType("boxd")
+    fake_boxd.Boxd = MagicMock(name="Boxd")
+    with patch.dict(sys.modules, {"boxd": fake_boxd}):
+        with pytest.raises(ValueError, match=r"egress_allow=\[\]"):
+            BoxdProvider(public=True, api_key="test-key", egress_allow=[])
+        with pytest.raises(ValueError, match=r"egress_allow=\[\]"):
+            _provider(client, image=ECHO, egress_allow=[])
+    fake_boxd.Boxd.assert_not_called()
+    assert client.machines.created == []
+    assert client.machines.egress == []
+
+
 def test_egress_allow_is_applied_after_the_pull_and_before_the_run(client):
     _provider(client, egress_allow=["api.example.com"]).start_container(ECHO)
     assert client.machines.egress == [("m-1", ["api.example.com"])]

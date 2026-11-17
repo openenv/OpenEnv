@@ -145,11 +145,13 @@ class BoxdProvider(ContainerProvider):
                 ``stop_container()``.
             egress_allow (`list[str]`, *optional*):
                 Hostnames (``"api.example.com"``, ``"*.example.com"``) and
-                public IPv4 addresses or CIDRs the machine may reach. Applied
-                after the image is pulled or built and before the container
-                starts, so the environment never runs with open egress.
-                ``["none"]`` blocks all outbound traffic. When `None`,
-                outbound internet is open.
+                public IPv4 addresses or CIDRs the machine may reach. The
+                provider sets the list on the new machine after the image is
+                pulled or built and before the container starts. New rules
+                can take about a second to apply, so the container's first
+                moments may still reach the network. ``["none"]`` blocks all
+                outbound traffic. When `None`, outbound internet is open. An
+                empty list raises ``ValueError``.
             start_timeout (`float`, *optional*, defaults to `900.0`):
                 Seconds allowed for ``docker build`` (for a Dockerfile image)
                 or ``docker pull`` (for a registry image).
@@ -172,6 +174,12 @@ class BoxdProvider(ContainerProvider):
             raise ValueError(
                 f"delete_after must be a positive number of seconds or None "
                 f"(got {delete_after!r})."
+            )
+        if egress_allow is not None and not egress_allow:
+            raise ValueError(
+                "egress_allow=[] would leave egress open, because boxd reads an "
+                'empty list as no policy. Pass ["none"] to block all outbound '
+                "traffic, or None to leave it open."
             )
         if _client is None:
             from boxd import Boxd
@@ -528,6 +536,8 @@ class BoxdProvider(ContainerProvider):
         Raises:
             TimeoutError: If the server doesn't become ready in time.
             RuntimeError: If the container exited.
+            NotFoundError, AuthenticationError, PermissionDeniedError: Raised
+                as is from the boxd SDK when the container probe gets one.
         """
         import requests
 
