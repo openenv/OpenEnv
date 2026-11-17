@@ -10,9 +10,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from openenv.core.env_server.mcp_types import CallToolAction
-
 from examples.policies import reservations
+from openenv.core.env_server.mcp_types import CallToolAction
 from server.capacity_environment import CapacityEnvironment
 
 
@@ -30,7 +29,9 @@ def record(out, policy, seed=23):
     records = []
     try:
         initial = env.reset(seed=seed, episode_id=f"trace-{policy}-{seed}")
-        view = unwrap(env.step(CallToolAction(tool_name="observe_demand_history", arguments={})))
+        view = unwrap(
+            env.step(CallToolAction(tool_name="observe_demand_history", arguments={}))
+        )
         assert view == initial.metadata
         records.append(
             {
@@ -64,7 +65,10 @@ def record(out, policy, seed=23):
             assert observation.reward == after["previous"]["reward"]
             view = after
         path.write_text(
-            "".join(json.dumps(x, allow_nan=False, separators=(",", ":")) + "\n" for x in records)
+            "".join(
+                json.dumps(x, allow_nan=False, separators=(",", ":")) + "\n"
+                for x in records
+            )
         )
     finally:
         env.close()
@@ -81,7 +85,9 @@ def replay(path):
         assert initial.metadata == header["observation"]
         for row in records[1:]:
             before = unwrap(
-                env.step(CallToolAction(tool_name="observe_demand_history", arguments={}))
+                env.step(
+                    CallToolAction(tool_name="observe_demand_history", arguments={})
+                )
             )
             assert before == row["observation"]
             result = env.step(CallToolAction(**row["action"]))
@@ -90,7 +96,15 @@ def replay(path):
             total += result.reward
         assert len(records) == 15 and result.done
         cost = row["next_observation"]["cumulative_modeled_cost"]
-        assert abs(total + cost / 1000) < 1e-10
+        baseline = sum(
+            sum(
+                before["unit_cost_per_1000_tokens"][m] * 4 * d / 1000
+                for m in ("ChatGPT", "GPT-4")
+                for d in row["next_observation"]["previous"]["realized_tokens"][m]
+            )
+            for row in records[1:]
+        )
+        assert abs(total - (baseline - cost) / 1000) < 1e-10
         return {
             "file": path.name,
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),

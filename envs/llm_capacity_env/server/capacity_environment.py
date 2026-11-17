@@ -16,7 +16,9 @@ class CapacityEnvironment(MCPEnvironment):
 
     def __init__(self, split=None, trace_dir=None):
         self.replay = Replay(split or os.getenv("CAPACITY_SPLIT", "train"))
-        self._recorder = TrajectoryRecorder(trace_dir or os.getenv("CAPACITY_TRACE_DIR"))
+        self._recorder = TrajectoryRecorder(
+            trace_dir or os.getenv("CAPACITY_TRACE_DIR")
+        )
         self._state = State(episode_id=str(uuid4()), step_count=0)
         mcp = FastMCP("llm_capacity_env")
 
@@ -30,7 +32,8 @@ class CapacityEnvironment(MCPEnvironment):
             """Commit next day's hourly token reservations: ChatGPT and GPT-4, each 24 values in [0,1000000].
 
             Advances exactly one day and reveals that day's outcome. Decisions cannot be undone.
-            Each day's reward is negative modeled cost / 1000. Minimize total modeled cost.
+            Reward is savings versus zero reservations, divided by 1000.
+            Maximize summed reward by minimizing total modeled cost.
             """
             result = self.replay.reserve(reservations)
             self._state.step_count = self.replay.turn
@@ -47,16 +50,20 @@ class CapacityEnvironment(MCPEnvironment):
 
     def _finish(self, observation, before, action):
         observation.done = self.replay.done
-        observation.reward = self.replay.previous["reward"] if self.replay.turn > before else 0.0
+        observation.reward = (
+            self.replay.previous["reward"] if self.replay.turn > before else 0.0
+        )
         self._recorder.append(action, observation, self._state.step_count)
         return observation
 
     def step(self, action, timeout_s=None, **kwargs):
-        before = getattr(self.replay, "turn", 0)
-        return self._finish(super().step(action, timeout_s=timeout_s, **kwargs), before, action)
+        before = self.replay.turn
+        return self._finish(
+            super().step(action, timeout_s=timeout_s, **kwargs), before, action
+        )
 
     async def step_async(self, action, timeout_s=None, **kwargs):
-        before = getattr(self.replay, "turn", 0)
+        before = self.replay.turn
         result = await super().step_async(action, timeout_s=timeout_s, **kwargs)
         return self._finish(result, before, action)
 

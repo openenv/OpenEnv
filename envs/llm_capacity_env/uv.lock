@@ -1709,7 +1709,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "openenv", specifier = "==0.11.0" },
+    { name = "openenv", specifier = ">=0.11.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==8.4.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.13" },
 ]

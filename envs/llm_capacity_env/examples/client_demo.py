@@ -4,9 +4,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from openenv.core.mcp_client import MCPToolClient
-
 from examples.policies import reservations
+from openenv.core.mcp_client import MCPToolClient
 
 
 def main(url):
@@ -15,7 +14,9 @@ def main(url):
         view = env.call_tool("observe_demand_history")
         while not view["done"]:
             view = env.call_tool("reserve_capacity", reservations=reservations(view))
-            print(f"day={view['episode_day']} cost={view['previous']['modeled_cost']:.6f}")
+            print(
+                f"day={view['episode_day']} cost={view['previous']['modeled_cost']:.6f}"
+            )
         print(f"total_modeled_cost={view['cumulative_modeled_cost']:.6f}")
 
 

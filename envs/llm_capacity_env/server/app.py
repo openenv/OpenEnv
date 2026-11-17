@@ -8,8 +8,6 @@ from openenv.core.env_server.types import Observation
 
 from .capacity_environment import CapacityEnvironment
 
-# Default server runs emit JSONL trajectories. Direct library evaluators can opt in separately.
-os.environ.setdefault("CAPACITY_TRACE_DIR", "outputs/trajectories")
 
 app = create_app(
     CapacityEnvironment,

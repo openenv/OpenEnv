@@ -27,9 +27,11 @@ def load_trace(path=DATA):
             if bucket[model][hour] is not None:
                 raise ValueError("Duplicate trace row")
             bucket[model][hour] = demand
-    if not trace or any(v is None for d in trace.values() for xs in d.values() for v in xs):
+    if not trace or any(
+        v is None for d in trace.values() for xs in d.values() for v in xs
+    ):
         raise ValueError("Incomplete hourly trace")
-    # Under this recorded bound, 48 hourly costs / 1000 are strictly below 2.
+    # This demand bound implies daily savings rewards in [-0.948, 1.422].
     if max(v for d in trace.values() for xs in d.values() for v in xs) > 500_000:
         raise ValueError("Trace exceeds declared reward-bound assumptions")
     return trace
@@ -38,12 +40,16 @@ def load_trace(path=DATA):
 def eligible_starts(trace, split):
     if split not in ("train", "test"):
         raise ValueError("split must be train or test")
-    target_ranges = ((14, 89), (239, 304)) if split == "train" else ((90, 120), (305, 334))
+    target_ranges = (
+        ((14, 89), (239, 304)) if split == "train" else ((90, 120), (305, 334))
+    )
     return [
         start
         for a, b in target_ranges
         for start in range(a, b - EPISODE_DAYS + 2)
-        if all(day in trace for day in range(start - HISTORY_DAYS, start + EPISODE_DAYS))
+        if all(
+            day in trace for day in range(start - HISTORY_DAYS, start + EPISODE_DAYS)
+        )
     ]
 
 
@@ -62,7 +68,9 @@ def validate_reservations(reservations):
             or not 0 <= x <= RESERVATION_CAP
             for x in xs
         ):
-            raise ValueError("Reservations must be finite numbers between 0 and 1000000")
+            raise ValueError(
+                "Reservations must be finite numbers between 0 and 1000000"
+            )
         result[model] = [float(x) for x in xs]
     return result
 
@@ -132,12 +140,13 @@ class Replay:
         day = self.start + self.turn
         demand = self.trace[day]
         cost = modeled_cost(plan, demand)
+        unreserved_cost = modeled_cost({m: [0.0] * 24 for m in MODELS}, demand)
         self.total_cost += cost
         self.turn += 1
         self.previous = {
             "log_day": day,
             "realized_tokens": demand,
             "modeled_cost": cost,
-            "reward": -cost / REWARD_SCALE,
+            "reward": (unreserved_cost - cost) / REWARD_SCALE,
         }
         return self.observe()

@@ -48,7 +48,9 @@ class TrajectoryRecorder:
         try:
             line = json.dumps(payload, allow_nan=False)
         except ValueError:
-            payload["action"] = {"serialization_error": "nonfinite value in rejected action"}
+            payload["action"] = {
+                "serialization_error": "nonfinite value in rejected action"
+            }
             line = json.dumps(payload, allow_nan=False)
         with self.lock, self.path.open("a", encoding="utf-8") as stream:
             stream.write(line + "\n")

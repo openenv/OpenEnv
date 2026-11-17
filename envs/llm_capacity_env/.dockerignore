@@ -4,9 +4,6 @@ __pycache__
 *.pyc
 .pytest_cache
 .ruff_cache
-validation
-
 build/
 *.egg-info/
-
-outputs/trajectories/
+outputs/

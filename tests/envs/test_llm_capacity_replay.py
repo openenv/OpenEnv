@@ -86,7 +86,7 @@ def test_determinism_terminal_and_non_mutating_observations():
     for _ in range(EPISODE_DAYS):
         x, y = a.reserve(plan(10000)), b.reserve(plan(10000))
         assert x == y
-        assert -2 <= x["previous"]["reward"] <= 0
+        assert -0.948 <= x["previous"]["reward"] <= 1.422
     assert a.done
     with pytest.raises(RuntimeError):
         a.reserve(plan())
@@ -118,3 +118,25 @@ def test_environment_instances_are_independent():
     before = b.reset(1)
     a.reserve(plan())
     assert b.observe() == before
+
+
+@pytest.mark.parametrize(
+    ("demand", "reservation", "reward"),
+    [(0, 1000000, -0.948), (500000, 500000, 1.422), (500000, 0, 0)],
+)
+def test_savings_reward_at_declared_extremes(demand, reservation, reward):
+    replay = Replay()
+    replay.reset(7)
+    replay.trace[replay.start] = plan(demand)
+    result = replay.reserve(plan(reservation))
+    assert result["previous"]["reward"] == pytest.approx(reward)
+
+
+def test_hindsight_reward_bounds_all_observed_demand_and_action_extremes():
+    for demand in load_trace().values():
+        baseline = modeled_cost(plan(0), demand)
+        best_cost = modeled_cost(demand, demand)
+        for reservation in (plan(0), plan(1000000), demand):
+            reward = (baseline - modeled_cost(reservation, demand)) / 1000
+            assert -0.948 - 1e-12 <= reward <= 1.422 + 1e-12
+            assert reward <= (baseline - best_cost) / 1000 + 1e-12

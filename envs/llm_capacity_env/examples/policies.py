@@ -20,6 +20,9 @@ def reservations(view, policy="rolling_quantile", frozen=None):
         return {m: list(view["history"][-1]["tokens"][m]) for m in models}
     # Cost minimizer of empirical newsvendor objective with 4x overflow price: q=0.75.
     return {
-        m: [quantile([day["tokens"][m][h] for day in view["history"]]) for h in range(24)]
+        m: [
+            quantile([day["tokens"][m][h] for day in view["history"]])
+            for h in range(24)
+        ]
         for m in models
     }

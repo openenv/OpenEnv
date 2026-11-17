@@ -42,7 +42,12 @@ def main():
             for hour in range(24):
                 for model in ("ChatGPT", "GPT-4"):
                     w.writerow([day, hour, model, totals.get((day, hour, model), 0)])
-    print("days=", len(days), "sha256=", hashlib.sha256(args.output.read_bytes()).hexdigest())
+    print(
+        "days=",
+        len(days),
+        "sha256=",
+        hashlib.sha256(args.output.read_bytes()).hexdigest(),
+    )
 
 
 if __name__ == "__main__":

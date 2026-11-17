@@ -38,7 +38,9 @@ For model `m` and hour `h`, let `r` be reserved tokens and `d` realized total to
 ```text
 hourly_modeled_cost = unit_cost[m] * (r + 4 * max(d - r, 0)) / 1000
 unit_cost = {ChatGPT: 0.002, GPT-4: 0.0375}
-daily_reward = -sum(hourly_modeled_cost) / 1000
+daily_cost = sum(hourly_modeled_cost)
+zero_reservation_cost = sum(unit_cost[m] * 4 * d / 1000)
+daily_reward = (zero_reservation_cost - daily_cost) / 1000
 ```
 
 Minimize total modeled episode cost, or equivalently maximize summed reward.
@@ -48,12 +50,15 @@ provider prices, or service-level guarantees. There is **no binary acceptance
 threshold**. The factor 1000 in reward is a fixed numerical scale; it does not
 change the optimal policy.
 
-The declared per-step range is `[-2, 0]`. The data loader checks that hourly demand
-is at most 500,000 tokens. Cost is convex in each reservation; at either legal
-endpoint it is at most `unit_cost * 2,000,000 / 1000`. Summing 24 hours and the two
-coefficients gives at most 1,896 modeled cost units, hence reward at least -1.896.
-Zero reward is also used for reset and observation calls; it is not a claim that
-zero operating cost is attainable on a nonempty demand day.
+The per-decision reward range is `[-0.948, 1.422]`. The data loader checks
+that hourly demand is at most 500,000 tokens. Reserving zero earns exactly zero;
+reserving useful capacity can earn positive savings, while excess reservation can
+produce negative reward. The lower bound occurs when demand is zero and all
+48 reservations are 1,000,000 tokens. The upper bound occurs when demand and
+reservations are both 500,000 tokens in every hour. Reset, invalid actions and
+observation-only calls earn zero and do not count as completed decisions.
+For a fixed completed episode, the zero-reservation cost is policy-independent,
+so maximizing total reward is equivalent to minimizing total modeled cost.
 
 The 0.75 empirical quantile is a useful baseline because the cost has a 4x
 shortfall multiplier. Drift and limited observation history create forecasting
@@ -69,6 +74,10 @@ We use hourly sums of `Total tokens` from `Conversation log` records, for the
 `ChatGPT` and `GPT-4` labels. There are 231 original relative days: 0–120 and
 225–334. Days 121–224 are absent in the upstream release. Episodes never cross
 this gap. Missing hours within a logged day have zero demand.
+Day 77 has zero ChatGPT demand in every hour; test days 101–106 have
+12–20 zero-demand hours per deployment. These may reflect upstream logging gaps
+rather than absent traffic. They remain scored as zero demand, so costs partly
+reflect forecasting these gaps; the trace does not establish real service outages.
 
 All 231 selected-stream days are retained, with no score-based episode filtering.
 This is an adaptation of our S11 capacity case, which previously selected these
@@ -109,7 +118,7 @@ Environment code license: BSD-3-Clause. See `THIRD_PARTY_NOTICES.md`.
 
 ## Install and run
 
-The environment supports Python 3.11 and later and pins OpenEnv 0.11.0.
+The environment supports Python 3.11 and later and requires OpenEnv 0.11.0 or later.
 From `envs/llm_capacity_env`, install the frozen dependency set and run:
 
 ```bash
@@ -137,14 +146,14 @@ PYTHONPATH=src:envs uv run pytest -q \
   tests/envs/test_llm_capacity_trajectory.py
 ```
 
-`requirements.lock` records the separately validated Python 3.13 dependency
-snapshot used for the container and standalone runtime checks. `uv.lock` is
-the environment lockfile used by the repository's frozen-dependency check.
+`uv.lock` supplies the same frozen runtime dependency set for the container
+and the repository dependency check. Development extras are not installed in the
+runtime image.
 
 Docker:
 
 ```bash
-docker build -t llm-capacity-env:0.1.0 .
+docker build -f server/Dockerfile -t llm-capacity-env:0.1.0 .
 docker run --rm -p 8000:8000 -e CAPACITY_SPLIT=test llm-capacity-env:0.1.0
 ```
 
@@ -153,112 +162,26 @@ available at `/web/` when `ENABLE_WEB_INTERFACE=true` (enabled in the Docker ima
 MCP and WebSocket clients use OpenEnv's standard endpoints. The server supports
 independent concurrent sessions through an environment factory.
 
-## Baselines and validation scope
+## Baselines
 
 `examples/evaluate.py` evaluates zero reservation, previous-day demand, a fixed
-initial-history 0.75 quantile, and an adaptive rolling 0.75 quantile over **every**
-eligible start. It also computes a perfect-information cost lower bound offline.
-That diagnostic reads future demand and is explicitly not a causal policy or
-agent tool. Baselines are descriptive controls, not a required pass score.
+initial-history 0.75 quantile, and an adaptive rolling 0.75 quantile on all eligible
+starts. It also reports a hindsight diagnostic that reserves the realized demand;
+this diagnostic reads future data and is not an agent policy. Compare completed
+episodes on the same starts using mean modeled cost (lower is better) or summed
+savings reward (higher is better). Overlapping episodes are not independent samples.
 
-Full example baseline trajectories are included under `outputs/example-traces/`.
-Each records observations, MCP actions, rewards, terminal flags and next
-observations for 14 decisions. Exact replay was checked independently. Reproduce:
+## Optional trajectory recording
 
-```bash
-python examples/record_trace.py outputs/traces
-```
+Recording is disabled by default. To write one JSONL file per server episode,
+set `CAPACITY_TRACE_DIR=/path/to/trajectories` before starting the server, or pass
+`trace_dir` when constructing `CapacityEnvironment`. The operator is responsible
+for retention and disk limits when recording is enabled.
 
-These are deterministic heuristic-policy traces, not LLM reasoning traces or
-evidence of frontier-agent difficulty. Recording here is explicit through the
-example runner. The API server additionally records each reset and MCP transition
-(action, observation, reward, terminal flag and step count) as a separate JSONL
-file under `outputs/trajectories/`. Set `CAPACITY_TRACE_DIR` to choose another
-server-owned output directory. Trace files are not exposed through agent tools
-and generated session files are excluded from the release package. Direct
-Python use records only when `trace_dir` or `CAPACITY_TRACE_DIR` is set.
-This instrumentation is not a claim of full hub telemetry certification.
-
-Tests cover cost arithmetic, data hashes, gap handling, split boundaries, causal
-observations, invalid actions, deterministic replay, terminal behavior, isolation,
-MCP tool declarations, and reward accounting. A compact validation record is included in `validation-evidence/`; full raw
-cluster/container logs remain in the accompanying submission preparation.
-The documented static/API validation does not constitute full semantic-validator
-certification, upstream approval, or a frontier-model difficulty result.
-
-## Publish
-
-After validating, the contributor can publish to their own Hugging Face Space:
+To generate and independently replay complete heuristic-policy examples:
 
 ```bash
-hf auth login
-openenv push --repo-id YOUR_HF_USERNAME/llm_capacity_env
+uv run --frozen python examples/record_trace.py outputs/example-traces
 ```
 
-Publishing a new personal Space does not automatically add it to an official
-OpenEnv collection or merge it into the GitHub monorepo. Ask maintainers about
-listing/review using the prepared contribution description and validation record.
-
-## Contributor reference-policy study
-
-A separate 2026-11-02 study generated three independent policies from each of
-`claude-opus-5-5` and `gemini-4-argon` gateway aliases, with three train-feedback
-submissions per repeat. All six policies froze before the 35-start test; all
-210 test trajectories (2,940 decisions) were exactly replayed. Mean test cost
-over the three programs was 1173.798785 for Opus and 1180.904867 for Gemini,
-compared with the causal rolling baseline at 1240.313545. Costs are modeled
-accounting units and lower is better. This was contributor-side program synthesis,
-not an official hosted evaluation or LLM weight training. The evidence archive
-`reference-model-evidence-20261102.tar.gz` is supplied separately for review,
-including requests, responses, policies, feedback, hashes and replay instructions.
-
-A separate 72-setting-per-deployment causal policy parameter fit selected the
-original baseline and showed no test improvement. These results demonstrate
-policy differences and measured baseline improvement, without establishing a
-hard frontier-model benchmark, ordered model capability tiers, an optimal causal
-ceiling or successful RL training. Test episodes overlap; they are not independent
-statistical samples.
-
-## Additional difficulty and trainability evidence (2026-11-02)
-
-A completed extension trains a 32-hidden-unit neural quantile policy with Adam
-on the exact environment cost. Across three seeds per initialization, cold-start
-cost drops 45.20%; training a residual on
-the existing rolling baseline drops cost 3.93%
-(conditional 95% interval [0.94%, 6.84%]).
-These statistics aggregate 61 unique test dates and use seven-day time blocks,
-not independent-sample inference over overlapping episodes. This demonstrates
-held-out improvement within these public recorded segments, including improvement
-from a useful baseline rather than only a weak initialization.
-
-There are 24 fitting configurations (two arms, three seeds, two learning rates,
-two regularizers), 80 epochs each, 82 fit days and 60 validation days. There are 2,480 minibatch updates per configuration (59,520 total);
-training-label collection covers 116 overlapping 14-decision episodes, 1,624
-replay decisions and 142 unique label days. Only
-validation selects configuration/checkpoint; all six selections are frozen before
-testing all 35 starts. Test records were used in earlier studies; they are not
-claimed to be previously unseen by all authors or contamination-proof. Training
-uses labels revealed after legal training actions. It is supervised neural policy
-fitting, not LLM weight fine-tuning or policy-gradient RL.
-
-A new controlled program-synthesis comparison uses Haiku 4.5 and Opus 5.5 gateway
-aliases, three independent programs each, three train-feedback submissions each,
-the same prompt/train starts/sandbox and 32,768 output tokens with 8,192 thinking
-tokens per response. All six programs freeze before test. Opus/Haiku three-program mean 14-day costs were 1169.929902/1274.433480. The separate unique-day analysis gives 6.47% cost reduction for Opus, conditional 95% interval [0.79%, 12.79%].
-The full interval and per-program results, including unfavorable results, are
-retained. API aliases/returned IDs are checked, not independently vendor-attested.
-
-The new evidence contains 280 initial/trained test episodes, 12 fixed-policy
-repeat episodes and 210 matched-model test episodes. All **502 episodes / 7,028
-decisions** pass independent exact replay, source/data/hash and API-budget checks;
-frozen neural weights also reproduce actions. Fixed-policy repeats have zero
-observed cost range, which checks deterministic replay rather than distributional
-robustness. Learning curves, all 192 checkpoints, model requests/responses,
-feedback and selection records are archived in `quality-evidence-20261102.tar.gz`.
-
-The earlier small-grid fitting negative result remains valid for that narrower
-policy family. These results establish measured learnability and characterize
-policy/model differences on the recorded data; they do not establish a universal
-frontier-hardness level, causal optimum, or transfer from training to general LLM
-capability. The hindsight bound reads future demand and is only a diagnostic.
-The reward/data/environment implementation is unchanged by this extension.
+Generated traces and validation logs are not included in the environment package.
