@@ -132,7 +132,7 @@ def test_init_generates_openenv_yaml(tmp_path: Path) -> None:
         ],
     )
     assert validate_result.exit_code == 0, validate_result.output
-    assert "Verdict: PASS" in validate_result.output
+    assert "PASS  static.manifest" in validate_result.output
 
     environment_file = env_dir / "server" / f"{env_name}_environment.py"
     assert "min(length * 0.1, 1.0)" in environment_file.read_text()

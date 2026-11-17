@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openenv"
-version = "0.13.0"
+version = "0.13.1.dev0"
 description = "A unified framework for reinforcement learning environments"
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -41,7 +41,7 @@ dependencies = [
 # `pip install openenv` includes the full runtime; the extras below are
 # optional integrations.
 daytona = [
-    "daytona>=0.136.0",
+    "daytona>=0.136.0,<1",
     "pyyaml>=6.0",
 ]
 aca = [
@@ -65,6 +65,12 @@ boxd = [
 ]
 inspect = [
     "inspect-ai>=0.3.0",
+]
+security = [
+    # Optional request-security middleware (IP lists, rate limiting,
+    # penetration detection) for env servers. No effect unless
+    # OPENENV_GUARD_ENABLED=1.
+    "fastapi-guard>=8.0.3,<9.0.0",
 ]
 harbor = [
     # Every sandbox backend. Bare `harbor` gives one that lists all 23 backends and can

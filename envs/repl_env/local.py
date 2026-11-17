@@ -16,6 +16,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Optional
 
+from .recursive_controller import RecursiveController
+
 try:
     from openenv.core.client_types import StepResult
 
@@ -46,6 +48,7 @@ class LocalREPLEnv:
         rubric: Optional[REPLRubric] = None,
         rlm_max_depth: int = 1,
         rlm_max_iterations: int | None = None,
+        recursive_controller: RecursiveController | None = None,
     ):
         self._env = REPLEnvironment(
             max_output_length=max_output_length,
@@ -57,6 +60,7 @@ class LocalREPLEnv:
             subcall_batch_fn=subcall_batch_fn,
             rlm_max_depth=rlm_max_depth,
             rlm_max_iterations=rlm_max_iterations,
+            recursive_controller=recursive_controller,
         )
 
     def reset(

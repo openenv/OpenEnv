@@ -1,0 +1,23 @@
+spec_version: 1
+name: harvest_rush_env
+version: 0.1.0
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
+validation:
+  reward:
+    range: [-1.0, 1.0]
+    oracle_tolerance: 0.0
+    floor_margin: 0.1
+  resources:
+    cpu: 1.0
+    memory_mb: 2048
+    disk_mb: 512
+    episode_timeout_s: 120.0
+  capabilities:
+    verifier:
+      kind: reward_channel
+  types:
+    tags: [rlvr, single-turn, ethics, animal-welfare]
+

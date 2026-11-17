@@ -188,6 +188,52 @@ def _hub_not_found(exc: Exception) -> bool:
     return getattr(response, "status_code", None) == 404
 
 
+def _check_harness(harness: str, model: str) -> dict[str, Any]:
+    """Construct the rollout's agent with dummy capture credentials, without setup or run."""
+    import io
+
+    result: dict[str, Any] = {"name": harness, "ok": False}
+    try:
+        # Imports, constructors and the process-env warning may print. Keep --json readable.
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            from harbor.agents.factory import AgentFactory
+            from openenv.harbor import seams
+            from openenv.harbor.rollout import build_trial_config, process_env
+
+            seam = seams.get(harness)
+            url, session = "http://127.0.0.1:9", "openenv-harness-preflight"
+            *_, proc_env = seam.resolve(base_url=url, session=session, model=model)
+            config = build_trial_config(
+                task_dir=tmp,
+                harness=harness,
+                sandbox="docker",
+                intercept_url=url,
+                session_id=session,
+                model=model,
+                trial_name="preflight",
+                trials_dir=tmp,
+            )
+            with process_env(harness, proc_env):
+                AgentFactory.create_agent_from_config(config.agent, logs_dir=Path(tmp))
+        result.update(
+            ok=True,
+            import_path=seam.import_path,
+            dialect=seam.dialect,
+            host_side=seam.host_side,
+            status=seam.status,
+            model=config.agent.model_name,
+            kwargs=config.agent.kwargs,
+            agent_env=config.agent.env,
+            process_env=proc_env,
+        )
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 - a failed check is report data
+        result["detail"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
 @app.command("info")
 def info(
     llm_url: Annotated[str, typer.Option("--llm-url", help=_LLM_HELP_OPTIONAL)] = "",
@@ -207,6 +253,14 @@ def info(
     ] = "Authorization",
     env_file: Annotated[
         str, typer.Option("--env-file", help="dotenv file with provider credentials.")
+    ] = "",
+    harness: Annotated[
+        str,
+        typer.Option(
+            "--harness",
+            help="Check a seam name or trusted `module:Class` by constructing it with dummy "
+            "capture credentials. Runs no agent or sandbox.",
+        ),
     ] = "",
     verbose: Annotated[
         bool,
@@ -229,11 +283,23 @@ def info(
         api_key=api_key or None,
         auth_header=auth_header,
     )
-    print(
-        json.dumps(caps.to_dict(), indent=2)
-        if json_output
-        else caps.render(verbose=verbose)
+    checked = (
+        _check_harness(harness, model or caps.llm.get("model") or "preflight-model")
+        if harness
+        else None
     )
+    if json_output:
+        data = caps.to_dict()
+        if checked is not None:
+            data["harness"] = checked
+        print(json.dumps(data, indent=2))
+    else:
+        print(caps.render(verbose=verbose))
+        if checked is not None:
+            print("\nharness preflight (construction only; capture is untested)")
+            print(json.dumps(checked, indent=2))
+    if checked is not None and not checked["ok"]:
+        raise typer.Exit(1)
 
 
 @app.command("rollout")
@@ -500,6 +566,16 @@ def serve(
     reward_key: Annotated[
         str, typer.Option("--reward-key", help=_REWARD_KEY_HELP)
     ] = "",
+    allow_harness: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--allow-harness",
+            help=(
+                "Accept this `module:Class` harness in clients' rollouts. Naming a class imports "
+                "its module on this server, so other import paths are refused. Repeatable."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Serve Harbor tasks over the OpenEnv Task API and MCP.
 
@@ -523,6 +599,8 @@ def serve(
     )
     # The UI's laptop defaults (this machine's token, private URLs) are for a loopback-only server.
     os.environ["OPENENV_HARBOR_UI_HOST"] = host
+    if allow_harness:
+        os.environ["OPENENV_HARBOR_ALLOW_HARNESS"] = ",".join(allow_harness)
     serve_harbor(
         llm_url=llm_url,
         model=model or None,

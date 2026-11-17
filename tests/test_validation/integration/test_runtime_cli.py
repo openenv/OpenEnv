@@ -37,6 +37,19 @@ IMPLEMENTED = {
     "runtime.oracle_containment",
 }
 PENDING = set()
+# Static checks without a grader: every report names them as SKIPs, so a run
+# where every runtime check passes reads WARN until these graders exist.
+STATIC_PENDING = {
+    "static.reproducible_build",
+    "static.image_hygiene",
+    "static.layout",
+    "static.sbom",
+    "static.oci_labels",
+    "static.resource_declaration",
+    "static.timeout_ceiling",
+    "static.dependency_pinning",
+    "static.task_distribution_pinning",
+}
 
 
 def _copy_asset(source, destination):
@@ -295,6 +308,10 @@ def _invoke_cli(
     assert {key for key in checks if key.startswith("runtime.")} == applicable
     assert all(checks[key]["status"] == "skip" for key in PENDING)
     assert all(checks[key]["evidence"] for key in PENDING)
+    assert all(
+        checks[key]["evidence"] == ["grader not implemented in this build"]
+        for key in STATIC_PENDING
+    )
     assert set(artifacts["coverage.json"]["requested_runtime_checks"]) == applicable
     assert artifacts["cleanup.json"]["completed"] is True
     return result, report, checks, artifacts
@@ -408,9 +425,11 @@ def test_cli_runtime_contract_findings(cli_context, tmp_path, mode, failed_check
         assert checks[failed_check]["evidence"]
     else:
         assert result.returncode == 0
-        assert report["verdict"] == "pass"
+        assert report["verdict"] == ("warn" if STATIC_PENDING else "pass")
         assert all(checks[key]["status"] == "pass" for key in IMPLEMENTED)
-        assert set(artifacts["coverage.json"]["incomplete"]) == PENDING
+        assert set(artifacts["coverage.json"]["incomplete"]) == (
+            PENDING | STATIC_PENDING
+        )
 
 
 def _assert_partial_episode(artifacts, expected_failure, checks):
@@ -556,7 +575,8 @@ def test_cli_controlled_judge_requires_twenty_samples(
     assert len(variances) == 2
     if mode == "judged_stable":
         assert variances == [0.0, 0.0]
-        assert result.returncode == 0 and report["verdict"] == "pass"
+        assert result.returncode == 0
+        assert report["verdict"] == ("warn" if STATIC_PENDING else "pass")
     else:
         assert all(value > 0.01 for value in variances)
         assert result.returncode == 1 and report["verdict"] == "fail"

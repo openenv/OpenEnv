@@ -4,6 +4,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Literal
 
@@ -683,6 +684,32 @@ class IsolationEvidence:
 
     sequential: RuntimeEvidence
     fresh: RuntimeEvidence
+
+
+@dataclass(frozen=True)
+class OracleEvidence:
+    """
+    Rewards for the Level 3 checks, measured by the execution binding.
+
+    The binding runs every episode in a fresh subject from one immutable image and
+    selects the graded reward. Values are exact rationals parsed from the raw
+    verifier output.
+
+    Attributes:
+        floor (`Fraction`):
+            Reward of the do-nothing episode.
+        oracle (`tuple[Fraction, ...]`):
+            Reward of each oracle run, in run order.
+        oracle_exit_codes (`tuple[int, ...]`):
+            Exit code of each oracle run, in run order.
+        canaries (`tuple[tuple[str, Fraction], ...]`, *optional*):
+            Name and reward of each declared canary run.
+    """
+
+    floor: Fraction
+    oracle: tuple[Fraction, ...]
+    oracle_exit_codes: tuple[int, ...]
+    canaries: tuple[tuple[str, Fraction], ...] = ()
 
 
 @dataclass(frozen=True)

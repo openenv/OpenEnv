@@ -139,6 +139,12 @@ class HarborService:
             raise
         return self.public_url
 
+    @property
+    def local_url(self) -> str:
+        """The proxy's loopback URL, for agents running in this process. Empty when it is mounted on a
+        Space's app, whose port this service does not own."""
+        return "" if self.mounted else f"http://127.0.0.1:{self.capture.port}"
+
     def stop(self) -> None:
         """Tear both halves down, even if the first half refuses to go.
 

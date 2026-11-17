@@ -38,6 +38,28 @@ negative rewards and values above 1 are accepted too. A value that is not a
 finite number is ignored, the pass rate is used, and the reason is recorded in
 `state.reward_override_ignored`.
 
+Verify commands, the clearing of that file and the read of it run as their own
+sandbox processes through E2B's process API, as `root` in `/home/user`, rather
+than as a `subprocess.run` cell in the code-interpreter kernel. Nothing done to
+the kernel, such as a rebound `subprocess.run`, a changed working directory or
+an edited `os.environ`, reaches verification. This removes the coupling to the
+kernel; it does not isolate verification from the agent. The agent's `bash`
+tool runs as root in the same sandbox, so it can still change anything there,
+including the files a verify command reads and the startup files of the shell
+it runs in. E2B starts each command as a login shell, so a profile the agent
+writes decides what a verify command reports: an `exit 0` or an `EXIT` trap in
+`/root/.bash_profile` makes a failing command look like a passing one. A test
+pins that behaviour, and #1232 tracks verification outside the agent's sandbox,
+which is what closes it.
+
+Only a command that ran and exited decides a verify result. If the sandbox
+itself fails, because it cannot be reached, the command cannot be started, or
+the wait for it ends without an exit status (a verify command that outlives its
+120 s timeout, for example), the error is raised instead: verification stops,
+no reward is produced, and the episode does not finish. A command with no exit
+status may still be running, since E2B's kill signals the command's own process
+and not the children it started.
+
 ## Tools
 
 - `bash(command, timeout=30)`

@@ -105,7 +105,49 @@ E2B starts each command as a login shell, so a profile the agent writes decides
 what a verify command reports: an `exit 0` or an `EXIT` trap in
 `/root/.bash_profile` makes a failing command look like a passing one. A test
 pins that behaviour rather than leaving it to be found in a reward curve, and
-#1232 tracks verification outside the agent's sandbox, which is what closes it.
+`submit_paths` closes that, per environment and per task.
+
+## Verifying outside the agent's sandbox
+
+A task that passes `submit_paths` to `reset` is verified in a second sandbox the
+agent never touches. The list defaults to empty, and an empty list keeps the
+behaviour above, so existing tasks score exactly as before.
+
+With paths declared, submitting runs this order, which is what makes it a
+boundary rather than hardening:
+
+1. A fresh sandbox is created from the same template.
+2. The task's `setup` commands run there, before any of the agent's work exists.
+3. The declared paths are copied out of the agent's sandbox into `/submission`,
+   which is not the working directory and is not on `PATH` or `PYTHONPATH`.
+4. The verify commands run, and the reward file is cleared and read there.
+5. The sandbox is killed.
+
+Paths are relative to `/home/user`. An absolute path, one that leaves the
+workspace with `..`, a symlink, a socket, a fifo, a device, or a submission over
+200 files or 10 MiB is refused, and the reason is recorded in
+`state.submission_refused`. Files that a shell or a test runner reads before the
+first assertion are left behind even when a declared directory contains them:
+the login files a shell reads (`.bash_profile`, `.bash_login`, `.profile`,
+`.bashrc`, `.bash_logout`), what Python runs before an import
+(`sitecustomize.py`, `usercustomize.py`, `*.pth`, `conftest.py`), and every
+file pytest takes options from (`pytest.ini`,
+`.pytest.ini`, `pytest.toml`, `.pytest.toml`, `pyproject.toml`, `setup.cfg`,
+`tox.ini`), since any of them can carry `addopts = --co` and report success
+without running a test. Declaring one of those exactly still submits it, since
+naming it is the task author's decision.
+
+Because the submission is no longer in the workspace, a task that opts in writes
+its verify commands against `/submission`. The task's own test files keep coming
+from its `setup` commands, so the copy cannot replace them.
+
+The boundary covers what the agent leaves in its own sandbox, not the code it
+submits. A verify command that imports or runs the submission runs that code as
+root in the verifier sandbox, where it can do anything root can, including
+ending the test process with status 0 and writing the reward file.
+
+The cost is one extra sandbox per scored rollout, which is why it is opt-in
+rather than the default.
 
 Only a command that ran and exited decides a verify result. If the sandbox
 itself fails, because it cannot be reached, the command cannot be started, or
