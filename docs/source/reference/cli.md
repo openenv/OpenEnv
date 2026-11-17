@@ -123,11 +123,11 @@ prefers a declared image over a Dockerfile, so the do-nothing trial pulls the pi
 and `runtime.startup` records it as `source_image`. The validator leaves the pulled
 image in the local Docker cache. Unsupported shapes include multi-step or non-Linux
 tasks, an `environment.docker_image` without a digest, tasks with neither a
-Dockerfile nor a pinned image, task-authored Compose files and separate verifier
-environments. GPU/TPU or external MCP requirements,
-credentials, non-public or differing phase networks, task environment variables,
-healthchecks, skills, verifier collection and artifact extensions are also
-unsupported. A served-package provider, including `--space`, is unsupported. Each case
+Dockerfile nor a pinned image and task-authored Compose files. GPU/TPU or external
+MCP requirements, credentials, non-public or differing phase networks, task
+environment variables, healthchecks, skills and verifier collection are also
+unsupported. Separate verifier environments and artifact extensions run only on
+`hf-sandbox`. A served-package provider, including `--space`, is unsupported. Each case
 gives `runtime.startup` SKIP with a named reason and runs no trials. With valid
 static declarations and an oracle, the verdict is WARN and the exit code is 0.
 A missing `solution/solve.sh` still FAILs `semantic.oracle_max` at the semantic level,
@@ -164,10 +164,22 @@ to build, every trial starts at once. `--flavor` and `--namespace` mean what the
 mean for `hf jobs run`: the flavor sets the hardware, and the namespace is the user
 or organization that owns and pays for the jobs, by default the token's user. The
 flavor must provide the CPU, memory and disk the contract declares, or
-`runtime.startup` reports ERROR before any job starts. Tasks that set an agent or
-verifier user are unsupported, because the sandbox cannot switch users.
+`runtime.startup` reports ERROR before any job starts.
 
-Each job carries `openenv-validation-run` and `openenv-validation-role` labels. At
+HF Sandbox cannot turn the network off or switch users. Tasks that declare
+`no-network` for any phase, or set an agent or verifier user, are unsupported,
+and `harbor-evidence.json` records that every phase ran with public networking
+as the image's default user.
+
+A task with `verifier.environment_mode = "separate"` runs its verifier in a second
+job, as Harbor does on other backends. That job starts from the task's pinned
+image. Harbor copies each `[[artifacts]]` path from the agent's job into it and
+uploads `tests/` at grading time, so test files never need to be in the image.
+A separate verifier with its own image, either `verifier.environment.docker_image`
+or a `tests/Dockerfile`, is unsupported.
+
+Each job, including a separate verifier's, carries `openenv-validation-run` and
+`openenv-validation-role` labels. At
 `AGENT_START` the validator reads the job back and requires the pinned image, the
 requested flavor and a `RUNNING` stage. After each trial it cancels any labelled
 job that is still running and waits up to 60 seconds for all of them to stop.
