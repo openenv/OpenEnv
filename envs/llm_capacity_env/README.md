@@ -23,18 +23,18 @@ released BurstGPT conversation-service workload logs. Before seeing the next day
 requests, an agent commits 24 hourly token reservations for each of two deployments.
 The environment then reveals demand and charges reservation and overflow costs.
 
-This is a **trace-replay environment with modeled economics**. It is not a live
-Azure service, hardware simulator, or measurement of current cloud pricing.
+The environment replays recorded demand and applies a fixed reservation and
+shortfall cost model.
 
 ## Task and interaction
 
 One episode contains 14 decision days. The observation provides the previous 14
-realized days, the next relative log day, published cost coefficients, and the most
+realized days, the next relative log day, cost-model coefficients, and the most
 recent outcome. Only completed 14-decision episodes are comparable; an unfinished prefix is not a successful zero-cost episode. The evaluation harness must require completion.
 
 Each action is a dictionary with exactly `ChatGPT` and `GPT-4`,
 each containing 24 finite nonnegative hourly token reservations in `[0, 1000000]`.
-The upper bound is a numerical action guard, not a claim about GPU throughput.
+Reservations are measured in tokens per hour; the upper bound limits the action space.
 
 Agent-facing MCP tools:
 
@@ -61,11 +61,9 @@ daily_reward = (zero_reservation_cost - daily_cost) / 1000
 ```
 
 Minimize total modeled episode cost, or equivalently maximize summed reward.
-The coefficients are explicit accounting assumptions retained from our existing
-capacity-reservation case. They are not real customer invoices, contemporary
-provider prices, or service-level guarantees. There is **no binary acceptance
-threshold**. The factor 1000 in reward is a fixed numerical scale; it does not
-change the optimal policy.
+The coefficients are fixed modeling assumptions for this capacity-reservation
+task. Reward is continuous. The factor 1000 is a fixed numerical scale that
+preserves the optimal policy.
 
 The per-decision reward range is `[-0.948, 1.422]`. The data loader checks
 that hourly demand is at most 500,000 tokens. Reserving zero earns exactly zero;
@@ -79,7 +77,7 @@ so maximizing total reward is equivalent to minimizing total modeled cost.
 
 The 0.75 empirical quantile is a useful baseline because the cost has a 4x
 shortfall multiplier. Drift and limited observation history create forecasting
-uncertainty. We do not claim this environment already defeats frontier models.
+uncertainty as workload levels change.
 
 ## Data, split and provenance
 
@@ -96,9 +94,8 @@ Day 77 has zero ChatGPT demand in every hour; test days 101–106 have
 rather than absent traffic. They remain scored as zero demand, so costs partly
 reflect forecasting these gaps; the trace does not establish real service outages.
 
-All 231 selected-stream days are retained, with no score-based episode filtering.
-This is an adaptation of our S11 capacity case, which previously selected these
-streams for studying workload drift. It is not an unbiased sample of all LLM use.
+All 231 days from the two selected conversation-service streams are retained.
+Results describe these two streams and do not represent all LLM workloads.
 No request text, completions, or user identifiers are distributed.
 
 - Train decision-day segments: 14–89 and 239–304.
@@ -111,9 +108,9 @@ No request text, completions, or user identifiers are distributed.
 
 Set `CAPACITY_SPLIT=train` (default) or `test` when starting the server. Seeded
 reset chooses uniformly from eligible starts. The split is orchestrator-owned.
-The complete trace is public and shipped on the **server side**; these are not
-secret, contamination-proof holdouts. Give remote agents the tools, not server
-filesystem access. No live data API, secrets, or provider account is required.
+The public trace is shipped on the server side. Agents interact through the MCP
+tools; the server filesystem contains the full trace and is reserved for the
+environment operator. No live data API or provider account is required.
 
 To independently reconstruct the aggregate, download `BurstGPT_1.csv`,
 `BurstGPT_2.csv`, and `BurstGPT_3.csv` from upstream release v2.0 into a raw directory
@@ -126,8 +123,8 @@ sha256sum rebuilt-hourly.csv
 
 Expected SHA-256:
 `de9db57e9dd8aa1c96f33789e45eaf5fe0b09726160e9554645d2cb8ca58c130`.
-This reconstruction has been run on all three original release assets; no demand
-values were modified to obtain the baseline results.
+The reconstruction script aggregates all three original release assets using the
+selection and zero-filling rules above.
 
 Data license: CC-BY-4.0, preserved in `server/data/LICENSE-BurstGPT.txt`.
 Modification details and aggregate hashes are in `server/data/PROVENANCE.json`.

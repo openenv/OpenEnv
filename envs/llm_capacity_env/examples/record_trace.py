@@ -1,8 +1,4 @@
-"""Record and independently replay full local MCP transitions of causal baselines.
-
-These are deterministic heuristic-policy traces, not LLM reasoning traces, and not
-an implementation of automatic server-side session telemetry / RFC 008 grading.
-"""
+"""Record complete heuristic-policy MCP episodes and verify exact replay."""
 
 import hashlib
 import json
@@ -124,7 +120,7 @@ if __name__ == "__main__":
     results = [replay(record(out, p)) for p in ("zero", "rolling_quantile")]
     report = {
         "passed": True,
-        "scope": "Local MCP baseline traces and exact replay; no LLM run or automatic subject-telemetry certification",
+        "scope": "Complete heuristic-policy MCP episodes and exact replay",
         "recorder_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "traces": results,
     }
