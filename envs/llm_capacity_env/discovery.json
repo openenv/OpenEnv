@@ -1,6 +1,5 @@
 {
   "license": "BSD-3-Clause AND CC-BY-4.0",
-  "license_source": "envs/llm_capacity_env/THIRD_PARTY_NOTICES.md",
   "tags": ["openenv", "resource-allocation", "llm-serving", "trace-replay"],
   "representative_queries": [
     "reserve LLM serving capacity using historical token demand",
