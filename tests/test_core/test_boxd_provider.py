@@ -353,14 +353,34 @@ def test_close_deletes_and_closes_the_client(client):
     assert client.closed == 1
 
 
-class _NotFoundError(Exception):
+class _BoxdError(Exception):
+    pass
+
+
+class _NotFoundError(_BoxdError):
+    pass
+
+
+class _AuthenticationError(_BoxdError):
+    pass
+
+
+class _PermissionDeniedError(_BoxdError):
+    pass
+
+
+class _APIConnectionError(_BoxdError):
     pass
 
 
 @pytest.fixture
 def fake_boxd_errors():
     errors = types.ModuleType("boxd.errors")
+    errors.BoxdError = _BoxdError
     errors.NotFoundError = _NotFoundError
+    errors.AuthenticationError = _AuthenticationError
+    errors.PermissionDeniedError = _PermissionDeniedError
+    errors.APIConnectionError = _APIConnectionError
     boxd = types.ModuleType("boxd")
     boxd.errors = errors
     with patch.dict(sys.modules, {"boxd": boxd, "boxd.errors": errors}):
@@ -547,6 +567,118 @@ def test_wait_for_ready_probes_stay_inside_the_budget(client):
     assert clock.now == 7
     assert http_timeouts == [5.0]
     assert client.machines.exec_timeouts == [2.0]
+
+
+def _clocked_wait(client, provider, url, timeout_s, inspect):
+    """Run wait_for_ready on a fake clock. Health checks answer 502 at once;
+    ``inspect(clock, timeout)`` stands in for the ``docker inspect`` exec."""
+    clock = SimpleNamespace(now=0.0)
+    original = client.machines.exec
+
+    def exec_(machine_id, command, *, timeout):
+        if command.startswith("docker inspect"):
+            client.machines.exec_timeouts.append(timeout)
+            return inspect(clock, timeout)
+        return original(machine_id, command, timeout=timeout)
+
+    client.machines.exec = exec_
+    client.machines.exec_timeouts.clear()
+    with (
+        patch("requests.get", return_value=_health(502)),
+        patch("time.sleep", side_effect=lambda s: setattr(clock, "now", clock.now + s)),
+        patch("time.monotonic", side_effect=lambda: clock.now),
+    ):
+        provider.wait_for_ready(url, timeout_s=timeout_s)
+
+
+def test_probe_timeout_near_the_deadline_raises_timeout_error(client, fake_boxd_errors):
+    provider = _provider(client)
+    url = provider.start_container(ECHO)
+
+    def inspect(clock, timeout):
+        # The exec hangs until its own timeout, then the SDK gives up on it.
+        clock.now += timeout
+        raise _BoxdError(f"exec timed out after {timeout}s on {HOST}")
+
+    with pytest.raises(TimeoutError, match="did not become ready") as err:
+        _clocked_wait(client, provider, url, 2.5, inspect)
+    assert HOST not in str(err.value)
+    assert err.value.__cause__ is None and err.value.__context__ is None
+    assert client.machines.exec_timeouts == [2.5]
+
+
+def test_probe_transport_error_keeps_polling(client, fake_boxd_errors):
+    provider = _provider(client)
+    url = provider.start_container(ECHO)
+    states = iter([_APIConnectionError("connection reset"), "exited"])
+
+    def inspect(clock, timeout):
+        state = next(states)
+        if isinstance(state, Exception):
+            raise state
+        return SimpleNamespace(exit_code=0, stdout=state + "\n", stderr="")
+
+    with pytest.raises(RuntimeError, match="exited during startup"):
+        _clocked_wait(client, provider, url, 30, inspect)
+    assert len(client.machines.exec_timeouts) == 2
+
+
+@pytest.mark.parametrize(
+    "error", [_NotFoundError("gone"), _AuthenticationError("bad key")]
+)
+def test_definite_probe_errors_are_raised(client, fake_boxd_errors, error):
+    provider = _provider(client)
+    url = provider.start_container(ECHO)
+
+    def inspect(clock, timeout):
+        raise error
+
+    with pytest.raises(type(error)):
+        _clocked_wait(client, provider, url, 30, inspect)
+
+
+def test_no_probe_with_less_than_a_second_left(client):
+    provider = _provider(client)
+    url = provider.start_container(ECHO)
+
+    def inspect(clock, timeout):
+        clock.now += 1.0
+        return SimpleNamespace(exit_code=0, stdout="running\n", stderr="")
+
+    with pytest.raises(TimeoutError):
+        _clocked_wait(client, provider, url, 2.5, inspect)
+    # Probes at 0 s (2.5 s left) and 2 s (0.5 s left): only the first runs.
+    assert client.machines.exec_timeouts == [2.5]
+
+
+def test_container_log_read_is_bounded(client):
+    client.machines.container_state = "exited"
+    provider = _provider(client, surface_server_logs=True)
+    url = provider.start_container(ECHO)
+    with patch("requests.get", return_value=_health(502)):
+        with pytest.raises(RuntimeError):
+            provider.wait_for_ready(url, timeout_s=5)
+    assert client.machines.commands[-1].startswith("docker logs")
+    assert client.machines.exec_timeouts[-1] == 10.0
+
+
+def test_failed_container_log_read_still_reports_the_exit(client, fake_boxd_errors):
+    client.machines.container_state = "exited"
+    provider = _provider(client, surface_server_logs=True)
+    url = provider.start_container(ECHO)
+    original = client.machines.exec
+
+    def exec_(machine_id, command, *, timeout):
+        if command.startswith("docker logs"):
+            raise _BoxdError(f"exec timed out after {timeout}s on {HOST}")
+        return original(machine_id, command, timeout=timeout)
+
+    client.machines.exec = exec_
+    with patch("requests.get", return_value=_health(502)):
+        with pytest.raises(RuntimeError, match="exited during startup") as err:
+            provider.wait_for_ready(url, timeout_s=5)
+    assert "could not be read" in str(err.value)
+    assert HOST not in str(err.value)
 
 
 def test_missing_url_is_refused_and_the_machine_deleted(client):

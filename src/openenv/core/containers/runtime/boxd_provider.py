@@ -33,6 +33,10 @@ _BUILT_IMAGE = "openenv-env:latest"
 _ENV_FILE = "/home/boxd/openenv-server.env"
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SKIP_IN_CONTEXT = {".git", ".venv", "__pycache__"}
+# wait_for_ready skips the container state check with less time than this left.
+_MIN_PROBE_S = 1.0
+# Time limit for reading the container log after the container exited.
+_LOGS_TIMEOUT_S = 10.0
 
 
 def _require_secure_url(url: Any) -> str:
@@ -479,10 +483,37 @@ class BoxdProvider(ContainerProvider):
                 "secrets; construct the provider with surface_server_logs=True "
                 "to include a redacted excerpt."
             )
-        log = self._exec(f"docker logs --tail 100 {_CONTAINER} 2>&1").stdout
+        try:
+            log = self._exec(
+                f"docker logs --tail 100 {_CONTAINER} 2>&1", timeout=_LOGS_TIMEOUT_S
+            ).stdout
+        except Exception:
+            return f"{base} Its log could not be read."
         for value in sorted(self._redact_values, key=len, reverse=True):
             log = log.replace(value, "***")
         return f"{base}\nLog (redacted):\n{log[-2000:]}"
+
+    def _container_state(self, *, timeout: float) -> str | None:
+        """State of the environment container, or ``None`` when the check
+        timed out or the connection failed (the caller keeps polling)."""
+        try:
+            result = self._exec(
+                f"docker inspect -f '{{{{.State.Status}}}}' {_CONTAINER}",
+                timeout=timeout,
+            )
+        except Exception as exc:
+            from boxd.errors import (
+                AuthenticationError,
+                BoxdError,
+                NotFoundError,
+                PermissionDeniedError,
+            )
+
+            definite = (AuthenticationError, NotFoundError, PermissionDeniedError)
+            if isinstance(exc, BoxdError) and not isinstance(exc, definite):
+                return None
+            raise
+        return result.stdout.strip()
 
     def wait_for_ready(self, base_url: str, timeout_s: float = 120.0) -> None:
         """
@@ -511,11 +542,8 @@ class BoxdProvider(ContainerProvider):
                 pass
 
             remaining = deadline - time.monotonic()
-            if self._machine_id is not None and remaining > 0:
-                state = self._exec(
-                    f"docker inspect -f '{{{{.State.Status}}}}' {_CONTAINER}",
-                    timeout=min(30.0, remaining),
-                ).stdout.strip()
+            if self._machine_id is not None and remaining >= _MIN_PROBE_S:
+                state = self._container_state(timeout=min(30.0, remaining))
                 if state in ("exited", "dead"):
                     raise RuntimeError(self._server_died_message())
 
