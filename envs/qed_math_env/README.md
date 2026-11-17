@@ -199,7 +199,7 @@ The environment normalizes many dataset formats automatically:
 | Field | Type | Description |
 |-------|------|-------------|
 | `problem` | `str` | Math problem statement |
-| `reference_solution` | `str` | Ground-truth solution |
+| `reference_solution` | `str` | Always empty. The ground-truth solution stays on the server and is only used for grading. |
 | `grading_guidelines` | `str` | Rubric / marking scheme |
 | `problem_id` | `str` | Unique identifier |
 | `problem_type` | `str` | `"proof"`, `"answer"`, or `"multi_step"` |

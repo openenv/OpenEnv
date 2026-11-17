@@ -200,7 +200,8 @@ def main():
     )
     model = AutoModelForCausalLM.from_pretrained(args.model, dtype=dtype).to(device)
     # A private Space needs your token. A public one ignores it.
-    headers = {"Authorization": f"Bearer {get_token()}"} if get_token() else None
+    token = get_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else None
 
     if args.secrets:
         secrets = args.secrets.split(",")

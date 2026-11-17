@@ -121,6 +121,70 @@ class TestJuliaServerImport:
         assert callable(transform)
 
 
+def _transform_code(core_code, test_code=""):
+    """Run the safety transform on an observation that already earned the full-pass reward."""
+    from julia_env import JuliaObservation
+    from julia_env.server import create_safe_julia_transform
+
+    obs = JuliaObservation(
+        reward=1.5, metadata={"core_code": core_code, "test_code": test_code}
+    )
+    return create_safe_julia_transform()(obs)
+
+
+class TestJuliaSafetyTransform:
+    """The safety penalty must hit dangerous calls, not names that end in one."""
+
+    @pytest.mark.parametrize(
+        ("core_code", "test_code"),
+        [
+            ("using LinearAlgebra\nunit(v) = v / norm(v)", ""),
+            ("using Distributions\nx = rand(Uniform(0, 1))", ""),
+            ("using DataFrames\nt(df) = transform(df, :a => ByRow(abs) => :b)", ""),
+            ("f(x) = x", "using Test, LinearAlgebra\n@test norm([3.0, 4.0]) == 5.0"),
+        ],
+        ids=["norm", "Uniform", "transform", "norm_in_test_code"],
+    )
+    def test_names_ending_in_a_pattern_are_not_penalized(self, core_code, test_code):
+        obs = _transform_code(core_code, test_code)
+
+        assert obs.reward == 1.5
+        assert "safety_violation" not in obs.metadata
+
+    @pytest.mark.parametrize(
+        "core_code",
+        [
+            "run(`ls`)",
+            'rm("data.txt")',
+            'Base.rm("data.txt")',
+            'x = read("secret.txt", String)',
+            'write("out.txt", "x")',
+            'ccall(:system, Cint, (Cstring,), "ls")',
+            "p = unsafe_load(ptr)",
+            "x = Base._unsafe_getindex(IndexLinear(), A, 1)",
+            'download("http://example.com/x")',
+            "Base.exit(0)",
+        ],
+        ids=[
+            "run",
+            "rm",
+            "Base.rm",
+            "read",
+            "write",
+            "ccall",
+            "unsafe_load",
+            "_unsafe_getindex",
+            "download",
+            "Base.exit",
+        ],
+    )
+    def test_dangerous_calls_are_penalized(self, core_code):
+        obs = _transform_code(core_code)
+
+        assert obs.reward == 1.5 - 3.0
+        assert "safety_violation" in obs.metadata
+
+
 def test_process_pool_failed_init_cleans_up(monkeypatch):
     """__del__ must not raise when __init__ fails before the pool is set up."""
     import gc

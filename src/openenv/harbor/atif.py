@@ -52,12 +52,16 @@ def load_atif(trial_dir: str | Path) -> dict[str, Any] | None:
 
 
 def _pi_session_as_atif(trial_dir: Path) -> dict[str, Any] | None:
-    """pi's own session log, reshaped into the two ATIF fields reconciliation reads.
+    """pi's own session log, reshaped into the ATIF fields reconciliation reads.
 
     pi writes no `trajectory.json`, but it does write `agent/pi/sessions/*.jsonl`, and every
     assistant record there carries `usage.output`: the completion-token count for that call, which
     is exactly what `metrics.completion_tokens` provides in ATIF. So the cross-check is available
     for pi after all, just under a different name and shape.
+
+    The text and tool calls are kept too. pi logs the proxy's budget stop like any other reply,
+    and `reconcile` can only tell it apart by its text; without it, every pi rollout that hits a
+    step or context limit fails reconciliation and cannot be trained on.
     """
     sessions = sorted((trial_dir / "agent" / "pi" / "sessions").glob("*.jsonl"))
     if not sessions:
@@ -72,9 +76,26 @@ def _pi_session_as_atif(trial_dir: Path) -> dict[str, Any] | None:
         if record.get("type") != "message" or message.get("role") != "assistant":
             continue
         usage = message.get("usage") or {}
+        content = message.get("content") or []
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
         steps.append(
             {
                 "source": "agent",
+                "message": "".join(
+                    part.get("text") or ""
+                    for part in content
+                    if part.get("type") == "text"
+                ),
+                "tool_calls": [
+                    {
+                        "tool_call_id": part.get("id"),
+                        "function_name": part.get("name"),
+                        "arguments": part.get("arguments"),
+                    }
+                    for part in content
+                    if part.get("type") == "toolCall"
+                ],
                 "metrics": {"completion_tokens": int(usage.get("output") or 0)},
             }
         )

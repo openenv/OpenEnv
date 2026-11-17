@@ -564,11 +564,32 @@ class TestGetProblemPayload:
         assert "problem_id" in payload
         assert "reference_solution" not in payload
 
-    def test_answer_mode_includes_reference_solution(self):
+    def test_answer_mode_hides_reference_solution(self):
         env = _make_env_with_problem(ANSWER_PROBLEM)
-        env.reset()
+        obs = env.reset()
+        assert obs.reference_solution == ""
         payload = env.get_problem_payload()
-        assert payload["reference_solution"] == r"\boxed{4}"
+        assert "reference_solution" not in payload
+        assert r"\boxed{4}" not in str(payload)
+
+    def test_auto_detected_answer_mode_hides_reference_solution(self):
+        # A row without a rubric is routed to answer mode automatically.
+        env = _make_env_with_problem({"problem": "What is 17*23?", "answer": "391"})
+        obs = env.reset()
+        assert obs.problem_type == "answer"
+        assert obs.reference_solution == ""
+        assert "391" not in str(env.get_problem_payload())
+
+    @pytest.mark.asyncio
+    async def test_answer_mode_correct_answer_still_scores(self):
+        env = _make_env_with_problem(ANSWER_PROBLEM)
+        try:
+            env.reset()
+            payload = await env.submit_proof_payload(r"The answer is \boxed{4}.")
+            assert payload["reward"] == pytest.approx(1.0)
+            assert payload["is_correct"] is True
+        finally:
+            await env._verifier_service.stop()
 
     def test_grading_guidelines_payload_without_reset(self):
         env = _make_env()

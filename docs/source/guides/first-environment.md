@@ -33,7 +33,7 @@ my_env/
 Class names come from the environment name, with a trailing `_env` dropped: `my_env` gives `MyAction`, `MyObservation`, `MyEnvironment` and `MyEnv`. The steps below go through each file. Edit them to replace the echo logic with yours. If you're working inside the OpenEnv repo, move the folder under `envs/`.
 
 > [!TIP]
-> If you already have an ORS/OpenReward or Prime Intellect Verifiers environment, run `openenv import SOURCE --name my_env --output-dir DIR` instead. It detects the source type, vendors the source under the generated package and emits an OpenEnv wrapper with task/split and MCP-style tool actions. Non-secret data files and portable dependencies from the source tree are carried over.
+> If you already have an ORS/OpenReward or Prime Intellect Verifiers environment, or an AgentEnv bundle, run `openenv import SOURCE --name my_env --output-dir DIR` instead. It detects the source type and vendors non-secret data files and portable dependencies into the generated package. ORS/OpenReward and Verifiers use generated wrappers; AgentEnv delegates serving to `agent_env.openenv.build_app` and vendors only the selected bundle. AgentEnv requires local Docker, and the generated Dockerfile alone cannot provide a working deployment. Its generated client is an `MCPToolClient`. See the generated README and [CLI reference](../reference/cli#openenv-import) for prerequisites.
 
 ## 2. Define the models
 

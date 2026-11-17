@@ -45,7 +45,10 @@ class ProblemObservation(QEDMathObservation):
     """Observation containing the problem statement."""
 
     problem: str = Field(default="", description="The mathematical problem")
-    reference_solution: str = Field(default="", description="Ground truth solution")
+    reference_solution: str = Field(
+        default="",
+        description="Always empty. The ground truth stays server-side for grading.",
+    )
     grading_guidelines: str = Field(
         default="", description="Rubric for grading (0-7 scale)"
     )

@@ -25,6 +25,10 @@ class ProviderError(RuntimeError):
     """A bounded, sanitized provider operation failed."""
 
 
+class CleanupError(ProviderError):
+    """Run-owned resources remain or their removal could not be verified."""
+
+
 class StartupError(ProviderError):
     """A subject did not become healthy within its startup deadline."""
 

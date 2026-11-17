@@ -1,0 +1,6 @@
+openenv>=0.8.0
+Spatial-Gym>=0.1.5
+datasets>=3.6.0
+gymnasium>=0.28.1
+fastapi>=0.115.0
+uvicorn>=0.24.0

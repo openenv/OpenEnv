@@ -65,19 +65,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--hub-model-id", required=True)
-    parser.add_argument("--env-url", default="https://openenv-wordle.hf.space")
+    parser.add_argument("--env-url", required=True)
     parser.add_argument("--max-steps", type=int, default=150)
     parser.add_argument("--trackio-space-id", default=None)
     args = parser.parse_args()
     env_url = args.env_url
-    # A private Space needs your token. A public one ignores it.
-    headers = {"Authorization": f"Bearer {get_token()}"} if get_token() else None
+    token = get_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else None
 
     class WordleEnv:
         def __init__(self):
-            self.client = TextArenaEnv(base_url=env_url, headers=headers)
+            self.client = TextArenaEnv(base_url=env_url, headers=headers).sync()
 
         def reset(self, **kwargs) -> str | None:
+            # One connection per game, so the Space's periodic WebSocket drops don't land mid-game.
+            self.client.close()
+            self.client = TextArenaEnv(base_url=env_url, headers=headers).sync()
             result = self.client.reset()
             # The game returns cumulative feedback each turn, so keep the full text and return only the new part.
             self._last_full_feedback = result.observation.messages[0].content
@@ -115,7 +118,8 @@ def main():
             self.done = result.done
             return feedback
 
-    # 4 prompts x 16 games per step. Each game is one environment session, so the Space must allow 64 at once.
+    # 4 prompts x 16 games per step, one environment session each. MAX_CONCURRENT_ENVS=96 leaves room for the sessions
+    # still being closed between games.
     prompts_per_step, num_generations, per_device_batch_size = 4, 16, 8
     dataset = Dataset.from_dict(
         {
@@ -133,7 +137,7 @@ def main():
             output_dir=args.hub_model_id.split("/")[-1],
             max_steps=args.max_steps,
             learning_rate=1e-6,
-            # Constant: with a linear decay to 0 the reward was still rising when the learning rate ran out.
+            # Constant, since with a linear decay to 0 the Wordle reward was still rising when the learning rate ran out.
             lr_scheduler_type="constant",
             num_generations=num_generations,
             per_device_train_batch_size=per_device_batch_size,

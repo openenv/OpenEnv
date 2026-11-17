@@ -117,7 +117,7 @@ hf jobs uv run --flavor a100-large --timeout 4h --secrets HF_TOKEN grpo.py \
     --env-url https://<user>-wordle.hf.space
 ```
 
-Every game is one environment session, so the environment must accept 64 at once. [Duplicate the `openenv/wordle` Space](https://huggingface.co/spaces/openenv/wordle?duplicate=true) and set the `MAX_CONCURRENT_ENVS=64` variable on your copy, rather than training against the shared Space. A private copy works too, since the script sends your token.
+Every game is one environment session and GRPO plays 64 at once. Each game opens a new session before the server has released the previous one, so the environment needs some room above 64. [Duplicate the `openenv/wordle` Space](https://huggingface.co/spaces/openenv/wordle?duplicate=true) and set the `MAX_CONCURRENT_ENVS=96` variable on your copy, rather than training against the shared Space. A private copy works too, since the script sends your token.
 
 ![Reward during GRPO](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/openenv/wordle-grpo-reward.png)
 
