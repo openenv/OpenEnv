@@ -249,6 +249,10 @@ or `8`/`"32G"`); the organization's default applies otherwise.
 
 Full example: [`examples/boxd_echo_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/boxd_echo_env.py).
 
+**Owner:** Michiel Voortman ([MichielMAnalytics](https://github.com/MichielMAnalytics)) at boxd
+owns this provider. Report SDK breakage in a GitHub issue and mention the
+owner.
+
 ### DaytonaProvider
 
 Runs the server in a Daytona cloud sandbox. Install with
