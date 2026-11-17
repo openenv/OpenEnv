@@ -426,17 +426,20 @@ class HFJobsInspector:
 def _unsupported(task, contract, sandbox):
     config = task.config
     env = config.environment
+    verifier_env = config.verifier.environment
+    environments = (env,) if verifier_env is None else (env, verifier_env)
     if task.has_steps:
         return "multi-step Harbor tasks"
-    if env.os.value != "linux":
+    if any(environment.os.value != "linux" for environment in environments):
         return "non-Linux Harbor tasks"
     if env.docker_image is not None and not _PINNED_IMAGE.fullmatch(env.docker_image):
         return "task-declared environment.docker_image without a sha256 digest pin"
-    if config.verifier.environment is not None or (
+    separate = verifier_env is not None or (
         config.verifier.environment_mode is not None
         and config.verifier.environment_mode.value != "shared"
-    ):
-        return "separate Harbor verifier environments"
+    )
+    if separate and sandbox != "hf-sandbox":
+        return "separate Harbor verifier environments outside hf-sandbox"
     if (
         env.docker_image is None
         and not (task.task_dir / "environment/Dockerfile").is_file()
@@ -446,19 +449,35 @@ def _unsupported(task, contract, sandbox):
         for path in (task.task_dir / "environment").rglob("*")
     ):
         return "tasks without one Dockerfile or pinned image, or with task-authored Compose"
-    if contract.resources.gpus or env.gpus or env.tpu or env.mcp_servers:
+    if contract.resources.gpus or any(
+        environment.gpus or environment.tpu or environment.mcp_servers
+        for environment in environments
+    ):
         return "GPU/TPU or external MCP requirements"
     if contract.requires_credentials:
         return "external credential requirements"
     if env.network_mode.value != "public" or any(
         phase.network_mode is not None and phase.network_mode.value != "public"
-        for phase in (config.agent, config.verifier)
+        for phase in (config.agent, config.verifier, verifier_env)
+        if phase is not None
     ):
         return "non-public or differing phase network policies"
-    if env.env or config.verifier.env or config.solution.env:
+    if (
+        any(environment.env for environment in environments)
+        or config.verifier.env
+        or config.solution.env
+    ):
         return "task environment variables (including host credential substitutions)"
-    if env.healthcheck or env.skills_dir or config.verifier.collect or config.artifacts:
-        return "healthcheck, skills, collect or artifact extensions"
+    if (
+        any(
+            environment.healthcheck or environment.skills_dir
+            for environment in environments
+        )
+        or config.verifier.collect
+    ):
+        return "healthcheck, skills or collect extensions"
+    if config.artifacts and sandbox != "hf-sandbox":
+        return "artifact extensions outside hf-sandbox"
     if sandbox == "hf-sandbox":
         if env.docker_image is None:
             return (
@@ -467,10 +486,23 @@ def _unsupported(task, contract, sandbox):
             )
         if config.agent.user is not None or config.verifier.user is not None:
             return "agent or verifier users on hf-sandbox, which cannot switch users"
+        # Harbor runs a separate verifier from verifier.environment.docker_image,
+        # else a tests/ Dockerfile, else the task image with tests/ uploaded.
+        if separate and (
+            (verifier_env is not None and verifier_env.docker_image is not None)
+            or any(
+                (task.task_dir / "tests" / name).is_file()
+                for name in ("Dockerfile", "docker-compose.yaml")
+            )
+        ):
+            return (
+                "separate verifiers on hf-sandbox that use their own image; "
+                + "the verifier must reuse the task's pinned image"
+            )
     return None
 
 
-async def _create_trial(config):
+async def _create_trial(config, register_job=None):
     from harbor.environments.hf_sandbox import HFSandboxEnvironment
     from harbor.trial.trial import Trial
 
@@ -478,12 +510,29 @@ async def _create_trial(config):
     environment = trial.agent_environment
     trial._openenv_cancelled_compose = []
     if isinstance(environment, HFSandboxEnvironment):
-        environment.start = partial(
+        start = partial(
             _start_sandbox,
-            environment,
             labels=_job_labels(config.trial_name),
             namespace=config.environment.kwargs["namespace"],
         )
+        environment.start = partial(start, environment)
+        # Harbor checks a separate verifier's environment just before starting
+        # it, so its job gets the same labels and is registered for cleanup.
+        check_verifier = trial._validate_separate_verifier_env_policies
+
+        def label_verifier(verifier, *, plan):
+            check_verifier(verifier, plan=plan)
+
+            async def start_verifier(*, force_build):
+                try:
+                    await start(verifier, force_build=force_build)
+                finally:
+                    if verifier._sandbox is not None:
+                        register_job(verifier._sandbox.id)
+
+            verifier.start = start_verifier
+
+        trial._validate_separate_verifier_env_policies = label_verifier
     else:
         environment._run_docker_compose_command = partial(
             _run_compose, environment, cancelled=trial._openenv_cancelled_compose
@@ -502,7 +551,9 @@ async def _start_sandbox(environment, *, force_build, labels, namespace):
             flavor=environment._flavor,
             idle_timeout=environment._idle_timeout,
             namespace=namespace,
-            labels=labels,
+            # The default job name is derived from the image, and a digest-pinned
+            # registry image makes it longer than the 100 characters HF Jobs allows.
+            labels={**labels, "name": environment.session_id},
             start_timeout=_SANDBOX_START_TIMEOUT_S,
         )
     )
@@ -779,7 +830,10 @@ async def _trial(
         effective_config.pop("trial_name")
         record["trial_config_digest"] = _digest(effective_config)
         record["resources"] = contract.resources.model_dump()
-        trial = await _create_trial(config)
+        trial = await _create_trial(
+            config,
+            register_job=partial(inspector.register_job, project) if hf else None,
+        )
         record["harbor_build_timeout_s"] = trial._environment_build_timeout_sec
         trial._environment_build_timeout_sec = build_budget
         if not expected:
@@ -1193,7 +1247,10 @@ def validate_harbor(
                         record["hf_jobs"] = host
                         record["limitations"] = [
                             "The image is the digest requested from HF Jobs and read "
-                            + "back from each job, not a digest measured at runtime."
+                            + "back from each job, not a digest measured at runtime.",
+                            "HF Sandbox cannot turn the network off or switch users, "
+                            + "so every phase runs with public networking as the "
+                            + "image's default user.",
                         ]
                     else:
                         record["daemon"] = host
