@@ -283,14 +283,17 @@ jobs:
           version: ${{ env.UV_VERSION }}
 
       - name: Install locked OR-Tools environment and test dependencies
-        run: uv sync --python 3.12 --project envs/ortools_env --frozen --extra dev
+        working-directory: tests/ortools_runtime
+        run: |
+          uv lock --check
+          uv sync --python 3.12 --frozen
 
       - name: Verify dependencies and run OR-Tools regressions
         env:
           PYTHONPATH: src:envs
         run: |
-          uv run --project envs/ortools_env --frozen --extra dev python -c 'import ortools, fastmcp'
-          uv run --project envs/ortools_env --frozen --extra dev pytest \
+          uv run --python 3.12 --frozen --project tests/ortools_runtime python -c 'import ortools, fastmcp'
+          uv run --python 3.12 --frozen --project tests/ortools_runtime pytest \
             tests/envs/test_ortools_env.py tests/envs/test_ortools_sandbox.py -v --tb=short
 
       - name: Build production image
