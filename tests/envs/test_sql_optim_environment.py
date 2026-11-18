@@ -740,6 +740,127 @@ class TestProcessBoundary:
         executor._kill_worker()
         assert executor._run("SELECT 1")[2] is None
 
+    def test_an_interrupted_call_cannot_hand_its_reply_to_the_next(self, executor):
+        """A wait cut short by any exception must not leave a reply in flight.
+
+        Otherwise every later call reads the reply of the job before it, so a
+        mismatching rewrite could be scored with an earlier match.
+        """
+
+        class Interrupted(BaseException):
+            """Stands in for an asynchronous exception, such as Ctrl-C."""
+
+        executor._run("SELECT 1")
+        pipe = executor._pipe
+        real_poll = pipe.poll
+
+        def interrupted_once(timeout=None):
+            pipe.poll = real_poll
+            raise Interrupted
+
+        pipe.poll = interrupted_once
+        with pytest.raises(Interrupted):
+            executor._results_equal("SELECT 1 AS x", "SELECT 1 AS x")
+        time.sleep(0.3)  # the first job's reply is ready by now
+
+        assert executor._results_equal("SELECT 1 AS x", "SELECT 2 AS x") is False
+        assert executor._run("SELECT 1")[2] is None
+
+    def test_a_worker_that_cannot_be_spawned_is_an_error(self, executor, monkeypatch):
+        from envs.sql_optim_env.server import executor as ex_mod
+
+        def no_processes(*args, **kwargs):
+            raise BlockingIOError(11, "Resource temporarily unavailable")
+
+        executor._kill_worker()
+        monkeypatch.setattr(ex_mod.subprocess, "Popen", no_processes)
+
+        assert executor._run("SELECT 1")[2]
+        monkeypatch.undo()
+        assert executor._run("SELECT 1")[2] is None
+
+    def test_a_forked_copy_starts_its_own_worker(self, executor, monkeypatch):
+        """A process forked after the first query must not share the parent's pipe.
+
+        Simulated by marking the worker as another process's, since a real fork
+        of this multi-threaded test process could deadlock.
+        """
+        executor._run("SELECT 1")
+        inherited = executor._worker
+        monkeypatch.setattr(executor, "_worker_owner_pid", -1)
+
+        assert executor._run("SELECT 1")[2] is None
+        assert executor._worker.pid != inherited.pid
+        assert executor._worker_owner_pid == os.getpid()
+        # The inherited worker was left to its owner, not killed. With its pipe
+        # closed here (this test is its real owner) it then exits by itself.
+        assert inherited.wait(5) == 0
+
+    def test_a_forked_copy_leaves_the_parents_resources_alone(
+        self, executor, monkeypatch
+    ):
+        """At exit, a forked copy must not kill the worker or delete the database."""
+        executor._run("SELECT 1")
+        worker = executor._worker
+        monkeypatch.setattr(executor, "_owner_pid", -1)
+        monkeypatch.setattr(executor, "_worker_owner_pid", -1)
+
+        executor._cleanup()
+
+        assert os.path.exists(executor._path)
+        assert worker.poll() is None
+        monkeypatch.undo()
+        worker.wait(5)  # it saw its pipe close and exited by itself
+        assert executor._run("SELECT 1")[2] is None
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="needs Linux /proc")
+    def test_worker_exits_when_the_server_dies_mid_query(self, tmp_path):
+        """An orphaned worker stops instead of finishing a runaway query."""
+        import contextlib
+        import signal
+        import subprocess
+        import textwrap
+
+        env_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../../envs/sql_optim_env")
+        )
+        pid_file = tmp_path / "worker.pid"
+        script = textwrap.dedent(
+            f"""
+            import sys
+            sys.path.insert(0, {env_dir!r})
+            from server.executor import QueryExecutor
+            ex = QueryExecutor()
+            ex._run("SELECT 1")
+            open({str(pid_file)!r}, "w").write(str(ex._worker.pid))
+            ex._run("SELECT COUNT(*) FROM events a, events b")
+            """
+        )
+        server = subprocess.Popen([sys.executable, "-c", script])
+
+        def gone(pid):
+            try:
+                with open(f"/proc/{pid}/stat") as f:
+                    return f.read().rsplit(") ", 1)[1].startswith("Z")
+            except FileNotFoundError:
+                return True
+
+        deadline = time.monotonic() + 60
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        worker_pid = int(pid_file.read_text())
+        try:
+            time.sleep(1.0)  # the runaway query is now running in the worker
+            server.send_signal(signal.SIGKILL)
+            server.wait()
+            deadline = time.monotonic() + 10
+            while not gone(worker_pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            assert gone(worker_pid)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(worker_pid, signal.SIGKILL)
+
 
 @pytest.mark.skipif(sys.platform != "linux", reason="RLIMIT_AS and /proc are Linux")
 class TestWorkerMemoryCap:
@@ -856,40 +977,51 @@ class TestLargeResultMeasurement:
         # `fetchall()` timing comes back.
         assert reported_ms < fetchall_ms * 0.25
 
-    def test_peak_memory_is_bounded_for_large_results(self, executor):
-        """Comparing a 500k-row query does not buffer the whole result set."""
+    @staticmethod
+    def _traced_peak(fn):
         tracemalloc.start()
         try:
-            result = executor.compare("SELECT * FROM orders", "SELECT * FROM orders")
+            result = fn()
             _, peak = tracemalloc.get_traced_memory()
         finally:
             tracemalloc.stop()
+        return result, peak
 
-        assert result["results_match"] is True
-        assert result["original_rows"] == 500_000
-        # Materializing 500k rows twice cost ~430 MB before; no result row
-        # reaches Python now.
-        assert peak < 100 * 1024 * 1024
+    def test_peak_memory_is_bounded_for_large_results(self, executor, ro_conn):
+        """Comparing a 500k-row query does not buffer the whole result set.
 
-    def test_a_one_row_result_is_not_converted_to_python(self, executor):
+        Measured where the rows live: the worker's job handler, run here so
+        tracemalloc can see it.
+        """
+        from envs.sql_optim_env.server import executor as ex_mod
+
+        query = "SELECT * FROM orders"
+        for job in (
+            {"op": "measure", "query": query, "runs": 1},
+            {"op": "equal", "original": query, "optimized": query},
+        ):
+            reply, peak = self._traced_peak(lambda: ex_mod._handle(ro_conn, job))
+            assert reply["ok"] is True
+            # Materializing 500k rows cost ~215 MB per query before.
+            assert peak < 100 * 1024 * 1024
+        assert executor.compare(query, query)["original_rows"] == 500_000
+
+    def test_a_one_row_result_is_not_converted_to_python(self, executor, ro_conn):
         """One row can hold a whole table, so no result row is fetched at all.
 
-        A row cap does not bound its size, and converting it holds the GIL, so
-        the deadline could not interrupt it either.
+        A row cap does not bound its size, so the worker only counts, times and
+        compares rows inside DuckDB.
         """
-        tracemalloc.start()
-        try:
-            result = executor.compare(
-                TASKS["task_1_basic_antipatterns"]["sql_query"],
-                "SELECT list(e) AS l FROM events e WHERE id <= 200000",
-            )
-            _, peak = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
+        from envs.sql_optim_env.server import executor as ex_mod
 
-        assert result["optimized_error"] is None
-        assert result["optimized_rows"] == 1
+        query = "SELECT list(e) AS l FROM events e WHERE id <= 200000"
+        job = {"op": "measure", "query": query, "runs": 1}
+        reply, peak = self._traced_peak(lambda: ex_mod._handle(ro_conn, job))
+
+        assert reply["ok"] is True and reply["rows"] == 1
         assert peak < 5 * 1024 * 1024
+        res = executor.compare(TASKS["task_1_basic_antipatterns"]["sql_query"], query)
+        assert res["optimized_error"] is None and res["optimized_rows"] == 1
 
     def test_timing_is_floored_at_the_profiler_resolution(self, executor):
         """A query faster than the profiler can express still gets a usable time.

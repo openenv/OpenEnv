@@ -66,7 +66,8 @@ _TOTAL_TIME_RE = re.compile(r"Total Time:\s*([0-9]*\.?[0-9]+)\s*s")
 # These caps cover buffer-managed memory and spill only. Agent results are
 # never converted into Python, in the worker or the server: only counts,
 # timings and plans cross the process boundary. Allocations DuckDB does not
-# track, such as one huge `repeat()`, are bounded only by the container.
+# track, such as one huge `repeat()`, are bounded by the worker's address-space
+# cap and the container; see `_WORKER_ADDRESS_SPACE_BYTES`.
 # Keep headroom in the 1024 MiB manifest budget, including RAM-backed /tmp in
 # docker-local validation.
 _DUCKDB_CONFIG = {
@@ -87,9 +88,12 @@ _WORKER_FAILED_ERROR = "Query aborted: the query process ran out of memory or cr
 _WORKER_START_TIMEOUT_S = 30.0
 # Memory DuckDB does not track (one huge `repeat()`) is bounded by the
 # container, so on Linux the worker volunteers as the OOM killer's victim
-# (`oom_score_adj`): when the container runs out, the worker dies and the
-# server survives. The address-space cap is a backstop for deployments without
-# a container limit, and refuses single allocations of 1 GiB or more. It is not
+# (`oom_score_adj`): when the container runs out, the kernel kills the worker
+# and the server survives. That holds when the OOM killer picks one process,
+# as under Docker's defaults; a runtime that kills a container's processes as a
+# group still takes the server down. The address-space cap is a backstop for deployments without
+# a container limit: an allocation that would take the worker past 1 GiB of
+# address space fails with DuckDB's out-of-memory error. It is not
 # tighter because address space is a poor proxy for memory here: the honest
 # task workload uses ~400 MiB resident, yet peaks at 580-660 MiB of address
 # space in the validation image and up to ~850 MiB on other Linux hosts, and a
@@ -169,9 +173,9 @@ def _single_statement_error(query: str) -> Optional[str]:
     Agent SQL gets `EXPLAIN ANALYZE ` prefixed onto it for timing. A prefix only
     binds to the first statement, so `SELECT 1; SELECT * FROM events` leaves the
     real query running as a statement of its own and the plan fetch converts its
-    rows into Python instead of a plan. The deadline does not save us there,
-    because `interrupt()` cannot stop rows that are already being converted into
-    Python objects.
+    rows into Python instead of a plan. That would bypass the rule that agent
+    results never become Python objects, and the time spent converting them
+    would be measured as query time.
 
     DuckDB's own parser decides what counts as a statement, so a `;` inside a
     string literal, a leading `--` comment and a trailing terminator all stay
@@ -358,8 +362,25 @@ def _confine_worker(address_space_bytes: Optional[int]) -> None:
         f.write("1000")
 
 
+def _exit_when_orphaned(interval_s: float = 0.5) -> None:
+    """Exit as soon as the server process is gone, even in the middle of a job.
+
+    Between jobs a closed pipe already ends the worker, but during a job it is
+    busy inside DuckDB and would otherwise run a runaway query to completion.
+    """
+    server = os.getppid()
+
+    def watch() -> None:
+        while os.getppid() == server:
+            time.sleep(interval_s)
+        os._exit(1)
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
 def _worker_main(fd: int) -> None:
     """Serve jobs from the server over the pipe at *fd* until it closes."""
+    _exit_when_orphaned()
     pipe = Connection(fd)
     try:
         setup = json.loads(pipe.recv_bytes())
@@ -417,12 +438,18 @@ class QueryExecutor:
         self._worker: Optional[subprocess.Popen] = None
         self._pipe: Optional[Connection] = None
         self._exec_lock = threading.Lock()
+        # A process forked from this one inherits the executor. It must neither
+        # share the worker's pipe nor, at exit, kill the worker or delete the
+        # database, so both are tied to the process that created them.
+        self._owner_pid = os.getpid()
+        self._worker_owner_pid = os.getpid()
         atexit.register(self._cleanup)
 
     def _cleanup(self) -> None:
         """Stop the worker and remove the temp database directory."""
         self._kill_worker()
-        shutil.rmtree(self._dir, ignore_errors=True)
+        if os.getpid() == self._owner_pid:
+            shutil.rmtree(self._dir, ignore_errors=True)
 
     # ── Schema Setup ─────────────────────────────────────────────────────
 
@@ -501,7 +528,11 @@ class QueryExecutor:
         to it. Starting one is trusted work, bounded by its own timeout rather
         than any query's deadline.
         """
-        if self._worker is not None and self._worker.poll() is None:
+        if (
+            self._worker is not None
+            and self._worker_owner_pid == os.getpid()
+            and self._worker.poll() is None
+        ):
             return None
         self._kill_worker()
 
@@ -511,8 +542,8 @@ class QueryExecutor:
             # `-P` keeps this directory off `sys.path`, so the worker imports
             # only what this file imports. A new session keeps a Ctrl-C meant
             # for the server from reaching the worker mid-job; it exits by
-            # itself once the server's end of the pipe closes.
-            self._worker = subprocess.Popen(
+            # itself once the server closes its end of the pipe or dies.
+            worker = subprocess.Popen(
                 [sys.executable, "-P", os.path.abspath(__file__), str(fd)],
                 pass_fds=(fd,),
                 start_new_session=True,
@@ -520,9 +551,13 @@ class QueryExecutor:
                 # environment rather than set by the worker itself.
                 env={**os.environ, **_WORKER_ENV},
             )
+        except OSError as exc:
+            server_end.close()
+            return f"Query process failed to start: {exc}"
         finally:
             worker_end.close()
-        self._pipe = server_end
+        self._worker, self._pipe = worker, server_end
+        self._worker_owner_pid = os.getpid()
 
         setup = {
             "path": self._path,
@@ -548,7 +583,8 @@ class QueryExecutor:
         self._worker = self._pipe = None
         if pipe is not None:
             pipe.close()
-        if worker is not None:
+        # A worker inherited through fork belongs to the parent: let it be.
+        if worker is not None and self._worker_owner_pid == os.getpid():
             if worker.poll() is None:
                 worker.kill()
             worker.wait()
@@ -581,6 +617,11 @@ class QueryExecutor:
                     reply = {"ok": False, "error": _TIMEOUT_ERROR, "fatal": True}
             except (EOFError, OSError):
                 reply = {"ok": False, "error": _WORKER_FAILED_ERROR, "fatal": True}
+            except BaseException:
+                # The job may still be running and will send a reply. Left in
+                # place, it would be read as the answer to the next job.
+                self._kill_worker()
+                raise
             if reply.get("fatal"):
                 self._kill_worker()
             return reply

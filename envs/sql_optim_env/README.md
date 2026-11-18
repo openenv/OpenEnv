@@ -129,9 +129,11 @@ crashes or runs out of memory, and starts a fresh one for the next query; the
 query gets an error and no credit. Allocations DuckDB does not track, such as
 one huge `repeat()`, are bounded by the container. On Linux the worker marks
 itself as the kernel's preferred out-of-memory victim, so when the container
-runs out of memory the worker is killed and the server keeps running. Its
-address space is also capped at 1 GiB, a backstop for deployments without a
-container memory limit. The Dockerfile and a direct `uvicorn` launch do not
+runs out of memory the worker is killed and the server keeps running. That
+holds when the OOM killer picks a single process, as under Docker's defaults; a
+runtime that kills a container's processes as a group still stops the server.
+The worker's address space is also capped at 1 GiB, a backstop for deployments
+without a container memory limit. The Dockerfile and a direct `uvicorn` launch do not
 enforce the YAML budgets themselves: deployments must configure their runtime
 limits explicitly.
 
