@@ -82,6 +82,24 @@ docker build -t coding-env:latest -f envs/coding_env/server/Dockerfile .
 - `step_count` (int) - Number of steps taken
 - `last_exit_code` (int) - Exit code from the last execution
 
+### Sessions and isolation
+
+Each session runs its code in its own Python worker process, and `reset()`
+starts a new one, so nothing an episode defines or changes in the interpreter
+reaches the next episode or another session. The worker does not inherit the
+server's environment variables, and runs as the unprivileged `nobody` user
+when the server runs as root. Each worker gets its own home and working
+directory, removed when the session ends. All workers run as the same user, so
+the import allowlist (which leaves out `os` by default) is what keeps one
+session's code from signaling another's process. No memory limit is set per
+worker.
+
+- `CODING_ENV_EXEC_TIMEOUT_S`: hard limit per step (default `30`). A step that
+  runs longer is stopped, its worker is killed, and the next step starts with a
+  fresh interpreter.
+- `MAX_CONCURRENT_ENVS`: max concurrent sessions (default `8`). Each session
+  holds one worker process.
+
 ## Advanced Usage
 
 ### Connecting to an Existing Server

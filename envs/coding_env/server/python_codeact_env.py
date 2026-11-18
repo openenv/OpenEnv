@@ -8,7 +8,9 @@
 Python Code Action Environment.
 
 This module provides a server-side environment implementation for executing
-Python code actions using PyExecutor.
+Python code actions. Each session runs its code in its own worker process
+(see `IsolatedPyExecutor`), and `reset()` replaces that process, so nothing
+an episode does to the interpreter reaches another session or episode.
 """
 
 import uuid
@@ -21,7 +23,7 @@ from openenv.core.env_server.interfaces import (
 )
 
 from ..models import CodeAction, CodeObservation, CodeState
-from .python_executor import DEFAULT_SAFE_IMPORTS, PyExecutor
+from .python_executor import DEFAULT_SAFE_IMPORTS, IsolatedPyExecutor
 from .transforms import create_safe_coding_transform
 
 
@@ -48,6 +50,8 @@ class PythonCodeActEnv(Environment):
         additional_imports: List of additional module imports to authorize
                           on top of DEFAULT_SAFE_IMPORTS
                           (e.g., ["numpy", "pandas", "matplotlib"])
+        timeout_s: Hard limit per step, after which the session's worker
+                   process is killed (default: CODING_ENV_EXEC_TIMEOUT_S or 30)
 
     Example:
         >>> env = PythonCodeActEnv()
@@ -59,16 +63,29 @@ class PythonCodeActEnv(Environment):
         >>> print(env.state.last_exit_code)  # 0
     """
 
+    # Every instance runs code in its own worker process and keeps no shared
+    # mutable state, so sessions can run side by side.
+    SUPPORTS_CONCURRENT_SESSIONS = True
+
     def __init__(
         self,
         transform: Transform | None = None,
         additional_imports: list[str] | None = None,
+        timeout_s: float | None = None,
     ):
         self._transform = transform
         self._additional_imports = _authorized_imports(additional_imports)
+        self._timeout_s = timeout_s
         self.transform = transform or create_safe_coding_transform()
-        self._executor = PyExecutor(additional_imports=self._additional_imports)
+        # The worker process starts on reset() or on the first step(), so
+        # instances the server creates only for introspection never spawn one.
+        self._executor = self._new_executor()
         self._state = CodeState()
+
+    def _new_executor(self) -> IsolatedPyExecutor:
+        return IsolatedPyExecutor(
+            additional_imports=self._additional_imports, timeout_s=self._timeout_s
+        )
 
     def reset(self) -> Observation:
         """
@@ -82,8 +99,11 @@ class PythonCodeActEnv(Environment):
         # Add last_exit_code to state
         self._state.last_exit_code = 0
 
-        # Reset executor to clear any previously defined variables/functions
-        self._executor = PyExecutor(additional_imports=self._additional_imports)
+        # Replace the worker process, so the new episode starts from a clean
+        # interpreter (variables, functions and any patched module state).
+        self._executor.close()
+        self._executor = self._new_executor()
+        self._executor.start()
 
         # Reset transform to clear any accumulated state
         self.transform = self._transform or create_safe_coding_transform()
@@ -113,7 +133,7 @@ class PythonCodeActEnv(Environment):
         if not isinstance(action, CodeAction):
             raise ValueError(f"Expected CodeAction, got {type(action)}")
 
-        # Execute the code using PyExecutor
+        # Execute the code in this session's worker process
         result = self._executor.run(action.code)
 
         # Update state
@@ -130,6 +150,10 @@ class PythonCodeActEnv(Environment):
         )
 
         return self._apply_transform(observation)
+
+    def close(self) -> None:
+        """Stop this session's worker process."""
+        self._executor.close()
 
     @property
     def state(self) -> CodeState:

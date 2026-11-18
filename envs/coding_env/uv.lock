@@ -2061,7 +2061,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
-    { name = "smolagents", specifier = ">=1.22.0,<2" },
+    { name = "smolagents", specifier = ">=1.24.0,<2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
 ]
 provides-extras = ["dev"]
