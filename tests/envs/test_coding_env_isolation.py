@@ -244,63 +244,44 @@ def test_server_runs_isolated_concurrent_websocket_sessions():
             socket.send_json({"type": "close"})
 
 
-@pytest.mark.parametrize(
-    "mode,euid,users",
-    [
-        (None, 0, [65534, None]),
-        (None, 1000, [None]),
-        ("auto", 0, [65534, None]),
-        ("same", 0, [None]),
-        ("nobody", 0, [65534]),
-    ],
-)
-def test_worker_user_choice(monkeypatch, mode, euid, users):
-    if mode is None:
-        monkeypatch.delenv("CODING_ENV_WORKER_USER", raising=False)
-    else:
-        monkeypatch.setenv("CODING_ENV_WORKER_USER", mode)
-    monkeypatch.setattr(python_executor.os, "geteuid", lambda: euid)
-    assert python_executor._worker_users() == users
-
-
-def test_unknown_worker_user_is_an_error(monkeypatch):
-    monkeypatch.setenv("CODING_ENV_WORKER_USER", "root")
-    with pytest.raises(ValueError):
-        python_executor._worker_users()
-
-
-def test_same_mode_runs_workers_as_the_server_user(make_env, monkeypatch, fresh_zygote):
-    monkeypatch.setenv("CODING_ENV_WORKER_USER", "same")
-    env = make_env(additional_imports=["os"])
-    assert env.reset().exit_code == 0
-    assert _run(env, "import os\nos.getuid()").stdout == str(os.getuid())
-
-
 @root_only
-def test_root_server_runs_workers_as_nobody(make_env, fresh_zygote):
+def test_root_server_runs_workers_as_nobody(make_env):
     env = make_env()
     env.reset()
     assert _uid(env._executor.pid) == python_executor.UNPRIVILEGED_UID
+    # The zygote keeps the server's uid, so it can read the server's packages.
+    assert _uid(python_executor._zygote._proc.pid) == 0
 
 
 @root_only
-def test_root_server_keeps_its_uid_when_nobody_cannot_run_python(
+def test_workers_cannot_signal_the_zygote_or_the_server(make_env):
+    env = make_env(additional_imports=["os"])
+    env.reset()
+    for pid in (python_executor._zygote._proc.pid, os.getpid()):
+        observation = _run(env, f"import os\nos.kill({pid}, 9)")
+        assert observation.exit_code == 1
+        assert "PermissionError" in observation.stderr
+        assert _alive(pid)
+
+
+@root_only
+def test_authorized_modules_load_from_a_directory_nobody_cannot_read(
     make_env, monkeypatch, fresh_zygote, tmp_path
 ):
-    # The interpreter sits in a directory only root can enter, like a venv
-    # under /root/.cache/uv.
+    # Like a virtual environment under /root/.cache/uv.
     private = tmp_path / "private"
     private.mkdir(mode=0o700)
-    (private / "python").symlink_to(sys.executable)
-    monkeypatch.setattr(python_executor.sys, "executable", str(private / "python"))
+    (private / "coding_env_probe_module.py").write_text("VALUE = 42\n")
+    monkeypatch.syspath_prepend(str(private))
 
-    env = make_env()
-    with pytest.warns(RuntimeWarning, match="CODING_ENV_WORKER_USER=same"):
-        observation = env.reset()
+    env = make_env(additional_imports=["coding_env_probe_module"])
+    env.reset()
+    observation = _run(
+        env, "import coding_env_probe_module\ncoding_env_probe_module.VALUE"
+    )
 
-    assert observation.exit_code == 0, observation.stderr
-    assert _run(env, "1 + 1").stdout == "2"
-    assert _uid(env._executor.pid) == 0
+    assert observation.stdout == "42", observation.stderr
+    assert _uid(env._executor.pid) == python_executor.UNPRIVILEGED_UID
 
 
 @linux_only
@@ -383,17 +364,3 @@ def test_dead_zygote_is_replaced(make_env):
     assert env.reset().exit_code == 0
     assert _run(env, "1 + 1").stdout == "2"
     assert python_executor._zygote is not zygote
-
-
-@linux_only
-def test_memory_limit_stops_a_large_allocation(make_env, monkeypatch):
-    monkeypatch.setenv("CODING_ENV_WORKER_MEMORY_MB", "1024")
-    env = make_env()
-    env.reset()
-
-    assert _run(env, "x = 'a' * (256 * 1024 ** 2)\nlen(x)").exit_code == 0
-    observation = _run(env, "y = 'a' * (2 * 1024 ** 3)")
-
-    assert observation.exit_code == 1
-    assert "MemoryError" in observation.stderr
-    assert _run(env, "1 + 1").stdout == "2"

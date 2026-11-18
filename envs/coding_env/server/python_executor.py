@@ -24,9 +24,9 @@ by every executor in a process. `IsolatedPyExecutor` therefore runs one
 `PyExecutor` per session in its own worker process, so sessions and
 episodes never share interpreter state. Workers are forked from a zygote, a
 template process started once per server with a minimal environment (no
-server secrets) and with smolagents already imported. They run as an
-unprivileged user when the server is root and that user can run the
-interpreter, and are killed on timeout. Server and workers exchange bounded
+server secrets) and with smolagents already imported. Each worker drops to
+an unprivileged user right after the fork when the server is root, and is
+killed on timeout. Server and workers exchange bounded
 JSON only, never pickle, because workers run untrusted code.
 """
 
@@ -35,6 +35,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import gc
+import importlib
 import json
 import logging
 import os
@@ -46,7 +47,6 @@ import sys
 import tempfile
 import threading
 import traceback
-import warnings
 import weakref
 from multiprocessing.connection import Connection
 from multiprocessing.reduction import recv_handle, send_handle
@@ -237,20 +237,6 @@ def set_non_dumpable() -> None:
     _prctl(PR_SET_DUMPABLE, 0)
 
 
-def _worker_users() -> list[int | None]:
-    """Users to try for the zygote and its workers, in order (None: the server's)."""
-    mode = os.environ.get("CODING_ENV_WORKER_USER", "auto")
-    if mode == "same":
-        return [None]
-    if mode == "nobody":
-        return [UNPRIVILEGED_UID]
-    if mode != "auto":
-        raise ValueError(
-            f"CODING_ENV_WORKER_USER must be auto, nobody or same, not {mode!r}"
-        )
-    return [UNPRIVILEGED_UID, None] if os.geteuid() == 0 else [None]
-
-
 def _worker_env(home: str) -> dict[str, str]:
     env = {k: os.environ[k] for k in WORKER_ENV_ALLOWLIST if k in os.environ}
     # The zygote imports this module the way the server did.
@@ -272,17 +258,16 @@ def _kill(proc: subprocess.Popen) -> None:
 class _Zygote:
     """Template process that forks one worker per session.
 
-    It starts from `sys.executable` with a minimal environment, as `user` when
-    set, becomes non-dumpable before its imports and then imports smolagents
-    and this module once. Workers are forked from it, so they start in
-    milliseconds, share its memory pages and are non-dumpable from their first
-    instruction. The threaded server itself is never forked. The zygote also
+    It starts from `sys.executable` with a minimal environment and the
+    server's uid, becomes non-dumpable before its imports and then imports
+    smolagents, this module and the sessions' authorized modules once.
+    Workers are forked from it, so they start in milliseconds and share its
+    memory pages. The threaded server itself is never forked. The zygote also
     kills and reaps its workers, so a worker's pid can't be reused while the
     server still refers to it.
     """
 
-    def __init__(self, user: int | None):
-        self.user = user
+    def __init__(self):
         self._lock = threading.Lock()
         self._live: set[int] = set()
         self._dead: collections.deque[int] = collections.deque()
@@ -294,10 +279,6 @@ class _Zygote:
             parent_sock, child_sock = socket.socketpair()
             self._conn = Connection(parent_sock.detach())
             cleanup.callback(self._conn.close)
-            kwargs = {}
-            if user is not None:
-                os.chown(home, user, user)
-                kwargs = dict(user=user, group=user, extra_groups=[])
             with child_sock:
                 self._proc = subprocess.Popen(
                     [sys.executable, "-c", _ZYGOTE_BOOT, str(child_sock.fileno())],
@@ -306,7 +287,6 @@ class _Zygote:
                     stdout=subprocess.DEVNULL,
                     env=_worker_env(home),
                     cwd=home,
-                    **kwargs,
                 )
             cleanup.callback(_kill, self._proc)
             if self._receive(ZYGOTE_STARTUP_TIMEOUT_S) != {"ready": True}:
@@ -332,7 +312,9 @@ class _Zygote:
         """Kill and reap a worker. Safe to call more than once.
 
         Without `wait` (garbage collection, which may run while this thread
-        holds the lock), a busy zygote kills it with its next request.
+        holds the lock), the kill is sent only if the lock is free, else with
+        the next spawn or close of any session. Until then, a worker that is
+        still running code keeps running.
         """
         try:
             self._live.remove(pid)
@@ -376,31 +358,12 @@ _zygote: _Zygote | None = None
 _zygote_lock = threading.Lock()
 
 
-def _start_zygote() -> _Zygote:
-    *fallbacks, user = _worker_users()
-    for candidate in fallbacks:
-        try:
-            return _Zygote(candidate)
-        except Exception as e:
-            # A warning, not a log record: nothing configures this logger in
-            # a plain uvicorn server, and this must be seen.
-            warnings.warn(
-                f"coding_env workers run as the server's uid {os.geteuid()}, "
-                f"because uid {candidate} can't start {sys.executable} with this "
-                f"PYTHONPATH ({e!r}). Install the env where that uid can read "
-                "it, or set CODING_ENV_WORKER_USER=same to skip this check.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-    return _Zygote(user)
-
-
 def _get_zygote() -> _Zygote:
     """This server's zygote, started on first use and restarted if it died."""
     global _zygote
     with _zygote_lock:
         if _zygote is None or not _zygote.alive:
-            _zygote = _start_zygote()
+            _zygote = _Zygote()
         return _zygote
 
 
@@ -425,7 +388,6 @@ class IsolatedPyExecutor:
             )
         self._additional_imports = additional_imports
         self._timeout_s = timeout_s
-        self._memory_mb = int(os.environ.get("CODING_ENV_WORKER_MEMORY_MB", "0"))
         self._zygote: _Zygote | None = None
         self._pid: int | None = None
         self._conn: Connection | None = None
@@ -448,15 +410,17 @@ class IsolatedPyExecutor:
             self._zygote = zygote = _get_zygote()
             self._home = tempfile.mkdtemp(prefix="coding_env_")
             cleanup.callback(shutil.rmtree, self._home, ignore_errors=True)
-            if zygote.user is not None:
-                os.chown(self._home, zygote.user, zygote.user)
+            # A root server runs model code as nobody.
+            uid = UNPRIVILEGED_UID if os.geteuid() == 0 else None
+            if uid is not None:
+                os.chown(self._home, uid, uid)
             parent_sock, child_sock = socket.socketpair()
             conn = Connection(parent_sock.detach())
             cleanup.callback(conn.close)
             config = {
                 "home": self._home,
                 "imports": self._additional_imports,
-                "memory_mb": self._memory_mb,
+                "uid": uid,
             }
             with child_sock:
                 self._pid = zygote.spawn(child_sock.fileno(), config)
@@ -511,6 +475,22 @@ def _cap(text: str) -> str:
     return text[:MAX_OUTPUT_CHARS] + "\n... (output truncated)"
 
 
+def _preload(names: list[str], tried: set[str]) -> None:
+    """Import a session's authorized modules in the zygote, with the server's
+    uid, so a worker that runs as nobody gets them even from a virtual
+    environment nobody can read. A module that fails here fails again, as a
+    normal ImportError, in that session."""
+    new = {name.removesuffix(".*") for name in names} - tried - {"*"}
+    for name in sorted(new):
+        tried.add(name)
+        try:
+            importlib.import_module(name)
+        except Exception:
+            traceback.print_exc()
+    if new:
+        gc.freeze()
+
+
 def _zygote_main(fd: int) -> None:
     """Zygote process: fork workers, and kill and reap them, on request."""
     import resource
@@ -518,6 +498,7 @@ def _zygote_main(fd: int) -> None:
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     conn = Connection(fd)
     children: set[int] = set()
+    preloaded: set[str] = set()
     # Keep the imported objects out of the workers' garbage collections, so
     # those don't write to (and copy) the memory pages they share.
     gc.freeze()
@@ -535,6 +516,7 @@ def _zygote_main(fd: int) -> None:
         reply = {}
         if request["spawn"] is not None:
             worker_fd = recv_handle(conn)
+            _preload(request["spawn"]["imports"] or [], preloaded)
             pid = os.fork()
             if pid == 0:
                 try:
@@ -552,16 +534,13 @@ def _zygote_main(fd: int) -> None:
 
 def _worker_main(fd: int, config: dict) -> None:
     """Forked worker: run one session's code, one call at a time."""
+    if config["uid"] is not None:
+        os.setgroups([])
+        os.setgid(config["uid"])
+        os.setuid(config["uid"])
+        # Changing the uid resets the dumpable flag and the parent-death signal.
+        set_non_dumpable()
     _prctl(PR_SET_PDEATHSIG, signal.SIGKILL)  # die with the zygote
-    if config["memory_mb"]:
-        import resource
-
-        # On top of the address space the worker starts with: the zygote's
-        # imports reserve far more of it than they use (about 2.3 GB).
-        with open("/proc/self/statm") as statm:
-            start = int(statm.read().split()[0]) * os.sysconf("SC_PAGE_SIZE")
-        limit = start + config["memory_mb"] * 1024 * 1024
-        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     home = config["home"]
     os.chdir(home)
     os.environ.update(HOME=home, TMPDIR=home, TMP=home, TEMP=home)
