@@ -3,3 +3,22 @@ version: "0.1.0"
 description: "Coding environment for OpenEnv"
 action: CodeAction
 observation: CodeObservation
+validation:
+  reward:
+    # Per-step shaping from server/transforms.py, not task success: a safety
+    # penalty of -1.0, plus 0.1 for short code and -0.2 for a syntax error.
+    range: [-1.2, 0.1]
+    oracle_tolerance: 0.0
+    # Policy minimum. Reset scores 0.0 and any short, safe snippet scores the
+    # max, so the reward measures code hygiene rather than solving a task.
+    floor_margin: 0.1
+  resources:
+    cpu: 1.0
+    memory_mb: 1024
+    disk_mb: 1024
+    episode_timeout_s: 300.0
+  capabilities:
+    verifier:
+      kind: reward_channel
+  types:
+    tags: [code, python]
