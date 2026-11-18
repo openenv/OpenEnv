@@ -458,14 +458,19 @@ def export_sft_command(
     rows, type `messages` and `tools` with the `Json` feature of `datasets`: a schema inferred from the rows gives
     every tool call the argument names of every other tool, as `None`.
     """
+    from openenv.core.utils import redact_secrets
     from openenv.harbor.sft import export_sft
 
     rows, stats = export_sft(
         _read_results(results), min_reward=min_reward, reward_key=reward_key
     )
+    # Rows hold what the agent saw and printed, which can include credentials.
+    text, redacted = redact_secrets("".join(json.dumps(row) + "\n" for row in rows))
     path = Path(out)
-    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    path.write_text(text)
     print(f"{stats.rows} rows from {stats.rollouts} rollouts -> {path}")
+    if redacted:
+        print(f"  redacted {redacted} secret(s)")
     if stats.below_min_reward or stats.ungraded:
         print(
             f"  dropped: {stats.below_min_reward} below --min-reward, {stats.ungraded} ungraded"
