@@ -5,6 +5,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from openenv.core.env_server.exceptions import SessionCapacityError
 from openenv.core.env_server.http_server import create_app
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
@@ -49,5 +50,23 @@ async def test_capacity_error_survives_close_before_send(server_url):
                 with pytest.raises(RuntimeError, match="CAPACITY_REACHED") as exc:
                     await refused.reset()
             assert "1/1 sessions active" in str(exc.value)
+            # The refused client also learns which server setting to raise.
+            assert "MAX_CONCURRENT_ENVS" in str(exc.value)
         finally:
             await refused.close()
+
+
+def test_capacity_error_names_the_setting_to_raise():
+    message = str(SessionCapacityError(active_sessions=1, max_sessions=1))
+
+    assert "1/1 sessions active" in message
+    assert "max_concurrent_envs" in message
+    assert "MAX_CONCURRENT_ENVS" in message
+    assert "SUPPORTS_CONCURRENT_SESSIONS=True" in message
+
+
+def test_capacity_error_keeps_a_custom_message():
+    error = SessionCapacityError(active_sessions=2, max_sessions=2, message="busy")
+
+    assert str(error) == "busy"
+    assert (error.active_sessions, error.max_sessions) == (2, 2)
