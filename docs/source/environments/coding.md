@@ -86,19 +86,40 @@ docker build -t coding-env:latest -f envs/coding_env/server/Dockerfile .
 
 Each session runs its code in its own Python worker process, and `reset()`
 starts a new one, so nothing an episode defines or changes in the interpreter
-reaches the next episode or another session. The worker does not inherit the
-server's environment variables, and runs as the unprivileged `nobody` user
-when the server runs as root. Each worker gets its own home and working
-directory, removed when the session ends. All workers run as the same user, so
-the import allowlist (which leaves out `os` by default) is what keeps one
-session's code from signaling another's process. No memory limit is set per
-worker.
+reaches the next episode or another session.
+
+Workers are forked from a template process (a zygote) that the server starts
+on the first `reset()`. The zygote starts with a minimal environment, so
+neither it nor the workers see the server's environment variables, and it
+imports smolagents once, which takes a few seconds. After that a new worker
+is ready in milliseconds and shares most of its memory with the zygote (about
+10 MB per worker on Linux). Each worker gets its own home, working and
+temporary directory (`HOME`, `TMPDIR`), removed when the session ends. A step
+that runs past the timeout kills only its own worker, and if the zygote dies
+the server starts a new one.
+
+When the server runs as root, the zygote and the workers run as the
+unprivileged `nobody` user, if that user can run the server's Python and read
+its packages. If it can't (for example, a virtual environment under `/root`),
+they keep the server's user and the server prints a warning. All workers run
+as the same user, so the import allowlist (which leaves out `os` by default)
+is what keeps one session's code from signaling another's process. On Linux
+the zygote and the workers are non-dumpable from the start, and so is the
+server started from `server/app.py`, so other processes of the same user
+can't read their memory or environment through `/proc`.
 
 - `CODING_ENV_EXEC_TIMEOUT_S`: hard limit per step (default `30`). A step that
   runs longer is stopped, its worker is killed, and the next step starts with a
   fresh interpreter.
 - `MAX_CONCURRENT_ENVS`: max concurrent sessions (default `8`). Each session
   holds one worker process.
+- `CODING_ENV_WORKER_USER`: `nobody` or `same` (the server's user) to choose
+  the workers' user instead of the check above.
+- `CODING_ENV_WORKER_MEMORY_MB` (Linux): how much address space a worker may
+  add to what it starts with (default: no limit). A step that allocates past
+  it fails with `MemoryError` and the session keeps going. The limit counts
+  reserved virtual memory, not only memory in use, so leave headroom for
+  libraries like numpy.
 
 ## Advanced Usage
 
