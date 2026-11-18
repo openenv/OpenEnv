@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import gc
 import json
 import logging
 import os
@@ -517,6 +518,9 @@ def _zygote_main(fd: int) -> None:
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     conn = Connection(fd)
     children: set[int] = set()
+    # Keep the imported objects out of the workers' garbage collections, so
+    # those don't write to (and copy) the memory pages they share.
+    gc.freeze()
     conn.send_bytes(b'{"ready":true}')
     while True:
         try:
