@@ -207,6 +207,7 @@ async def test_hf_sandbox_start_labels_its_job_and_keeps_harbor_setup(
             "labels": {
                 "openenv-validation-run": "d" * 32,
                 "openenv-validation-role": "oracle-replay",
+                "name": "openenv-validation-" + "d" * 32 + "-oracle-replay__env",
             },
             "start_timeout": harbor._SANDBOX_START_TIMEOUT_S,
         },
@@ -216,6 +217,76 @@ async def test_hf_sandbox_start_labels_its_job_and_keeps_harbor_setup(
     assert "/logs/verifier" in calls[2][1][-1]
     await trial.agent_environment.stop(delete=True)
     assert calls[-1] == ("kill",)
+
+
+@pytest.mark.asyncio
+async def test_hf_sandbox_separate_verifier_job_is_labelled_and_registered(
+    monkeypatch, tmp_path
+):
+    import huggingface_hub
+    from harbor.models.environment_type import EnvironmentType
+    from harbor.models.task.verifier_mode import resolve_verifier_environment_definition
+    from harbor.models.trial.config import (
+        AgentConfig,
+        EnvironmentConfig,
+        TaskConfig,
+        TrialConfig,
+    )
+
+    created, registered = [], []
+
+    def create(**kwargs):
+        created.append(kwargs)
+        return SimpleNamespace(
+            id=f"job-{len(created)}",
+            files=SimpleNamespace(mkdir=lambda path: None),
+            run=lambda argv, **kwargs: SimpleNamespace(
+                stdout="", stderr="", exit_code=0
+            ),
+            kill=lambda: None,
+        )
+
+    monkeypatch.setattr(huggingface_hub.Sandbox, "create", create)
+    image = "registry.example/image@sha256:" + "d" * 64
+    task = tmp_path / "task"
+    for directory in ("solution", "tests"):
+        (task / directory).mkdir(parents=True)
+    (task / "task.toml").write_text(
+        f'schema_version = "1.4"\n[environment]\ndocker_image = "{image}"\n'
+        + '[verifier]\nenvironment_mode = "separate"\n'
+    )
+    (task / "instruction.md").write_text("Write the correct answer.\n")
+    (task / "tests/test.sh").write_text("#!/bin/sh\nexit 0\n")
+    (task / "solution/solve.sh").write_text("#!/bin/sh\nexit 0\n")
+    trial = await harbor._create_trial(
+        TrialConfig(
+            task=TaskConfig(path=task),
+            agent=AgentConfig(name="oracle"),
+            environment=EnvironmentConfig(
+                type=EnvironmentType.HF_SANDBOX,
+                kwargs={"flavor": "cpu-basic", "namespace": "org"},
+            ),
+            trial_name="openenv-validation-" + "d" * 32 + "-oracle",
+            trials_dir=tmp_path / "trials",
+        ),
+        register_job=registered.append,
+    )
+    definition = resolve_verifier_environment_definition(
+        trial.task.config, trial.task.paths
+    )
+    plan = trial._network_plan(env_config=definition.config)
+    async with trial._separate_verifier_env(definition, key="verify", plan=plan):
+        pass
+    # Harbor starts the verifier from the task image and uploads tests/ itself.
+    assert not definition.bundled_tests
+    (verifier,) = created
+    assert verifier["image"] == image and verifier["namespace"] == "org"
+    assert verifier["labels"] == {
+        "openenv-validation-run": "d" * 32,
+        "openenv-validation-role": "oracle",
+        "name": trial._separate_verifier_session_id("verify"),
+    }
+    assert registered == ["job-1"]
 
 
 @pytest.mark.asyncio
@@ -229,6 +300,7 @@ async def test_hf_sandbox_cancelled_start_retains_the_late_job(
     release = threading.Event()
     sandbox = SimpleNamespace(id="late-job")
     environment = SimpleNamespace(
+        session_id="trial__env",
         task_env_config=SimpleNamespace(docker_image="pinned-image"),
         _flavor="cpu-basic",
         _idle_timeout=600,
