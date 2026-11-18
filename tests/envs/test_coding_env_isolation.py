@@ -10,7 +10,6 @@ must only stop its own session.
 from __future__ import annotations
 
 import gc
-import logging
 import os
 import secrets
 import subprocess
@@ -286,7 +285,7 @@ def test_root_server_runs_workers_as_nobody(make_env, fresh_zygote):
 
 @root_only
 def test_root_server_keeps_its_uid_when_nobody_cannot_run_python(
-    make_env, monkeypatch, fresh_zygote, tmp_path, caplog
+    make_env, monkeypatch, fresh_zygote, tmp_path
 ):
     # The interpreter sits in a directory only root can enter, like a venv
     # under /root/.cache/uv.
@@ -296,13 +295,12 @@ def test_root_server_keeps_its_uid_when_nobody_cannot_run_python(
     monkeypatch.setattr(python_executor.sys, "executable", str(private / "python"))
 
     env = make_env()
-    with caplog.at_level(logging.WARNING, logger=python_executor.__name__):
+    with pytest.warns(RuntimeWarning, match="CODING_ENV_WORKER_USER=same"):
         observation = env.reset()
 
     assert observation.exit_code == 0, observation.stderr
     assert _run(env, "1 + 1").stdout == "2"
     assert _uid(env._executor.pid) == 0
-    assert "CODING_ENV_WORKER_USER=same" in caplog.text
 
 
 @linux_only
@@ -389,11 +387,12 @@ def test_dead_zygote_is_replaced(make_env):
 
 @linux_only
 def test_memory_limit_stops_a_large_allocation(make_env, monkeypatch):
-    monkeypatch.setenv("CODING_ENV_WORKER_MEMORY_MB", "2048")
+    monkeypatch.setenv("CODING_ENV_WORKER_MEMORY_MB", "1024")
     env = make_env()
     env.reset()
 
-    observation = _run(env, "x = 'a' * (4 * 1024 ** 3)")
+    assert _run(env, "x = 'a' * (256 * 1024 ** 2)\nlen(x)").exit_code == 0
+    observation = _run(env, "y = 'a' * (2 * 1024 ** 3)")
 
     assert observation.exit_code == 1
     assert "MemoryError" in observation.stderr

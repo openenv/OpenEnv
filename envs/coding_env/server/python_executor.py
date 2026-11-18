@@ -45,6 +45,7 @@ import sys
 import tempfile
 import threading
 import traceback
+import warnings
 import weakref
 from multiprocessing.connection import Connection
 from multiprocessing.reduction import recv_handle, send_handle
@@ -89,8 +90,7 @@ CRASH_MESSAGE = (
     "so variables defined in earlier steps are gone."
 )
 START_FAILED_MESSAGE = (
-    "RuntimeError: the Python session could not start. Try again, or see the "
-    "server log."
+    "RuntimeError: the Python session could not start. Try again later."
 )
 
 
@@ -381,15 +381,15 @@ def _start_zygote() -> _Zygote:
         try:
             return _Zygote(candidate)
         except Exception as e:
-            logger.warning(
-                "coding_env workers run as the server's uid %d, because uid %d "
-                "can't start %s with this PYTHONPATH (%s). Install the env where "
-                "that uid can read it, or set CODING_ENV_WORKER_USER=same to "
-                "skip this check.",
-                os.geteuid(),
-                candidate,
-                sys.executable,
-                e,
+            # A warning, not a log record: nothing configures this logger in
+            # a plain uvicorn server, and this must be seen.
+            warnings.warn(
+                f"coding_env workers run as the server's uid {os.geteuid()}, "
+                f"because uid {candidate} can't start {sys.executable} with this "
+                f"PYTHONPATH ({e!r}). Install the env where that uid can read "
+                "it, or set CODING_ENV_WORKER_USER=same to skip this check.",
+                RuntimeWarning,
+                stacklevel=2,
             )
     return _Zygote(user)
 
@@ -521,7 +521,7 @@ def _zygote_main(fd: int) -> None:
     while True:
         try:
             request = json.loads(conn.recv_bytes())
-        except EOFError:
+        except (EOFError, OSError):
             return  # the server is gone, PR_SET_PDEATHSIG stops the workers
         for pid in request["kill"]:
             if pid in children:
@@ -552,7 +552,11 @@ def _worker_main(fd: int, config: dict) -> None:
     if config["memory_mb"]:
         import resource
 
-        limit = config["memory_mb"] * 1024 * 1024
+        # On top of the address space the worker starts with: the zygote's
+        # imports reserve far more of it than they use (about 2.3 GB).
+        with open("/proc/self/statm") as statm:
+            start = int(statm.read().split()[0]) * os.sysconf("SC_PAGE_SIZE")
+        limit = start + config["memory_mb"] * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     home = config["home"]
     os.chdir(home)
