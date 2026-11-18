@@ -18,9 +18,23 @@ logger = logging.getLogger(__name__)
 _DATABASE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
-def _deny_other_files(action: int, *_args) -> int:
-    """Clients send SQL; ATTACH, DETACH and VACUUM INTO would open or write other files."""
+# Functions that reach outside SQL: extension loading and raw tokenizer pointers.
+_DENIED_FUNCTIONS = {"fts3_tokenizer", "load_extension"}
+# Pragmas that change directories for the whole process, not just this database.
+_DENIED_PRAGMAS = {"temp_store_directory", "data_store_directory"}
+
+
+def _deny_other_files(action: int, arg1, arg2, *_args) -> int:
+    """Keep client SQL inside its own database file.
+
+    ATTACH and DETACH would open other files. VACUUM INTO, and plain VACUUM,
+    attach a database internally, so they are denied too.
+    """
     if action in (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH):
+        return sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_FUNCTION and (arg2 or "").lower() in _DENIED_FUNCTIONS:
+        return sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_PRAGMA and (arg1 or "").lower() in _DENIED_PRAGMAS:
         return sqlite3.SQLITE_DENY
     return sqlite3.SQLITE_OK
 

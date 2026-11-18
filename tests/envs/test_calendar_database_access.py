@@ -70,3 +70,42 @@ def test_orm_connections_cannot_attach_other_files(manager, tmp_path):
     with manager.get_engine("alice").connect() as conn:
         with pytest.raises(exc.DatabaseError):
             conn.execute(text(f"ATTACH DATABASE '{tmp_path / 'x.sqlite'}' AS x"))
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT fts3_tokenizer('simple')",
+        "SELECT FTS3_TOKENIZER('simple')",
+        "SELECT load_extension('anything')",
+        "PRAGMA temp_store_directory = '/tmp'",
+        "PRAGMA data_store_directory = '/tmp'",
+    ],
+)
+def test_client_sql_cannot_reach_outside_sql(manager, sql):
+    conn = connect_database(manager.get_db_path("alice"))
+    with pytest.raises(sqlite3.DatabaseError):
+        conn.execute(sql)
+
+
+def test_orm_connections_cannot_call_denied_functions(manager):
+    from sqlalchemy import exc, text
+
+    with manager.get_engine("alice").connect() as conn:
+        with pytest.raises(exc.DatabaseError):
+            conn.execute(text("SELECT fts3_tokenizer('simple')"))
+
+
+def test_ordinary_functions_and_pragmas_still_work(manager):
+    conn = connect_database(manager.get_db_path("alice"))
+    conn.execute("create table events(title)")
+    assert conn.execute("select upper('a'), length('abc')").fetchall() == [("A", 3)]
+    assert [row[1] for row in conn.execute("PRAGMA table_info(events)")] == ["title"]
+    try:
+        conn.execute("create virtual table notes using fts5(body)")
+    except sqlite3.OperationalError:
+        pytest.skip("this sqlite has no fts5")
+    conn.execute("insert into notes values ('team standup')")
+    assert conn.execute(
+        "select body from notes where notes match 'standup'"
+    ).fetchall() == [("team standup",)]
