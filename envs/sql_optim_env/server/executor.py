@@ -572,6 +572,10 @@ class QueryExecutor:
                 reply = {"ok": False, "error": "Query process did not start in time"}
         except (EOFError, OSError):
             reply = {"ok": False, "error": _WORKER_FAILED_ERROR}
+        except BaseException:
+            # The ready message may still arrive and be read as a job's reply.
+            self._kill_worker()
+            raise
         if not reply["ok"]:
             self._kill_worker()
             return reply["error"]

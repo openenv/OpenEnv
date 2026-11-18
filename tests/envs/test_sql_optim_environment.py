@@ -766,6 +766,40 @@ class TestProcessBoundary:
         assert executor._results_equal("SELECT 1 AS x", "SELECT 2 AS x") is False
         assert executor._run("SELECT 1")[2] is None
 
+    def test_an_interrupted_handshake_cannot_hand_its_reply_to_a_job(
+        self, executor, monkeypatch
+    ):
+        """The worker's ready message must not be read as a job's reply."""
+        from envs.sql_optim_env.server import executor as ex_mod
+
+        class Interrupted(BaseException):
+            """Stands in for an asynchronous exception, such as Ctrl-C."""
+
+        real_pipe = ex_mod.multiprocessing.Pipe
+
+        def pipe_interrupting_the_handshake():
+            server_end, worker_end = real_pipe()
+            real_poll = server_end.poll
+
+            def interrupted_once(timeout=None):
+                server_end.poll = real_poll
+                raise Interrupted
+
+            server_end.poll = interrupted_once
+            return server_end, worker_end
+
+        executor._kill_worker()
+        monkeypatch.setattr(
+            ex_mod.multiprocessing, "Pipe", pipe_interrupting_the_handshake
+        )
+        with pytest.raises(Interrupted):
+            executor._run("SELECT 1")
+        monkeypatch.undo()
+        time.sleep(0.5)  # the ready message is waiting by now
+
+        assert executor._results_equal("SELECT 1 AS x", "SELECT 2 AS x") is False
+        assert executor._run("SELECT 1")[2] is None
+
     def test_a_worker_that_cannot_be_spawned_is_an_error(self, executor, monkeypatch):
         from envs.sql_optim_env.server import executor as ex_mod
 
