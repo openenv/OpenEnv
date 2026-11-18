@@ -15,6 +15,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -290,6 +291,42 @@ def test_first_import_of_a_slow_module_does_not_stop_the_zygote(
     assert observation.stdout == "7", observation.stderr
     # Already imported in the zygote, so the next session gets the short budget.
     make_env(additional_imports=["coding_env_slow_module"]).reset()
+
+
+def _running(pid: int) -> bool:
+    """Alive and not a zombie waiting to be reaped."""
+    state = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
+    ).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
+def test_timeout_kill_does_not_wait_for_another_sessions_preload(
+    make_env, monkeypatch, fresh_zygote, tmp_path
+):
+    (tmp_path / "coding_env_slower_module.py").write_text(
+        "import time\ntime.sleep(4)\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(python_executor, "ZYGOTE_REPLY_TIMEOUT_S", 0.5)
+    runaway = make_env(timeout_s=1.0)
+    runaway.reset()
+    pid = runaway._executor.pid
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        # Holds the zygote lock for about 4 s while it imports the module.
+        preload = pool.submit(
+            make_env(additional_imports=["coding_env_slower_module"]).reset
+        )
+        time.sleep(0.5)
+        started = time.monotonic()
+        observation = _run(runaway, "for i in range(10**12):\n    pass")
+        elapsed = time.monotonic() - started
+        assert not _running(pid)
+        preload.result()
+
+    assert "TimeoutError" in observation.stderr, observation.stderr
+    assert elapsed < 2.5, elapsed
 
 
 @root_only

@@ -316,19 +316,32 @@ class _Zygote:
         return pid
 
     def kill(self, pid: int, wait: bool = True) -> None:
-        """Kill and reap a worker. Safe to call more than once.
+        """Kill a worker now and have the zygote reap it. Safe to call more
+        than once.
 
-        Without `wait` (garbage collection, which may run while this thread
-        holds the lock), the kill is sent only if the lock is free, else with
-        the next spawn or close of any session. Until then, a worker that is
-        still running code keeps running.
+        The worker is signalled directly, so it stops even while another
+        session holds the lock (a spawn that imports new modules can take up
+        to `ZYGOTE_PRELOAD_TIMEOUT_S`). Its pid stays reserved until the zygote
+        reaps it, which only happens on a request from this side. The reap
+        goes out now if the lock frees up within `ZYGOTE_REPLY_TIMEOUT_S` (or
+        is free, without `wait`, e.g. during garbage collection), else with the
+        next spawn or close of any session.
         """
         try:
             self._live.remove(pid)
         except KeyError:
             return
         self._dead.append(pid)
-        if not self._lock.acquire(blocking=wait):
+        if self.alive:  # a live zygote has not reaped `pid`, so it is ours
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        if wait:
+            acquired = self._lock.acquire(timeout=ZYGOTE_REPLY_TIMEOUT_S)
+        else:
+            acquired = self._lock.acquire(blocking=False)
+        if not acquired:
             return
         try:
             self._request(None)
