@@ -3,7 +3,7 @@
 """
 Daytona container provider for running OpenEnv environments in Daytona cloud sandboxes.
 
-Requires the ``daytona`` SDK: ``pip install daytona>=0.10``
+Requires the ``daytona`` SDK: ``pip install 'daytona>=0.10,<1'``
 """
 
 from __future__ import annotations

@@ -27,6 +27,7 @@ from typing import Any, BinaryIO, Callable, Iterable
 
 from ..env_server.mcp_types import Tool
 from ..llm_client import LLMClient
+from ..utils import redact_secrets
 from .rollout import (
     _resolve_env_reward,
     HarnessAdapter,
@@ -598,6 +599,19 @@ def push_to_hf_hub(
 
     readme_path = output_dir / README_FILENAME
     readme_path.write_text(build_dataset_readme(output_dir), encoding="utf-8")
+
+    # Episodes hold what the agent saw and printed, which can include credentials.
+    redacted = 0
+    for path in output_dir.iterdir():
+        if path.suffix in {".jsonl", ".json", ".md"}:
+            text, count = redact_secrets(path.read_text(encoding="utf-8"))
+            if count:
+                path.write_text(text, encoding="utf-8")
+                redacted += count
+    if redacted:
+        warnings.warn(
+            f"Redacted {redacted} secret(s) from {output_dir} before the upload"
+        )
 
     num_episodes = _count_episodes(results_path)
     message = commit_message or f"Add {num_episodes} collected episode(s)"
