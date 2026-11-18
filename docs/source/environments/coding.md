@@ -121,6 +121,8 @@ Limits:
   shared if file access (`os`, `open`) is authorized.
 - There is no memory limit per worker. The container's limit is the guard,
   and a worker that gets killed only restarts its own session.
+- Workers share the server's stderr, so if `os` is authorized, model code can
+  write lines into the server log.
 
 ## Advanced Usage
 
