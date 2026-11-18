@@ -248,6 +248,7 @@ def test_server_runs_isolated_concurrent_websocket_sessions():
 def test_root_server_runs_workers_as_nobody(make_env):
     env = make_env()
     env.reset()
+    _run(env, "1")  # the worker switches user right after the fork
     assert _uid(env._executor.pid) == python_executor.UNPRIVILEGED_UID
     # The zygote keeps the server's uid, so it can read the server's packages.
     assert _uid(python_executor._zygote._proc.pid) == 0
@@ -289,10 +290,10 @@ def test_workers_are_never_dumpable(make_env):
     env = make_env()
     env.reset()
     pid = env._executor.pid
-    # Right after the fork, before the worker has run anything.
-    uid = _uid(pid)
-    if uid == 0:
-        pytest.skip("root can read any process")
+    # Right after the fork, before the worker has run anything, read as the
+    # user the worker runs as. A root server's worker is still root or already
+    # nobody, non-dumpable either way.
+    uid = python_executor.UNPRIVILEGED_UID if os.geteuid() == 0 else os.geteuid()
     for target in (pid, python_executor._zygote._proc.pid):
         for name in ("environ", "mem"):
             result = _read_as(uid, f"/proc/{target}/{name}")
