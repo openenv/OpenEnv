@@ -638,6 +638,12 @@ class TestResourceLimits:
         assert (
             limits["memory_limit"] + writable_bytes <= resources["memory_mb"] * mib / 2
         )
+        # The worker's address-space cap must hold DuckDB's buffer pool, and is
+        # never looser than the container, which is the real memory boundary.
+        from envs.sql_optim_env.server.executor import _WORKER_ADDRESS_SPACE_BYTES
+
+        assert _WORKER_ADDRESS_SPACE_BYTES > limits["memory_limit"]
+        assert _WORKER_ADDRESS_SPACE_BYTES <= resources["memory_mb"] * mib
 
 
 class TestProcessBoundary:
@@ -733,6 +739,70 @@ class TestProcessBoundary:
         assert worker.wait(timeout=5) is not None
         executor._kill_worker()
         assert executor._run("SELECT 1")[2] is None
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="RLIMIT_AS and /proc are Linux")
+class TestWorkerMemoryCap:
+    """Memory DuckDB does not track is capped in the worker, not the server.
+
+    `memory_limit` only covers DuckDB's buffer manager, so one huge string can
+    grow past it. The worker's address space is capped, so such an allocation
+    fails inside the worker, and if the container still runs out of memory the
+    kernel kills the worker rather than the server.
+    """
+
+    # Not foldable to a constant (it depends on a column), so the string is
+    # really built at run time, for each of the 1,000 rows until LIMIT stops it.
+    UNTRACKED = (
+        "SELECT length(repeat(chr(120), 600000000 + (id % 1))) AS n "
+        "FROM products LIMIT 1"
+    )
+
+    @staticmethod
+    def _proc(pid, name):
+        with open(f"/proc/{pid}/{name}") as f:
+            return f.read()
+
+    def test_worker_address_space_is_capped(self, executor):
+        from envs.sql_optim_env.server import executor as ex_mod
+
+        executor._run("SELECT 1")
+        limits = self._proc(executor._worker.pid, "limits")
+        row = next(line for line in limits.splitlines() if "address space" in line)
+        soft, hard = row.split()[3:5]
+        assert int(soft) == int(hard) == ex_mod._WORKER_ADDRESS_SPACE_BYTES
+
+    def test_worker_uses_two_malloc_arenas(self, executor):
+        executor._run("SELECT 1")
+        environ = self._proc(executor._worker.pid, "environ").split("\0")
+        assert "MALLOC_ARENA_MAX=2" in environ
+
+    def test_worker_is_the_preferred_oom_victim(self, executor):
+        server_adj = self._proc("self", "oom_score_adj").strip()
+        executor._run("SELECT 1")
+        assert self._proc(executor._worker.pid, "oom_score_adj").strip() == "1000"
+        assert self._proc("self", "oom_score_adj").strip() == server_adj
+
+    def test_untracked_allocation_fails_in_the_worker(self, executor):
+        executor._run("SELECT 1")
+        pid = executor._worker.pid
+
+        res = executor.compare("SELECT 1 AS n", self.UNTRACKED)
+
+        assert "Out of Memory" in (res["optimized_error"] or "")
+        assert res["results_match"] is False
+        # A worker whose allocator has failed is replaced, not reused.
+        assert executor.compare("SELECT 1", "SELECT 1")["results_match"] is True
+        assert executor._worker.pid != pid
+
+    def test_cap_leaves_room_for_the_real_tasks(self, executor):
+        """Every task query still runs, and matches itself, under the cap."""
+        for task in TASKS.values():
+            if "sql_query" not in task:
+                continue
+            res = executor.compare(task["sql_query"], task["sql_query"])
+            assert res["optimized_error"] is None, task["task_id"]
+            assert res["results_match"] is True, task["task_id"]
 
 
 class TestLargeResultMeasurement:

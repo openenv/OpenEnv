@@ -85,6 +85,17 @@ _TIMEOUT_ERROR = (
 _WORKER_FAILED_ERROR = "Query aborted: the query process ran out of memory or crashed"
 # Starting the worker is trusted work and is not charged to any query's deadline.
 _WORKER_START_TIMEOUT_S = 30.0
+# Memory DuckDB does not track (one huge `repeat()`) is bounded by the
+# container, so on Linux the worker volunteers as the OOM killer's victim
+# (`oom_score_adj`): when the container runs out, the worker dies and the
+# server survives. The address-space cap is a backstop for deployments without
+# a container limit, and refuses single allocations of 1 GiB or more. It is not
+# tighter because address space is a poor proxy for memory here: the honest
+# task workload uses ~400 MiB resident, yet peaks at 580-660 MiB of address
+# space in the validation image and up to ~850 MiB on other Linux hosts, and a
+# cap below that fails honest comparisons at random.
+_WORKER_ADDRESS_SPACE_BYTES = 1024 * 1024 * 1024
+_WORKER_ENV = {"MALLOC_ARENA_MAX": "2"}
 _TABLES = ("users", "orders", "products", "events")
 # Output column names compare case-insensitively the way DuckDB identifiers do,
 # which folds ASCII letters only (`X` matches `x`, `Ä` does not match `ä`).
@@ -329,11 +340,30 @@ def _handle(conn: duckdb.DuckDBPyConnection, job: Dict[str, Any]) -> Dict[str, A
         return {"ok": False, "error": str(exc), "fatal": fatal}
 
 
+def _confine_worker(address_space_bytes: Optional[int]) -> None:
+    """Cap this process's address space and make it the first OOM victim.
+
+    Linux only; elsewhere the worker still runs, just without either guard.
+    Raising one's own ``oom_score_adj`` needs no privilege, but ``/proc`` can
+    be read-only in some sandboxes, so a failed write is ignored.
+    """
+    if sys.platform != "linux":
+        return
+    import resource
+
+    if address_space_bytes:
+        limit = (address_space_bytes, address_space_bytes)
+        resource.setrlimit(resource.RLIMIT_AS, limit)
+    with contextlib.suppress(OSError), open("/proc/self/oom_score_adj", "w") as f:
+        f.write("1000")
+
+
 def _worker_main(fd: int) -> None:
     """Serve jobs from the server over the pipe at *fd* until it closes."""
     pipe = Connection(fd)
     try:
         setup = json.loads(pipe.recv_bytes())
+        _confine_worker(setup["address_space_bytes"])
         conn = duckdb.connect(setup["path"], read_only=True, config=setup["config"])
         conn.execute("SELECT 1").fetchall()
     except Exception as exc:
@@ -486,12 +516,19 @@ class QueryExecutor:
                 [sys.executable, "-P", os.path.abspath(__file__), str(fd)],
                 pass_fds=(fd,),
                 start_new_session=True,
+                # glibc reads this at startup, so it has to be in the
+                # environment rather than set by the worker itself.
+                env={**os.environ, **_WORKER_ENV},
             )
         finally:
             worker_end.close()
         self._pipe = server_end
 
-        setup = {"path": self._path, "config": _DUCKDB_CONFIG}
+        setup = {
+            "path": self._path,
+            "config": _DUCKDB_CONFIG,
+            "address_space_bytes": _WORKER_ADDRESS_SPACE_BYTES,
+        }
         try:
             server_end.send_bytes(json.dumps(setup).encode())
             if server_end.poll(_WORKER_START_TIMEOUT_S):
