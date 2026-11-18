@@ -522,10 +522,10 @@ def _zygote_main(fd: int) -> None:
                 try:
                     conn.close()
                     _worker_main(worker_fd, request["spawn"])
-                except BaseException:
+                except Exception:
                     traceback.print_exc()
                 finally:
-                    os._exit(0)
+                    os._exit(0)  # never return into the zygote's loop
             os.close(worker_fd)
             children.add(pid)
             reply["pid"] = pid
