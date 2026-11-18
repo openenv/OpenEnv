@@ -23,7 +23,11 @@ from openenv.core.env_server.interfaces import (
 )
 
 from ..models import CodeAction, CodeObservation, CodeState
-from .python_executor import DEFAULT_SAFE_IMPORTS, IsolatedPyExecutor
+from .python_executor import (
+    DEFAULT_SAFE_IMPORTS,
+    IsolatedPyExecutor,
+    START_FAILED_MESSAGE,
+)
 from .transforms import create_safe_coding_transform
 
 
@@ -92,27 +96,28 @@ class PythonCodeActEnv(Environment):
         Reset environment and start fresh execution session.
 
         Returns:
-            Initial observation with empty stdout/stderr and exit_code=0
+            Initial observation with empty stdout/stderr and exit_code=0, or
+            exit_code=1 with a RuntimeError message if the worker could not start
         """
-        # Initialize fresh state
-        self._state = CodeState(episode_id=str(uuid.uuid4()), step_count=0)
-        # Add last_exit_code to state
-        self._state.last_exit_code = 0
-
         # Replace the worker process, so the new episode starts from a clean
         # interpreter (variables, functions and any patched module state).
         self._executor.close()
         self._executor = self._new_executor()
-        self._executor.start()
+        started = self._executor.start()
+
+        # Initialize fresh state
+        self._state = CodeState(episode_id=str(uuid.uuid4()), step_count=0)
+        self._state.last_exit_code = 0 if started else 1
 
         # Reset transform to clear any accumulated state
         self.transform = self._transform or create_safe_coding_transform()
 
-        # Return initial observation
+        # If the worker could not start, say so the way a crashed step does.
+        # The next step tries again.
         observation = CodeObservation(
             stdout="",
-            stderr="",
-            exit_code=0,
+            stderr="" if started else START_FAILED_MESSAGE,
+            exit_code=self._state.last_exit_code,
         )
 
         return self._apply_transform(observation)

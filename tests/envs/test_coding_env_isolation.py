@@ -9,8 +9,13 @@ must only stop its own session.
 
 from __future__ import annotations
 
+import gc
+import logging
 import os
 import secrets
+import subprocess
+import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -18,7 +23,16 @@ import pytest
 pytest.importorskip("smolagents", reason="smolagents is not installed")
 
 from coding_env.models import CodeAction
+from coding_env.server import python_executor
 from coding_env.server.python_codeact_env import PythonCodeActEnv
+
+linux_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux /proc and prctl"
+)
+root_only = pytest.mark.skipif(
+    not sys.platform.startswith("linux") or os.geteuid() != 0,
+    reason="needs root on Linux",
+)
 
 # Each pair patches shared state of an imported module (not a session
 # variable), then checks it from a clean interpreter.
@@ -38,6 +52,33 @@ def _alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
+
+
+def _uid(pid: int) -> int:
+    with open(f"/proc/{pid}/status") as status:
+        line = next(line for line in status if line.startswith("Uid:"))
+    return int(line.split()[1])
+
+
+def _read_as(uid: int, path: str) -> subprocess.CompletedProcess:
+    """Read `path` from a new process running as `uid`."""
+    user = {} if uid == os.geteuid() else dict(user=uid, group=uid, extra_groups=[])
+    return subprocess.run(
+        [sys.executable, "-c", "import sys; open(sys.argv[1], 'rb').read()", path],
+        capture_output=True,
+        text=True,
+        cwd="/",
+        **user,
+    )
+
+
+@pytest.fixture
+def fresh_zygote(monkeypatch):
+    """Start the next worker from a new zygote, and stop that zygote after."""
+    monkeypatch.setattr(python_executor, "_zygote", None)
+    yield
+    if python_executor._zygote is not None:
+        python_executor._zygote.close()
 
 
 @pytest.fixture
@@ -202,3 +243,158 @@ def test_server_runs_isolated_concurrent_websocket_sessions():
 
         for socket in (a, b):
             socket.send_json({"type": "close"})
+
+
+@pytest.mark.parametrize(
+    "mode,euid,users",
+    [
+        (None, 0, [65534, None]),
+        (None, 1000, [None]),
+        ("auto", 0, [65534, None]),
+        ("same", 0, [None]),
+        ("nobody", 0, [65534]),
+    ],
+)
+def test_worker_user_choice(monkeypatch, mode, euid, users):
+    if mode is None:
+        monkeypatch.delenv("CODING_ENV_WORKER_USER", raising=False)
+    else:
+        monkeypatch.setenv("CODING_ENV_WORKER_USER", mode)
+    monkeypatch.setattr(python_executor.os, "geteuid", lambda: euid)
+    assert python_executor._worker_users() == users
+
+
+def test_unknown_worker_user_is_an_error(monkeypatch):
+    monkeypatch.setenv("CODING_ENV_WORKER_USER", "root")
+    with pytest.raises(ValueError):
+        python_executor._worker_users()
+
+
+def test_same_mode_runs_workers_as_the_server_user(make_env, monkeypatch, fresh_zygote):
+    monkeypatch.setenv("CODING_ENV_WORKER_USER", "same")
+    env = make_env(additional_imports=["os"])
+    assert env.reset().exit_code == 0
+    assert _run(env, "import os\nos.getuid()").stdout == str(os.getuid())
+
+
+@root_only
+def test_root_server_runs_workers_as_nobody(make_env, fresh_zygote):
+    env = make_env()
+    env.reset()
+    assert _uid(env._executor.pid) == python_executor.UNPRIVILEGED_UID
+
+
+@root_only
+def test_root_server_keeps_its_uid_when_nobody_cannot_run_python(
+    make_env, monkeypatch, fresh_zygote, tmp_path, caplog
+):
+    # The interpreter sits in a directory only root can enter, like a venv
+    # under /root/.cache/uv.
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    (private / "python").symlink_to(sys.executable)
+    monkeypatch.setattr(python_executor.sys, "executable", str(private / "python"))
+
+    env = make_env()
+    with caplog.at_level(logging.WARNING, logger=python_executor.__name__):
+        observation = env.reset()
+
+    assert observation.exit_code == 0, observation.stderr
+    assert _run(env, "1 + 1").stdout == "2"
+    assert _uid(env._executor.pid) == 0
+    assert "CODING_ENV_WORKER_USER=same" in caplog.text
+
+
+@linux_only
+def test_workers_are_never_dumpable(make_env):
+    env = make_env()
+    env.reset()
+    pid = env._executor.pid
+    # Right after the fork, before the worker has run anything.
+    uid = _uid(pid)
+    if uid == 0:
+        pytest.skip("root can read any process")
+    for target in (pid, python_executor._zygote._proc.pid):
+        for name in ("environ", "mem"):
+            result = _read_as(uid, f"/proc/{target}/{name}")
+            assert "PermissionError" in result.stderr, (target, name, result)
+
+
+def test_temporary_files_go_to_the_session_home(make_env):
+    env = make_env(additional_imports=["os", "tempfile"])
+    env.reset()
+    home = os.path.realpath(env._executor._home)
+
+    observation = _run(
+        env,
+        "import os, tempfile\n"
+        "print(tempfile.gettempdir(), os.environ['TMPDIR'], os.environ['TMP'], "
+        "os.environ['TEMP'], os.environ['HOME'], os.getcwd())",
+    )
+
+    assert observation.exit_code == 0, observation.stderr
+    paths = observation.stdout.split()
+    assert len(paths) == 6
+    assert {os.path.realpath(path) for path in paths} == {home}
+
+
+def test_a_worker_that_cannot_start_is_reported_and_cleaned_up(make_env, monkeypatch):
+    homes = []
+
+    def mkdtemp(**kwargs):
+        homes.append(real_mkdtemp(**kwargs))
+        return homes[-1]
+
+    def spawn(self, fd, config):
+        raise OSError("no fork")
+
+    real_mkdtemp = tempfile.mkdtemp
+    monkeypatch.setattr(python_executor.tempfile, "mkdtemp", mkdtemp)
+    monkeypatch.setattr(python_executor._Zygote, "spawn", spawn)
+    env = make_env()
+
+    observation = env.reset()
+    assert observation.exit_code == 1
+    assert observation.stderr == python_executor.START_FAILED_MESSAGE
+    assert _run(env, "1").stderr == python_executor.START_FAILED_MESSAGE
+    assert homes and not any(os.path.exists(home) for home in homes)
+
+    monkeypatch.undo()
+    assert _run(env, "1 + 1").stdout == "2"
+
+
+def test_garbage_collected_env_stops_its_worker():
+    env = PythonCodeActEnv()
+    env.reset()
+    pid, home = env._executor.pid, env._executor._home
+
+    del env
+    gc.collect()
+
+    assert not _alive(pid)
+    assert not os.path.exists(home)
+
+
+def test_dead_zygote_is_replaced(make_env):
+    env = make_env()
+    env.reset()
+    zygote = python_executor._zygote
+    zygote._proc.kill()
+    zygote._proc.wait()
+
+    assert env.reset().exit_code == 0
+    assert _run(env, "1 + 1").stdout == "2"
+    assert python_executor._zygote is not zygote
+
+
+@linux_only
+def test_memory_limit_stops_a_large_allocation(make_env, monkeypatch):
+    monkeypatch.setenv("CODING_ENV_WORKER_MEMORY_MB", "2048")
+    env = make_env()
+    env.reset()
+
+    observation = _run(env, "x = 'a' * (4 * 1024 ** 3)")
+
+    assert observation.exit_code == 1
+    assert "MemoryError" in observation.stderr
+    assert _run(env, "1 + 1").stdout == "2"
