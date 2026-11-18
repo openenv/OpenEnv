@@ -91,35 +91,36 @@ reaches the next episode or another session.
 Workers are forked from a template process (a zygote) that the server starts
 on the first `reset()`. The zygote starts with a minimal environment, so
 neither it nor the workers see the server's environment variables, and it
-imports smolagents once, which takes a few seconds. After that a new worker
-is ready in milliseconds and shares most of its memory with the zygote (about
-10 MB per worker on Linux). Each worker gets its own home, working and
-temporary directory (`HOME`, `TMPDIR`), removed when the session ends. A step
-that runs past the timeout kills only its own worker, and if the zygote dies
-the server starts a new one.
+imports smolagents and the authorized modules once, which takes a few
+seconds. After that a new worker is ready in milliseconds and shares most of
+its memory with the zygote (about 10 MB per worker on Linux). Each worker gets
+its own home, working and temporary directory (`HOME`, `TMPDIR`), removed when
+the session ends. A step that runs past the timeout kills only its own
+worker, and if the zygote dies the server starts a new one.
 
-When the server runs as root, the zygote and the workers run as the
-unprivileged `nobody` user, if that user can run the server's Python and read
-its packages. If it can't (for example, a virtual environment under `/root`),
-they keep the server's user and the server prints a warning. All workers run
-as the same user, so the import allowlist (which leaves out `os` by default)
-is what keeps one session's code from signaling another's process. On Linux
-the zygote and the workers are non-dumpable from the start, and so is the
-server started from `server/app.py`, so other processes of the same user
-can't read their memory or environment through `/proc`.
+When the server runs as root, each worker switches to the unprivileged
+`nobody` user right after the fork, before it runs any model code, so it
+can't signal the server, the zygote or processes of other users. On Linux the
+zygote and the workers are non-dumpable, and so is the server started from
+`server/app.py`, so other processes of the same user can't read their memory
+or environment through `/proc`.
 
 - `CODING_ENV_EXEC_TIMEOUT_S`: hard limit per step (default `30`). A step that
   runs longer is stopped, its worker is killed, and the next step starts with a
   fresh interpreter.
 - `MAX_CONCURRENT_ENVS`: max concurrent sessions (default `8`). Each session
   holds one worker process.
-- `CODING_ENV_WORKER_USER`: `nobody` or `same` (the server's user) to choose
-  the workers' user instead of the check above.
-- `CODING_ENV_WORKER_MEMORY_MB` (Linux): how much address space a worker may
-  add to what it starts with (default: no limit). A step that allocates past
-  it fails with `MemoryError` and the session keeps going. The limit counts
-  reserved virtual memory, not only memory in use, so leave headroom for
-  libraries like numpy.
+
+Limits:
+
+- All workers run as the same user, and when the server isn't root they run
+  as the server's user. The import allowlist, which leaves out `os` by
+  default, is what keeps one session's code from signaling other sessions'
+  workers (or, without root, the server).
+- Each session has its own temporary directory, but `/tmp` itself is still
+  shared if file access (`os`, `open`) is authorized.
+- There is no memory limit per worker. The container's limit is the guard,
+  and a worker that gets killed only restarts its own session.
 
 ## Advanced Usage
 
