@@ -336,7 +336,8 @@ class _Zygote:
             try:
                 os.kill(pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
-                pass
+                # Already exited. The reap below still collects it.
+                logger.debug("coding_env worker %d already gone", pid)
         if wait:
             acquired = self._lock.acquire(timeout=ZYGOTE_REPLY_TIMEOUT_S)
         else:
