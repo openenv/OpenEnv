@@ -62,6 +62,9 @@ DEFAULT_SAFE_IMPORTS = ["json"]
 DEFAULT_EXEC_TIMEOUT_S = 30.0  # same as smolagents' MAX_EXECUTION_TIME_SECONDS
 ZYGOTE_STARTUP_TIMEOUT_S = 60.0  # one-time import of smolagents and openenv
 ZYGOTE_REPLY_TIMEOUT_S = 10.0
+# A spawn that brings new authorized modules imports them in the zygote first
+# (numpy, pandas, torch...), so it gets the startup budget.
+ZYGOTE_PRELOAD_TIMEOUT_S = ZYGOTE_STARTUP_TIMEOUT_S
 MAX_OUTPUT_CHARS = 1_000_000  # per stream and call, cut in the worker
 MAX_REPLY_BYTES = 16 * 1024 * 1024
 UNPRIVILEGED_UID = 65534  # nobody
@@ -271,6 +274,7 @@ class _Zygote:
         self._lock = threading.Lock()
         self._live: set[int] = set()
         self._dead: collections.deque[int] = collections.deque()
+        self._preloaded: set[str] = set()  # mirrors the zygote's `preloaded`
         cleanup = contextlib.ExitStack()
         self._finalizer = weakref.finalize(self, cleanup.close)
         try:
@@ -302,7 +306,10 @@ class _Zygote:
     def spawn(self, fd: int, config: dict) -> int:
         """Fork a worker that serves `fd` and return its pid."""
         with self._lock:
-            pid = self._request(config, fd).get("pid")
+            new = _module_names(config["imports"] or []) - self._preloaded
+            timeout = ZYGOTE_PRELOAD_TIMEOUT_S if new else ZYGOTE_REPLY_TIMEOUT_S
+            pid = self._request(config, fd, timeout).get("pid")
+            self._preloaded |= new
         if type(pid) is not int or pid <= 0:
             raise ValueError("bad zygote reply")
         self._live.add(pid)
@@ -334,7 +341,12 @@ class _Zygote:
     def close(self) -> None:
         self._finalizer()
 
-    def _request(self, spawn: dict | None, fd: int | None = None) -> dict:
+    def _request(
+        self,
+        spawn: dict | None,
+        fd: int | None = None,
+        timeout: float | None = None,
+    ) -> dict:
         """Send the pending kills and an optional spawn. Caller holds the lock."""
         kills = []
         while self._dead:
@@ -343,7 +355,7 @@ class _Zygote:
             self._conn.send_bytes(json.dumps({"kill": kills, "spawn": spawn}).encode())
             if fd is not None:
                 send_handle(self._conn, fd, self._proc.pid)
-            return self._receive(ZYGOTE_REPLY_TIMEOUT_S)
+            return self._receive(ZYGOTE_REPLY_TIMEOUT_S if timeout is None else timeout)
         except BaseException:
             self.close()
             raise
@@ -475,12 +487,17 @@ def _cap(text: str) -> str:
     return text[:MAX_OUTPUT_CHARS] + "\n... (output truncated)"
 
 
+def _module_names(names: list[str]) -> set[str]:
+    """Modules a session's authorized imports name, as the zygote imports them."""
+    return {name.removesuffix(".*") for name in names} - {"*"}
+
+
 def _preload(names: list[str], tried: set[str]) -> None:
     """Import a session's authorized modules in the zygote, with the server's
     uid, so a worker that runs as nobody gets them even from a virtual
     environment nobody can read. A module that fails here fails again, as a
     normal ImportError, in that session."""
-    new = {name.removesuffix(".*") for name in names} - tried - {"*"}
+    new = _module_names(names) - tried
     for name in sorted(new):
         tried.add(name)
         try:

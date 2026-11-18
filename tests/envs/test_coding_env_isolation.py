@@ -265,6 +265,33 @@ def test_workers_cannot_signal_the_zygote_or_the_server(make_env):
         assert _alive(pid)
 
 
+def test_first_import_of_a_slow_module_does_not_stop_the_zygote(
+    make_env, monkeypatch, fresh_zygote, tmp_path
+):
+    # Like the first session that authorizes torch: the zygote imports it
+    # before it forks, which takes longer than an ordinary spawn.
+    (tmp_path / "coding_env_slow_module.py").write_text(
+        "import time\ntime.sleep(1.5)\nVALUE = 7\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(python_executor, "ZYGOTE_REPLY_TIMEOUT_S", 0.5)
+
+    first = make_env()
+    first.reset()
+    zygote = python_executor._zygote
+    slow = make_env(additional_imports=["coding_env_slow_module"])
+    slow.reset()
+
+    assert python_executor._zygote is zygote
+    assert _run(first, "1 + 1").stdout == "2"
+    observation = _run(
+        slow, "import coding_env_slow_module\ncoding_env_slow_module.VALUE"
+    )
+    assert observation.stdout == "7", observation.stderr
+    # Already imported in the zygote, so the next session gets the short budget.
+    make_env(additional_imports=["coding_env_slow_module"]).reset()
+
+
 @root_only
 def test_authorized_modules_load_from_a_directory_nobody_cannot_read(
     make_env, monkeypatch, fresh_zygote, tmp_path
