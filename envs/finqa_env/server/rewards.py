@@ -21,7 +21,7 @@ def extract_boxed_answer(text: str) -> Optional[str]:
     Returns:
         The extracted answer or None if not found
     """
-    match = re.search(r"\\boxed\{([^}]+)\}", text)
+    match = re.search(r"\\boxed\{((?:[^{}]|\{[^{}]*\})+)\}", text)
     if match:
         return match.group(1).strip()
     return None
@@ -37,7 +37,7 @@ def extract_all_boxed_answers(text: str) -> list:
     Returns:
         List of extracted answers
     """
-    matches = re.findall(r"\\boxed\{([^}]+)\}", text)
+    matches = re.findall(r"\\boxed\{((?:[^{}]|\{[^{}]*\})+)\}", text)
     return [m.strip() for m in matches]
 
 
