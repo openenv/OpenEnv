@@ -431,7 +431,10 @@ def test_dead_zygote_is_replaced(make_env):
     assert python_executor._zygote is not zygote
 
 
-@linux_only
+@pytest.mark.skipif(
+    bool(python_executor._socket_filter_unavailable()),
+    reason="the socket filter exists for Linux on x86_64 and aarch64",
+)
 def test_workers_cannot_create_sockets(make_env):
     """Even with `socket` authorized, model code gets no socket of any family."""
     env = make_env(additional_imports=["socket"])
