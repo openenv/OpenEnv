@@ -127,17 +127,27 @@ subprocess.Popen([sys.executable, '-c',
         self.assertIn("PermissionError", second["output"])
 
     def test_process_count_is_limited(self):
-        result = self.run_code("""
-import subprocess, sys
-procs = []
-try:
-    for _ in range(200):
-        procs.append(subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(5)']))
-except (BlockingIOError, OSError) as e:
-    print('limited after', len(procs), type(e).__name__)
-""")
-        self.assertIn("limited after", result["output"])
-        self.assertLess(int(result["output"].split()[2]), sandbox.MAX_PROCESSES)
+        result = self.run_code(
+            "print([l for l in open('/proc/self/limits') if l.startswith('Max processes')][0])"
+        )
+        self.assertEqual(result["returncode"], 0, result["output"])
+        self.assertEqual(result["output"].split()[2], str(sandbox.MAX_PROCESSES))
+
+    def test_cleanup_survives_a_child_that_kills_everything(self):
+        # The child signals every process of its uid in a loop, including the call itself.
+        uid = sandbox.new_uid()
+        self.addCleanup(sandbox.release_uid, uid)
+        code = (
+            "import subprocess, sys\n"
+            "subprocess.Popen([sys.executable, '-c', 'import os, signal\\n"
+            "while True:\\n    try:\\n        os.kill(-1, signal.SIGKILL)\\n"
+            "    except OSError:\\n        pass'], start_new_session=True)\n"
+            "import time; time.sleep(5)\n"
+        )
+        start = time.monotonic()
+        sandbox.run(code, {}, self.workdir.name, 10, uid=uid)
+        self.assertLess(time.monotonic() - start, 30)
+        self.assertEqual(sandbox._processes_of(uid), [])
 
 
 if __name__ == "__main__":

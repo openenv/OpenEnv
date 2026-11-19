@@ -38,16 +38,8 @@ SANDBOX_ORTOOLS_PYTHON = os.environ.get("SANDBOX_ORTOOLS_PYTHON", sys.executable
 # Hugging Face map only uids 0-65535.
 _free_uids = list(range(60_000, 65_000))
 _uids_lock = threading.Lock()
-MAX_PROCESSES = 32  # per session uid
-
-# Run as a session's uid: kill(-1) signals every process of that uid at once, except itself.
-_KILL_ALL = """
-import os, signal
-try:
-    os.kill(-1, signal.SIGKILL)
-except ProcessLookupError:
-    pass
-"""
+# Processes and threads per session uid (numpy's OpenBLAS starts one thread per core).
+MAX_PROCESSES = 256
 
 _RUNNER = """\
 import importlib.abc, json, sys
@@ -75,11 +67,13 @@ if sys.argv[3] == "solve":
 """
 
 
-def _limit_resources(memory_mb: int):
+def _limit_resources(memory_mb: int, max_processes: int | None):
     def apply():
         limit = memory_mb * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-        resource.setrlimit(resource.RLIMIT_NPROC, (MAX_PROCESSES, MAX_PROCESSES))
+        # RLIMIT_NPROC counts every process of the uid, so only for a session's own uid.
+        if max_processes is not None:
+            resource.setrlimit(resource.RLIMIT_NPROC, (max_processes, max_processes))
 
     return apply
 
@@ -101,13 +95,13 @@ def release_uid(uid: int | None) -> None:
     """Stop every process of `uid` and make it available to another session."""
     if uid is None:
         return
-    _kill_all(uid, pwd.getpwnam(SANDBOX_USER).pw_gid)
+    _kill_all(uid)
     with _uids_lock:
         _free_uids.append(uid)
 
 
-def _processes_of(uid: int) -> list[tuple[int, int]]:
-    """`(pid, parent pid)` of every process of `uid`."""
+def _processes_of(uid: int) -> list[tuple[int, int, str]]:
+    """`(pid, parent pid, state)` of every process of `uid`."""
     found = []
     for pid in os.listdir("/proc"):
         if not pid.isdigit():
@@ -118,28 +112,35 @@ def _processes_of(uid: int) -> list[tuple[int, int]]:
         except OSError:
             continue
         if int(fields["Uid"].split()[0]) == uid:
-            found.append((int(pid), int(fields["PPid"])))
+            found.append((int(pid), int(fields["PPid"]), fields["State"].split()[0]))
     return found
 
 
-def _kill_all(uid: int, gid: int) -> None:
-    subprocess.run(
-        [SANDBOX_PYTHON, "-I", "-c", _KILL_ALL],
-        user=uid,
-        group=gid,
-        extra_groups=[],
-        env={"PATH": "/usr/bin:/bin"},
-        cwd="/",
-        timeout=10,
-    )
+def _kill_all(uid: int) -> None:
+    """Stop every process of `uid`, from this (root) process, so the code can't interfere."""
+    deadline = time.monotonic() + 10
+    # Freeze first: a stopped process can't start more processes or send signals.
+    while time.monotonic() < deadline:
+        running = [pid for pid, _, state in _processes_of(uid) if state not in "TZX"]
+        if not running:
+            break
+        for pid in running:
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
+    for pid, _, _ in _processes_of(uid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
     # Orphans of the session were reparented to this process (a subreaper, see `run`).
     # Reap them, or their zombies would still count against the uid's process limit.
-    deadline = time.monotonic() + 5
     while (processes := _processes_of(uid)) and time.monotonic() < deadline:
-        for pid, parent in processes:
+        for pid, parent, _ in processes:
             if parent == os.getpid():
                 try:
-                    os.waitpid(pid, 0)
+                    os.waitpid(pid, os.WNOHANG)
                 except ChildProcessError:
                     pass
         time.sleep(0.01)
@@ -267,7 +268,7 @@ def run(
                 text=True,
                 start_new_session=True,
                 # RLIMIT_AS cannot be lowered on macOS.
-                preexec_fn=_limit_resources(memory_mb)
+                preexec_fn=_limit_resources(memory_mb, MAX_PROCESSES if user else None)
                 if sys.platform == "linux"
                 else None,
                 **user,
@@ -280,10 +281,10 @@ def run(
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            proc.wait()
             if user:
                 # Also the children that left the process group (setsid).
-                _kill_all(user["user"], user["group"])
-            proc.wait()
+                _kill_all(user["user"])
             log.seek(0)
             output = log.read(8001)
             if len(output) > 8000:

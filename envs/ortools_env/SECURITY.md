@@ -17,16 +17,18 @@ untouched until the workdir is reset; setup never traverses or recursively delet
 
 ## Sessions and leftover processes
 
-Each session's code runs as its own uid (60000 to 64999, no account behind it, given back when the session ends), so
-sessions can't signal each other or read each other's files, and a session's
-working directory belongs to its uid only. When a call ends, a helper running as
-that uid calls `kill(-1, SIGKILL)`, which stops every process of the uid at once,
-including children that called `setsid` to leave the process group. Each uid can
-run at most 32 processes (`RLIMIT_NPROC`).
+Each session's code runs as its own uid (60000 to 64999, no account behind it,
+given back when the session ends), so sessions can't signal each other or read
+each other's files, and a session's working directory belongs to its uid only.
+When a call ends, the server stops every process of that uid: it first freezes
+them with SIGSTOP, so none can start another process or send a signal, then
+kills them with SIGKILL and reaps them. That includes children that called
+`setsid` to leave the process group. Each uid can run at most 256 processes and
+threads (`RLIMIT_NPROC`).
 
 ## Unresolved: aggregate resource containment
 
-RLIMIT_AS applies per process, so a session can still use up to 32 times its
+RLIMIT_AS applies per process, so a session can still use many times its
 memory limit, and nothing bounds CPU, disk use or log-file growth per session.
 Bounding them requires a delegated cgroup per session, which the current
 Dockerfile/hosting contract does not supply. Adding privileges or mounting the
