@@ -7,13 +7,13 @@
 """
 Julia Process Pool for high-performance code execution.
 
-This module provides a pool of persistent Julia processes that can be reused
-for multiple code executions, eliminating the overhead of spawning new processes.
-
-Expected speedup: 50-100x for repeated executions compared to spawning new processes.
+This module keeps a pool of Julia processes started ahead of time, so an
+execution does not wait for Julia to start. Each process runs one execution and
+is then replaced in the background: code can redefine methods and globals for
+every later caller of the same process, so no state crosses sessions or episodes.
 
 Features:
-- Persistent Julia processes (no startup overhead)
+- Pre-started Julia processes (no startup wait while the pool keeps up)
 - Thread-safe process allocation
 - Automatic recovery from process failures
 - Proper cleanup on shutdown
@@ -301,7 +301,7 @@ class JuliaWorkerProcess:
 
 class JuliaProcessPool:
     """
-    Pool of persistent Julia processes for high-performance code execution.
+    Pool of pre-started Julia processes for fast code execution, one execution each.
 
     This class manages multiple Julia worker processes and distributes
     code execution among them, providing significant speedup by eliminating
@@ -499,23 +499,36 @@ class JuliaProcessPool:
 
     def _return_worker(self, worker: JuliaWorkerProcess) -> None:
         """
-        Return a worker to the available pool.
+        Replace a worker that ran code with a fresh one, started in the background.
 
-        If the worker is unhealthy and auto_recover is enabled, attempts to
-        recover the worker before returning it to the pool. This ensures
-        workers are not leaked when they fail during execution.
+        Code can redefine methods (including Base and Test) and globals for every
+        later caller of the same Julia process, so a worker runs one execution,
+        and no state crosses sessions or episodes.
         """
+        worker.shutdown()
+        threading.Thread(
+            target=self._replace_worker, args=(worker,), daemon=True
+        ).start()
+
+    def _replace_worker(self, worker: JuliaWorkerProcess) -> None:
+        try:
+            new_worker = JuliaWorkerProcess(
+                worker_id=worker.worker_id,
+                julia_path=self.julia_path,
+                worker_script=self.worker_script,
+                optimization_flags=self.optimization_flags,
+            )
+        except Exception as e:
+            logger.error(f"Failed to replace worker {worker.worker_id}: {e}")
+            # Back as unhealthy: the next caller that gets it restarts it.
+            worker.is_healthy = False
+            new_worker = worker
         with self.pool_lock:
             if self.shutdown_flag:
+                new_worker.shutdown()
                 return
-
-            # If worker is unhealthy, try to recover it immediately
-            if not worker.is_healthy and self.auto_recover:
-                worker = self._recover_worker(worker)
-
-            # Always return the worker to the pool (healthy or not)
-            # Unhealthy workers will be recovered when next acquired
-            self.available_workers.append(worker)
+            self.workers[new_worker.worker_id] = new_worker
+            self.available_workers.append(new_worker)
 
     def execute(self, code: str, timeout: Optional[int] = None) -> CodeExecResult:
         """

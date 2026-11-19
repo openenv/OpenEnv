@@ -402,3 +402,24 @@ def test_julia_code_gets_no_server_env_and_no_sockets(monkeypatch, use_pool):
         )
     if os.geteuid() == 0:
         assert "uid=65534" in result.stdout, result.stdout
+
+
+@pytest.mark.skipif(not julia_available, reason=julia_skip_reason)
+def test_pool_does_not_carry_state_between_executions():
+    from julia_env.server.julia_executor import JuliaExecutor
+
+    assert JuliaExecutor.enable_process_pool(size=1)
+    try:
+        executor = JuliaExecutor(use_process_pool=True)
+        first = executor.run(
+            'global LEAKED = 1\nBase.:+(a::Int, b::String) = 42\nprintln(1 + "x")'
+        )
+        assert "42" in first.stdout, first.stderr
+        second = executor.run(
+            "println(isdefined(Main, :LEAKED))\n"
+            "println(hasmethod(+, Tuple{Int, String}))"
+        )
+    finally:
+        JuliaExecutor.shutdown_pool()
+
+    assert second.stdout.split() == ["false", "false"], second.stderr
