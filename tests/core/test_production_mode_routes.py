@@ -2087,6 +2087,68 @@ class TestMCPSessionResourceLeaks:
             server._shared_session_executor.shutdown(wait=True)
 
 
+def _slow_factory_server(shared_executor):
+    """Build a server whose env factory blocks until the test releases it."""
+    import threading
+
+    class SlowEnv(MinimalEnvironment):
+        REQUIRES_SINGLE_THREAD_EXECUTOR = shared_executor
+        entered = threading.Event()
+        release = threading.Event()
+        built = []
+
+        def __init__(self):
+            super().__init__()
+            self.created_thread = threading.get_ident()
+            self.close_threads = []
+            SlowEnv.built.append(self)
+            SlowEnv.entered.set()
+            SlowEnv.release.wait(5)
+
+        def close(self):
+            self.close_threads.append(threading.get_ident())
+
+    server = HTTPEnvServer(
+        SlowEnv, MinimalAction, MinimalObservation, max_concurrent_envs=2
+    )
+    app = FastAPI()
+    server.register_routes(app, mode="production")
+    return server, app, SlowEnv
+
+
+async def _shutdown_during_factory(server, app, env_cls):
+    """Start shutdown while a factory is running, then let the factory finish."""
+    import asyncio
+
+    from openenv.core.env_server.exceptions import SessionCreationError
+
+    env_cls.entered.clear()
+    env_cls.release.clear()
+    env_cls.built.clear()
+    lifespan = app.router.lifespan_context(app)
+    await lifespan.__aenter__()
+    creation = asyncio.create_task(server._create_session())
+    try:
+        assert await asyncio.to_thread(env_cls.entered.wait, 5)
+        shutdown = asyncio.create_task(lifespan.__aexit__(None, None, None))
+        await asyncio.sleep(0.05)
+        assert not shutdown.done(), (
+            "shutdown finished while a session was still being created"
+        )
+    finally:
+        env_cls.release.set()
+
+    with pytest.raises(SessionCreationError):
+        await asyncio.wait_for(creation, 5)
+    await asyncio.wait_for(shutdown, 5)
+
+    assert server.active_sessions == 0
+    assert not server._session_executors
+    assert not server._session_info
+    (env,) = env_cls.built
+    assert env.close_threads == [env.created_thread]
+
+
 class TestHTTPMCPSessionShutdown:
     @pytest.fixture(params=[False, True], ids=["per-session", "shared-executor"])
     async def shutdown_server(self, request, mock_fastmcp_server):
@@ -2281,56 +2343,102 @@ class TestHTTPMCPSessionShutdown:
         waits for in-flight creations, and a creation that finishes after
         shutdown began closes its environment on the thread that built it.
         """
+        server, app, env_cls = _slow_factory_server(shared_executor)
+        await _shutdown_during_factory(server, app, env_cls)
+
+    def test_shutdown_during_factory_in_successive_lifespans_on_new_loops(self):
+        """The shutdown wait must not tie the server to the first lifespan's loop.
+
+        A server reused across app lifespans (as `TestClient` does) runs each
+        one on a new event loop, so any asyncio primitive that outlives a
+        lifespan and is awaited while unset binds to a loop that is gone.
+        """
+        import asyncio
+
+        server, app, env_cls = _slow_factory_server(shared_executor=False)
+        for _ in range(2):
+            asyncio.run(_shutdown_during_factory(server, app, env_cls))
+
+    async def test_shutdown_abandons_stalled_mcp_handshake(self, mock_fastmcp_server):
+        """A stalled MCP handshake must not hold shutdown open.
+
+        The constructor has returned, so nothing blocks a thread: shutdown stops
+        the creation's wait on the handshake, the entry is cancelled once and
+        unwinds, its env is closed on the thread that built it, and the sessions
+        that were already live are closed as usual.
+        """
         import asyncio
         import threading
+        from contextlib import asynccontextmanager
 
         from openenv.core.env_server.exceptions import SessionCreationError
+        from openenv.core.env_server.mcp_environment import MCPEnvironment
 
-        factory_entered = threading.Event()
-        release_factory = threading.Event()
+        handshake_started = asyncio.Event()
         built = []
 
-        class SlowEnv(MinimalEnvironment):
-            REQUIRES_SINGLE_THREAD_EXECUTOR = shared_executor
+        class StallingEnv(MCPEnvironment):
+            SUPPORTS_CONCURRENT_SESSIONS = True
+            stall = False
 
             def __init__(self):
-                super().__init__()
+                super().__init__(mock_fastmcp_server)
                 self.created_thread = threading.get_ident()
                 self.close_threads = []
+                self.unwound = False
                 built.append(self)
-                factory_entered.set()
-                release_factory.wait(5)
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                if StallingEnv.stall:
+                    handshake_started.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        self.unwound = True
+                async with super().mcp_session() as client:
+                    yield client
+
+            def reset(self, **kwargs):
+                return Observation()
+
+            def _step_impl(self, action, **kwargs):
+                return Observation()
+
+            @property
+            def state(self):
+                return State()
 
             def close(self):
                 self.close_threads.append(threading.get_ident())
+                super().close()
 
-        server = HTTPEnvServer(
-            SlowEnv, MinimalAction, MinimalObservation, max_concurrent_envs=2
-        )
+        server = HTTPEnvServer(StallingEnv, None, None, max_concurrent_envs=2)
         app = FastAPI()
         server.register_routes(app, mode="production")
         lifespan = app.router.lifespan_context(app)
         await lifespan.__aenter__()
-        creation = asyncio.create_task(server._create_session())
+        creation = None
         try:
-            assert await asyncio.to_thread(factory_entered.wait, 5)
-            shutdown = asyncio.create_task(lifespan.__aexit__(None, None, None))
-            await asyncio.sleep(0.05)
-            assert not shutdown.done(), (
-                "shutdown finished while a session was still being created"
-            )
+            _, live = await server._create_session()
+            StallingEnv.stall = True
+            creation = asyncio.create_task(server._create_session())
+            await asyncio.wait_for(handshake_started.wait(), 5)
+            await asyncio.wait_for(lifespan.__aexit__(None, None, None), 5)
+            with pytest.raises(SessionCreationError):
+                await asyncio.wait_for(creation, 5)
         finally:
-            release_factory.set()
+            if creation is not None and not creation.done():
+                creation.cancel()
+                await asyncio.gather(creation, return_exceptions=True)
 
-        with pytest.raises(SessionCreationError):
-            await asyncio.wait_for(creation, 5)
-        await asyncio.wait_for(shutdown, 5)
-
+        stalled = built[1]
+        assert stalled.unwound
         assert server.active_sessions == 0
         assert not server._session_executors
-        assert not server._session_info
-        (env,) = built
-        assert env.close_threads == [env.created_thread]
+        assert not server._session_stacks
+        for env in (live, stalled):
+            assert env.close_threads == [env.created_thread]
 
     async def test_create_session_refused_until_next_startup(self):
         """Once shutdown starts, no factory runs until the app starts up again."""
