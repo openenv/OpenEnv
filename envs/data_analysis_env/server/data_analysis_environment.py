@@ -15,6 +15,7 @@ ends the episode. The reward (1.0 or 0.0) arrives on the observation of the subm
 
 import asyncio
 import random
+import threading
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -25,12 +26,14 @@ from openenv.core.env_server.types import Action, Observation
 from ..models import AVAILABLE_TOOLS, DataAnalysisState
 from . import tasks
 from .grading import grade_answer
-from .sandbox import SandboxSession
+from .sandbox import MAX_START_S, SandboxSession, settings as sandbox_settings
 
 DEFAULT_MAX_PYTHON_CALLS = 30
 MAX_PYTHON_CALLS_LIMIT = 200
 MAX_TOOL_OUTPUT_CHARS = 20_000
 RANDOM_PICK_ATTEMPTS = 8
+# Added to the sandbox's own limits (start, then one call) for the MCP tool timeout.
+TOOL_TIMEOUT_MARGIN_S = 10.0
 
 
 class DataAnalysisEnvironment(MCPEnvironment):
@@ -81,6 +84,9 @@ class DataAnalysisEnvironment(MCPEnvironment):
         )
         self._session: Optional[SandboxSession] = None
         self._rng = random.Random()
+        # A tool call that the MCP layer gave up on keeps running in its thread. The lock makes
+        # the next call (or reset, submit, close) wait for it instead of sharing the worker.
+        self._lock = threading.Lock()
 
     def reset(
         self,
@@ -107,7 +113,6 @@ class DataAnalysisEnvironment(MCPEnvironment):
             An observation whose metadata holds `prompt`, `task_id`, `split`, `question`,
             `files` (absolute paths) and `difficulty_tier`. Never the answer.
         """
-        self._close_session()
         conf = tasks.settings()
         split = str(split or conf["split"])
         calls = int(max_python_calls or DEFAULT_MAX_PYTHON_CALLS)
@@ -117,6 +122,8 @@ class DataAnalysisEnvironment(MCPEnvironment):
             )
         if seed is not None:
             self._rng = random.Random(seed)
+        # The new task is fetched before the current episode is touched, so a failed reset
+        # leaves that episode as it was.
         rows = tasks.load_split(split)
         attempts = 1 if task_id is not None else RANDOM_PICK_ATTEMPTS
         for attempt in range(attempts):
@@ -129,20 +136,22 @@ class DataAnalysisEnvironment(MCPEnvironment):
             except tasks.TaskError:
                 if attempt == attempts - 1:
                     raise
-        self._task = row
-        self._session = SandboxSession(read_dirs=[task_dir])
-        self._state = DataAnalysisState(
-            episode_id=episode_id or str(uuid4()),
-            step_count=0,
-            split=split,
-            task_id=row["task_id"],
-            question=str(row["question"]),
-            files=paths,
-            difficulty_tier=(
-                str(row["difficulty_tier"]) if row.get("difficulty_tier") else None
-            ),
-            max_python_calls=calls,
-        )
+        with self._lock:
+            self._close_session()
+            self._task = row
+            self._session = SandboxSession(read_dirs=[task_dir])
+            self._state = DataAnalysisState(
+                episode_id=episode_id or str(uuid4()),
+                step_count=0,
+                split=split,
+                task_id=row["task_id"],
+                question=str(row["question"]),
+                files=paths,
+                difficulty_tier=(
+                    str(row["difficulty_tier"]) if row.get("difficulty_tier") else None
+                ),
+                max_python_calls=calls,
+            )
         return Observation(
             done=False,
             reward=None,
@@ -158,6 +167,10 @@ class DataAnalysisEnvironment(MCPEnvironment):
         )
 
     def _run_python(self, code: str) -> str:
+        with self._lock:
+            return self._run_python_locked(code)
+
+    def _run_python_locked(self, code: str) -> str:
         if self._state.submitted:
             return "Error: an answer was already submitted. The episode is over."
         if self._task is None or self._session is None:
@@ -171,6 +184,10 @@ class DataAnalysisEnvironment(MCPEnvironment):
         return tasks.tool_output(stdout, stderr, exit_code, MAX_TOOL_OUTPUT_CHARS)
 
     def _submit_answer(self, answer: str) -> str:
+        with self._lock:
+            return self._submit_answer_locked(answer)
+
+    def _submit_answer_locked(self, answer: str) -> str:
         if self._task is None:
             return "Error: no task. The episode has not started."
         if self._state.submitted:
@@ -206,17 +223,28 @@ class DataAnalysisEnvironment(MCPEnvironment):
             },
         )
 
+    @staticmethod
+    def _tool_timeout_s(timeout_s: Optional[float]) -> float:
+        """The MCP tool timeout: by default longer than a cold sandbox start plus one call."""
+        if timeout_s is not None:
+            return timeout_s
+        exec_timeout_s = float(sandbox_settings()["exec_timeout_s"])
+        return MAX_START_S + exec_timeout_s + TOOL_TIMEOUT_MARGIN_S
+
     def step(
         self, action: Action, timeout_s: Optional[float] = None, **kwargs: Any
     ) -> Observation:
         self._state.step_count += 1
-        return self._finish(super().step(action, timeout_s=timeout_s, **kwargs))
+        obs = super().step(action, timeout_s=self._tool_timeout_s(timeout_s), **kwargs)
+        return self._finish(obs)
 
     async def step_async(
         self, action: Action, timeout_s: Optional[float] = None, **kwargs: Any
     ) -> Observation:
         self._state.step_count += 1
-        obs = await super().step_async(action, timeout_s=timeout_s, **kwargs)
+        obs = await super().step_async(
+            action, timeout_s=self._tool_timeout_s(timeout_s), **kwargs
+        )
         return self._finish(obs)
 
     @property
@@ -225,5 +253,6 @@ class DataAnalysisEnvironment(MCPEnvironment):
 
     def close(self) -> None:
         """Called by the server when the session ends: stop the worker process."""
-        self._close_session()
+        with self._lock:
+            self._close_session()
         super().close()

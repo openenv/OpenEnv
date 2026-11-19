@@ -71,6 +71,10 @@ NOFILE_LIMIT = 256
 SPAWNER_STARTUP_TIMEOUT_S = 120.0
 SPAWNER_REPLY_TIMEOUT_S = 30.0
 WORKER_START_TIMEOUT_S = 30.0
+# Longest a session start can take: a spawner (re)start, a uid sweep, then the fork.
+MAX_START_S = (
+    SPAWNER_STARTUP_TIMEOUT_S + 2 * SPAWNER_REPLY_TIMEOUT_S + WORKER_START_TIMEOUT_S
+)
 MAX_CODE_BYTES = 1_000_000
 MAX_REPLY_BYTES = 1_000_000
 CLONE_NEWNET = 0x40000000
@@ -319,7 +323,12 @@ def make_audit_hook(roots: Tuple[str, ...], home: str):
     """
     import posix
 
-    lstat, readlink, getcwd = posix.lstat, posix.readlink, posix.getcwd
+    lstat, stat, readlink, getcwd = (
+        posix.lstat,
+        posix.stat,
+        posix.readlink,
+        posix.getcwd,
+    )
     str_, bytes_, int_, type_, tuple_, list_, len_ = (
         str,
         bytes,
@@ -385,13 +394,14 @@ def make_audit_hook(roots: Tuple[str, ...], home: str):
             resolved.append(name)
         return "/" + "/".join(resolved)
 
-    def checked(path, allowed, what: str) -> None:
+    def checked(path, allowed, what: str) -> str:
+        """The resolved path, if it is under `allowed`."""
         text = as_text(path)
         if text is None:
             raise violation(f"sandbox: {what} needs a plain str path")
         real = resolve(text)
         if real in allowed_files and allowed is read_roots:
-            return
+            return real
         if not (real.rstrip("/") + "/").startswith(allowed):
             if allowed is home_root:
                 raise violation(
@@ -401,6 +411,13 @@ def make_audit_hook(roots: Tuple[str, ...], home: str):
             raise violation(
                 f"sandbox: {what} {text!r} is not allowed, only the task's data files"
             )
+        return real
+
+    def is_dir(real: str) -> bool:
+        try:
+            return stat(real).st_mode & 0o170000 == 0o040000
+        except oserror:
+            return False
 
     def hook(event: str, args: tuple) -> None:
         if event == "open":
@@ -413,8 +430,16 @@ def make_audit_hook(roots: Tuple[str, ...], home: str):
             ) or (type_(flags) is int_ and flags & write_flags)
             if writing:
                 checked(path, home_root, "writing")
-            else:
-                checked(path, read_roots, "reading")
+                return
+            real = checked(path, read_roots, "reading")
+            # The open event doesn't carry dir_fd, and the hook resolves relative paths against
+            # the working directory. So the only directories that can be opened (for use as a
+            # dir_fd) are under the session home, where any relative path stays in the home.
+            if is_dir(real) and not (real.rstrip("/") + "/").startswith(home_root):
+                raise violation(
+                    "sandbox: opening a directory is only allowed "
+                    "under the session's working directory"
+                )
             return
         if event in ("os.listdir", "os.scandir", "os.chdir"):
             path = args[0] if args else None
@@ -983,8 +1008,6 @@ def _drop_blocked_modules() -> None:
 
 def _worker_main(fd: int, config: dict) -> None:
     """Forked worker: drop privileges, lock down, then run one session's calls in order."""
-    from importlib import import_module
-
     uid = config["uid"]
     if uid is not None:
         os.setgroups([])
@@ -1015,7 +1038,7 @@ def _worker_main(fd: int, config: dict) -> None:
     # Model code may patch json's classes in this process (it only hurts its own session).
     encode = json.JSONEncoder(separators=(",", ":")).encode
     decode = json.JSONDecoder().decode
-    session = import_module(_SESSION_MODULE).PythonSession()
+    session = importlib.import_module(_SESSION_MODULE).PythonSession()
     session.run(
         "pass"
     )  # warm the cell machinery (ast, compile, linecache) before arming

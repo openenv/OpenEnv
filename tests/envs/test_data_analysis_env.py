@@ -9,12 +9,14 @@
 Network-free except the tests marked `network`, which download one small task anonymously.
 """
 
+import concurrent.futures
 import hashlib
 import io
 import os
 import random
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -24,10 +26,11 @@ pytest.importorskip("fastmcp", reason="fastmcp is not installed")
 
 from data_analysis_env import extract_answer  # noqa: E402
 from data_analysis_env.models import DataAnalysisState  # noqa: E402
-from data_analysis_env.server import grading, tasks  # noqa: E402
+from data_analysis_env.server import grading, sandbox, tasks  # noqa: E402
 from data_analysis_env.server.data_analysis_environment import (  # noqa: E402
     DataAnalysisEnvironment,
 )
+from openenv.core.env_server.mcp_environment import MCPEnvironment  # noqa: E402
 from openenv.core.env_server.mcp_types import CallToolAction  # noqa: E402
 
 ENV_DIR = Path(__file__).resolve().parents[2] / "envs" / "data_analysis_env"
@@ -244,6 +247,9 @@ def test_real_task_download(tmp_path):
 
 @pytest.fixture()
 def env(monkeypatch):
+    # The sandbox worker preloads these. The env's own CI job installs them.
+    pytest.importorskip("openpyxl", reason="openpyxl is not installed")
+    pytest.importorskip("sklearn", reason="scikit-learn is not installed")
     # Not pytest's tmp_path: as root it is 0700, and session users must be able to read the data.
     tmp_path = Path(tempfile.mkdtemp(prefix="data_analysis_test_"))
     rows = [row("t1"), row("t2", answer="7", reward_mode="numeric"), row("t3")]
@@ -330,6 +336,84 @@ def test_reset_starts_a_fresh_session(env):
     assert text(call(env, "run_python", code="x = 1\nx")) == "1\n"
     env.reset(task_id="t1")
     assert "NameError" in text(call(env, "run_python", code="x"))
+
+
+def test_failed_reset_keeps_the_current_episode(env, monkeypatch):
+    env.reset(task_id="t1")
+    assert text(call(env, "run_python", code="x = 1\nx")) == "1\n"
+
+    def unavailable(*args, **kwargs):
+        raise tasks.TaskError("download failed")
+
+    monkeypatch.setattr(tasks, "fetch_task_files", unavailable)
+    with pytest.raises(tasks.TaskError):
+        env.reset(task_id="t2")
+    assert env.state.task_id == "t1"
+    assert text(call(env, "run_python", code="x")) == "1\n"
+    obs = call(env, "submit_answer", answer=GOLD)
+    assert (obs.done, obs.reward) == (True, 1.0)
+
+
+class _SlowSession:
+    """Stands in for the sandbox: counts the calls that overlap."""
+
+    def __init__(self):
+        self.active = self.peak = 0
+        self.closed = False
+
+    def run(self, code):
+        self.active += 1
+        self.peak = max(self.peak, self.active)
+        time.sleep(0.2)
+        self.active -= 1
+        if self.closed:
+            return "", "closed during the call", 1
+        return f"{code}\n", "", 0
+
+    def close(self):
+        self.closed = True
+
+
+def test_tool_calls_never_share_the_session(env):
+    """A call the MCP layer gave up on keeps running in its thread: the next one waits for it.
+
+    Calls the tools' thread targets directly, as `asyncio.to_thread` does in the server.
+    """
+    env.reset(task_id="t1")
+    env._session.close()
+    env._session = slow = _SlowSession()
+    with concurrent.futures.ThreadPoolExecutor(4) as pool:
+        outputs = list(pool.map(env._run_python, ["0", "1", "2", "3"]))
+    assert outputs == ["0\n", "1\n", "2\n", "3\n"]
+    assert slow.peak == 1 and env.state.python_calls == 4
+    # A submit during a call waits for it, then closes the session.
+    with concurrent.futures.ThreadPoolExecutor(2) as pool:
+        running = pool.submit(env._run_python, "last")
+        time.sleep(0.05)
+        submitted = pool.submit(env._submit_answer, GOLD)
+        assert running.result() == "last\n"
+        assert "submitted" in submitted.result()
+    assert slow.closed and env.state.reward == 1.0
+
+
+def test_tool_timeout_covers_a_cold_start_and_a_call(env, monkeypatch):
+    seen = []
+    handle = MCPEnvironment._async_handle_call_tool
+
+    async def spy(self, action, timeout_s=None):
+        seen.append(timeout_s)
+        return await handle(self, action, timeout_s=timeout_s)
+
+    monkeypatch.setattr(MCPEnvironment, "_async_handle_call_tool", spy)
+    env.reset(task_id="t1")
+    call(env, "run_python", code="1")
+    env.step(
+        CallToolAction(tool_name="run_python", arguments={"code": "1"}), timeout_s=5
+    )
+    # A cold start (spawner, then worker) plus the fixture's 10 s call limit.
+    cold_start = sandbox.SPAWNER_STARTUP_TIMEOUT_S + sandbox.WORKER_START_TIMEOUT_S
+    assert seen[0] is not None and seen[0] >= cold_start + 10
+    assert seen[1] == 5
 
 
 def test_model_code_cannot_read_another_task(env):

@@ -25,6 +25,9 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("pandas", reason="pandas is not installed")
+# The worker preloads these. The env's own CI job installs them, the generic test job doesn't.
+pytest.importorskip("openpyxl", reason="openpyxl is not installed")
+pytest.importorskip("sklearn", reason="scikit-learn is not installed")
 
 from data_analysis_env.server import sandbox  # noqa: E402
 from data_analysis_env.server.sandbox import SandboxSession  # noqa: E402
@@ -289,17 +292,25 @@ def test_pandas_cannot_read_system_files(session, path):
     "snippet",
     [
         # Patching what the hook could look up at call time.
-        "import os\nh = os.path.realpath(os.environ['HOME'])\n"
-        "os.path.realpath = lambda p, **k: h + '/x'\nopen('/etc/hosts').read()",
+        (
+            "import os\nh = os.path.realpath(os.environ['HOME'])\n"
+            + "os.path.realpath = lambda p, **k: h + '/x'\nopen('/etc/hosts').read()"
+        ),
         "import os\nos.lstat = lambda p: None\nopen('/etc/hosts').read()",
-        "import sys\nm = sys.modules['data_analysis_env.server.sandbox']\n"
-        "m._BLOCKED_EVENT_PREFIXES = ()\nm.BLOCKED_IMPORTS = ()\nimport socket\nsocket.socket()",
+        (
+            "import sys\nm = sys.modules['data_analysis_env.server.sandbox']\n"
+            + "m._BLOCKED_EVENT_PREFIXES = ()\nm.BLOCKED_IMPORTS = ()\nimport socket\nsocket.socket()"
+        ),
         "import builtins\nbuiltins.isinstance = lambda *a: False\nopen('/etc/hosts').read()",
         # A path-like object that shows the hook one path and the opener another.
-        "class P:\n    n = 0\n    def __fspath__(self):\n        P.n += 1\n"
-        "        return 'x' if P.n > 1 else '/etc/hosts'\nopen(P()).read()",
-        "import sqlite3\nclass S(str):\n    def __eq__(s, o):\n        return True\n"
-        "sqlite3.connect(S('/etc/x.db'))",
+        (
+            "class P:\n    n = 0\n    def __fspath__(self):\n        P.n += 1\n"
+            + "        return 'x' if P.n > 1 else '/etc/hosts'\nopen(P()).read()"
+        ),
+        (
+            "import sqlite3\nclass S(str):\n    def __eq__(s, o):\n        return True\n"
+            + "sqlite3.connect(S('/etc/x.db'))"
+        ),
         # A relative path that means something else under another directory's fd.
         "import os\nfd = os.open('.', os.O_RDONLY)\nos.open('../../etc/hosts', os.O_RDONLY, dir_fd=fd)",
     ],
@@ -363,6 +374,37 @@ def test_writes_only_under_the_session_home(session, task_dir):
         assert run(session, snippet)[0] != 0, snippet
     assert not os.path.exists(target)
     assert os.path.exists(os.path.join(task_dir, "sales.csv"))
+
+
+def test_replace_is_checked_like_rename(session, task_dir):
+    """os.replace raises the os.rename audit event, so it is limited to the session home."""
+    code, out, err = run(
+        session,
+        "import os\nopen('a', 'w').write('1')\nos.replace('a', 'b')\nopen('b').read()",
+    )
+    assert (code, out) == (0, "'1'\n"), err
+    target = os.path.join(task_dir, "replaced.csv")
+    code, _, err = run(session, f"import os\nos.replace('b', {target!r})")
+    assert code != 0 and "not allowed" in err
+    assert not os.path.exists(target)
+
+
+def test_no_writes_through_a_directory_fd_outside_home(session, task_dir):
+    target = os.path.join(task_dir, "via_dir_fd.csv")
+    code, _, err = run(
+        session,
+        f"import os\nfd = os.open({task_dir!r}, os.O_RDONLY)\n"
+        + "os.close(os.open('via_dir_fd.csv', os.O_WRONLY | os.O_CREAT, dir_fd=fd))",
+    )
+    assert code != 0 and "opening a directory" in err, err
+    assert not os.path.exists(target)
+    # Directories in the home can still be opened and used as dir_fd.
+    code, out, err = run(
+        session,
+        "import os\nos.mkdir('d')\nfd = os.open('d', os.O_RDONLY)\n"
+        + "os.close(os.open('f', os.O_WRONLY | os.O_CREAT, dir_fd=fd))\nos.listdir('d')",
+    )
+    assert (code, out) == (0, "['f']\n"), err
 
 
 def test_home_is_private_and_removed_on_close(task_dir):

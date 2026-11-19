@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import selectors
 import subprocess
@@ -43,7 +44,7 @@ def _tolerance(value) -> float:
         number = 1e-3 if value is None else float(value)
     except (TypeError, ValueError):
         return 1e-3
-    return number if number == number else 1e-3  # NaN from the dataset: default
+    return 1e-3 if math.isnan(number) else number  # NaN from the dataset: default
 
 
 def _grader_main() -> None:

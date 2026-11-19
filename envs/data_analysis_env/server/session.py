@@ -150,7 +150,9 @@ class PythonSession:
                         if value is not None:
                             self.namespace["_"] = value
                             print(repr(value))
-                except BaseException as e:  # SystemExit too: the session goes on
+                # Whatever model code raises, SystemExit, KeyboardInterrupt and GeneratorExit
+                # included, is reported to the model as an error and the session goes on.
+                except BaseException as e:
                     error = self._format_error(e)
         parts = (err.getvalue().rstrip("\n"), _format_warnings(caught), error)
         stderr = "\n".join(part for part in parts if part)

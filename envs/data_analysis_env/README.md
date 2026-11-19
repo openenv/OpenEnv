@@ -141,8 +141,8 @@ forked from a spawner that has pandas, numpy and scikit-learn loaded, with these
    tokens and keys don't reach it. The server and the spawner are non-dumpable, so a process of the same uid can't
    ptrace them or read their memory. The server reads the worker's replies as bounded JSON, never pickle.
 4. **An audit hook** (PEP 578), armed before model code: reads only under the task's data, the session's home and the
-   Python installation, writes only under the session's home (its working directory), and no sockets, subprocesses,
-   signals, `ctypes`, `cffi` or `pyarrow` (its readers skip audit events), no `gc.get_referrers` and similar escapes.
+   Python installation, writes (and opening a directory) only under the session's home (its working directory), and no
+   sockets, subprocesses, signals, `ctypes`, `cffi` or `pyarrow` (its readers skip audit events), no `gc.get_referrers` and similar escapes.
    Audit hooks can be bypassed from Python, so this is defense in depth, not a boundary.
 
 When the server is **not root** (local development, or platforms that run containers as a non-root user, such as
