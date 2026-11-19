@@ -12,10 +12,26 @@ to interact with the environment.
 """
 
 from openenv.core.env_server import State
+from openenv.core.env_server.types import ResetRequest
+from pydantic import Field
 
 
 # Tool names - defined statically to avoid circular imports
 AVAILABLE_TOOLS = ["get_descriptions", "get_table_info", "sql_query", "submit_answer"]
+
+
+class FinQAResetRequest(ResetRequest):
+    """
+    Reset parameters that select a task, published on `/schema`.
+
+    A hint for clients: requests are not validated against it.
+    """
+
+    split: str = Field(default="test", description="Task split")
+    index: int | None = Field(
+        default=None,
+        description="Row of the split to load; without it, the seeded order picks",
+    )
 
 
 class FinQAState(State):

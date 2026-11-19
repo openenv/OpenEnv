@@ -18,7 +18,7 @@ from openenv.core.env_server.mcp_types import CallToolAction, CallToolObservatio
 from openenv.core.env_server.types import Observation
 from pydantic import field_validator
 
-from ..models import FinQAState
+from ..models import FinQAResetRequest, FinQAState
 from .finqa_environment import FinQAEnvironment
 
 DATA_PATH = os.environ.get("FINQA_DATA_PATH", "/app/env/data")
@@ -54,6 +54,8 @@ _create_app_kwargs = (
 )
 if "state_cls" in inspect.signature(create_app).parameters:
     _create_app_kwargs["state_cls"] = FinQAState
+if "reset_cls" in inspect.signature(create_app).parameters:
+    _create_app_kwargs["reset_cls"] = FinQAResetRequest
 
 app = create_app(
     _env_factory,

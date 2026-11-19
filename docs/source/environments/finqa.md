@@ -113,6 +113,22 @@ Once the episode has ended (an answer was submitted or `FINQA_MAX_STEPS` was rea
 | `FINQA_MAX_STEPS` | `50` | Maximum tool calls per episode |
 | `FINQA_TASK` | `finqa` | Task name |
 
+## Tasks
+
+The environment implements the [Task API](https://huggingface.co/docs/openenv/guides/task-api). The dataset is for evaluation only, so it publishes one split, `test`, holding every row of `benchmark_questions/finqa.csv` in file order. Each task spec is `{"id": "finqa-test-<i>", "split": "test", "index": <i>, "group": <company>}`. There is no `difficulty` key, and a spec carries neither the question nor the answer.
+
+The server exposes `/finqa_env/splits`, `/finqa_env/tasks`, `/finqa_env/num_tasks`, `/finqa_env/task` and `/finqa_env/task_range`. `reset(split="test", index=i)` loads row `i`, over `POST /reset` or the WebSocket `reset` message, and `/schema` publishes `split` and `index` under `reset`:
+
+```bash
+curl -s localhost:8000/finqa_env/num_tasks -H 'Content-Type: application/json' -d '{"split": "test"}'
+curl -s localhost:8000/reset -H 'Content-Type: application/json' -d '{"split": "test", "index": 3}'
+```
+
+- A reset without `index` keeps the seeded shuffle: `seed` sets the order of the unindexed resets, and an indexed reset does not move it.
+- `seed` does not change an indexed question, since FinQA has no seeded variants. For pass@k, run several samples per task at a temperature above 0.
+- An unknown split raises `ValueError`, with or without `index`, and an index outside the split raises `IndexError` (`400` on `/finqa_env/task`).
+- The routes need `openenv-core` 0.4.1 or later on the server, and the reset schema on `/schema` needs 0.11.0 or later.
+
 ## Reward Computation
 
 Rewards use fuzzy numerical matching:
