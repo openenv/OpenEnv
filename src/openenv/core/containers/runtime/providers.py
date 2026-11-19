@@ -9,6 +9,7 @@ This module provides a pluggable architecture for different container providers
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Mapping, Optional, Sequence, TypeVar
 
@@ -209,9 +210,10 @@ class LocalDockerProvider(ContainerProvider):
         ]
 
         # Add environment variables
-        if env_vars:
-            for key, value in env_vars.items():
-                cmd.extend(["-e", f"{key}={value}"])
+        # Values go through docker's own environment (`-e KEY`), never the command
+        # line, which other processes can read and errors below include.
+        for key in env_vars or {}:
+            cmd.extend(["-e", key])
 
         # Add volume mounts before the image name.
         if volumes:
@@ -232,7 +234,13 @@ class LocalDockerProvider(ContainerProvider):
 
         # Run container
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, **(env_vars or {})},
+            )
             self._container_id = result.stdout.strip()
         except subprocess.CalledProcessError as e:
             error_msg = f"Failed to start Docker container.\nCommand: {' '.join(cmd)}\nExit code: {e.returncode}\nStderr: {e.stderr}\nStdout: {e.stdout}"
@@ -461,9 +469,10 @@ class DockerSwarmProvider(ContainerProvider):
         if self._overlay_network:
             cmd.extend(["--network", self._overlay_network])
 
-        if env_vars:
-            for key, value in env_vars.items():
-                cmd.extend(["--env", f"{key}={value}"])
+        # Values go through docker's own environment (`--env KEY`), never the
+        # command line, which other processes can read and errors below include.
+        for key in env_vars or {}:
+            cmd.extend(["--env", key])
 
         if cpu_limit is not None:
             cmd.extend(["--limit-cpu", str(cpu_limit)])
@@ -493,6 +502,7 @@ class DockerSwarmProvider(ContainerProvider):
                 capture_output=True,
                 text=True,
                 check=True,
+                env={**os.environ, **(env_vars or {})},
             )
             self._service_id = result.stdout.strip()
         except subprocess.CalledProcessError as e:

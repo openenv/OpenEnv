@@ -104,3 +104,27 @@ async def test_from_env_keeps_workers_compatible_with_default_docker(monkeypatch
         assert len(commands[1]) == 8
     finally:
         await client.close()
+
+
+def test_env_values_stay_out_of_the_command_and_errors(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs.get("env")))
+        if command[:2] == ["docker", "run"]:
+            raise subprocess.CalledProcessError(125, command, "", "no such image")
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    provider = LocalDockerProvider()
+
+    with pytest.raises(RuntimeError) as error:
+        provider.start_container(
+            "echo-env:latest", env_vars={"HF_TOKEN": "fake-token-value"}
+        )
+
+    command, env = calls[-1]
+    assert command[command.index("-e") + 1] == "HF_TOKEN"
+    assert "fake-token-value" not in " ".join(command)
+    assert env["HF_TOKEN"] == "fake-token-value"
+    assert "fake-token-value" not in str(error.value)
