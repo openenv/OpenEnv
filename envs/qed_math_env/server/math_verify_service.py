@@ -155,7 +155,11 @@ def _verify_answer_worker(request: VerifyRequest) -> VerifyResponse:
         else:
             # Parse both expressions
             gold_parsed = _parse_math_verify_expression(request.gold)
-            boxed_prediction_parsed = _parse_math_verify_expression(boxed_prediction)
+            # Keep the box: math_verify reads unboxed text as its last bare
+            # number, so "\sqrt{51}" fails and "49, 50, 51" matches 51.
+            boxed_prediction_parsed = _parse_math_verify_expression(
+                f"\\boxed{{{boxed_prediction}}}"
+            )
 
             if not gold_parsed or not boxed_prediction_parsed:
                 status = "unparsable"
