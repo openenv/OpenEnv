@@ -26,9 +26,10 @@ episodes never share interpreter state. Workers are forked from a zygote, a
 template process started once per server with a minimal environment (no
 server secrets) and with smolagents already imported. Each worker drops to
 an unprivileged user right after the fork when the server is root, installs
-a seccomp filter that refuses to create sockets (Linux, no capability
-needed), and is killed on timeout. Server and workers exchange bounded
-JSON only, never pickle, because workers run untrusted code.
+a seccomp filter that refuses to create sockets or to reach into other
+processes (Linux, no capability needed), and is killed on timeout. Server
+and workers exchange bounded JSON only, never pickle, because workers run
+untrusted code.
 """
 
 from __future__ import annotations
@@ -78,10 +79,13 @@ PR_SET_SECCOMP = 22
 PR_SET_NO_NEW_PRIVS = 38
 SECCOMP_MODE_FILTER = 2
 # Per architecture: (AUDIT_ARCH_*, syscalls the workers' seccomp filter denies). socket(2) for
-# every address family, and io_uring_setup(2), which could open sockets without socket(2).
+# every address family; io_uring_setup/enter/register(2), which could open sockets without
+# socket(2); and ptrace(2), process_vm_readv/writev(2) and pidfd_getfd(2), which could take
+# a socket or memory from another process of the same uid (a non-root server's workers share
+# its uid).
 _SECCOMP_DENIED = {
-    "x86_64": (0xC000003E, (41, 425)),
-    "aarch64": (0xC00000B7, (198, 425)),
+    "x86_64": (0xC000003E, (41, 425, 426, 427, 101, 310, 311, 438)),
+    "aarch64": (0xC00000B7, (198, 425, 426, 427, 117, 270, 271, 438)),
 }
 # The zygote turns non-dumpable before importing anything, so a same-uid
 # process can't read its memory while it loads. Workers inherit the flag.
@@ -284,7 +288,8 @@ def _socket_filter_unavailable() -> str:
 
 
 def block_sockets() -> None:
-    """Linux: install a seccomp filter so this process and its children can't create sockets.
+    """Linux: install a seccomp filter so this process and its children can't create sockets
+    or reach into other processes (see `_SECCOMP_DENIED`).
 
     It needs no capability (no_new_privs is set first) and can't be undone from
     inside the process. Raises OSError if not possible.
@@ -313,6 +318,23 @@ def block_sockets() -> None:
         raise OSError(ctypes.get_errno(), "prctl(PR_SET_NO_NEW_PRIVS) failed")
     if prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog), 0, 0) != 0:
         raise OSError(ctypes.get_errno(), "prctl(PR_SET_SECCOMP) failed")
+
+
+def _check_socket_filter() -> str:
+    """Install the socket filter in a throwaway child: "" if that works, else why not."""
+    if _socket_filter_unavailable():
+        return ""  # the server warns that model code has network access
+    pid = os.fork()
+    if pid == 0:
+        try:
+            block_sockets()
+            os._exit(0)
+        except OSError as e:
+            os._exit(e.errno or 255)
+        finally:
+            os._exit(255)
+    code = os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
+    return "" if code == 0 else f"prctl failed: {os.strerror(code)}"
 
 
 def _worker_env(home: str) -> dict[str, str]:
@@ -368,7 +390,13 @@ class _Zygote:
                     cwd=home,
                 )
             cleanup.callback(_kill, self._proc)
-            if self._receive(ZYGOTE_STARTUP_TIMEOUT_S) != {"ready": True}:
+            reply = self._receive(ZYGOTE_STARTUP_TIMEOUT_S)
+            if "error" in reply:
+                raise RuntimeError(
+                    "coding_env: can't install the seccomp filter that keeps model "
+                    f"code off the network ({reply['error']})"
+                )
+            if reply != {"ready": True}:
                 raise ValueError("bad zygote handshake")
             if reason := _socket_filter_unavailable():
                 logger.warning("coding_env: model code has network access, %s", reason)
@@ -610,6 +638,9 @@ def _zygote_main(fd: int) -> None:
     # Keep the imported objects out of the workers' garbage collections, so
     # those don't write to (and copy) the memory pages they share.
     gc.freeze()
+    if error := _check_socket_filter():
+        conn.send_bytes(json.dumps({"error": error}).encode())
+        return
     conn.send_bytes(b'{"ready":true}')
     while True:
         try:
