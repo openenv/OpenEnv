@@ -592,6 +592,8 @@ class QueryExecutor:
             if worker.poll() is None:
                 worker.kill()
             worker.wait()
+            # DuckDB removes its spill files only when it shuts down cleanly.
+            shutil.rmtree(f"{self._path}.tmp", ignore_errors=True)
 
     def _call(self, job: Dict[str, Any]) -> Dict[str, Any]:
         """Run *job* in the worker under the query deadline and return its reply.

@@ -679,6 +679,24 @@ class TestProcessBoundary:
         assert executor.compare("SELECT 1", "SELECT 1")["results_match"] is True
         assert executor._worker.pid != pid
 
+    def test_a_killed_worker_leaves_no_spill_files(self, executor, deadline):
+        """A query killed mid-spill does not leave its temporary files behind.
+
+        DuckDB removes them when a query ends or the database closes, but not
+        when its process is killed. With /tmp on tmpfs they hold memory that
+        killing the worker does not free.
+        """
+        from pathlib import Path
+
+        deadline(1.5)
+        spilling = (
+            "SELECT COUNT(*) FROM (SELECT a.session_id || b.session_id AS k "
+            "FROM events a, (FROM events LIMIT 100) b ORDER BY k)"
+        )
+
+        assert executor._run(spilling)[2]
+        assert list(Path(executor._dir).rglob("duckdb_temp_*")) == []
+
     def test_worker_death_during_a_job_fails_closed(self, executor):
         import signal
         import threading
