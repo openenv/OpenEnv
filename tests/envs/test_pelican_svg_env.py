@@ -132,6 +132,17 @@ class TestSourceGate:
         )
         assert "embedded_raster" in inspect_source(document).codes
 
+    @pytest.mark.parametrize(
+        "media_type", ["text/plain", "", "application/octet-stream"]
+    )
+    def test_rejects_data_uri_whatever_its_media_type(self, media_type):
+        """The renderer sniffs the bytes, so a PNG labelled text/plain still draws."""
+        body = (
+            f'<filter id="f"><feImage href="data:{media_type};base64,AAAA"/></filter>'
+            '<circle cx="1" cy="1" r="1"/><rect width="2" height="2"/>'
+        )
+        assert "embedded_raster" in inspect_source(svg(body)).codes
+
     def test_rejects_external_reference(self):
         body = '<use href="https://evil.example/x.svg"/><circle r="1"/><rect/><line/>'
         assert "external_reference" in inspect_source(svg(body)).codes
