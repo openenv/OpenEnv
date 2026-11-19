@@ -429,3 +429,17 @@ def test_dead_zygote_is_replaced(make_env):
     assert env.reset().exit_code == 0
     assert _run(env, "1 + 1").stdout == "2"
     assert python_executor._zygote is not zygote
+
+
+@linux_only
+def test_workers_cannot_create_sockets(make_env):
+    """Even with `socket` authorized, model code gets no socket of any family."""
+    env = make_env(additional_imports=["socket"])
+    env.reset()
+    for family in ("AF_INET", "AF_INET6", "AF_UNIX"):
+        result = _run(env, f"import socket\nsocket.socket(socket.{family})")
+        assert result.exit_code != 0
+        assert "not permitted" in result.stderr, result.stderr
+    assert _run(env, "1 + 1").stdout == "2"
+    with open(f"/proc/{env._executor.pid}/status") as status:
+        assert "Seccomp:\t2" in status.read()
