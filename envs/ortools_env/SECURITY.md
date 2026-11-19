@@ -15,29 +15,30 @@ If a submission leaves a directory at either reserved filename, subsequent calls
 return a controlled setup failure without launching code. The directory is left
 untouched until the workdir is reset; setup never traverses or recursively deletes it.
 
-## Unresolved: detached processes and aggregate resource containment
+## Sessions and leftover processes
 
-`killpg` only cleans up the initial process group. A submission can start a child
-with `start_new_session=True` (or call `setsid`) and continue running after the
-submission returns, including after timeout. RLIMIT_AS applies per process; it
-does not bound aggregate memory, CPU, process count, disk use or log-file growth.
-The sandbox UID is also shared between calls. Do not run mutually untrusted
-sessions concurrently under that UID.
+Each session's code runs as its own uid (60000 to 64999, no account behind it, given back when the session ends), so
+sessions can't signal each other or read each other's files, and a session's
+working directory belongs to its uid only. When a call ends, a helper running as
+that uid calls `kill(-1, SIGKILL)`, which stops every process of the uid at once,
+including children that called `setsid` to leave the process group. Each uid can
+run at most 32 processes (`RLIMIT_NPROC`).
 
-Fixing this requires a per-submission Linux PID namespace or a delegated cgroup
-with race-free child placement, group-wide kill and resource limits. The current
-Dockerfile/hosting contract supplies neither a namespace launcher nor writable,
-delegated cgroups. Adding privileges or mounting the Docker socket into the
-server would weaken the boundary and is not an acceptable narrow fix. A process
-tree scan or process-group change does not solve the `setsid` escape.
+## Unresolved: aggregate resource containment
+
+RLIMIT_AS applies per process, so a session can still use up to 32 times its
+memory limit, and nothing bounds CPU, disk use or log-file growth per session.
+Bounding them requires a delegated cgroup per session, which the current
+Dockerfile/hosting contract does not supply. Adding privileges or mounting the
+Docker socket into the server would weaken the boundary and is not an acceptable
+narrow fix.
 
 `tests/containers/check_ortools_sandbox.py` runs against the production image,
 checks the UID/interpreter boundary after removing the hook, exercises privileged
-file I/O with synthetic data, and contains an explicitly expected failing test
-for the detached-child blocker. That reproduction writes a marker and exits
-itself. An expected failure is evidence of an unresolved bug, not containment
-proof. The CI container's PID/memory limits protect the test runner as a whole;
-they do not isolate individual submissions.
+file I/O with synthetic data, and checks that a detached child does not outlive
+its call, that sessions get separate uids and that the process count is limited.
+The CI container's PID/memory limits protect the test runner as a whole. They do
+not isolate individual submissions.
 
 ## CI and release gate
 
@@ -46,5 +47,5 @@ explicitly imports required dependencies before pytest, and builds/runs the
 production container on Linux without network access during checks. Repository
 administrators must make this job required in branch protection; adding the job
 does not change branch protection. Passing CI does not clear the process/resource
-containment hold above. Deployment also needs an explicit network policy and
+containment limit above. Deployment also needs an explicit network policy and
 proof that untrusted code cannot reach server orchestration endpoints.

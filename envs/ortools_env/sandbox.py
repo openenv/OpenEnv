@@ -9,11 +9,12 @@ Run model-written Python in a subprocess with a wall-clock limit, a memory limit
 
 Keeping `ortools` and the environment's own packages out of reach is what keeps the reward honest: otherwise a policy
 can call the reference solver. In the container (see `server/Dockerfile`), `SANDBOX_USER` is set and the code runs as
-that unprivileged user with `SANDBOX_PYTHON`, an interpreter without `ortools`, while the environment source and the
-server's packages are not readable by it. With `allow_ortools=True` it runs with `SANDBOX_ORTOOLS_PYTHON` instead,
+an unprivileged uid of its own with `SANDBOX_PYTHON`, an interpreter without `ortools`, while the environment source
+and the server's packages are not readable by it. Each session gets its own uid (`new_uid`), so sessions can't signal
+each other or read each other's files, and every process of that uid is killed when a call ends, including children
+that left the process group. With `allow_ortools=True` it runs with `SANDBOX_ORTOOLS_PYTHON` instead,
 which only the `ortools` group can read. Without `SANDBOX_USER` (local development), the code runs with the server's
-interpreter and an import blocker that it can remove. Container UID/interpreter separation is necessary but does not
-provide full containment: detached children escape process-group cleanup. See SECURITY.md for deployment holds.
+interpreter and an import blocker that it can remove. See SECURITY.md for what is not contained.
 """
 
 import json
@@ -26,12 +27,27 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 BLOCKED_ALWAYS = ("ortools_env", "problems", "server", "sandbox")
 SANDBOX_USER = os.environ.get("SANDBOX_USER")
 SANDBOX_PYTHON = os.environ.get("SANDBOX_PYTHON", sys.executable)
 SANDBOX_ORTOOLS_PYTHON = os.environ.get("SANDBOX_ORTOOLS_PYTHON", sys.executable)
+# One uid per session, with no account behind it. Below 65534 (nobody): containers on
+# Hugging Face map only uids 0-65535.
+_free_uids = list(range(60_000, 65_000))
+_uids_lock = threading.Lock()
+MAX_PROCESSES = 32  # per session uid
+
+# Run as a session's uid: kill(-1) signals every process of that uid at once, except itself.
+_KILL_ALL = """
+import os, signal
+try:
+    os.kill(-1, signal.SIGKILL)
+except ProcessLookupError:
+    pass
+"""
 
 _RUNNER = """\
 import importlib.abc, json, sys
@@ -59,12 +75,74 @@ if sys.argv[3] == "solve":
 """
 
 
-def _limit_memory(memory_mb: int):
+def _limit_resources(memory_mb: int):
     def apply():
         limit = memory_mb * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+        resource.setrlimit(resource.RLIMIT_NPROC, (MAX_PROCESSES, MAX_PROCESSES))
 
     return apply
+
+
+def new_uid() -> int | None:
+    """A uid for one session's code, used by no other session, or `None` without `SANDBOX_USER`.
+
+    Give it back with `release_uid` when the session ends.
+    """
+    if SANDBOX_USER is None:
+        return None
+    with _uids_lock:
+        if not _free_uids:
+            raise RuntimeError("no free sandbox uid: too many sessions")
+        return _free_uids.pop()
+
+
+def release_uid(uid: int | None) -> None:
+    """Stop every process of `uid` and make it available to another session."""
+    if uid is None:
+        return
+    _kill_all(uid, pwd.getpwnam(SANDBOX_USER).pw_gid)
+    with _uids_lock:
+        _free_uids.append(uid)
+
+
+def _processes_of(uid: int) -> list[tuple[int, int]]:
+    """`(pid, parent pid)` of every process of `uid`."""
+    found = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open(f"/proc/{pid}/status") as f:
+                fields = dict(line.split(":", 1) for line in f if ":" in line)
+        except OSError:
+            continue
+        if int(fields["Uid"].split()[0]) == uid:
+            found.append((int(pid), int(fields["PPid"])))
+    return found
+
+
+def _kill_all(uid: int, gid: int) -> None:
+    subprocess.run(
+        [SANDBOX_PYTHON, "-I", "-c", _KILL_ALL],
+        user=uid,
+        group=gid,
+        extra_groups=[],
+        env={"PATH": "/usr/bin:/bin"},
+        cwd="/",
+        timeout=10,
+    )
+    # Orphans of the session were reparented to this process (a subreaper, see `run`).
+    # Reap them, or their zombies would still count against the uid's process limit.
+    deadline = time.monotonic() + 5
+    while (processes := _processes_of(uid)) and time.monotonic() < deadline:
+        for pid, parent in processes:
+            if parent == os.getpid():
+                try:
+                    os.waitpid(pid, 0)
+                except ChildProcessError:
+                    pass
+        time.sleep(0.01)
 
 
 def run(
@@ -75,6 +153,7 @@ def run(
     allow_ortools: bool = False,
     solve: bool = False,
     memory_mb: int = 4096,
+    uid: int | None = None,
 ) -> dict:
     """
     Run `code` with `instance` bound as a global, from `workdir` (where files persist between calls).
@@ -94,11 +173,15 @@ def run(
             Whether to call `solve(instance)`, which `code` must define, and return its result as the solution.
         memory_mb (`int`, *optional*, defaults to `4096`):
             Address-space limit of the subprocess.
+        uid (`int`, *optional*):
+            The session's uid from `new_uid`, which owns `workdir`. Defaults to a uid for this call only.
+            Ignored without `SANDBOX_USER`.
 
     Returns:
         `dict` with keys `output` (combined stdout and stderr, truncated), `elapsed_s`, `timed_out`, `returncode` and,
         with `solve=True`, `solution` (`None` if the run failed).
     """
+    own_uid = None
     directory_fd = os.open(workdir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         blocked = list(BLOCKED_ALWAYS) + ([] if allow_ortools else ["ortools"])
@@ -143,11 +226,19 @@ def run(
             return result
         user = {}
         if SANDBOX_USER is not None:
-            account = pwd.getpwnam(SANDBOX_USER)
-            os.fchown(directory_fd, account.pw_uid, account.pw_gid)
+            # Orphans of the code come back to this process instead of PID 1, so they can be reaped.
+            import ctypes
+
+            ctypes.CDLL(None, use_errno=True).prctl(
+                36, 1, 0, 0, 0
+            )  # PR_SET_CHILD_SUBREAPER
+            gid = pwd.getpwnam(SANDBOX_USER).pw_gid
+            if uid is None:
+                uid = own_uid = new_uid()
+            os.fchown(directory_fd, uid, gid)
             user = {
-                "user": SANDBOX_USER,
-                "group": SANDBOX_USER,
+                "user": uid,
+                "group": gid,
                 "extra_groups": ["ortools"] if allow_ortools else [],
             }
         start = time.monotonic()
@@ -176,7 +267,7 @@ def run(
                 text=True,
                 start_new_session=True,
                 # RLIMIT_AS cannot be lowered on macOS.
-                preexec_fn=_limit_memory(memory_mb)
+                preexec_fn=_limit_resources(memory_mb)
                 if sys.platform == "linux"
                 else None,
                 **user,
@@ -185,12 +276,13 @@ def run(
                 returncode, timed_out = proc.wait(timeout=timeout_s), False
             except subprocess.TimeoutExpired:
                 returncode, timed_out = None, True
-            # This only kills descendants that remain in the original process group.
-            # A child that calls setsid() escapes; see SECURITY.md for the deployment hold.
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            if user:
+                # Also the children that left the process group (setsid).
+                _kill_all(user["user"], user["group"])
             proc.wait()
             log.seek(0)
             output = log.read(8001)
@@ -233,3 +325,4 @@ def run(
         return result
     finally:
         os.close(directory_fd)
+        release_uid(own_uid)
