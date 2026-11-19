@@ -126,9 +126,9 @@ print(result.final_answer)
 ```
 
 The runner supports child-count, batch, timeout, and result-length limits, plus
-`on_subcall_start` / `on_subcall_complete` callbacks and child traces. For different
-outer/inner models, supply a `backend_factory`; see
-[`recursive_backends.py`](https://github.com/openenv/OpenEnv/blob/main/envs/repl_env/recursive_backends.py).
+`on_subcall_start` / `on_subcall_complete` callbacks and child traces. See the
+[runnable examples](https://github.com/openenv/OpenEnv/blob/main/examples/repl_model_servers/README.md) for connecting
+to vLLM and using separate parent and child models.
 
 ### Managed child lifecycle (opt-in)
 
