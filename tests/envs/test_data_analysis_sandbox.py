@@ -205,6 +205,10 @@ def test_syntax_error_and_system_exit_keep_the_session(session):
     assert code == 1 and err.startswith("SyntaxError:")
     code, _, err = run(session, "import sys\nsys.exit(2)")
     assert code == 1 and "SystemExit: 2" in err
+    code, _, err = run(session, "raise KeyboardInterrupt")
+    assert code == 1 and "KeyboardInterrupt" in err
+    code, _, err = run(session, "raise GeneratorExit")
+    assert code == 1 and "GeneratorExit" in err
     assert run(session, "keep")[:2] == (0, "1\n")
 
 
