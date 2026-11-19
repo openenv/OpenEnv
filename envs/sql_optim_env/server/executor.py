@@ -437,6 +437,7 @@ class QueryExecutor:
 
         self._worker: Optional[subprocess.Popen] = None
         self._pipe: Optional[Connection] = None
+        self._spill_dir: Optional[str] = None
         self._exec_lock = threading.Lock()
         # A process forked from this one inherits the executor. It must neither
         # share the worker's pipe nor, at exit, kill the worker or delete the
@@ -558,10 +559,13 @@ class QueryExecutor:
             worker_end.close()
         self._worker, self._pipe = worker, server_end
         self._worker_owner_pid = os.getpid()
+        # Each worker spills to its own directory, so removing it after a kill
+        # cannot touch the files of a worker a forked copy shares the database with.
+        self._spill_dir = tempfile.mkdtemp(prefix="spill_", dir=self._dir)
 
         setup = {
             "path": self._path,
-            "config": _DUCKDB_CONFIG,
+            "config": {**_DUCKDB_CONFIG, "temp_directory": self._spill_dir},
             "address_space_bytes": _WORKER_ADDRESS_SPACE_BYTES,
         }
         try:
@@ -583,8 +587,8 @@ class QueryExecutor:
 
     def _kill_worker(self) -> None:
         """Kill and reap the worker, if there is one. Safe to call repeatedly."""
-        worker, pipe = self._worker, self._pipe
-        self._worker = self._pipe = None
+        worker, pipe, spill_dir = self._worker, self._pipe, self._spill_dir
+        self._worker = self._pipe = self._spill_dir = None
         if pipe is not None:
             pipe.close()
         # A worker inherited through fork belongs to the parent: let it be.
@@ -593,7 +597,7 @@ class QueryExecutor:
                 worker.kill()
             worker.wait()
             # DuckDB removes its spill files only when it shuts down cleanly.
-            shutil.rmtree(f"{self._path}.tmp", ignore_errors=True)
+            shutil.rmtree(spill_dir, ignore_errors=True)
 
     def _call(self, job: Dict[str, Any]) -> Dict[str, Any]:
         """Run *job* in the worker under the query deadline and return its reply.

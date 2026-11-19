@@ -848,6 +848,19 @@ class TestProcessBoundary:
         # closed here (this test is its real owner) it then exits by itself.
         assert inherited.wait(5) == 0
 
+    def test_a_forked_copy_keeps_off_the_parents_spill_files(
+        self, executor, monkeypatch
+    ):
+        """A forked copy's worker spills to its own directory and removes only that."""
+        executor._run("SELECT 1")
+        marker = os.path.join(executor._spill_dir, "in_use")
+        open(marker, "w").close()
+        monkeypatch.setattr(executor, "_worker_owner_pid", -1)
+
+        assert executor._run("SELECT 1")[2] is None
+        executor._kill_worker()
+        assert os.path.exists(marker)
+
     def test_a_forked_copy_leaves_the_parents_resources_alone(
         self, executor, monkeypatch
     ):
