@@ -496,6 +496,37 @@ def test_workers_and_spawner_are_not_dumpable(session):
         assert os.stat(f"/proc/{pid}/mem").st_uid == 0
 
 
+_SOCKETS_AFTER_FILTER = """
+import socket, sys
+from data_analysis_env.server.sandbox import block_sockets
+block_sockets()
+for family in (socket.AF_INET, socket.AF_INET6, socket.AF_UNIX):
+    try:
+        socket.socket(family, socket.SOCK_STREAM).close()
+        print("OPENED", family)
+    except PermissionError:
+        print("DENIED")
+"""
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux seccomp")
+def test_workers_cannot_create_sockets_without_the_hook(session):
+    """The seccomp filter alone (this process has no audit hook) refuses every socket."""
+    r = subprocess.run(
+        [sys.executable, "-c", _SOCKETS_AFTER_FILTER],
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert r.stdout.split() == ["DENIED"] * 3, r.stdout + r.stderr
+    status = sandbox.sandbox_status()
+    assert status["socket_filter"] is True, status
+    assert run(session, "1")[0] == 0
+    proc_status = Path(f"/proc/{session.pid}/status").read_text()
+    assert "\nSeccomp:\t2\n" in proc_status
+
+
 # --- The OS boundary (Linux, root) ---------------------------------------------------------------
 
 

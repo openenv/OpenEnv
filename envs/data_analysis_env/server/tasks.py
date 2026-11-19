@@ -123,15 +123,15 @@ def _check_location(row: dict) -> Tuple[str, str]:
     return bucket, prefix.strip("/")
 
 
-def ensure_dir(path: str) -> str:
-    """Create a 0755 directory, or check an existing one is ours and a plain directory."""
-    os.makedirs(path, mode=0o755, exist_ok=True)
+def ensure_dir(path: str, mode: int = 0o755) -> str:
+    """Create a directory with `mode`, or check an existing one is ours and a plain directory."""
+    os.makedirs(path, mode=mode, exist_ok=True)
     st = os.lstat(path)
     if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
         raise TaskError(f"{path} is not a plain directory")
     if st.st_uid != os.geteuid():
         raise TaskError(f"{path} belongs to uid {st.st_uid}, not to the server")
-    os.chmod(path, 0o755)
+    os.chmod(path, mode)
     return path
 
 
@@ -262,7 +262,9 @@ def fetch_task_files(
     files = list(row["files"])
     if any(safe_file_name(f) is None for f in files):
         raise TaskError("the task has an unusable file name")
-    split_dir = ensure_dir(os.path.join(ensure_dir(tasks_root), split))
+    # The root and split directories can be crossed but not listed: a session reads its own
+    # task's directory and doesn't see which other tasks are on this server.
+    split_dir = ensure_dir(os.path.join(ensure_dir(tasks_root, 0o711), split), 0o711)
     task_dir = os.path.join(split_dir, safe_task_id(row["task_id"]))
     with _lock_for(task_dir):
         ensure_dir(task_dir)

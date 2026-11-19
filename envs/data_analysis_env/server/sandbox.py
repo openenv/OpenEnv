@@ -15,10 +15,13 @@ layers below decide what that is, from the strongest to defense in depth:
    files only root can read, or another session's home, and it can't signal other sessions. When
    a session ends, every process left with its uid is killed and its files in /tmp, /var/tmp and
    /dev/shm are removed before the uid is used again.
-2. **No network** (root with CAP_SYS_ADMIN). The spawner moves itself into a new network
-   namespace before it forks any worker, so workers have no usable interface, not even loopback.
-   Without CAP_SYS_ADMIN (Docker's default) this is not possible and the server logs
-   "network: NOT isolated", and the audit hook (4) is then what blocks sockets.
+2. **No network.** On Linux every worker installs a seccomp filter (after no_new_privs, so no
+   capability is needed) that refuses to create any socket, before model code runs. With root and
+   CAP_SYS_ADMIN the spawner also moves itself into a new network namespace before it forks any
+   worker, so workers have no usable interface, not even loopback. The server logs which of the
+   two apply ("network: blocked by seccomp" without CAP_SYS_ADMIN, Docker's default), or
+   "network: NOT isolated" when neither does (not Linux), and then only the audit hook (4) blocks
+   sockets.
 3. **Process limits and hygiene.** A hard per-call timeout (the worker is killed and the next
    call starts a fresh session), an address-space limit, a cap on file size, open files and
    (with a uid per session) processes, no core files. The worker's environment is built from an
@@ -80,6 +83,15 @@ MAX_REPLY_BYTES = 1_000_000
 CLONE_NEWNET = 0x40000000
 PR_SET_PDEATHSIG = 1
 PR_SET_DUMPABLE = 4
+PR_SET_SECCOMP = 22
+PR_SET_NO_NEW_PRIVS = 38
+SECCOMP_MODE_FILTER = 2
+# Per architecture: (AUDIT_ARCH_*, syscalls the workers' seccomp filter denies). socket(2) for
+# every address family, and io_uring_setup(2), which could open sockets without socket(2).
+_SECCOMP_DENIED = {
+    "x86_64": (0xC000003E, (41, 425)),
+    "aarch64": (0xC00000B7, (198, 425)),
+}
 
 # The only server environment variables a worker inherits. Anything else (tokens, API keys,
 # credentials) stays in the server process.
@@ -506,6 +518,93 @@ def _isolate_network() -> Tuple[bool, str]:
     return True, ""
 
 
+def _socket_filter(arch: int, denied: Tuple[int, ...]) -> bytes:
+    """A seccomp BPF program: EPERM for `denied` syscalls and for any other ABI, allow the rest."""
+    import struct
+
+    ld, jeq, jge, ret = (
+        0x20,
+        0x15,
+        0x35,
+        0x06,
+    )  # BPF_LD|W|ABS, BPF_JMP|JEQ|K, JGE|K, RET|K
+    allow, deny = (
+        0x7FFF0000,
+        0x00050000 | 1,
+    )  # SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO | EPERM
+    prog = [(ld, 0, 0, 4), (jeq, 1, 0, arch), (ret, 0, 0, deny), (ld, 0, 0, 0)]
+    checks = [(jge, 0x40000000)] + [(jeq, nr) for nr in denied]  # x32 syscalls too
+    for i, (op, k) in enumerate(checks):
+        prog.append((op, len(checks) - i, 0, k))  # to the final deny
+    prog += [(ret, 0, 0, allow), (ret, 0, 0, deny)]
+    return b"".join(struct.pack("=HBBI", *ins) for ins in prog)
+
+
+def _socket_filter_unavailable() -> str:
+    """Why this platform has no socket filter, or "" if it has one."""
+    import platform
+
+    if not sys.platform.startswith("linux"):
+        return f"seccomp needs Linux (this is {sys.platform})"
+    if platform.machine() not in _SECCOMP_DENIED:
+        return f"no seccomp socket filter for {platform.machine()}"
+    return ""
+
+
+def block_sockets() -> None:
+    """Linux: install a seccomp filter so this process and its children can't create sockets.
+
+    Unlike a network namespace it needs no capability (no_new_privs is set first), and unlike
+    the audit hook it can't be undone from inside the process. Raises OSError if not possible.
+    """
+    import platform
+
+    reason = _socket_filter_unavailable()
+    if reason:
+        raise OSError(reason)
+    import ctypes
+
+    arch, denied = _SECCOMP_DENIED[platform.machine()]
+    code = _socket_filter(arch, denied)
+    buf = ctypes.create_string_buffer(code, len(code))
+
+    class _Prog(ctypes.Structure):
+        _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
+
+    prog = _Prog(len(code) // 8, ctypes.addressof(buf))
+    libc = ctypes.CDLL(None, use_errno=True)
+    prctl = libc.prctl
+    prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
+    prctl.argtypes += [ctypes.c_ulong, ctypes.c_ulong]  # unused arguments must be 0
+    prctl.restype = ctypes.c_int
+    if prctl(PR_SET_NO_NEW_PRIVS, 1, None, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_NO_NEW_PRIVS) failed")
+    if prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog), 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_SECCOMP) failed")
+
+
+def _probe_socket_filter() -> Tuple[bool, str]:
+    """Whether the filter works here: a child installs it and must be refused an AF_INET socket."""
+    reason = _socket_filter_unavailable()
+    if reason:
+        return False, reason
+    pid = os.fork()
+    if pid == 0:
+        code = 1
+        try:
+            block_sockets()
+            try:
+                socket.socket(socket.AF_INET, socket.SOCK_STREAM).close()
+            except PermissionError:
+                code = 0
+        finally:
+            os._exit(code)
+    _, status = os.waitpid(pid, 0)
+    if os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0:
+        return True, ""
+    return False, "the kernel refused the seccomp filter"
+
+
 def _base_env(home: str) -> Dict[str, str]:
     env = {k: os.environ[k] for k in WORKER_ENV_ALLOWLIST if k in os.environ}
     env.update(THREAD_ENV)
@@ -588,6 +687,8 @@ class _Spawner:
                 raise ValueError("bad spawner handshake")
             self.network_isolated = hello.get("network_isolated") is True
             self.network_reason = str(hello.get("network_reason", ""))[:300]
+            self.socket_filter = hello.get("socket_filter") is True
+            self.socket_filter_reason = str(hello.get("socket_filter_reason", ""))[:300]
         except BaseException:
             self.close()
             raise
@@ -698,11 +799,21 @@ def _get_spawner() -> _Spawner:
                 users = f"a uid per session (from {conf['uid_base']})"
             else:
                 users = "the server's uid (not root: audit hook only)"
-            network = (
-                "isolated"
-                if _spawner.network_isolated
-                else f"NOT isolated ({_spawner.network_reason})"
-            )
+            if _spawner.network_isolated:
+                network = "isolated" + (
+                    " (namespace and seccomp)"
+                    if _spawner.socket_filter
+                    else f" (namespace, {_spawner.socket_filter_reason})"
+                )
+            elif _spawner.socket_filter:
+                network = (
+                    f"blocked by seccomp (no namespace: {_spawner.network_reason})"
+                )
+            else:
+                network = (
+                    f"NOT isolated ({_spawner.network_reason}, "
+                    f"{_spawner.socket_filter_reason})"
+                )
             logger.warning(
                 "data_analysis_env sandbox: workers run as %s, network: %s",
                 users,
@@ -727,6 +838,8 @@ def sandbox_status() -> Dict[str, object]:
         "user_per_session": drops_privileges(),
         "network_isolated": spawner.network_isolated,
         "network_reason": spawner.network_reason,
+        "socket_filter": spawner.socket_filter,
+        "socket_filter_reason": spawner.socket_filter_reason,
         "spawner_pid": spawner.pid,
     }
 
@@ -803,6 +916,7 @@ class SandboxSession:
                 "roots": list(read_roots(self._read_dirs + [self._home])),
                 "mem_limit_mb": self._mem_limit_mb,
                 "file_limit_mb": DEFAULT_FILE_LIMIT_MB,
+                "block_sockets": spawner.socket_filter,
             }
             parent_sock, child_sock = socket.socketpair()
             conn = Connection(parent_sock.detach())
@@ -888,6 +1002,7 @@ def _spawner_main(fd: int, isolate_network: bool) -> None:
         isolated, reason = _isolate_network()
     else:
         isolated, reason = False, "disabled with DATA_ANALYSIS_ISOLATE_NETWORK=0"
+    filtered, filter_reason = _probe_socket_filter()
     for name in PRELOAD:
         importlib.import_module(name)
     conn = Connection(fd)
@@ -895,7 +1010,13 @@ def _spawner_main(fd: int, isolate_network: bool) -> None:
     # Keep the imported objects out of the workers' garbage collections, so those don't write to
     # (and copy) the memory pages they share with the spawner.
     gc.freeze()
-    hello = {"ready": True, "network_isolated": isolated, "network_reason": reason}
+    hello = {
+        "ready": True,
+        "network_isolated": isolated,
+        "network_reason": reason,
+        "socket_filter": filtered,
+        "socket_filter_reason": filter_reason,
+    }
     conn.send_bytes(json.dumps(hello).encode())
     while True:
         try:
@@ -1017,6 +1138,8 @@ def _worker_main(fd: int, config: dict) -> None:
             raise PermissionError("could not switch to the session uid")
     set_non_dumpable()  # changing uid resets it, so set it in every case
     _prctl(PR_SET_PDEATHSIG, signal.SIGKILL)  # die with the spawner
+    if config["block_sockets"]:
+        block_sockets()  # no socket from here on, whatever happens to the audit hook
     signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     # Model code writing to fd 0-2 directly must not reach the server's log.
     devnull = os.open(os.devnull, os.O_RDWR)

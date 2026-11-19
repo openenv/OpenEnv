@@ -118,9 +118,11 @@ forked from a spawner that has pandas, numpy and scikit-learn loaded, with these
    can't read the server's environment, memory or root-only files, another session's home, or signal another session's
    processes. When a session ends, every process left with its uid is killed and its files in `/tmp`, `/var/tmp` and
    `/dev/shm` are removed before the uid is used again.
-2. **No network.** With `CAP_SYS_ADMIN` (`docker run --cap-add SYS_ADMIN`), the spawner moves into a new network
-   namespace, so workers have no usable interface, not even loopback. Without it the server logs
-   `network: NOT isolated` and the audit hook (4) is what blocks sockets.
+2. **No network.** On Linux each worker installs a seccomp filter that refuses to create any socket, before model
+   code runs. It needs no capability, so it also holds on hosts that don't grant `CAP_SYS_ADMIN`, and the server
+   logs `network: blocked by seccomp`. With `CAP_SYS_ADMIN` (`docker run --cap-add SYS_ADMIN`) the spawner also moves
+   into a new network namespace, so workers have no usable interface, not even loopback. When neither applies (not
+   Linux) the server logs `network: NOT isolated` and only the audit hook (4) blocks sockets.
 3. **Limits.** A hard timeout per call (30 s, then the worker is killed and the session restarts, with a message
    saying so), 4 GiB of address space, at most 64 processes per session user, 256 open files, 64 MiB per written file,
    no core files. The worker's environment is an allowlist (`PATH`, locale, `HOME`), never a copy of the server's, so

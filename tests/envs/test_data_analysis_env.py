@@ -201,6 +201,10 @@ def test_downloads_are_anonymous_and_capped(tmp_path, monkeypatch):
     )
     assert Path(paths[0]).read_text() == "a,b\n1,2\n"
     assert os.stat(paths[0]).st_mode & 0o777 == 0o644
+    # Other tasks can't be listed: the root and split directories are only traversable.
+    assert os.stat(tmp_path).st_mode & 0o777 == 0o711
+    assert os.stat(tmp_path / "eval").st_mode & 0o777 == 0o711
+    assert os.stat(task_dir).st_mode & 0o777 == 0o755
     assert os.stat(task_dir).st_mode & 0o777 == 0o755
     assert seen and all(not r.has_header("Authorization") for r in seen)
     assert all(FAKE_TOKEN not in str(r.header_items()) for r in seen)

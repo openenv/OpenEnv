@@ -44,6 +44,13 @@ addr = struct.pack("=H", 2) + struct.pack("!H", int(sys.argv[2])) + socket.inet_
 print("CONNECTED" if libc.connect(fd, addr, 16) == 0 else f"ERRNO {ctypes.get_errno()}")
 """
 
+# libc socket(AF_INET): the socket module and the audit hook are not involved.
+CTYPES_SOCKET = """
+import ctypes
+libc = ctypes.CDLL(None, use_errno=True)
+print("SOCKET" if libc.socket(2, 1, 0) >= 0 else f"ERRNO {ctypes.get_errno()}")
+"""
+
 
 def as_uid(uid, code, *args, netns_of=None):
     """Python as `uid`, no audit hook, empty environment; optionally in a worker's netns."""
@@ -164,6 +171,10 @@ class DataAnalysisSandbox(unittest.TestCase):
         self.assertIn("PermissionError", r.stderr)
         r = as_uid(a.uid, "import sys; open(sys.argv[1], 'a')", self.files[0])
         self.assertIn("PermissionError", r.stderr)
+        # Nor list which tasks are on the server.
+        for path in (self.root, f"{self.root}/eval"):
+            r = as_uid(a.uid, "import os, sys; os.listdir(sys.argv[1])", path)
+            self.assertIn("PermissionError", r.stderr)
 
     def test_no_token_and_no_server_secrets(self):
         out = self.run_code("import os\ndict(os.environ)")
@@ -257,7 +268,23 @@ class DataAnalysisSandbox(unittest.TestCase):
         )
         status = sandbox.sandbox_status()
         self.assertEqual(status["network_isolated"], EXPECT_NETNS, status)
+        self.assertTrue(status["socket_filter"], status)
         worker, uid = self.session().pid, self.session().uid
+        # The worker runs under the seccomp filter, and a process with that filter (and without
+        # the audit hook) can't create a socket.
+        self.assertEqual(worker_status(worker)["Seccomp"].strip(), "2")
+        # sandbox.py alone (stdlib only), not the package: its imports need a HOME.
+        filtered = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('sandbox_only', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "module.block_sockets()\n"
+        )
+        r = as_uid(uid, filtered + CTYPES_SOCKET, sandbox.__file__)
+        self.assertEqual(r.stdout.strip(), "ERRNO 1", r.stdout + r.stderr)  # EPERM
+        r = as_uid(uid, CTYPES_SOCKET)  # the same process without the filter
+        self.assertEqual(r.stdout.strip(), "SOCKET", r.stdout + r.stderr)
         if EXPECT_NETNS:
             self.assertNotEqual(
                 os.readlink(f"/proc/{worker}/ns/net"), os.readlink("/proc/self/ns/net")

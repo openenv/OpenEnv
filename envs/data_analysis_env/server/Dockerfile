@@ -74,8 +74,8 @@ ENV PYTHONPATH="/app/env:$PYTHONPATH"
 # The server runs as root on purpose: it only serves HTTP and downloads task files, and being
 # root lets it run each session's code as its own unprivileged uid (see server/sandbox.py). The
 # venv and the environment code must stay readable by those uids (default permissions).
-# Give the container CAP_SYS_ADMIN (`--cap-add SYS_ADMIN`) to also cut the sessions off the
-# network. Without it the server logs "network: NOT isolated".
+# Sessions can't create sockets (a seccomp filter, no capability needed). Give the container
+# CAP_SYS_ADMIN (`--cap-add SYS_ADMIN`) to also put them in an empty network namespace.
 ENV ENABLE_WEB_INTERFACE=true
 
 # Health check using Python (more portable than curl/wget)
