@@ -341,7 +341,8 @@ def _handle(conn: duckdb.DuckDBPyConnection, job: Dict[str, Any]) -> Dict[str, A
         raise ValueError(f"Unknown query worker job: {op!r}")
     except Exception as exc:
         fatal = isinstance(exc, (duckdb.OutOfMemoryException, MemoryError))
-        return {"ok": False, "error": str(exc), "fatal": fatal}
+        # The agent chooses the error text (`error(repeat(...))`), so cap it.
+        return {"ok": False, "error": str(exc)[:2000], "fatal": fatal}
 
 
 def _confine_worker(address_space_bytes: Optional[int]) -> None:

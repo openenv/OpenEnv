@@ -848,6 +848,11 @@ class TestProcessBoundary:
         # closed here (this test is its real owner) it then exits by itself.
         assert inherited.wait(5) == 0
 
+    def test_agent_chosen_error_text_is_capped(self, executor):
+        """An error message the agent writes cannot carry unbounded text back."""
+        res = executor.compare("SELECT 1", "SELECT error(repeat('x', 100000))")
+        assert 0 < len(res["optimized_error"]) <= 2000
+
     def test_a_forked_copy_keeps_off_the_parents_spill_files(
         self, executor, monkeypatch
     ):
