@@ -352,3 +352,40 @@ class TestJuliaExecutor:
 
         assert result.exit_code != 0
         assert result.stderr != ""
+
+
+# Prints whether a server variable is visible, the uid, and whether a socket can be opened.
+_ISOLATION_PROBE = """
+println(haskey(ENV, "SERVER_SECRET_FOR_TEST") ? "SECRET_VISIBLE" : "no secret")
+println("uid=", ccall(:getuid, Cint, ()))
+using Sockets
+try
+    close(listen(IPv4(0x7f000001), 0))
+    println("SOCKET_OPENED")
+catch e
+    println("socket refused: ", e)
+end
+"""
+
+
+@pytest.mark.skipif(not julia_available, reason=julia_skip_reason)
+@pytest.mark.parametrize("use_pool", [False, True])
+def test_julia_code_gets_no_server_env_and_no_sockets(monkeypatch, use_pool):
+    from julia_env.server.julia_executor import JuliaExecutor
+    from julia_env.server.julia_sandbox import _socket_filter_unavailable
+
+    monkeypatch.setenv("SERVER_SECRET_FOR_TEST", "not-a-real-secret")
+    if use_pool:
+        assert JuliaExecutor.enable_process_pool(size=1)
+    try:
+        result = JuliaExecutor(use_process_pool=use_pool).run(_ISOLATION_PROBE)
+    finally:
+        if use_pool:
+            JuliaExecutor.shutdown_pool()
+
+    assert result.exit_code == 0, result.stderr
+    assert "no secret" in result.stdout
+    if not _socket_filter_unavailable():
+        assert "socket refused" in result.stdout, result.stdout
+    if os.geteuid() == 0:
+        assert "uid=65534" in result.stdout, result.stdout
