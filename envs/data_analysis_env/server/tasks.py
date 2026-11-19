@@ -28,6 +28,7 @@ import re
 import stat
 import tempfile
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -37,7 +38,9 @@ DATASET_REVISION = (
     "6c439f075cf550793b1bfd7b887a41e51f3b23ab"  # grader.py vendored from it
 )
 HUB = "https://huggingface.co"
-SPLITS = ("train", "eval", "test")
+# SmolDataEnvs v1.1 adds `eval_verified` and `test_verified` (golds checked against an independent
+# solution). DATASET_REVISION moves to v1.1 once it is released. Until then they are not found.
+SPLITS = ("train", "eval", "test", "eval_verified", "test_verified")
 DEFAULT_EXTENSIONS = (".csv", ".tsv", ".json")
 DEFAULT_MAX_FILE_MB = 10
 MAX_SPLIT_BYTES = 256 * 1024 * 1024
@@ -165,8 +168,13 @@ def _download_split(split: str) -> List[dict]:
         f"{HUB}/datasets/{DATASET_ID}/resolve/{DATASET_REVISION}/data/"
         f"{split}-00000-of-00001.parquet"
     )
-    with _http_get(url, timeout=300) as resp:
-        data = _read_capped(resp, MAX_SPLIT_BYTES)
+    try:
+        with _http_get(url, timeout=300) as resp:
+            data = _read_capped(resp, MAX_SPLIT_BYTES)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+        raise TaskError(f"split {split!r} is not in the pinned dataset revision")
     frame = pd.read_parquet(io.BytesIO(data), columns=list(ROW_FIELDS))
     rows = []
     for record in frame.to_dict(orient="records"):

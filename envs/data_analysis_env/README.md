@@ -73,7 +73,7 @@ with DataAnalysisEnv(base_url="http://localhost:8000").sync() as env:
 
 | Argument | Default | Meaning |
 |---|---|---|
-| `split` | `DATA_ANALYSIS_SPLIT` or `eval` | `train` (5,000 tasks), `eval` (144) or `test` (250, held out and harder) |
+| `split` | `DATA_ANALYSIS_SPLIT` or `eval` | `train` (5,000 tasks), `eval` (144) or `test` (250, held out and harder). `eval_verified` and `test_verified` once the pinned revision has them (see [Data](#data)). |
 | `task_id` | random | A specific task of the split. Random tasks are drawn among those whose files are all CSV, TSV or JSON and under the size cap. |
 | `seed` | `None` | Reseeds the task choice: the same seed picks the same task, and the same sequence on the unseeded resets that follow. |
 | `episode_id` | generated | Episode identifier, kept in the state. |
@@ -102,6 +102,12 @@ Nothing is bundled with the environment.
 
 - **Tasks**: SmolDataEnvs (MIT license) at a pinned commit (`DATASET_REVISION` in `server/tasks.py`), downloaded once
   per server into memory.
+- **Verified splits**: [SmolDataEnvs](https://huggingface.co/datasets/FineEnvs/SmolDataEnvs) v1.1
+  ([pending Hub PR](https://huggingface.co/datasets/FineEnvs/SmolDataEnvs/discussions/3)) adds `eval_verified`
+  (61 tasks) and `test_verified` (85): golds checked with an independent solution, ambiguous or seed-dependent tasks
+  left out, and no data file shared with `train`. It also fixes 5 golds in `eval`.
+  The pinned commit predates v1.1, so these splits are refused until `DATASET_REVISION` moves to v1.1. Once it does,
+  `eval_verified` is the recommended split for evaluation.
 - **Data files**: downloaded on first use of each task from the public Hugging Face bucket the dataset row points to,
   into `<DATA_ANALYSIS_TASKS_ROOT>/<split>/<task_id>/`, read-only for model code. Files over
   `DATA_ANALYSIS_MAX_FILE_MB` (10 MiB) are not served. They come from public Kaggle datasets, each under its own

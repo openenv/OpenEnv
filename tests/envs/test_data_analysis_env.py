@@ -228,6 +228,29 @@ def test_downloads_are_anonymous_and_capped(tmp_path, monkeypatch):
     assert not (tmp_path / "eval" / "t3" / "big.csv").exists()
 
 
+def test_verified_splits_are_accepted(monkeypatch):
+    import pandas as pd
+
+    buf = io.BytesIO()
+    pd.DataFrame([row()]).to_parquet(buf)
+    seen = []
+
+    def fake_urlopen(req, timeout=None):
+        seen.append(req.full_url)
+        if "test_verified" in req.full_url:
+            raise tasks.urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+        return _FakeResponse(buf.getvalue())
+
+    monkeypatch.setattr(tasks.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(tasks, "_splits", {})
+    rows = tasks.load_split("eval_verified")
+    assert [r["task_id"] for r in rows] == ["t1"]
+    assert seen[0].endswith("/data/eval_verified-00000-of-00001.parquet")
+    # A revision without the split refuses it with a clear error, not a raw HTTP one.
+    with pytest.raises(tasks.TaskError, match="not in the pinned dataset revision"):
+        tasks.load_split("test_verified")
+
+
 def test_tasks_root_must_belong_to_the_server(tmp_path):
     link = tmp_path / "link"
     link.symlink_to(tmp_path)

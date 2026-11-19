@@ -103,8 +103,8 @@ class DataAnalysisEnvironment(MCPEnvironment):
             seed: Reseed the task choice. The same seed picks the same task, and the same
                 sequence of tasks on the unseeded resets that follow.
             episode_id: Episode identifier (generated if omitted).
-            split: SmolDataEnvs split: `train`, `eval` or `test` (default `DATA_ANALYSIS_SPLIT`
-                or `eval`).
+            split: SmolDataEnvs split: `train`, `eval`, `test`, `eval_verified` or `test_verified`
+                (default `DATA_ANALYSIS_SPLIT` or `eval`).
             task_id: A specific task of that split. Random (among tasks with CSV/TSV/JSON files
                 under the size cap) if omitted.
             max_python_calls: `run_python` calls allowed (default 30, at most 200).
