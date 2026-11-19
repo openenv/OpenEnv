@@ -12,18 +12,20 @@ can call the reference solver. In the container (see `server/Dockerfile`), `SAND
 an unprivileged uid of its own with `SANDBOX_PYTHON`, an interpreter without `ortools`, while the environment source
 and the server's packages are not readable by it. Each session gets its own uid (`new_uid`), so sessions can't signal
 each other or read each other's files, and every process of that uid is killed when a call ends, including children
-that left the process group. With `allow_ortools=True` it runs with `SANDBOX_ORTOOLS_PYTHON` instead,
+that left the process group. On Linux (x86_64, aarch64) a seccomp filter keeps that code off the network. With `allow_ortools=True` it runs with `SANDBOX_ORTOOLS_PYTHON` instead,
 which only the `ortools` group can read. Without `SANDBOX_USER` (local development), the code runs with the server's
 interpreter and an import blocker that it can remove. See SECURITY.md for what is not contained.
 """
 
 import json
 import os
+import platform
 import pwd
 import resource
 import secrets
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -42,6 +44,17 @@ KILLER_OFFSET = 5_000
 _uids_lock = threading.Lock()
 # Processes and threads per session uid (numpy's OpenBLAS starts one thread per core).
 MAX_PROCESSES = 256
+PR_SET_SECCOMP = 22
+PR_SET_NO_NEW_PRIVS = 38
+SECCOMP_MODE_FILTER = 2
+# Per architecture: (AUDIT_ARCH_*, syscalls the sandbox's seccomp filter denies). socket(2) for
+# every address family; io_uring_setup/enter/register(2), which could open sockets without
+# socket(2); and ptrace(2), process_vm_readv/writev(2) and pidfd_getfd(2), which could take
+# a socket or memory from another process of the same uid.
+_SECCOMP_DENIED = {
+    "x86_64": (0xC000003E, (41, 425, 426, 427, 101, 310, 311, 438)),
+    "aarch64": (0xC00000B7, (198, 425, 426, 427, 117, 270, 271, 438)),
+}
 
 _RUNNER = """\
 import importlib.abc, json, sys
@@ -69,13 +82,60 @@ if sys.argv[3] == "solve":
 """
 
 
+def _socket_filter(arch: int, denied: tuple[int, ...]) -> bytes:
+    """A seccomp BPF program: EPERM for `denied` syscalls and for any other ABI, allow the rest."""
+    ld, jeq, jge, ret = (
+        0x20,
+        0x15,
+        0x35,
+        0x06,
+    )  # BPF_LD|W|ABS, BPF_JMP|JEQ|K, JGE|K, RET|K
+    allow, deny = (
+        0x7FFF0000,
+        0x00050000 | 1,
+    )  # SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO | EPERM
+    prog = [(ld, 0, 0, 4), (jeq, 1, 0, arch), (ret, 0, 0, deny), (ld, 0, 0, 0)]
+    checks = [(jge, 0x40000000)] + [(jeq, nr) for nr in denied]  # x32 syscalls too
+    for i, (op, k) in enumerate(checks):
+        prog.append((op, len(checks) - i, 0, k))  # to the final deny
+    prog += [(ret, 0, 0, allow), (ret, 0, 0, deny)]
+    return b"".join(struct.pack("=HBBI", *ins) for ins in prog)
+
+
 def _limit_resources(memory_mb: int, max_processes: int | None):
+    """What the code's process applies to itself before it starts, as the session's uid."""
+    # Built before the fork: the child only makes the two prctl calls.
+    no_network = max_processes is not None and platform.machine() in _SECCOMP_DENIED
+    if no_network:
+        import ctypes
+
+        code = _socket_filter(*_SECCOMP_DENIED[platform.machine()])
+        buf = ctypes.create_string_buffer(code, len(code))
+
+        class _Prog(ctypes.Structure):
+            _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
+
+        # `prog` points into `buf`, which `apply` must keep alive.
+        filter_prog = (buf, _Prog(len(code) // 8, ctypes.addressof(buf)))
+        prctl = ctypes.CDLL(None, use_errno=True).prctl
+        prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
+        prctl.argtypes += [ctypes.c_ulong, ctypes.c_ulong]  # unused arguments must be 0
+        prctl.restype = ctypes.c_int
+
     def apply():
         limit = memory_mb * 1024 * 1024
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
         # RLIMIT_NPROC counts every process of the uid, so only for a session's own uid.
         if max_processes is not None:
             resource.setrlimit(resource.RLIMIT_NPROC, (max_processes, max_processes))
+        # No network and no reaching into other processes, without any capability. If this
+        # fails, the code does not start.
+        if no_network:
+            if prctl(PR_SET_NO_NEW_PRIVS, 1, None, 0, 0) != 0:
+                raise OSError(ctypes.get_errno(), "prctl(PR_SET_NO_NEW_PRIVS) failed")
+            prog = ctypes.byref(filter_prog[1])
+            if prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, prog, 0, 0) != 0:
+                raise OSError(ctypes.get_errno(), "prctl(PR_SET_SECCOMP) failed")
 
     return apply
 
