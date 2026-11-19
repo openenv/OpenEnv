@@ -963,6 +963,27 @@ class TestWorkerMemoryCap:
         soft, hard = row.split()[3:5]
         assert int(soft) == int(hard) == ex_mod._WORKER_ADDRESS_SPACE_BYTES
 
+    def test_a_tighter_inherited_cap_is_kept(self):
+        """A host that already caps the address space more tightly keeps its cap."""
+        import subprocess
+
+        tighter = 900 * 1024 * 1024
+        script = (
+            "import resource\n"
+            "from envs.sql_optim_env.server import executor as ex\n"
+            f"resource.setrlimit(resource.RLIMIT_AS, ({tighter}, {tighter}))\n"
+            "ex._confine_worker(ex._WORKER_ADDRESS_SPACE_BYTES)\n"
+            "print(*resource.getrlimit(resource.RLIMIT_AS))\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+        )
+        assert out.stdout.split() == [str(tighter), str(tighter)]
+
     def test_worker_uses_two_malloc_arenas(self, executor):
         executor._run("SELECT 1")
         environ = self._proc(executor._worker.pid, "environ").split("\0")

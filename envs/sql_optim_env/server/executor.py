@@ -357,6 +357,10 @@ def _confine_worker(address_space_bytes: Optional[int]) -> None:
     import resource
 
     if address_space_bytes:
+        # A tighter hard limit the host already set stays: it cannot be raised.
+        _, hard = resource.getrlimit(resource.RLIMIT_AS)
+        if hard != resource.RLIM_INFINITY:
+            address_space_bytes = min(address_space_bytes, hard)
         limit = (address_space_bytes, address_space_bytes)
         resource.setrlimit(resource.RLIMIT_AS, limit)
     with contextlib.suppress(OSError), open("/proc/self/oom_score_adj", "w") as f:
@@ -541,6 +545,9 @@ class QueryExecutor:
         server_end, worker_end = multiprocessing.Pipe()
         fd = worker_end.fileno()
         try:
+            # Each worker spills to its own directory, so removing it after a
+            # kill cannot touch the files of a worker a forked copy started.
+            spill_dir = tempfile.mkdtemp(prefix="spill_", dir=self._dir)
             # `-P` keeps this directory off `sys.path`, so the worker imports
             # only what this file imports. A new session keeps a Ctrl-C meant
             # for the server from reaching the worker mid-job; it exits by
@@ -558,11 +565,8 @@ class QueryExecutor:
             return f"Query process failed to start: {exc}"
         finally:
             worker_end.close()
-        self._worker, self._pipe = worker, server_end
+        self._worker, self._pipe, self._spill_dir = worker, server_end, spill_dir
         self._worker_owner_pid = os.getpid()
-        # Each worker spills to its own directory, so removing it after a kill
-        # cannot touch the files of a worker a forked copy shares the database with.
-        self._spill_dir = tempfile.mkdtemp(prefix="spill_", dir=self._dir)
 
         setup = {
             "path": self._path,
