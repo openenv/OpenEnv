@@ -73,6 +73,24 @@ Environment variables read by [`server/app.py`](https://github.com/openenv/OpenE
 | `REPL_RLM_MAX_ITERATIONS` | `30` | Maximum iterations for recursive child runs |
 | `MAX_CONCURRENT_ENVS` | `8` | Maximum concurrent sessions |
 
+### Isolation
+
+The model's code runs in smolagents' `LocalPythonExecutor`, which is an
+interpreter, not a sandbox. Each episode runs it in its own worker process
+(started on `reset()`, about 0.2 s), so the code never shares memory with the
+server and its token:
+
+- the worker gets only `PATH`, `LANG`, `LC_*` and `TZ` from the server environment,
+- `llm_query`, `rlm_query` and the other LLM helpers run in the server, and the
+  worker only sees their arguments and results,
+- when the server runs as root, the worker runs as `nobody`,
+- on Linux, the server and the worker are non-dumpable, so other processes of
+  the same user can't read their `/proc/<pid>/environ` or memory.
+
+When the server does not run as root, the worker keeps the server's user, so
+code that gets out of the interpreter can still signal the server and read files
+that user can read. Keep tokens out of files in that user's home on such servers.
+
 ## Reward
 
 The default `REPLRubric` gives 1.0 for a matching `expected_answer`, 0.0 for a

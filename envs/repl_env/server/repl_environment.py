@@ -362,7 +362,9 @@ class REPLEnvironment(Environment):
             total_execution_time=0.0,
         )
 
-        # Initialize executor
+        # Initialize executor (FINAL, FINAL_VAR and SHOW_VARS are built in)
+        if self._executor is not None:
+            self._executor.close()
         self._executor = PythonExecutor(max_output_length=self.max_output_length)
 
         # Initialize answer dict (Prime Intellect style)
@@ -433,36 +435,6 @@ class REPLEnvironment(Environment):
                 ("rlm_wait", self._managed_children.wait),
             ):
                 self._executor.inject_function(name, function)
-
-        # Inject FINAL helper function so both FINAL(x) and print(f'FINAL({x})') work
-        # Returns the FINAL pattern as a string so it appears in stdout for detection
-        def final_helper(value):
-            """Helper that returns FINAL(value) string for detection."""
-            return f"FINAL({value})"
-
-        self._executor.inject_function("FINAL", final_helper)
-
-        # Inject FINAL_VAR helper that looks up variable and returns FINAL(value)
-        # This matches official RLM behavior - strips quotes from var_name and looks up in namespace
-        executor = self._executor  # Capture for closure
-
-        def final_var_helper(var_name: str):
-            """Look up variable by name and return FINAL(value) for detection."""
-            # Strip quotes if present (handles both FINAL_VAR("x") and FINAL_VAR(x))
-            var_name_clean = str(var_name).strip().strip("\"'")
-            # Look up variable in executor namespace
-            value = executor.get_variable(var_name_clean)
-            if value is not None:
-                return f"FINAL({value})"
-            return f"FINAL_VAR({var_name_clean})"  # Fallback for regex detection
-
-        self._executor.inject_function("FINAL_VAR", final_var_helper)
-
-        def show_vars_helper():
-            """Return the current non-private variables in the namespace."""
-            return sorted(executor.list_variables())
-
-        self._executor.inject_function("SHOW_VARS", show_vars_helper)
 
         # Update namespace keys
         self._state.namespace_keys = self._executor.list_variables()
@@ -702,6 +674,8 @@ class REPLEnvironment(Environment):
         if self._runtime_controller is not None:
             self._runtime_controller.close()
             self._runtime_controller = None
+        if self._executor is not None:
+            self._executor.close()
         self._executor = None
         self._state = None
 
