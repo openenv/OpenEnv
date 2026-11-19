@@ -354,7 +354,8 @@ class TestJuliaExecutor:
         assert result.stderr != ""
 
 
-# Prints whether a server variable is visible, the uid, and whether a socket can be opened.
+# Prints whether a server variable is visible, the uid, whether a socket can be opened, and
+# what the syscalls that reach into other processes return.
 _ISOLATION_PROBE = """
 println(haskey(ENV, "SERVER_SECRET_FOR_TEST") ? "SECRET_VISIBLE" : "no secret")
 println("uid=", ccall(:getuid, Cint, ()))
@@ -364,6 +365,12 @@ try
     println("SOCKET_OPENED")
 catch e
     println("socket refused: ", e)
+end
+# ptrace, process_vm_readv, process_vm_writev, pidfd_getfd, io_uring_enter, io_uring_register
+nrs = Sys.ARCH == :x86_64 ? [101, 310, 311, 438, 426, 427] : [117, 270, 271, 438, 426, 427]
+for nr in nrs
+    r = ccall(:syscall, Clong, (Clong, Clong, Clong, Clong, Clong), nr, 0, 0, 0, 0)
+    println("syscall ", nr, " ", r, " ", Libc.errno())
 end
 """
 
@@ -387,5 +394,11 @@ def test_julia_code_gets_no_server_env_and_no_sockets(monkeypatch, use_pool):
     assert "no secret" in result.stdout
     if not _socket_filter_unavailable():
         assert "socket refused" in result.stdout, result.stdout
+        denied = [
+            line for line in result.stdout.splitlines() if line.startswith("syscall ")
+        ]
+        assert len(denied) == 6 and all(line.endswith(" -1 1") for line in denied), (
+            denied
+        )
     if os.geteuid() == 0:
         assert "uid=65534" in result.stdout, result.stdout

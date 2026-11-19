@@ -8,8 +8,8 @@
 
 `sandboxed(cmd)` turns a command into one that first runs this file as a
 script: when the server is root it drops to `nobody`, on Linux it installs a
-seccomp filter that refuses to create sockets (no capability needed, so it
-works without CAP_SYS_ADMIN), then it execs `cmd`, which keeps both.
+seccomp filter that refuses to create sockets or to reach into other
+processes (no capability needed, so it works without CAP_SYS_ADMIN), then it execs `cmd`, which keeps both.
 `worker_env()` is the environment to start it with: an allowlist, never a copy
 of the server's, so no token or key reaches Julia code. `set_non_dumpable()`
 keeps Julia code from reading the server's environment and memory through
@@ -25,10 +25,13 @@ PR_SET_SECCOMP = 22
 PR_SET_NO_NEW_PRIVS = 38
 SECCOMP_MODE_FILTER = 2
 # Per architecture: (AUDIT_ARCH_*, syscalls the workers' seccomp filter denies). socket(2) for
-# every address family, and io_uring_setup(2), which could open sockets without socket(2).
+# every address family; io_uring_setup/enter/register(2), which could open sockets without
+# socket(2); and ptrace(2), process_vm_readv/writev(2) and pidfd_getfd(2), which could take
+# a socket or memory from another process of the same uid (a non-root server's workers share
+# its uid).
 _SECCOMP_DENIED = {
-    "x86_64": (0xC000003E, (41, 425)),
-    "aarch64": (0xC00000B7, (198, 425)),
+    "x86_64": (0xC000003E, (41, 425, 426, 427, 101, 310, 311, 438)),
+    "aarch64": (0xC00000B7, (198, 425, 426, 427, 117, 270, 271, 438)),
 }
 
 # The only server environment variables Julia code inherits, plus JULIA*
@@ -94,7 +97,8 @@ def _socket_filter_unavailable() -> str:
 
 
 def block_sockets() -> None:
-    """Linux: install a seccomp filter so this process and its children can't create sockets.
+    """Linux: install a seccomp filter so this process and its children can't create sockets
+    or reach into other processes (see `_SECCOMP_DENIED`).
 
     It needs no capability (no_new_privs is set first) and can't be undone from
     inside the process. Raises OSError if not possible.
