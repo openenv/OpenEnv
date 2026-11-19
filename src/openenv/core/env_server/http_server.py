@@ -147,7 +147,10 @@ from .exceptions import (
     ConcurrencyConfigurationError,
     EnvironmentFactoryError,
     SessionCapacityError,
+    SessionCreationError,
 )
+
+_SHUTTING_DOWN = "server is shutting down"
 
 
 class HTTPEnvServer:
@@ -286,6 +289,15 @@ class HTTPEnvServer:
         # idle-reaped. A count, since an attached socket can share the session.
         self._session_operations_in_flight: Dict[str, int] = {}
         self._session_lock = asyncio.Lock()
+        # Set under _session_lock when application shutdown begins. Creations
+        # check it when they reserve a slot and again when they publish, so no
+        # session is registered after shutdown has collected the live ones.
+        self._closing = False
+        # Creations between slot reservation and publish (or disposal).
+        # Shutdown waits for these before it tears down the shared executor.
+        self._creations_in_flight = 0
+        self._creations_drained = asyncio.Event()
+        self._creations_drained.set()
 
         # Create thread pool for running sync code in async context
         # This is needed for environments using sync libraries (e.g., Playwright)
@@ -408,8 +420,11 @@ class HTTPEnvServer:
         Raises:
             `SessionCapacityError`: If max concurrent sessions reached.
             `EnvironmentFactoryError`: If the factory fails to create an environment.
+            `SessionCreationError`: If application shutdown has begun.
         """
         async with self._session_lock:
+            if self._closing:
+                raise SessionCreationError(_SHUTTING_DOWN)
             if len(self._sessions) >= self._max_concurrent_envs:
                 raise SessionCapacityError(
                     active_sessions=len(self._sessions),
@@ -427,6 +442,8 @@ class HTTPEnvServer:
                 executor = ThreadPoolExecutor(max_workers=1)
             self._session_executors[session_id] = executor
             self._sessions[session_id] = None  # placeholder until env is ready
+            self._creations_in_flight += 1
+            self._creations_drained.clear()
 
         # Every await from here to registration runs with the slot reserved, so
         # cancellation has to release it. CancelledError is not an Exception, so
@@ -550,18 +567,26 @@ class HTTPEnvServer:
                 raise
 
             async with self._session_lock:
-                self._sessions[session_id] = env
-                self._session_stacks[session_id] = stack
-                if mode is not None:
-                    self._session_modes[session_id] = mode_val
-                now = time.time()
-                self._session_info[session_id] = SessionInfo(
-                    session_id=session_id,
-                    created_at=current_time,
-                    last_activity_at=now,
-                    step_count=0,
-                    environment_type=type(env).__name__,
-                )
+                closing = self._closing
+                if not closing:
+                    self._sessions[session_id] = env
+                    self._session_stacks[session_id] = stack
+                    if mode is not None:
+                        self._session_modes[session_id] = mode_val
+                    now = time.time()
+                    self._session_info[session_id] = SessionInfo(
+                        session_id=session_id,
+                        created_at=current_time,
+                        last_activity_at=now,
+                        step_count=0,
+                        environment_type=type(env).__name__,
+                    )
+            if closing:
+                # Shutdown has already collected the live sessions and is
+                # waiting on this creation, so publishing would leave the env
+                # with no owner. Dispose of it through the shared cleanup path.
+                await drain_cleanup(start_cleanup())
+                raise SessionCreationError(_SHUTTING_DOWN)
         except asyncio.CancelledError:
             # Joins the cleanup already under way if startup failure began one,
             # so the environment is closed by a single owner.
@@ -574,6 +599,9 @@ class HTTPEnvServer:
             if creation_lock_acquired:
                 assert self._shared_session_creation_lock is not None
                 self._shared_session_creation_lock.release()
+            self._creations_in_flight -= 1
+            if self._creations_in_flight == 0:
+                self._creations_drained.set()
 
         return session_id, env
 
@@ -1092,10 +1120,20 @@ class HTTPEnvServer:
         server_ref = self
 
         async def _start_session_reaper() -> None:
+            # A server reused across app lifespans (as TestClient does) accepts
+            # sessions again once the next startup runs.
+            server_ref._closing = False
             server_ref._start_reaper()
 
         async def _shutdown_sessions() -> None:
             await server_ref._stop_reaper()
+            async with server_ref._session_lock:
+                server_ref._closing = True
+            # Wait for creations already past their reservation. Each one now
+            # disposes of its own env instead of publishing it, and must do so
+            # before the shared executor below stops accepting its close().
+            # This is also the last point at which async cleanup can run.
+            await server_ref._creations_drained.wait()
             async with server_ref._session_lock:
                 session_ids = list(server_ref._sessions)
             for session_id in session_ids:
@@ -1223,6 +1261,13 @@ class HTTPEnvServer:
                         str(e),
                         request_id=request_id,
                         data={"factory_name": e.factory_name},
+                    )
+                except SessionCreationError as e:
+                    return JsonRpcResponse.error_response(
+                        JsonRpcErrorCode.SERVER_ERROR,
+                        str(e),
+                        request_id=request_id,
+                        data={"reason": e.reason},
                     )
                 return JsonRpcResponse.success(
                     result={"session_id": created_session_id},

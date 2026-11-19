@@ -2267,6 +2267,114 @@ class TestHTTPMCPSessionShutdown:
                 assert env.events == ["mcp_exit", "close"]
                 assert env.close_threads == [env.created_thread]
 
+    @pytest.mark.parametrize(
+        "shared_executor", [False, True], ids=["per-session", "shared-executor"]
+    )
+    async def test_shutdown_during_factory_closes_late_environment(
+        self, shared_executor
+    ):
+        """A creation still building its env when shutdown starts must not publish it.
+
+        Shutdown used to snapshot the session IDs, destroy the `None`
+        placeholder of an in-flight creation, and return. The creation then
+        published a live environment that nothing would ever close. Shutdown now
+        waits for in-flight creations, and a creation that finishes after
+        shutdown began closes its environment on the thread that built it.
+        """
+        import asyncio
+        import threading
+
+        from openenv.core.env_server.exceptions import SessionCreationError
+
+        factory_entered = threading.Event()
+        release_factory = threading.Event()
+        built = []
+
+        class SlowEnv(MinimalEnvironment):
+            REQUIRES_SINGLE_THREAD_EXECUTOR = shared_executor
+
+            def __init__(self):
+                super().__init__()
+                self.created_thread = threading.get_ident()
+                self.close_threads = []
+                built.append(self)
+                factory_entered.set()
+                release_factory.wait(5)
+
+            def close(self):
+                self.close_threads.append(threading.get_ident())
+
+        server = HTTPEnvServer(
+            SlowEnv, MinimalAction, MinimalObservation, max_concurrent_envs=2
+        )
+        app = FastAPI()
+        server.register_routes(app, mode="production")
+        lifespan = app.router.lifespan_context(app)
+        await lifespan.__aenter__()
+        creation = asyncio.create_task(server._create_session())
+        try:
+            assert await asyncio.to_thread(factory_entered.wait, 5)
+            shutdown = asyncio.create_task(lifespan.__aexit__(None, None, None))
+            await asyncio.sleep(0.05)
+            assert not shutdown.done(), (
+                "shutdown finished while a session was still being created"
+            )
+        finally:
+            release_factory.set()
+
+        with pytest.raises(SessionCreationError):
+            await asyncio.wait_for(creation, 5)
+        await asyncio.wait_for(shutdown, 5)
+
+        assert server.active_sessions == 0
+        assert not server._session_executors
+        assert not server._session_info
+        (env,) = built
+        assert env.close_threads == [env.created_thread]
+
+    async def test_create_session_refused_until_next_startup(self):
+        """Once shutdown starts, no factory runs until the app starts up again."""
+        import httpx
+        from openenv.core.env_server.exceptions import SessionCreationError
+
+        built = []
+
+        class CountingEnv(MinimalEnvironment):
+            def __init__(self):
+                super().__init__()
+                built.append(self)
+
+        server = HTTPEnvServer(CountingEnv, MinimalAction, MinimalObservation)
+        app = FastAPI()
+        server.register_routes(app, mode="production")
+        async with app.router.lifespan_context(app):
+            pass
+
+        with pytest.raises(SessionCreationError):
+            await server._create_session()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "openenv/session/create",
+                    "params": {},
+                },
+            )
+        body = response.json()
+        assert "result" not in body
+        assert body["error"]["data"] == {"reason": "server is shutting down"}
+        assert built == []
+        assert server.active_sessions == 0
+
+        async with app.router.lifespan_context(app):
+            session_id, env = await server._create_session()
+            assert built == [env]
+        assert session_id not in server._sessions
+
 
 class TestHTTPMCPSessionReaper:
     """Tests for the idle-session reaper (originally in TestHTTPMCPSessionLifecycle)."""
