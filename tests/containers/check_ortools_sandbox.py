@@ -166,6 +166,34 @@ subprocess.Popen([sys.executable, '-c',
         self.assertLess(time.monotonic() - start, 30)
         self.assertEqual(sandbox._processes_of(uid), [])
 
+    def test_concurrent_sessions_clean_up_their_own_processes(self):
+        import threading
+
+        uids = [sandbox.new_uid() for _ in range(3)]
+        dirs = [
+            tempfile.TemporaryDirectory(prefix="ortools_container_check_") for _ in uids
+        ]
+        for uid, d in zip(uids, dirs):
+            self.addCleanup(sandbox.release_uid, uid)
+            self.addCleanup(d.cleanup)
+        code = (
+            "import subprocess, sys\n"
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)\n"
+            "import time; time.sleep(1)\n"
+        )
+        threads = [
+            threading.Thread(
+                target=sandbox.run, args=(code, {}, d.name, 10), kwargs={"uid": uid}
+            )
+            for uid, d in zip(uids, dirs)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        for uid in uids:
+            self.assertEqual(sandbox._processes_of(uid), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

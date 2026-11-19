@@ -22,8 +22,9 @@ given back when the session ends), so sessions can't signal each other or read
 each other's files, and a session's working directory belongs to its uid only.
 When a call ends, the server kills every process of that uid at once with
 `kill(-1, SIGKILL)` from a process whose effective uid is the session's but whose
-real and saved uids are a reserved one, so the session's processes can't signal
-it back, and none can start another process in between. That includes children
+real and saved uids are one used by nothing else (the session's uid minus 5000),
+so neither the session's processes nor other sessions' cleanups can signal it,
+and none can start another process in between. That includes children
 that called `setsid` to leave the process group. The server then reaps them, and
 a uid goes back to the pool only once none of its processes is left. Each uid
 can run at most 256 processes and threads (`RLIMIT_NPROC`).

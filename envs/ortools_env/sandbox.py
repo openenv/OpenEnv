@@ -37,7 +37,8 @@ SANDBOX_ORTOOLS_PYTHON = os.environ.get("SANDBOX_ORTOOLS_PYTHON", sys.executable
 # One uid per session, with no account behind it. Below 65534 (nobody): containers on
 # Hugging Face map only uids 0-65535.
 _free_uids = list(range(60_000, 65_000))
-KILLER_UID = 65_000  # no session runs as it, see _kill_all
+# Each session uid has its own killer uid (uid - 5000, so 55000-59999), see _start_killer.
+KILLER_OFFSET = 5_000
 _uids_lock = threading.Lock()
 # Processes and threads per session uid (numpy's OpenBLAS starts one thread per core).
 MAX_PROCESSES = 256
@@ -123,15 +124,18 @@ def _start_killer(uid: int) -> tuple[int, int]:
     It starts before the session's code runs, so cleanup needs no new process even
     if the code fills the process table. kill(-1) signals every process the caller
     may signal, at once, so none can start another in between. The killer acts as
-    `uid` (effective uid), but its real and saved uids are KILLER_UID: the session's
-    processes can't signal it, and it doesn't count against their process limit.
+    `uid` (effective uid), but its real and saved uids are `uid - KILLER_OFFSET`, used
+    by nothing else: the session's processes and other sessions' killers can't signal
+    it, it can't signal them, and it doesn't count against the session's process limit.
     """
     read_fd, write_fd = os.pipe()
     pid = os.fork()
     if pid == 0:
         try:
             os.close(write_fd)
-            os.setresuid(KILLER_UID, uid, KILLER_UID)
+            os.setgroups([])
+            os.setresgid(uid - KILLER_OFFSET, uid - KILLER_OFFSET, uid - KILLER_OFFSET)
+            os.setresuid(uid - KILLER_OFFSET, uid, uid - KILLER_OFFSET)
             os.read(read_fd, 1)
             os.kill(-1, signal.SIGKILL)
         finally:
@@ -146,7 +150,13 @@ def _kill_all(uid: int, killer: tuple[int, int] | None = None) -> bool:
         pid, write_fd = killer or _start_killer(uid)
     except OSError:
         return False  # can't start the killer now, the uid stays out of the pool
-    os.write(write_fd, b"x")
+    try:
+        os.write(write_fd, b"x")
+    except BrokenPipeError:
+        # The killer is gone without killing: start a new one if this one was pre-started.
+        os.close(write_fd)
+        os.waitpid(pid, 0)
+        return _kill_all(uid) if killer else False
     os.close(write_fd)
     os.waitpid(pid, 0)
     # Orphans of the session were reparented to this process (a subreaper, see `run`).
