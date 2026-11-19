@@ -149,6 +149,23 @@ subprocess.Popen([sys.executable, '-c',
         self.assertLess(time.monotonic() - start, 30)
         self.assertEqual(sandbox._processes_of(uid), [])
 
+    def test_cleanup_survives_a_fork_bomb(self):
+        # Detached processes that keep forking and send SIGCONT to every process of the uid.
+        uid = sandbox.new_uid()
+        self.addCleanup(sandbox.release_uid, uid)
+        code = (
+            "import subprocess, sys\n"
+            "subprocess.Popen([sys.executable, '-c', 'import os, signal\\n"
+            "while True:\\n    try:\\n        os.fork()\\n"
+            "        os.kill(-1, signal.SIGCONT)\\n"
+            "    except OSError:\\n        pass'], start_new_session=True)\n"
+            "import time; time.sleep(2)\n"
+        )
+        start = time.monotonic()
+        sandbox.run(code, {}, self.workdir.name, 10, uid=uid)
+        self.assertLess(time.monotonic() - start, 30)
+        self.assertEqual(sandbox._processes_of(uid), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -37,6 +37,7 @@ SANDBOX_ORTOOLS_PYTHON = os.environ.get("SANDBOX_ORTOOLS_PYTHON", sys.executable
 # One uid per session, with no account behind it. Below 65534 (nobody): containers on
 # Hugging Face map only uids 0-65535.
 _free_uids = list(range(60_000, 65_000))
+KILLER_UID = 65_000  # no session runs as it, see _kill_all
 _uids_lock = threading.Lock()
 # Processes and threads per session uid (numpy's OpenBLAS starts one thread per core).
 MAX_PROCESSES = 256
@@ -95,13 +96,13 @@ def release_uid(uid: int | None) -> None:
     """Stop every process of `uid` and make it available to another session."""
     if uid is None:
         return
-    _kill_all(uid)
-    with _uids_lock:
-        _free_uids.append(uid)
+    if _kill_all(uid):
+        with _uids_lock:
+            _free_uids.append(uid)
 
 
-def _processes_of(uid: int) -> list[tuple[int, int, str]]:
-    """`(pid, parent pid, state)` of every process of `uid`."""
+def _processes_of(uid: int) -> list[tuple[int, int]]:
+    """`(pid, parent pid)` of every process of `uid`."""
     found = []
     for pid in os.listdir("/proc"):
         if not pid.isdigit():
@@ -110,40 +111,56 @@ def _processes_of(uid: int) -> list[tuple[int, int, str]]:
             with open(f"/proc/{pid}/status") as f:
                 fields = dict(line.split(":", 1) for line in f if ":" in line)
         except OSError:
-            continue
+            continue  # the process exited while we listed /proc
         if int(fields["Uid"].split()[0]) == uid:
-            found.append((int(pid), int(fields["PPid"]), fields["State"].split()[0]))
+            found.append((int(pid), int(fields["PPid"])))
     return found
 
 
-def _kill_all(uid: int) -> None:
-    """Stop every process of `uid`, from this (root) process, so the code can't interfere."""
-    deadline = time.monotonic() + 10
-    # Freeze first: a stopped process can't start more processes or send signals.
-    while time.monotonic() < deadline:
-        running = [pid for pid, _, state in _processes_of(uid) if state not in "TZX"]
-        if not running:
-            break
-        for pid in running:
-            try:
-                os.kill(pid, signal.SIGSTOP)
-            except ProcessLookupError:
-                pass
-    for pid, _, _ in _processes_of(uid):
+def _start_killer(uid: int) -> tuple[int, int]:
+    """Fork a process that kills every process of `uid` when its pipe gets a byte.
+
+    It starts before the session's code runs, so cleanup needs no new process even
+    if the code fills the process table. kill(-1) signals every process the caller
+    may signal, at once, so none can start another in between. The killer acts as
+    `uid` (effective uid), but its real and saved uids are KILLER_UID: the session's
+    processes can't signal it, and it doesn't count against their process limit.
+    """
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
         try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+            os.close(write_fd)
+            os.setresuid(KILLER_UID, uid, KILLER_UID)
+            os.read(read_fd, 1)
+            os.kill(-1, signal.SIGKILL)
+        finally:
+            os._exit(0)
+    os.close(read_fd)
+    return pid, write_fd
+
+
+def _kill_all(uid: int, killer: tuple[int, int] | None = None) -> bool:
+    """Kill and reap every process of `uid`. False if some are still there."""
+    try:
+        pid, write_fd = killer or _start_killer(uid)
+    except OSError:
+        return False  # can't start the killer now, the uid stays out of the pool
+    os.write(write_fd, b"x")
+    os.close(write_fd)
+    os.waitpid(pid, 0)
     # Orphans of the session were reparented to this process (a subreaper, see `run`).
     # Reap them, or their zombies would still count against the uid's process limit.
+    deadline = time.monotonic() + 5
     while (processes := _processes_of(uid)) and time.monotonic() < deadline:
-        for pid, parent, _ in processes:
+        for child, parent in processes:
             if parent == os.getpid():
                 try:
-                    os.waitpid(pid, os.WNOHANG)
+                    os.waitpid(child, os.WNOHANG)
                 except ChildProcessError:
-                    pass
+                    pass  # reaped by someone else already
         time.sleep(0.01)
+    return not _processes_of(uid)
 
 
 def run(
@@ -242,6 +259,7 @@ def run(
                 "group": gid,
                 "extra_groups": ["ortools"] if allow_ortools else [],
             }
+        killer = _start_killer(uid) if user else None
         start = time.monotonic()
         # Output goes to a file, so processes the code leaves behind cannot hold the call open through a pipe.
         with (
@@ -250,29 +268,36 @@ def run(
         ):
             json.dump({"code": code, "instance": instance}, input_file)
             input_file.seek(0)
-            proc = subprocess.Popen(
-                [
-                    SANDBOX_ORTOOLS_PYTHON if allow_ortools else SANDBOX_PYTHON,
-                    "-I",
-                    "-c",
-                    _RUNNER,
-                    json.dumps(blocked),
-                    "<submission>",
-                    "solve" if solve else "run",
-                ],
-                cwd=workdir,
-                stdin=input_file,
-                env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": workdir},
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                start_new_session=True,
-                # RLIMIT_AS cannot be lowered on macOS.
-                preexec_fn=_limit_resources(memory_mb, MAX_PROCESSES if user else None)
-                if sys.platform == "linux"
-                else None,
-                **user,
-            )
+            try:
+                proc = subprocess.Popen(
+                    [
+                        SANDBOX_ORTOOLS_PYTHON if allow_ortools else SANDBOX_PYTHON,
+                        "-I",
+                        "-c",
+                        _RUNNER,
+                        json.dumps(blocked),
+                        "<submission>",
+                        "solve" if solve else "run",
+                    ],
+                    cwd=workdir,
+                    stdin=input_file,
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": workdir},
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    start_new_session=True,
+                    # RLIMIT_AS cannot be lowered on macOS.
+                    preexec_fn=_limit_resources(
+                        memory_mb, MAX_PROCESSES if user else None
+                    )
+                    if sys.platform == "linux"
+                    else None,
+                    **user,
+                )
+            except BaseException:
+                if killer:
+                    _kill_all(uid, killer)  # don't leave the killer waiting
+                raise
             try:
                 returncode, timed_out = proc.wait(timeout=timeout_s), False
             except subprocess.TimeoutExpired:
@@ -284,7 +309,7 @@ def run(
             proc.wait()
             if user:
                 # Also the children that left the process group (setsid).
-                _kill_all(user["user"])
+                _kill_all(user["user"], killer)
             log.seek(0)
             output = log.read(8001)
             if len(output) > 8000:

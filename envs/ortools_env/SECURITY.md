@@ -20,11 +20,13 @@ untouched until the workdir is reset; setup never traverses or recursively delet
 Each session's code runs as its own uid (60000 to 64999, no account behind it,
 given back when the session ends), so sessions can't signal each other or read
 each other's files, and a session's working directory belongs to its uid only.
-When a call ends, the server stops every process of that uid: it first freezes
-them with SIGSTOP, so none can start another process or send a signal, then
-kills them with SIGKILL and reaps them. That includes children that called
-`setsid` to leave the process group. Each uid can run at most 256 processes and
-threads (`RLIMIT_NPROC`).
+When a call ends, the server kills every process of that uid at once with
+`kill(-1, SIGKILL)` from a process whose effective uid is the session's but whose
+real and saved uids are a reserved one, so the session's processes can't signal
+it back, and none can start another process in between. That includes children
+that called `setsid` to leave the process group. The server then reaps them, and
+a uid goes back to the pool only once none of its processes is left. Each uid
+can run at most 256 processes and threads (`RLIMIT_NPROC`).
 
 ## Unresolved: aggregate resource containment
 
