@@ -237,6 +237,25 @@ def test_cli_writes_rows_from_a_results_directory(tmp_path):
     assert len(rows) == 1 and rows[0]["messages"][-1]["content"] == "There are 42 rows."
 
 
+def test_cli_redacts_secrets_in_the_rows(tmp_path):
+    """A rollout can hold a key the agent printed; the rows written for upload must not."""
+    typer_testing = pytest.importorskip("typer.testing")
+    harbor_cli = pytest.importorskip("openenv.cli.commands.harbor")
+    secret = "hf_" + "x" * 34
+    results = tmp_path / "a.json"
+    results.write_text(json.dumps(rollout(last_reply=f"HF_TOKEN={secret}")))
+    out = tmp_path / "rows.jsonl"
+    outcome = typer_testing.CliRunner().invoke(
+        harbor_cli.app, ["export-sft", str(results), "--out", str(out)]
+    )
+    assert outcome.exit_code == 0, outcome.output
+    assert secret not in out.read_text()
+    assert (
+        json.loads(out.read_text())["messages"][-1]["content"] == "HF_TOKEN=<REDACTED>"
+    )
+    assert "redacted 1 secret(s)" in outcome.output
+
+
 # Without --private the namespace's default visibility applies, as with `hf upload`: passing
 # False would make a dataset public in an organization whose repos are private by default.
 @pytest.mark.parametrize("flag, private", [(["--private"], True), ([], None)])
