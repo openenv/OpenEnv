@@ -46,6 +46,8 @@ def test_reset_passes_seed_to_sumo(env):
 def test_reset_keeps_episode_id_or_generates_one(env):
     env.reset(episode_id="traffic-1")
     assert env.state.episode_id == "traffic-1"
+    env.reset(episode_id="")
+    assert env.state.episode_id == ""
     env.reset()
     first = env.state.episode_id
     env.reset()

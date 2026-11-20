@@ -179,7 +179,7 @@ class SumoEnvironment(Environment):
         obs, info = self.env.reset(seed=seed)
 
         # Update state tracking
-        self._state.episode_id = episode_id or str(uuid.uuid4())
+        self._state.episode_id = episode_id if episode_id is not None else str(uuid.uuid4())
         self._state.step_count = 0
         self._state.sim_time = 0.0
 

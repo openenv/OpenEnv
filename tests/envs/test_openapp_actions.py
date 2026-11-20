@@ -90,3 +90,6 @@ def test_reset_passes_seed_and_keeps_episode_id(monkeypatch):
     env.reset()
     assert browser.seeds == [7, None]
     assert env.state.episode_id not in ("", "ep-1")
+
+    env.reset(episode_id="")
+    assert env.state.episode_id == ""

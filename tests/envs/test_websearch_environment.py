@@ -54,6 +54,8 @@ def test_reset_keeps_episode_id_or_generates_one(monkeypatch):
     env = WebSearchEnvironment()
     env.reset(seed=3, episode_id="search-1")
     assert env.state.episode_id == "search-1"
+    env.reset(episode_id="")
+    assert env.state.episode_id == ""
     assert env.state.step_count == 0
 
     env.reset()

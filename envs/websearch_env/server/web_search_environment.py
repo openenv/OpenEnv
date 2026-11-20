@@ -89,7 +89,7 @@ class WebSearchEnvironment(Environment):
         Returns:
             WebSearchObservation with empty web contents
         """
-        self._state = State(episode_id=episode_id or str(uuid4()), step_count=0)
+        self._state = State(episode_id=episode_id if episode_id is not None else str(uuid4()), step_count=0)
         self._reset_count += 1
 
         return WebSearchObservation(
