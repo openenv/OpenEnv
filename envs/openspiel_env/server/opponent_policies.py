@@ -37,13 +37,22 @@ class OpponentPolicy(Protocol):
 class RandomOpponent:
     """Random opponent that selects uniformly from legal actions."""
 
+    def __init__(self, seed: int | None = None):
+        """
+        Initialize random opponent.
+
+        Args:
+            seed: Seed for the opponent's own random generator. Unseeded if None.
+        """
+        self._rng = random.Random(seed)
+
     def select_action(
         self, legal_actions: list[int], observations: dict[str, Any]
     ) -> int:
         """Select a random legal action."""
         if not legal_actions:
             raise ValueError("No legal actions available")
-        return random.choice(legal_actions)
+        return self._rng.choice(legal_actions)
 
 
 class FixedActionOpponent:
@@ -75,12 +84,13 @@ class FixedActionOpponent:
             return legal_actions[0]
 
 
-def get_opponent_policy(policy_name: str) -> OpponentPolicy:
+def get_opponent_policy(policy_name: str, seed: int | None = None) -> OpponentPolicy:
     """
     Get an opponent policy by name.
 
     Args:
         policy_name: Name of the policy ("random", "first", "last", "middle").
+        seed: Seed for the "random" policy. The fixed policies ignore it.
 
     Returns:
         OpponentPolicy instance.
@@ -89,7 +99,7 @@ def get_opponent_policy(policy_name: str) -> OpponentPolicy:
         ValueError: If policy_name is not recognized.
     """
     if policy_name == "random":
-        return RandomOpponent()
+        return RandomOpponent(seed)
     elif policy_name in ("first", "last", "middle"):
         return FixedActionOpponent(action_selector=policy_name)
     else:
