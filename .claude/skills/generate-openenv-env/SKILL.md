@@ -162,3 +162,4 @@ Report:
 - Do not copy outdated manifest patterns from older envs (`name/version/action/observation`-only manifests).
 - Do not copy build artifacts or virtualenv files from example envs.
 - Do not set `max_concurrent_envs > 1` unless the environment explicitly supports concurrent sessions.
+- Do not run model-written code in the server process or with a copy of the server's environment: use a separate process started from an environment allowlist (see `coding_env`).

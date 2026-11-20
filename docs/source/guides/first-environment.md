@@ -240,6 +240,10 @@ Check it before deploying:
 openenv validate --level static --skip-build
 ```
 
+### Keep secrets away from model code
+
+If your environment runs code the model writes (Python, shell, another language), run it in a separate process that never gets the server's secrets. Start that process from an allowlist of environment variables (`PATH`, `HOME`, locale and what the tool needs), never from a copy of `os.environ`, and keep tokens the server needs, for example for LLM calls, in the server process. An interpreter that restricts imports, such as smolagents' `LocalPythonExecutor`, is not a sandbox: don't run it inside the server process when the server holds a token. `coding_env` runs one worker process per session as an example.
+
 ## 7. Deploy
 
 Push the environment to a Hugging Face Space:
