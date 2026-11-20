@@ -1,0 +1,35 @@
+{
+  "dataset": "BurstGPT v2.0",
+  "upstream": "https://github.com/HPMLL/BurstGPT",
+  "release": "https://github.com/HPMLL/BurstGPT/releases/tag/v2.0",
+  "license": "CC-BY-4.0",
+  "citation": "Yuxin Wang et al. BurstGPT: A Real-World Workload Dataset to Optimize LLM Serving Systems. KDD 2025. doi:10.1145/3711896.3737413",
+  "adaptation": "Select Conversation log entries for ChatGPT and GPT-4; sum Total tokens by original relative day, hour and model; zero-fill missing hours within recorded days. Retain all 231 days from these selected streams. No raw prompts, completions, or user identifiers are distributed.",
+  "source_files": [
+    "BurstGPT_1.csv",
+    "BurstGPT_2.csv",
+    "BurstGPT_3.csv"
+  ],
+  "reconstruction_script": "scripts/rebuild_aggregates.py",
+  "log_day_segments": [
+    [
+      0,
+      120
+    ],
+    [
+      225,
+      334
+    ]
+  ],
+  "days": 231,
+  "rows": 11088,
+  "sha256": "de9db57e9dd8aa1c96f33789e45eaf5fe0b09726160e9554645d2cb8ca58c130",
+  "cost_model": {
+    "description": "Fixed modeling assumptions for the capacity-reservation task; not infrastructure costs measured by BurstGPT.",
+    "unit_cost_per_1000_tokens": {
+      "ChatGPT": 0.002,
+      "GPT-4": 0.0375
+    },
+    "shortfall_multiplier": 4
+  }
+}

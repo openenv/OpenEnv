@@ -32,6 +32,10 @@ if git -C "$CHECK_DIR" rev-parse --git-dir > /dev/null 2>&1; then
 
         # Check for CRLF line endings
         if grep -qU $'\r' "$file" 2>/dev/null; then
+            # Explicit -text preserves source bytes, including their line endings.
+            if git check-attr text -- "$file" | grep -q ": text: unset$"; then
+                continue
+            fi
             CRLF_FILES+=("$file")
         fi
     done < "$TEMP_FILE"
