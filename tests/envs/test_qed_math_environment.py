@@ -1044,6 +1044,15 @@ class TestMCPToolRegistration:
         assert "submit_proof" in tools
         assert "get_grading_guidelines" in tools
 
+    @pytest.mark.asyncio
+    async def test_list_tools_reports_input_schemas(self):
+        from openenv.core.env_server.mcp_types import ListToolsAction
+
+        env = _make_env()
+        obs = await env.step_async(ListToolsAction())
+        tools = {tool.name: tool for tool in obs.tools}
+        assert "proof" in tools["submit_proof"].input_schema["properties"]
+
     def test_get_problem_tool_callable_after_reset(self):
         env = _make_env()
         env.reset()

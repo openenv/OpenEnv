@@ -43,6 +43,7 @@ from .models import (
     HarborTurn,
     turns_from_document,
 )
+from .supervisor import get_supervisor
 
 # Harbor's own retry is deliberately off. A Harbor-level retry re-runs the agent against the SAME
 # capture session, so two attempts merge into one graph and the trace cross-check compares a
@@ -540,6 +541,7 @@ async def run_rollout(
             if not proc_env:
                 config = build_trial_config(**config_kwargs)
                 trial = await Trial.create(config)
+                get_supervisor().adopt(trial)
                 trial_result = await _run_trial(trial, on_trial_created)
             else:
                 # The override has to span `run()`, not just construction. Harbor's goose wrapper reads
@@ -572,6 +574,7 @@ async def run_rollout(
                     with ctx_env_overlay(proc_env):
                         config = build_trial_config(**config_kwargs)
                         trial = await Trial.create(config)
+                        get_supervisor().adopt(trial)
                         trial_result = await _run_trial(trial, on_trial_created)
                 else:
                     # Fallback: mutate the real environment under a lock, one rollout at a time.
@@ -580,6 +583,7 @@ async def run_rollout(
                         with process_env(seam.name, proc_env):
                             config = build_trial_config(**config_kwargs)
                             trial = await Trial.create(config)
+                            get_supervisor().adopt(trial)
                             trial_result = await _run_trial(trial, on_trial_created)
                     finally:
                         _PROC_ENV_LOCK.release()
