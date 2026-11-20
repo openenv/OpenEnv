@@ -497,7 +497,8 @@ async def test_failed_stop_retains_ownership_and_can_be_retried(retry_via_close)
     assert attempts == 2
 
 
-async def test_cancelled_stop_attempt_can_be_retried():
+@pytest.mark.parametrize("via_close", [False, True])
+async def test_cancelled_stop_attempt_can_be_retried(via_close):
     sup = SandboxSupervisor()
     attempts = 0
 
@@ -512,10 +513,16 @@ async def test_cancelled_stop_attempt_can_be_retried():
     env = CancelledEnv([])
     sup.adopt(make_trial(env))
     await env.start(force_build=False)
-    with pytest.raises(asyncio.CancelledError):
-        await env.stop(delete=True)
+    if via_close:
+        await sup.aclose()
+    else:
+        with pytest.raises(asyncio.CancelledError):
+            await env.stop(delete=True)
     retained = sup.owned
-    await env.stop(delete=True)
+    if via_close:
+        await sup.aclose()
+    else:
+        await env.stop(delete=True)
     assert retained == 1
     assert attempts == 2
     assert sup.owned == 0

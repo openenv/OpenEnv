@@ -229,7 +229,8 @@ class SandboxSupervisor:
             pending, timeout=_CLEANUP_TIMEOUT_S if timeout is None else timeout
         )
         for task in done:
-            task.exception()  # stop failures belong to the trial; retrieved so asyncio stays quiet
+            if not task.cancelled():
+                task.exception()  # stop failures belong to the trial
 
     def install_signal_handlers(self, signals: tuple[int, ...] = _SIGNALS) -> bool:
         """Stop owned sandboxes on these signals, then hand the signal to the previous handler.
