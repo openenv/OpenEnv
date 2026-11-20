@@ -184,11 +184,8 @@ class TestProductionModeMCPToolsList:
             # Verify tool has required fields
             get_info_tool = next(t for t in tools if t["name"] == "get_info")
             assert "description" in get_info_tool, "Tool should have description"
-            # Note: FastMCP may use different field names (inputSchema vs input_schema)
-            # Just verify the tool has some schema-related field
-            assert len(get_info_tool) > 2, (
-                "Tool should have name, description, and other metadata"
-            )
+            assert "inputSchema" in get_info_tool
+            assert "input_schema" not in get_info_tool
 
     def test_production_mode_tools_list_without_reset(self, production_mcp_app):
         """
