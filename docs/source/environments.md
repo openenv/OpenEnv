@@ -8,6 +8,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
 <div class="mt-6">
   <div class="w-full flex flex-col space-y-4 md:space-y-0 md:grid md:grid-cols-3 md:gap-4">
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Minesweeper</div>
+      <p class="text-sm">Reveal safe cells and flag suspected mines in a seeded grid puzzle.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/minesweeper" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">Echo</div>
       <p class="text-sm">Minimal observation/action loop for verifying client integrations, CI pipelines, and onboarding flows in seconds.</p>
       <div class="flex gap-2 mt-3">
