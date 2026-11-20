@@ -60,6 +60,9 @@ kubernetes = [
 novita = [
     "novita-sandbox>=2.1.1",
 ]
+boxd = [
+    "boxd>=0.3.1",
+]
 inspect = [
     "inspect-ai>=0.3.0",
 ]
