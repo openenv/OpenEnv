@@ -36,8 +36,9 @@ To support a new runtime (a cloud sandbox, a scheduler, etc.), subclass
 - In the [Runtime Providers guide](guides/runtime-providers.md), add a row to the table and a "Per-provider setup" subsection (kept in alphabetical order).
 - Add a test (the providers under `tests/test_core/` inject a fake SDK, so no network is needed).
 
-See the Cloud Sandbox Providers amendment proposed in RFC 002 for the
-provider-neutral invariants (direct base URL, WebSocket conformance, network posture).
+See the Cloud Sandbox Providers section of RFC 002 for the provider-neutral
+invariants (direct base URL, WebSocket conformance, network posture) and the
+admission criteria a new provider must meet.
 
 ### 📝 Improve Documentation
 

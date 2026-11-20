@@ -8,11 +8,6 @@ Requires the ``novita-sandbox`` SDK: ``pip install openenv[novita]``
 The provider boots an OpenEnv server inside a Novita sandbox, exposes port 8000
 on the sandbox's public host, and returns an ``https://`` URL that ``EnvClient``
 connects to over ``wss://``.
-
-Note: the ``RFC 002 security invariant S<n>`` references in this module point to
-the **proposed** "Cloud Sandbox Providers" amendment to RFC 002, which is pending
-review/sign-off by the RFC authors. They describe the security properties this
-provider enforces; treat them as proposed (not yet ratified) until that sign-off.
 """
 
 from __future__ import annotations
