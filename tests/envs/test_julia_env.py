@@ -423,3 +423,58 @@ def test_pool_does_not_carry_state_between_executions():
         JuliaExecutor.shutdown_pool()
 
     assert second.stdout.split() == ["false", "false"], second.stderr
+
+
+def test_shutdown_stops_a_replacement_worker_stuck_starting(monkeypatch):
+    import tempfile
+    import time
+
+    from julia_env.server.julia_process_pool import JuliaProcessPool
+
+    # A stand-in for julia: ready at first, then a replacement that never is.
+    # Open to nobody, who runs it when the tests run as root.
+    folder = Path(tempfile.mkdtemp())
+    folder.chmod(0o777)
+    fake_julia = folder / "julia"
+    fake_julia.write_text(
+        "#!/bin/sh\n"
+        'if [ -n "$JULIA_FAKE_STALL" ]; then\n'
+        '  echo $$ > "$JULIA_FAKE_STALL"; exec sleep 600\n'
+        "fi\n"
+        'echo "Julia worker ready" >&2\n'
+        "exec cat >/dev/null\n"
+    )
+    fake_julia.chmod(0o755)
+    pid_file = folder / "stuck.pid"
+    pool = JuliaProcessPool(
+        size=1, julia_path=str(fake_julia), optimization_flags=False
+    )
+    try:
+        monkeypatch.setenv("JULIA_FAKE_STALL", str(pid_file))
+        pool._return_worker(pool._get_available_worker())
+        deadline = time.monotonic() + 10
+        while not pid_file.exists() or not pid_file.read_text().strip():
+            assert time.monotonic() < deadline, "the replacement never started"
+            time.sleep(0.05)
+        stuck_pid = int(pid_file.read_text())
+
+        pool.shutdown()
+
+        deadline = time.monotonic() + 10
+        while _process_exists(stuck_pid):
+            assert time.monotonic() < deadline, "the stuck worker outlived shutdown"
+            time.sleep(0.05)
+        assert pool.workers == []
+    finally:
+        pool.shutdown()
+        shutil.rmtree(folder)
+
+
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True

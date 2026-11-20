@@ -37,7 +37,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .julia_executor import CodeExecResult
 from .julia_sandbox import sandboxed, worker_env
@@ -67,6 +67,7 @@ class JuliaWorkerProcess:
         julia_path: str,
         worker_script: str,
         optimization_flags: bool = True,
+        on_spawn: Optional[Callable[[subprocess.Popen], None]] = None,
     ):
         """
         Initialize a Julia worker process.
@@ -76,6 +77,8 @@ class JuliaWorkerProcess:
             julia_path: Path to Julia executable
             worker_script: Path to julia_repl_worker.jl script
             optimization_flags: Enable Julia optimization flags
+            on_spawn: Called with the process as soon as it exists, before it
+                is ready, so its owner can stop a process stuck starting
         """
         self.worker_id = worker_id
         self.julia_path = julia_path
@@ -85,6 +88,7 @@ class JuliaWorkerProcess:
         self.is_busy = False
         self.is_healthy = True
         self.lock = threading.Lock()
+        self._on_spawn = on_spawn
 
         # Start the worker process
         self._start_process()
@@ -116,6 +120,8 @@ class JuliaWorkerProcess:
                 text=True,
                 bufsize=1,  # Line buffered
             )
+            if self._on_spawn is not None:
+                self._on_spawn(self.process)
 
             # Wait for "Julia worker ready" message on stderr
             ready_msg = self.process.stderr.readline()
@@ -130,6 +136,7 @@ class JuliaWorkerProcess:
         except Exception as e:
             self.is_healthy = False
             logger.error(f"Failed to start worker {self.worker_id}: {e}")
+            self._kill_process()
             raise
 
     def execute(self, code: str, timeout: Optional[int] = None) -> CodeExecResult:
@@ -349,6 +356,8 @@ class JuliaProcessPool:
         self.available_workers: deque[JuliaWorkerProcess] = deque()
         self.pool_lock = threading.Lock()
         self.shutdown_flag = False
+        # Replacement processes still starting, for shutdown() to stop.
+        self._starting: set[subprocess.Popen] = set()
 
         self.size = size
         # Read timeout from env var if not explicitly provided
@@ -511,12 +520,23 @@ class JuliaProcessPool:
         ).start()
 
     def _replace_worker(self, worker: JuliaWorkerProcess) -> None:
+        spawned: list[subprocess.Popen] = []
+
+        def track(process: subprocess.Popen) -> None:
+            with self.pool_lock:
+                spawned.append(process)
+                if self.shutdown_flag:
+                    process.kill()
+                else:
+                    self._starting.add(process)
+
         try:
             new_worker = JuliaWorkerProcess(
                 worker_id=worker.worker_id,
                 julia_path=self.julia_path,
                 worker_script=self.worker_script,
                 optimization_flags=self.optimization_flags,
+                on_spawn=track,
             )
         except Exception as e:
             logger.error(f"Failed to replace worker {worker.worker_id}: {e}")
@@ -524,6 +544,7 @@ class JuliaProcessPool:
             worker.is_healthy = False
             new_worker = worker
         with self.pool_lock:
+            self._starting.difference_update(spawned)
             if self.shutdown_flag:
                 new_worker.shutdown()
                 return
@@ -591,6 +612,14 @@ class JuliaProcessPool:
 
             self.workers.clear()
             self.available_workers.clear()
+
+            # A replacement stuck starting: killing it ends its wait for "ready".
+            for process in self._starting:
+                try:
+                    process.kill()
+                except Exception as e:
+                    logger.error(f"Error stopping a starting worker: {e}")
+            self._starting.clear()
 
         logger.info("Julia process pool shutdown complete")
 
