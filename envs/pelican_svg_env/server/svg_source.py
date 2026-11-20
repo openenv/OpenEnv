@@ -58,7 +58,9 @@ _INLINE_TEXT_TAGS = frozenset({"tspan", "textPath"})
 
 _HREF_ATTRS = ("href", "{http://www.w3.org/1999/xlink}href", "src", "xlink:href")
 _REMOTE_SCHEME = re.compile(r"^\s*(https?|ftp|file)://", re.IGNORECASE)
-_DATA_IMAGE = re.compile(r"data:\s*image/", re.IGNORECASE)
+# Any data: URI, not just data:image/. The renderer sniffs the bytes, so a PNG
+# declared as text/plain or with no media type still draws.
+_DATA_URI = re.compile(r"\s*data:", re.IGNORECASE)
 _DOCTYPE = re.compile(r"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
 _SVG_BLOCK = re.compile(r"<svg\b.*?</svg\s*>", re.IGNORECASE | re.DOTALL)
 _SVG_OPEN = re.compile(r"<svg\b", re.IGNORECASE)
@@ -274,11 +276,11 @@ def inspect_source(source: str, forbidden_terms: Sequence[str] = ()) -> SourceRe
             )
 
         for href in _iter_hrefs(element):
-            if _DATA_IMAGE.search(href):
+            if _DATA_URI.match(href):
                 violations.append(
                     SourceViolation(
                         "embedded_raster",
-                        f"<{tag}> references a data: image URI",
+                        f"<{tag}> references a data: URI",
                     )
                 )
             elif _REMOTE_SCHEME.match(href):
