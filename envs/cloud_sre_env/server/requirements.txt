@@ -1,0 +1,2 @@
+# Cloud SRE Environment — server dependencies
+# No additional dependencies beyond openenv-core defaults (fastapi, pydantic, uvicorn)
