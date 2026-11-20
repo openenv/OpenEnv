@@ -112,6 +112,7 @@ See `server/julia_transforms.py` for detailed reward logic.
 ## Features
 
 - ✅ Execute Julia code in isolated subprocess
+- ✅ No network and no server secrets for Julia code: environment allowlist, `nobody` when the server is root, a non-dumpable server, and a Linux seccomp filter that refuses sockets
 - ✅ Parse Julia `Test` module output (tests passed/failed)
 - ✅ Calculate rewards based on execution results and test outcomes
 - ✅ Safety transforms for output truncation (prevents excessive output)

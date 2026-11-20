@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from coding_env.models import CodeAction
 from coding_env.server.python_codeact_env import PythonCodeActEnv
 from coding_env.server.python_executor import DEFAULT_SAFE_IMPORTS
@@ -22,8 +23,22 @@ class RecordingTransform(Transform):
         return observation
 
 
-def test_additional_imports_keep_the_default_safe_imports():
-    env = PythonCodeActEnv(additional_imports=["base64"])
+@pytest.fixture
+def make_env():
+    """Build envs and stop their worker processes after the test."""
+    envs = []
+
+    def factory(**kwargs) -> PythonCodeActEnv:
+        envs.append(PythonCodeActEnv(**kwargs))
+        return envs[-1]
+
+    yield factory
+    for env in envs:
+        env.close()
+
+
+def test_additional_imports_keep_the_default_safe_imports(make_env):
+    env = make_env(additional_imports=["base64"])
     env.reset()
 
     for code in (IMPORT_JSON, IMPORT_BASE64):
@@ -31,8 +46,8 @@ def test_additional_imports_keep_the_default_safe_imports():
         assert observation.exit_code == 0, observation.stderr
 
 
-def test_additional_imports_survive_reset():
-    env = PythonCodeActEnv(additional_imports=["base64"])
+def test_additional_imports_survive_reset(make_env):
+    env = make_env(additional_imports=["base64"])
     env.reset()
     env.reset()
 
@@ -41,8 +56,8 @@ def test_additional_imports_survive_reset():
         assert observation.exit_code == 0, observation.stderr
 
 
-def test_default_constructor_authorizes_only_the_safe_imports():
-    env = PythonCodeActEnv()
+def test_default_constructor_authorizes_only_the_safe_imports(make_env):
+    env = make_env()
     env.reset()
 
     assert DEFAULT_SAFE_IMPORTS == ["json"]
@@ -50,9 +65,9 @@ def test_default_constructor_authorizes_only_the_safe_imports():
     assert env.step(CodeAction(code=IMPORT_BASE64)).exit_code == 1
 
 
-def test_explicit_transform_survives_reset():
+def test_explicit_transform_survives_reset(make_env):
     transform = RecordingTransform()
-    env = PythonCodeActEnv(transform=transform)
+    env = make_env(transform=transform)
     env.reset()
 
     assert env.transform is transform
