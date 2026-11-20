@@ -86,4 +86,5 @@ Mark complete only when all are true:
 - `__init__.py` exports the public API.
 - `README.md` includes quickstart and configuration.
 - `openenv build` and `openenv validate --level static --skip-build` pass, or failures are documented.
+- `validation/runtime.json` holds valid actions for this environment, and `openenv validate --level runtime` passes its runtime checks (needs Docker), or failures are documented.
 - Runtime smoke check is executed (`/health`; optionally `openenv validate --url`).
