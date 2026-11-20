@@ -16,6 +16,7 @@ The environment wraps CARLA scenarios and provides OpenEnv-compatible API.
 
 import html
 import math
+import random
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -193,8 +194,6 @@ class ActorsHelper:
         """
         try:
             blueprint_library = self.world.get_blueprint_library()
-            import random
-
             vehicle_bps = blueprint_library.filter("vehicle.*")
             if not vehicle_bps:
                 return None
@@ -304,13 +303,23 @@ class CarlaEnvironment(Environment):
 
     def reset(
         self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
         scenario_name: Optional[str] = None,
         scenario_config: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> CarlaObservation:
         """
         Reset environment and setup scenario.
 
         Args:
+            seed: If given, seed Python's `random` module before the scenario
+                is set up. That fixes the choices this package makes with it
+                (random weather, maze and route goals, spawn points, NPC
+                vehicle models). It does not seed the CARLA simulator, so real
+                mode runs can still differ in traffic and physics. The seed is
+                process-wide, so concurrent sessions share it.
+            episode_id: Optional episode identifier (generated if omitted)
             scenario_name: Optional scenario name to switch to. If None, uses current scenario.
             scenario_config: Optional dict of config field overrides (e.g. weather, max_steps).
                 Keys must match fields on the scenario's config dataclass.
@@ -331,9 +340,11 @@ class CarlaEnvironment(Environment):
         # Reset rubric state for new episode
         self._reset_rubric()
 
-        # Generate new episode ID
+        if seed is not None:
+            random.seed(seed)
+
         self._state = CarlaState(
-            episode_id=str(uuid.uuid4()),
+            episode_id=episode_id or str(uuid.uuid4()),
             scenario_name=self.scenario.config.name,
             step_count=0,
         )
@@ -715,8 +726,6 @@ class CarlaEnvironment(Environment):
         # Randomly pick from all valid candidates (within max_angle_deg).
         # This avoids always selecting the same spawn point which may have
         # undesirable road features (e.g. speed bumps).
-        import random
-
         random.shuffle(candidates)
         return candidates[0][1]
 

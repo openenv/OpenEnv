@@ -677,3 +677,29 @@ def test_carla_web_playground():
     assert ">step 1<" in sketch
     assert "#" not in sketch  # theme colours only, so it reads in dark mode
     assert env.render_web({}) is None
+
+
+class TestResetSeed:
+    """reset(seed=...) fixes the scenario's random choices; episode_id is kept."""
+
+    @staticmethod
+    def _weather(env, seed):
+        env.reset(seed=seed)
+        return env.scenario.config.weather
+
+    def test_same_seed_same_random_weather(self):
+        env = CarlaEnvironment(scenario_name="free_roam", mode="mock")
+        env.scenario = FreeRoamScenario(
+            FreeRoamConfig(name="free_roam", description="", weather="random")
+        )
+        assert self._weather(env, 5) == self._weather(env, 5)
+        assert len({self._weather(env, seed) for seed in range(20)}) > 1
+
+    def test_episode_id_is_kept_or_generated(self):
+        env = CarlaEnvironment(scenario_name="trolley_saves", mode="mock")
+        env.reset(episode_id="drive-1")
+        assert env.state.episode_id == "drive-1"
+        env.reset()
+        first = env.state.episode_id
+        env.reset()
+        assert first and env.state.episode_id != first
