@@ -133,7 +133,7 @@ scores zero and never reaches the judge.
 | --- | --- |
 | `no_svg_in_response` / `truncated_svg` | No SVG, or one cut off mid-generation. Kept separate because "the model refused" and "the harness cut it off" are different facts. |
 | `unparseable` / `render_failed` | Not well-formed, declares a DTD, or will not rasterise. |
-| `embedded_raster` | An `<image>` element or a `data:image` URI. |
+| `embedded_raster` | An `<image>` element or any `data:` URI. |
 | `external_reference` | An `href` pointing off-document. |
 | `forbidden_element` | `<script>`, `<foreignObject>` and friends. |
 | `text_label` / `text_heavy` | Writing the answer instead of drawing it. |
