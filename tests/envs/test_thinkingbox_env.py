@@ -1780,7 +1780,7 @@ def test_dockerfile_uses_canonical_python311_base_and_frozen_sync() -> None:
         encoding="utf-8"
     )
 
-    assert "ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest" in dockerfile
+    assert "ARG BASE_IMAGE=ghcr.io/openenv/openenv-base:latest" in dockerfile
     assert dockerfile.count("FROM ${BASE_IMAGE}") == 2
     assert "python:3.12-slim" not in dockerfile
     assert "curl -LsSf https://astral.sh/uv/install.sh" in dockerfile

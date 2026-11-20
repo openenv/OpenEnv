@@ -413,7 +413,7 @@ def test_init_dockerfile_uses_correct_base(tmp_path: Path) -> None:
     dockerfile_content = dockerfile.read_text()
 
     # Check base image
-    assert "ghcr.io/huggingface/openenv-base:latest" in dockerfile_content
+    assert "ghcr.io/openenv/openenv-base:latest" in dockerfile_content
 
     # Check CMD uses correct module path (could be in list format or string format)
     assert "server.app:app" in dockerfile_content

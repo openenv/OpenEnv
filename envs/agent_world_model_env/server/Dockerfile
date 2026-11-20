@@ -6,7 +6,7 @@
 
 # Hardcoded base image: HF Spaces' BuildKit injects an empty
 # --build-arg BASE_IMAGE= that overrides the ARG default.
-FROM ghcr.io/huggingface/openenv-base:latest AS builder
+FROM ghcr.io/openenv/openenv-base:latest AS builder
 
 WORKDIR /app
 
@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     fi
 
 # Final runtime stage
-FROM ghcr.io/huggingface/openenv-base:latest
+FROM ghcr.io/openenv/openenv-base:latest
 
 WORKDIR /app
 

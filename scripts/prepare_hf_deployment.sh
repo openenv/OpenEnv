@@ -280,9 +280,9 @@ if [ -z "$HF_NAMESPACE" ]; then
 fi
 
 if [ -n "$BASE_IMAGE_SHA" ]; then
-    BASE_IMAGE_REF="ghcr.io/huggingface/openenv-base:$BASE_IMAGE_SHA"
+    BASE_IMAGE_REF="ghcr.io/openenv/openenv-base:$BASE_IMAGE_SHA"
 else
-    BASE_IMAGE_REF="ghcr.io/huggingface/openenv-base:latest"
+    BASE_IMAGE_REF="ghcr.io/openenv/openenv-base:latest"
 fi
 
 if ! command -v hf >/dev/null 2>&1; then
