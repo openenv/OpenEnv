@@ -10,6 +10,7 @@ instances share the same Gitea server but have isolated workspaces.
 import atexit
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -18,6 +19,81 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, urlparse
+
+# Git subcommands an agent may run. Left out: those that run other programs (submodule, bisect,
+# difftool, filter-branch) or read files outside the repository (hash-object, apply, am), and
+# global options before the subcommand (`-c`, `-C`, `--git-dir`).
+_AGENT_SUBCOMMANDS = frozenset(
+    {
+        "add",
+        "blame",
+        "branch",
+        "checkout",
+        "cherry-pick",
+        "commit",
+        "config",
+        "describe",
+        "diff",
+        "fetch",
+        "grep",
+        "init",
+        "log",
+        "ls-files",
+        "merge",
+        "mv",
+        "pull",
+        "push",
+        "rebase",
+        "remote",
+        "reset",
+        "restore",
+        "rev-parse",
+        "revert",
+        "rm",
+        "shortlog",
+        "show",
+        "stash",
+        "status",
+        "switch",
+        "tag",
+    }
+)
+# Options that run a program or read or write a path outside the repository. Git also accepts any
+# unambiguous prefix of a long option, so prefixes are refused too.
+_BLOCKED_LONG_OPTIONS = (
+    "--config",
+    "--exec",
+    "--ext-diff",
+    "--extcmd",
+    "--file",
+    "--no-index",
+    "--open-files-in-pager",
+    "--output",
+    "--pathspec-from-file",
+    "--receive-pack",
+    "--template",
+    "--upload-pack",
+)
+_BLOCKED_SHORT_OPTIONS = "FOx"  # -F <file>, grep -O <pager>, rebase -x <cmd>
+_SECRET_ENV_NAME = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD)(_|$)", re.IGNORECASE)
+
+
+def _refusal(args: list[str]) -> str | None:
+    """Why an agent's git arguments are refused, or `None` when they may run."""
+    if not args or args[0] not in _AGENT_SUBCOMMANDS:
+        return f"git {args[0] if args else ''} is not available here"
+    if args[0] == "config" and (
+        len(args) > 3 or args[1:2] not in (["--get"], ["--get-all"], ["--list"])
+    ):
+        return "git config is not available here, except --get <key>, --get-all <key> and --list"
+    for arg in args[1:]:
+        name = arg.split("=", 1)[0]
+        if name.startswith("--") and len(name) > 2:
+            if any(option.startswith(name) for option in _BLOCKED_LONG_OPTIONS):
+                return f"{name} is not available here"
+        elif name.startswith("-") and set(name[1:]) & set(_BLOCKED_SHORT_OPTIONS):
+            return f"{name} is not available here"
+    return None
 
 
 @dataclass
@@ -124,7 +200,12 @@ class GitServerClient:
         gitconfig_path = config_dir / "gitconfig"
         gitconfig_path.write_text(git_config)
 
-        self._git_env = {**os.environ, "GIT_CONFIG_GLOBAL": str(gitconfig_path)}
+        # Agents run git in this environment, so it carries no credentials of the server.
+        self._git_env = {
+            **{k: v for k, v in os.environ.items() if not _SECRET_ENV_NAME.search(k)},
+            "GIT_CONFIG_GLOBAL": str(gitconfig_path),
+            "GIT_ALLOW_PROTOCOL": "http:https",
+        }
 
     def wait_for_ready(self, timeout: int = 30) -> bool:
         """
@@ -222,7 +303,10 @@ class GitServerClient:
             raise RuntimeError("Gitea server is not ready")
 
         target_dir = target_dir or repo_name
-        target_path = self.workspace_dir / target_dir
+        workspace = self.workspace_dir.resolve()
+        target_path = (workspace / target_dir).resolve()
+        if target_path == workspace or not target_path.is_relative_to(workspace):
+            raise ValueError(f"target_dir {target_dir!r} is outside the workspace")
 
         # Remove existing directory if present
         if target_path.exists():
@@ -352,14 +436,19 @@ class GitServerClient:
         Returns:
             `tuple` of (exit_code, stdout, stderr).
         """
-        work_path = (
-            self.workspace_dir / working_dir if working_dir else self.workspace_dir
-        )
+        workspace = self.workspace_dir.resolve()
+        work_path = (workspace / working_dir).resolve()
+        if not work_path.is_relative_to(workspace):
+            return (1, "", f"working_dir {working_dir!r} is outside the workspace")
 
         if not work_path.exists():
             return (1, "", f"Working directory does not exist: {work_path}")
 
-        cmd_parts = ["git"] + shlex.split(command)
+        args = shlex.split(command)
+        refusal = _refusal(args)
+        if refusal:
+            return (1, "", refusal)
+        cmd_parts = ["git"] + args
 
         result = subprocess.run(
             cmd_parts,
