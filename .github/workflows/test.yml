@@ -320,13 +320,16 @@ jobs:
           version: ${{ env.UV_VERSION }}
 
       - name: Install locked data-analysis environment and test dependencies
-        run: uv sync --python 3.12 --project envs/data_analysis_env --frozen --extra dev
+        working-directory: tests/data_analysis_runtime
+        run: |
+          uv lock --check
+          uv sync --python 3.12 --frozen
 
       - name: Run data-analysis regressions
         env:
           PYTHONPATH: src:envs
         run: |
-          uv run --project envs/data_analysis_env --frozen --extra dev pytest \
+          uv run --python 3.12 --frozen --project tests/data_analysis_runtime pytest \
             tests/envs/test_data_analysis_env.py tests/envs/test_data_analysis_sandbox.py \
             -m "not network" -v --tb=short
 
