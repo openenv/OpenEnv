@@ -22,7 +22,7 @@ A few integrations ship as optional extras. Install them with
 |-------|----------|
 | `inspect` | The Inspect AI evaluation harness |
 | `harbor` | The [Harbor integration](environments/harbor) and its sandbox backends (Python 3.12+) |
-| `daytona`, `aca`, `modal`, `novita` | Cloud sandbox providers (see [Runtime Providers](guides/runtime-providers)) |
+| `daytona`, `aca`, `modal`, `novita`, `tensorlake` | Cloud sandbox providers (see [Runtime Providers](guides/runtime-providers)) |
 
 ## Try an Environment
 
@@ -155,7 +155,7 @@ with EchoEnv(base_url="http://localhost:8000").sync() as client:
     result = client.reset()
 ```
 
-The same client also runs environments on cloud sandboxes (Daytona, Modal, Novita, Azure Container Apps, Hugging Face) and on a Kubernetes cluster through runtime providers. `HFSandboxProvider` ships with core OpenEnv and needs a Hugging Face token for an account that can run Jobs (the sandboxes are billed as Jobs): it runs an environment's Space image in a Hugging Face sandbox ([example](guides/runtime-providers#hfsandboxprovider)). `KubernetesProvider` is an optional extra (`pip install openenv[kubernetes]`, [example](guides/runtime-providers#kubernetesprovider)). See the [Runtime Providers guide](guides/runtime-providers) to pick one.
+The same client also runs environments on cloud sandboxes (Daytona, Modal, Novita, Azure Container Apps, Hugging Face, Tensorlake) and on a Kubernetes cluster through runtime providers. `HFSandboxProvider` ships with core OpenEnv and needs a Hugging Face token for an account that can run Jobs (the sandboxes are billed as Jobs): it runs an environment's Space image in a Hugging Face sandbox ([example](guides/runtime-providers#hfsandboxprovider)). `KubernetesProvider` is an optional extra (`pip install openenv[kubernetes]`, [example](guides/runtime-providers#kubernetesprovider)). See the [Runtime Providers guide](guides/runtime-providers) to pick one.
 
 ## Next Steps
 
