@@ -154,8 +154,9 @@ containment. Hostile submissions remain blocked on per-run Linux PID/cgroup isol
 Keeping `ortools` (unless `allow_ortools=True`) and the environment's own modules out of reach prevents direct imports
 of the reference solver and verifier. This is only one part of the required isolation boundary.
 
-In the container, the code runs as an unprivileged `sandbox` user with its own interpreter (numpy and scipy only), and
-the environment source and the server's packages are not readable by that user; with `allow_ortools=True` it uses a
+In the container, the code runs as an unprivileged uid of its own per session, with its own interpreter (numpy and
+scipy only), and the environment source and the server's packages are not readable by it. Every process of that uid
+is stopped when a call ends; with `allow_ortools=True` it uses a
 second interpreter with `ortools`. This is configured by `SANDBOX_USER`, `SANDBOX_PYTHON` and `SANDBOX_ORTOOLS_PYTHON`
 in `server/Dockerfile`. Outside the container (`SANDBOX_USER` unset), the code runs with the server's interpreter and
 an in-process import blocker that it can remove, which is fine for development but does not keep rewards honest

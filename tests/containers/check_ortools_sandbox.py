@@ -8,7 +8,6 @@
 
 import importlib.util
 import os
-import pwd
 import tempfile
 import time
 import unittest
@@ -28,10 +27,9 @@ class SandboxIsolation(unittest.TestCase):
         return sandbox.run(code, {"value": 42}, self.workdir.name, 10, **kwargs)
 
     def test_uid_and_import_isolation_after_removing_import_hook(self):
-        uid = pwd.getpwnam("sandbox").pw_uid
-        code = f"""
+        code = """
 import os, sys, importlib, subprocess
-assert os.getuid() == {uid} != 0
+assert 60000 <= os.getuid() < 65000
 assert os.getgroups() == []
 sys.meta_path = [f for f in sys.meta_path if type(f).__name__ != '_Blocker']
 for name in ['ortools', 'problems', 'server', 'ortools_env']:
@@ -93,9 +91,7 @@ os._exit(0)
         self.assertEqual(result["returncode"], 0)
         self.assertIsNone(result["solution"])
 
-    @unittest.expectedFailure
-    def test_known_blocker_detached_child_outlives_call(self):
-        # Bounded reproduction: the escaped child writes once and exits itself.
+    def test_detached_child_does_not_outlive_call(self):
         result = self.run_code("""
 import subprocess, sys
 subprocess.Popen([sys.executable, '-c',
@@ -105,6 +101,98 @@ subprocess.Popen([sys.executable, '-c',
         self.assertEqual(result["returncode"], 0, result["output"])
         time.sleep(1)
         self.assertFalse((Path(self.workdir.name) / "escaped").exists())
+
+    def test_sessions_get_separate_uids(self):
+        other = tempfile.TemporaryDirectory(prefix="ortools_container_check_")
+        self.addCleanup(other.cleanup)
+        uid, other_uid = sandbox.new_uid(), sandbox.new_uid()
+        self.addCleanup(sandbox.release_uid, uid)
+        self.addCleanup(sandbox.release_uid, other_uid)
+        first = sandbox.run(
+            "import os; print(os.getuid()); open('mine', 'w').write('x')",
+            {},
+            self.workdir.name,
+            10,
+            uid=uid,
+        )
+        self.assertEqual(first["output"].strip(), str(uid), first["output"])
+        second = sandbox.run(
+            f"import os; print(os.getuid()); open({str(Path(self.workdir.name) / 'mine')!r}).read()",
+            {},
+            other.name,
+            10,
+            uid=other_uid,
+        )
+        self.assertIn(str(other_uid), second["output"])
+        self.assertIn("PermissionError", second["output"])
+
+    def test_process_count_is_limited(self):
+        result = self.run_code(
+            "print([l for l in open('/proc/self/limits') if l.startswith('Max processes')][0])"
+        )
+        self.assertEqual(result["returncode"], 0, result["output"])
+        self.assertEqual(result["output"].split()[2], str(sandbox.MAX_PROCESSES))
+
+    def test_cleanup_survives_a_child_that_kills_everything(self):
+        # The child signals every process of its uid in a loop, including the call itself.
+        uid = sandbox.new_uid()
+        self.addCleanup(sandbox.release_uid, uid)
+        code = (
+            "import subprocess, sys\n"
+            "subprocess.Popen([sys.executable, '-c', 'import os, signal\\n"
+            "while True:\\n    try:\\n        os.kill(-1, signal.SIGKILL)\\n"
+            "    except OSError:\\n        pass'], start_new_session=True)\n"
+            "import time; time.sleep(5)\n"
+        )
+        start = time.monotonic()
+        sandbox.run(code, {}, self.workdir.name, 10, uid=uid)
+        self.assertLess(time.monotonic() - start, 30)
+        self.assertEqual(sandbox._processes_of(uid), [])
+
+    def test_cleanup_survives_a_fork_bomb(self):
+        # Detached processes that keep forking and send SIGCONT to every process of the uid.
+        uid = sandbox.new_uid()
+        self.addCleanup(sandbox.release_uid, uid)
+        code = (
+            "import subprocess, sys\n"
+            "subprocess.Popen([sys.executable, '-c', 'import os, signal\\n"
+            "while True:\\n    try:\\n        os.fork()\\n"
+            "        os.kill(-1, signal.SIGCONT)\\n"
+            "    except OSError:\\n        pass'], start_new_session=True)\n"
+            "import time; time.sleep(2)\n"
+        )
+        start = time.monotonic()
+        sandbox.run(code, {}, self.workdir.name, 10, uid=uid)
+        self.assertLess(time.monotonic() - start, 30)
+        self.assertEqual(sandbox._processes_of(uid), [])
+
+    def test_concurrent_sessions_clean_up_their_own_processes(self):
+        import threading
+
+        uids = [sandbox.new_uid() for _ in range(3)]
+        dirs = [
+            tempfile.TemporaryDirectory(prefix="ortools_container_check_") for _ in uids
+        ]
+        for uid, d in zip(uids, dirs):
+            self.addCleanup(sandbox.release_uid, uid)
+            self.addCleanup(d.cleanup)
+        code = (
+            "import subprocess, sys\n"
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)\n"
+            "import time; time.sleep(1)\n"
+        )
+        threads = [
+            threading.Thread(
+                target=sandbox.run, args=(code, {}, d.name, 10), kwargs={"uid": uid}
+            )
+            for uid, d in zip(uids, dirs)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        for uid in uids:
+            self.assertEqual(sandbox._processes_of(uid), [])
 
 
 if __name__ == "__main__":
