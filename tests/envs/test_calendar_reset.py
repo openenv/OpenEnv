@@ -37,6 +37,9 @@ def test_reset_keeps_episode_id_or_generates_one(env):
     assert obs.metadata["episode_id"] == "cal-1"
     assert env.state.step_count == 0
 
+    env.reset(episode_id="")
+    assert env.state.episode_id == ""
+
     env.reset()
     first = env.state.episode_id
     env.reset()

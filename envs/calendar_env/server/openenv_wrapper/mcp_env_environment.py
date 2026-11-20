@@ -124,7 +124,7 @@ class MCPEnvironment(Environment):
         Returns:
             MCPObservation with environment information and available tool count
         """
-        self._state = State(episode_id=episode_id or str(uuid4()), step_count=0)
+        self._state = State(episode_id=episode_id if episode_id is not None else str(uuid4()), step_count=0)
         self._reset_count += 1
         self._successful_tool_calls = 0
         self._failed_tool_calls = 0

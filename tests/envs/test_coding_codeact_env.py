@@ -77,6 +77,8 @@ def test_reset_keeps_episode_id_or_generates_one(make_env):
     env = make_env()
     env.reset(seed=3, episode_id="code-1")
     assert env.state.episode_id == "code-1"
+    env.reset(episode_id="")
+    assert env.state.episode_id == ""
     assert env.state.step_count == 0
 
     env.reset()

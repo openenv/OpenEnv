@@ -117,7 +117,7 @@ class PythonCodeActEnv(Environment):
         started = self._executor.start()
 
         # Initialize fresh state
-        self._state = CodeState(episode_id=episode_id or str(uuid.uuid4()), step_count=0)
+        self._state = CodeState(episode_id=episode_id if episode_id is not None else str(uuid.uuid4()), step_count=0)
         self._state.last_exit_code = 0 if started else 1
 
         # Reset transform to clear any accumulated state
