@@ -288,6 +288,12 @@ async def test_signal_stops_sandboxes_then_reaches_the_previous_handler():
     assert seen == [signal.SIGTERM]
     assert signal.getsignal(signal.SIGTERM) is previous
 
+    late = FakeEnv(log, "late")
+    sup.adopt(make_trial(late))
+    with pytest.raises(RuntimeError, match="shutting down"):
+        await late.start(force_build=False)
+    assert signal.getsignal(signal.SIGTERM) is previous
+
 
 async def test_second_signal_skips_the_wait():
     seen: list[int] = []

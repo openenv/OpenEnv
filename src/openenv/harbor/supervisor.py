@@ -250,7 +250,7 @@ class SandboxSupervisor:
         cannot be wrapped: cleanup then runs alongside the server's shutdown, and the signal is not
         delivered again.
         """
-        if threading.current_thread() is not threading.main_thread():
+        if self._closing or threading.current_thread() is not threading.main_thread():
             return False
         try:
             loop = asyncio.get_running_loop()
