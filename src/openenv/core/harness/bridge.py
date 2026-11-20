@@ -14,7 +14,7 @@ from .adapter import HarnessError
 
 
 async def _source_tools(mcp_server: Any) -> dict[str, Any]:
-    """Return {name: FastMCP tool}, compatible with FastMCP 2.x and 3.x.
+    """Return {name: FastMCP tool}.
 
     Async twin of [`~openenv.core.env_server.mcp_environment.get_server_tools`],
     which wraps the same calls in `run_async_safely`; awaiting directly avoids
@@ -52,9 +52,11 @@ async def build_bridge_server(mcp_server: Any, renames: dict[str, str]) -> Any:
         return mcp_server
 
     from fastmcp import Client
+    from fastmcp.server.dependencies import get_context
     from fastmcp.server.providers.proxy import FastMCPProxy, StatefulProxyClient
     from fastmcp.server.transforms import ToolTransform
     from fastmcp.tools.tool_transform import ToolTransformConfig
+    from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
     source_tools = await _source_tools(mcp_server)
     missing = sorted(set(renames.values()) - set(source_tools))
@@ -71,12 +73,20 @@ async def build_bridge_server(mcp_server: Any, renames: dict[str, str]) -> Any:
         async with Client(mcp_server):
             yield {}
 
-    # Forward callbacks in the current request context. Each harness MCP
-    # connection gets its own source session, closed on disconnect.
+    # Keep one backend client per front connection, and mirror its protocol era.
+    # StatefulProxyClient defaults to legacy, which cannot carry sampling guards.
     client = StatefulProxyClient(mcp_server)
+
+    def client_factory():
+        backend = client.new_stateful()
+        if not backend.is_connected():
+            version = get_context().request_context.protocol_version
+            backend.mode = version if version in MODERN_PROTOCOL_VERSIONS else "legacy"
+        return backend
+
     view = FastMCPProxy(
         name=f"{getattr(mcp_server, 'name', 'openenv')}-harness-view",
-        client_factory=client.new_stateful,
+        client_factory=client_factory,
         lifespan=lifespan,
     )
     view.add_transform(
