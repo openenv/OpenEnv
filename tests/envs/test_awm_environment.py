@@ -1479,3 +1479,42 @@ class TestAWMEnvironmentUnit:
 
         # Episode should still be active until done is called
         assert env._episode_done is False
+
+
+class TestAWMLLMCredentials:
+    """The server's judge key only ever goes to the server's judge URL."""
+
+    def test_client_url_does_not_get_the_server_key(self, mock_data_dir, monkeypatch):
+        from envs.agent_world_model_env.server.awm_environment import AWMEnvironment
+
+        monkeypatch.setenv("OPENENV_AWM_LLM_BASE_URL", "https://judge.server")
+        monkeypatch.setenv("OPENENV_AWM_LLM_API_KEY", "server-key")
+        env = AWMEnvironment(data_loader=AWMDataLoader(cache_dir=mock_data_dir))
+        env.reset(
+            scenario="test_shop", task_idx=0, llm_base_url="https://attacker.example"
+        )
+        assert env._llm_base_url == "https://attacker.example"
+        assert env._llm_api_key is None
+
+    def test_client_url_uses_the_client_key(self, mock_data_dir, monkeypatch):
+        from envs.agent_world_model_env.server.awm_environment import AWMEnvironment
+
+        monkeypatch.setenv("OPENENV_AWM_LLM_API_KEY", "server-key")
+        env = AWMEnvironment(data_loader=AWMDataLoader(cache_dir=mock_data_dir))
+        env.reset(
+            scenario="test_shop",
+            task_idx=0,
+            llm_base_url="https://my-judge.example",
+            llm_api_key="client-key",
+        )
+        assert env._llm_api_key == "client-key"
+
+    def test_server_url_keeps_the_server_key(self, mock_data_dir, monkeypatch):
+        from envs.agent_world_model_env.server.awm_environment import AWMEnvironment
+
+        monkeypatch.setenv("OPENENV_AWM_LLM_BASE_URL", "https://judge.server")
+        monkeypatch.setenv("OPENENV_AWM_LLM_API_KEY", "server-key")
+        env = AWMEnvironment(data_loader=AWMDataLoader(cache_dir=mock_data_dir))
+        env.reset(scenario="test_shop", task_idx=0)
+        assert env._llm_base_url == "https://judge.server"
+        assert env._llm_api_key == "server-key"
