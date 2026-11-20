@@ -1046,3 +1046,53 @@ def test_a_file_read_before_the_first_assertion_stays_behind(name):
     assert submission.excluded_file(f"work/{name}")
     # Naming one exactly is the task author's decision, so it is still allowed.
     assert submission.check_declared_path(f"work/{name}") is None
+
+
+class _FileSandbox(FakeSandbox):
+    def __init__(self) -> None:
+        super().__init__()
+        self.files: dict[str, bytes] = {}
+
+    def write_file(self, path: str, data: bytes) -> None:
+        self.files[path] = data
+
+
+def _kaggle_env(monkeypatch, tmp_path):
+    data_dir = tmp_path / "kaggle"
+    (data_dir / "titanic").mkdir(parents=True)
+    (data_dir / "titanic" / "train.csv").write_text("a,b\n")
+    (tmp_path / "secret").mkdir()
+    (tmp_path / "secret" / "token").write_text("server-secret")
+    monkeypatch.setenv("E2B_API_KEY", "fake-key")
+    monkeypatch.setenv("KAGGLE_DATA_DIR", str(data_dir))
+    sandbox = _FileSandbox()
+    monkeypatch.setattr(
+        "jupyter_env.server.jupyter_environment.E2BSandbox", lambda api_key: sandbox
+    )
+    return JupyterEnvironment(), sandbox
+
+
+def test_reset_loads_kaggle_files_from_the_data_dir(monkeypatch, tmp_path):
+    env, sandbox = _kaggle_env(monkeypatch, tmp_path)
+    env.reset(kaggle_dataset_name="titanic", files=["train.csv"])
+    assert sandbox.files == {"/home/user/input/train.csv": b"a,b\n"}
+
+
+@pytest.mark.parametrize("name", ["../secret", "<absolute>", "titanic/../../secret"])
+def test_reset_never_reads_files_outside_the_data_dir(monkeypatch, tmp_path, name):
+    """The client names the dataset, so a path out of the data dir must not reach server files."""
+    env, sandbox = _kaggle_env(monkeypatch, tmp_path)
+    if name == "<absolute>":
+        name = str(tmp_path / "secret")
+    obs = env.reset(kaggle_dataset_name=name, files=["token"])
+    assert obs.metadata["status"] == "error"
+    assert sandbox.files == {}
+
+
+def test_reset_never_follows_a_link_out_of_the_data_dir(monkeypatch, tmp_path):
+    env, sandbox = _kaggle_env(monkeypatch, tmp_path)
+    (tmp_path / "kaggle" / "titanic" / "token").symlink_to(
+        tmp_path / "secret" / "token"
+    )
+    env.reset(kaggle_dataset_name="titanic", files=["token"])
+    assert sandbox.files == {}
