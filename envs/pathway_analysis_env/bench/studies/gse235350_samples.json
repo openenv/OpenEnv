@@ -1,0 +1,32 @@
+[
+  {
+    "sample_id": "GSM7500863_con_rep1",
+    "sra": "SRR24978571",
+    "condition": "control"
+  },
+  {
+    "sample_id": "GSM7500864_con_rep2",
+    "sra": "SRR24978570",
+    "condition": "control"
+  },
+  {
+    "sample_id": "GSM7500865_con_rep3",
+    "sra": "SRR24978569",
+    "condition": "control"
+  },
+  {
+    "sample_id": "GSM7500866_palbo_rep1",
+    "sra": "SRR24978568",
+    "condition": "palbociclib"
+  },
+  {
+    "sample_id": "GSM7500867_palbo_rep2",
+    "sra": "SRR24978567",
+    "condition": "palbociclib"
+  },
+  {
+    "sample_id": "GSM7500868_palbo_rep3",
+    "sra": "SRR24978566",
+    "condition": "palbociclib"
+  }
+]
