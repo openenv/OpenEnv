@@ -131,21 +131,42 @@ class OpenSpielEnvironment(Environment):
         draw = _DRAWINGS.get(self.game_name)
         return draw(observation) if draw else None
 
-    def reset(self) -> OpenSpielObservation:
+    def reset(
+        self,
+        seed: int | None = None,
+        episode_id: str | None = None,
+        **kwargs: Any,
+    ) -> OpenSpielObservation:
         """
         Reset the environment and return initial observation.
 
         For multi-player games, this will autoplay opponent turns until
         it's the agent's turn (or terminal state).
 
+        Args:
+            seed (`int`, *optional*):
+                Reseeds the game's chance events and the random opponent. The same
+                seed always yields the same observations for the same agent moves.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
+
         Returns:
             Initial observation for the agent.
         """
+        if seed is not None:
+            self._ospiel_env.seed(seed)
+            if self.opponent_policy_fn is not None:
+                self.opponent_policy_fn = get_opponent_policy(
+                    self._state.opponent_policy, seed
+                )
+
         # Reset OpenSpiel environment
         time_step = self._ospiel_env.reset()
 
         # Reset state tracking
-        self._state.episode_id = str(uuid.uuid4())
+        self._state.episode_id = (
+            episode_id if episode_id is not None else str(uuid.uuid4())
+        )
         self._state.step_count = 0
         self._last_opponent_action = None
 
