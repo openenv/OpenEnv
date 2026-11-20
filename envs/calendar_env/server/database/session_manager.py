@@ -4,13 +4,18 @@ Calendar Session Manager - Database session handling for Calendar services using
 
 import logging
 import os
+import re
 from typing import Dict
 
 from database.models import Base
-from sqlalchemy import create_engine
+from database.sqlite_guard import _deny_other_files, connect_database  # noqa: F401
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 logger = logging.getLogger(__name__)
+
+# A database id becomes a file name, so it may not hold a path.
+_DATABASE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 class CalendarSessionManager:
@@ -22,6 +27,10 @@ class CalendarSessionManager:
 
     def get_db_path(self, db_id: str) -> str:
         """Get database path for a specific session ID"""
+        if not _DATABASE_ID.fullmatch(db_id):
+            raise ValueError(
+                f"Invalid database id {db_id!r}: use letters, digits, _ and -"
+            )
         databases_dir = "./mcp_databases"
         os.makedirs(databases_dir, exist_ok=True)
         return os.path.join(databases_dir, f"calendar_{db_id}.sqlite")
@@ -37,6 +46,11 @@ class CalendarSessionManager:
                 connect_args={"check_same_thread": False},  # Needed for SQLite
                 pool_pre_ping=True,  # Verify connections before using them
                 pool_recycle=3600,  # Recycle connections after 1 hour
+            )
+            event.listen(
+                self._engines[db_id],
+                "connect",
+                lambda conn, _record: conn.set_authorizer(_deny_other_files),
             )
         return self._engines[db_id]
 

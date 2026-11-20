@@ -33,6 +33,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .julia_sandbox import (
+    _socket_filter_unavailable,
+    sandboxed,
+    UNPRIVILEGED_UID,
+    worker_env,
+)
+
 # Use julia_env hierarchy to inherit handlers from app.py's setup_logging()
 logger = logging.getLogger("julia_env.executor")
 
@@ -158,6 +165,8 @@ class JuliaExecutor:
             )
 
         logger.debug(f"JuliaExecutor initialized with Julia at: {self.julia_path}")
+        if reason := _socket_filter_unavailable():
+            logger.warning(f"Julia code has network access: {reason}")
         logger.debug(f"Timeout: {self.timeout}s, Max retries: {self.max_retries}")
 
     def _kill_process_tree(
@@ -261,6 +270,8 @@ class JuliaExecutor:
                 ) as f:
                     f.write(code)
                     code_file = f.name
+                if os.geteuid() == 0:  # Julia runs as nobody (see julia_sandbox)
+                    os.chown(code_file, UNPRIVILEGED_UID, UNPRIVILEGED_UID)
 
                 script_name = Path(code_file).name
                 logger.debug(
@@ -281,7 +292,9 @@ class JuliaExecutor:
                 if hasattr(os, "setpgrp"):
                     kwargs["preexec_fn"] = os.setpgrp
 
-                proc = subprocess.Popen(self.base_cmd + [code_file], **kwargs)
+                proc = subprocess.Popen(
+                    sandboxed(self.base_cmd + [code_file]), env=worker_env(), **kwargs
+                )
 
                 logger.debug(f"Started Julia process {proc.pid}")
 
