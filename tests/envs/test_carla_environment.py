@@ -683,22 +683,48 @@ class TestResetSeed:
     """reset(seed=...) fixes the scenario's random choices; episode_id is kept."""
 
     @staticmethod
-    def _weather(env, seed):
-        env.reset(seed=seed)
-        return env.scenario.config.weather
-
-    def test_same_seed_same_random_weather(self):
+    def _env():
         env = CarlaEnvironment(scenario_name="free_roam", mode="mock")
         env.scenario = FreeRoamScenario(
             FreeRoamConfig(name="free_roam", description="", weather="random")
         )
+        return env
+
+    @staticmethod
+    def _weather(env, seed=None):
+        env.reset(seed=seed)
+        return env.scenario.config.weather
+
+    def test_same_seed_same_random_weather(self):
+        env = self._env()
         assert self._weather(env, 5) == self._weather(env, 5)
         assert len({self._weather(env, seed) for seed in range(20)}) > 1
+
+    def test_seeding_one_env_does_not_change_another(self):
+        reference = self._env()
+        expected = [self._weather(reference, 5)] + [
+            self._weather(reference) for _ in range(5)
+        ]
+
+        env, other = self._env(), self._env()
+        got = [self._weather(env, 5)]
+        for _ in range(5):
+            self._weather(other, 99)  # would reseed a shared generator
+            got.append(self._weather(env))
+        assert got == expected
+
+    def test_positional_scenario_name_still_works(self):
+        env = CarlaEnvironment(scenario_name="trolley_saves", mode="mock")
+        obs = env.reset("free_roam")
+        assert obs.scenario_name == "free_roam"
+        assert env.scenario.config.name == "free_roam"
 
     def test_episode_id_is_kept_or_generated(self):
         env = CarlaEnvironment(scenario_name="trolley_saves", mode="mock")
         env.reset(episode_id="drive-1")
         assert env.state.episode_id == "drive-1"
+        env.reset(episode_id="")
+        assert env.state.episode_id == ""
         env.reset()
         first = env.state.episode_id
         env.reset()

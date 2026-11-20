@@ -14,7 +14,6 @@ generation with continuous reward for RL training.
 from __future__ import annotations
 
 import logging
-import random
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -83,7 +82,7 @@ class FreeRoamScenario(BaseScenario[FreeRoamConfig]):
         # Resolve random weather before CarlaEnvironment applies it.
         # Re-derive from the saved original so each episode can get new weather.
         if self._configured_weather == "random":
-            self.config.weather = random.choice(WEATHER_PRESETS)
+            self.config.weather = self.rng.choice(WEATHER_PRESETS)
 
     def setup(self, state: Any) -> None:
         fr = state["scenario_state"]["free_roam"]
@@ -132,7 +131,7 @@ class FreeRoamScenario(BaseScenario[FreeRoamConfig]):
         available = [
             sp for sp in spawn_points if sp.location.distance(ego_location) > 10.0
         ]
-        random.shuffle(available)
+        self.rng.shuffle(available)
         for sp in available[: self.config.num_npc_vehicles]:
             runtime.actors.spawn_npc_vehicle(sp)
 
@@ -178,7 +177,7 @@ class FreeRoamScenario(BaseScenario[FreeRoamConfig]):
         grp = GlobalRoutePlanner(carla_map, sampling_resolution=2.0)
 
         candidates = list(spawn_points)
-        random.shuffle(candidates)
+        self.rng.shuffle(candidates)
 
         import math
 
