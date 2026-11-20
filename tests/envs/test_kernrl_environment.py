@@ -2,6 +2,8 @@
 
 """Tests for the kernrl environment."""
 
+import os
+
 from kernrl.server.kernrl_environment import KernelOptEnvironment
 
 
@@ -43,3 +45,18 @@ class TestResetSeed:
         assert env.state.episode_id == ""
         env.reset()
         assert env.state.episode_id not in (None, "", "episode-1")
+
+
+def test_solution_subprocesses_get_no_server_secrets(monkeypatch):
+    from kernrl.server.profiler import solution_env
+
+    monkeypatch.setenv("HF_TOKEN", "hf_FAKEtoken0000000000000000000000000")
+    monkeypatch.setenv("MY_API_KEY", "fake-key")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+
+    env = solution_env()
+
+    assert "HF_TOKEN" not in env
+    assert "MY_API_KEY" not in env
+    assert env["CUDA_VISIBLE_DEVICES"] == "0"
+    assert env["PATH"] == os.environ["PATH"]

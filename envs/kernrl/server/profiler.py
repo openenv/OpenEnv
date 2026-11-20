@@ -29,6 +29,38 @@ from pathlib import Path
 from typing import Optional
 
 
+# The only server environment variables the solution's code gets, plus the
+# GPU, PyTorch and Triton settings below. Tokens and keys stay in the server.
+SOLUTION_ENV_ALLOWLIST = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "PYTHONPATH",
+    "LD_LIBRARY_PATH",
+)
+SOLUTION_ENV_PREFIXES = ("CUDA_", "NVIDIA_", "TORCH_", "TRITON_", "OMP_")
+
+
+def solution_env() -> dict:
+    """Environment for the subprocesses that import the model's solution."""
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if k in SOLUTION_ENV_ALLOWLIST or k.startswith(SOLUTION_ENV_PREFIXES)
+    }
+
+
+def set_non_dumpable() -> None:
+    """Linux: other processes of the same user can't read this one's /proc/<pid>/{environ,mem}."""
+    if sys.platform.startswith("linux"):
+        import ctypes
+
+        ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)  # PR_SET_DUMPABLE
+
+
 class ProfilerType(Enum):
     """Available profilers."""
 
@@ -602,6 +634,7 @@ class GPUProfiler:
                     str(script_path),
                 ],
                 capture_output=True,
+                env=solution_env(),
                 text=True,
                 timeout=self.nsys_timeout,
                 cwd=workdir,
@@ -774,6 +807,7 @@ class GPUProfiler:
                     str(script_path),
                 ],
                 capture_output=True,
+                env=solution_env(),
                 text=True,
                 timeout=self.ncu_timeout,
                 cwd=workdir,
@@ -1033,6 +1067,7 @@ class GPUProfiler:
                         str(script_path),
                     ],
                     capture_output=True,
+                    env=solution_env(),
                     text=True,
                     timeout=self.sanitizer_timeout,
                     cwd=workdir,
@@ -1183,6 +1218,7 @@ print("TORCH_PROFILE_OK")
             proc = subprocess.run(
                 [sys.executable, str(profiler_script)],
                 capture_output=True,
+                env=solution_env(),
                 text=True,
                 timeout=60,
                 cwd=workdir,
@@ -1275,6 +1311,7 @@ print(f"PTX_LINES:{{len(ptx_code.split(chr(10)))}}")
             proc = subprocess.run(
                 [sys.executable, str(extract_script)],
                 capture_output=True,
+                env=solution_env(),
                 text=True,
                 timeout=30,
                 cwd=workdir,
