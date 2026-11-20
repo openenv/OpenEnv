@@ -13,7 +13,7 @@ via the OpenEnv Environment interface for traffic signal control.
 
 import os
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # Set SUMO_HOME before importing sumo_rl
 os.environ.setdefault("SUMO_HOME", "/usr/share/sumo")
@@ -158,18 +158,28 @@ class SumoEnvironment(Environment):
 
         self._last_info = {}
 
-    def reset(self) -> Observation:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Observation:
         """
         Reset the environment and return initial observation.
+
+        Args:
+            seed: Optional SUMO random seed for this and later episodes. It
+                replaces the `sumo_seed` given at construction.
+            episode_id: Optional episode identifier (generated if omitted)
 
         Returns:
             Initial SumoObservation for the agent.
         """
         # Reset SUMO simulation
-        obs, info = self.env.reset()
+        obs, info = self.env.reset(seed=seed)
 
         # Update state tracking
-        self._state.episode_id = str(uuid.uuid4())
+        self._state.episode_id = episode_id if episode_id is not None else str(uuid.uuid4())
         self._state.step_count = 0
         self._state.sim_time = 0.0
 

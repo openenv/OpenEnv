@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any, Optional
 from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
@@ -71,14 +72,24 @@ class WebSearchEnvironment(Environment):
             proxy=None,
         )
 
-    def reset(self) -> WebSearchObservation:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> WebSearchObservation:
         """
         Reset the environment.
+
+        Args:
+            seed: Accepted for API compatibility. Web search has no random
+                state, so it has no effect.
+            episode_id: Optional episode identifier (generated if omitted)
 
         Returns:
             WebSearchObservation with empty web contents
         """
-        self._state = State(episode_id=str(uuid4()), step_count=0)
+        self._state = State(episode_id=episode_id if episode_id is not None else str(uuid4()), step_count=0)
         self._reset_count += 1
 
         return WebSearchObservation(

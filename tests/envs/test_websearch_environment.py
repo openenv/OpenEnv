@@ -47,3 +47,18 @@ def test_websearch_environment():
     else:
         assert obs.web_contents == []
         assert "[ERROR]" in obs.content
+
+
+def test_reset_keeps_episode_id_or_generates_one(monkeypatch):
+    monkeypatch.delenv("SERPER_API_KEY", raising=False)
+    env = WebSearchEnvironment()
+    env.reset(seed=3, episode_id="search-1")
+    assert env.state.episode_id == "search-1"
+    env.reset(episode_id="")
+    assert env.state.episode_id == ""
+    assert env.state.step_count == 0
+
+    env.reset()
+    first = env.state.episode_id
+    env.reset()
+    assert first and env.state.episode_id != first
