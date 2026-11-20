@@ -147,7 +147,20 @@ from .exceptions import (
     ConcurrencyConfigurationError,
     EnvironmentFactoryError,
     SessionCapacityError,
+    SessionCreationError,
 )
+
+_SHUTTING_DOWN = "server is shutting down"
+
+
+class _PendingCreation:
+    """Shutdown's handle on one `_create_session` call that has not finished."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        # Resolved by shutdown: abandon async startup and dispose of the env.
+        self.stop: asyncio.Future[None] = loop.create_future()
+        # Resolved by the creation once it has published or been disposed of.
+        self.done: asyncio.Future[None] = loop.create_future()
 
 
 class HTTPEnvServer:
@@ -286,6 +299,15 @@ class HTTPEnvServer:
         # idle-reaped. A count, since an attached socket can share the session.
         self._session_operations_in_flight: Dict[str, int] = {}
         self._session_lock = asyncio.Lock()
+        # Set under _session_lock when application shutdown begins. Creations
+        # check it when they reserve a slot and again when they publish, so no
+        # session is registered after shutdown has collected the live ones.
+        self._closing = False
+        # Creations between slot reservation and publish (or disposal), keyed by
+        # session ID. Shutdown stops their async startup and waits for each one
+        # before it tears down the shared executor. The futures belong to the
+        # loop the creation runs on, so nothing here outlives an app lifespan.
+        self._pending_creations: Dict[str, _PendingCreation] = {}
 
         # Create thread pool for running sync code in async context
         # This is needed for environments using sync libraries (e.g., Playwright)
@@ -408,8 +430,11 @@ class HTTPEnvServer:
         Raises:
             `SessionCapacityError`: If max concurrent sessions reached.
             `EnvironmentFactoryError`: If the factory fails to create an environment.
+            `SessionCreationError`: If application shutdown has begun.
         """
         async with self._session_lock:
+            if self._closing:
+                raise SessionCreationError(_SHUTTING_DOWN)
             if len(self._sessions) >= self._max_concurrent_envs:
                 raise SessionCapacityError(
                     active_sessions=len(self._sessions),
@@ -427,6 +452,8 @@ class HTTPEnvServer:
                 executor = ThreadPoolExecutor(max_workers=1)
             self._session_executors[session_id] = executor
             self._sessions[session_id] = None  # placeholder until env is ready
+            pending = _PendingCreation(asyncio.get_running_loop())
+            self._pending_creations[session_id] = pending
 
         # Every await from here to registration runs with the slot reserved, so
         # cancellation has to release it. CancelledError is not an Exception, so
@@ -530,17 +557,26 @@ class HTTPEnvServer:
                     mcp_session_cm = cast(
                         AsyncContextManager[Any], mcp_session_factory()
                     )
-                    # Enter in its own task and await it shielded. An entry that
-                    # blocks before yielding may release resources in its own
-                    # finally, and the stack cannot replay that cleanup: it
-                    # registers the exit callback only once __aenter__ returns.
-                    # Shielding keeps repeated cancellation off the entry, so
-                    # the cleanup owner can cancel it exactly once and drain the
-                    # unwind instead of aborting it part-way.
+                    # Enter in its own task and wait on it without propagating
+                    # cancellation into it. An entry that blocks before
+                    # yielding may release resources in its own finally, and the
+                    # stack cannot replay that cleanup: it registers the exit
+                    # callback only once __aenter__ returns. Keeping repeated
+                    # cancellation off the entry lets the cleanup owner cancel
+                    # it exactly once and drain the unwind instead of aborting
+                    # it part-way.
                     mcp_entry_task = asyncio.create_task(
                         stack.enter_async_context(mcp_session_cm)
                     )
-                    await asyncio.shield(mcp_entry_task)
+                    # Shutdown cannot wait out a stalled handshake, so it stops
+                    # the wait and the cleanup owner unwinds the entry.
+                    await asyncio.wait(
+                        (mcp_entry_task, pending.stop),
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if not mcp_entry_task.done():
+                        raise SessionCreationError(_SHUTTING_DOWN)
+                    mcp_entry_task.result()
             except Exception:
                 # MCP transport failed to start — clean up the reserved slot,
                 # the env, and the executor so they don't leak permanently
@@ -550,18 +586,26 @@ class HTTPEnvServer:
                 raise
 
             async with self._session_lock:
-                self._sessions[session_id] = env
-                self._session_stacks[session_id] = stack
-                if mode is not None:
-                    self._session_modes[session_id] = mode_val
-                now = time.time()
-                self._session_info[session_id] = SessionInfo(
-                    session_id=session_id,
-                    created_at=current_time,
-                    last_activity_at=now,
-                    step_count=0,
-                    environment_type=type(env).__name__,
-                )
+                closing = self._closing
+                if not closing:
+                    self._sessions[session_id] = env
+                    self._session_stacks[session_id] = stack
+                    if mode is not None:
+                        self._session_modes[session_id] = mode_val
+                    now = time.time()
+                    self._session_info[session_id] = SessionInfo(
+                        session_id=session_id,
+                        created_at=current_time,
+                        last_activity_at=now,
+                        step_count=0,
+                        environment_type=type(env).__name__,
+                    )
+            if closing:
+                # Shutdown has already collected the live sessions and is
+                # waiting on this creation, so publishing would leave the env
+                # with no owner. Dispose of it through the shared cleanup path.
+                await drain_cleanup(start_cleanup())
+                raise SessionCreationError(_SHUTTING_DOWN)
         except asyncio.CancelledError:
             # Joins the cleanup already under way if startup failure began one,
             # so the environment is closed by a single owner.
@@ -574,6 +618,9 @@ class HTTPEnvServer:
             if creation_lock_acquired:
                 assert self._shared_session_creation_lock is not None
                 self._shared_session_creation_lock.release()
+            self._pending_creations.pop(session_id, None)
+            if not pending.done.done():
+                pending.done.set_result(None)
 
         return session_id, env
 
@@ -1092,10 +1139,26 @@ class HTTPEnvServer:
         server_ref = self
 
         async def _start_session_reaper() -> None:
+            # A server reused across app lifespans (as TestClient does) accepts
+            # sessions again once the next startup runs.
+            server_ref._closing = False
             server_ref._start_reaper()
 
         async def _shutdown_sessions() -> None:
             await server_ref._stop_reaper()
+            async with server_ref._session_lock:
+                server_ref._closing = True
+                pending = list(server_ref._pending_creations.values())
+            # Creations already past their reservation now dispose of their own
+            # env instead of publishing it. Stop their async startup (a stalled
+            # MCP handshake would otherwise hold shutdown forever) and wait for
+            # them: a running factory cannot be interrupted, and its env must be
+            # closed before the shared executor below stops accepting close().
+            # This is also the last point at which async cleanup can run.
+            for creation in pending:
+                if not creation.stop.done():
+                    creation.stop.set_result(None)
+            await asyncio.gather(*(creation.done for creation in pending))
             async with server_ref._session_lock:
                 session_ids = list(server_ref._sessions)
             for session_id in session_ids:
@@ -1223,6 +1286,13 @@ class HTTPEnvServer:
                         str(e),
                         request_id=request_id,
                         data={"factory_name": e.factory_name},
+                    )
+                except SessionCreationError as e:
+                    return JsonRpcResponse.error_response(
+                        JsonRpcErrorCode.SERVER_ERROR,
+                        str(e),
+                        request_id=request_id,
+                        data={"reason": e.reason},
                     )
                 return JsonRpcResponse.success(
                     result={"session_id": created_session_id},
