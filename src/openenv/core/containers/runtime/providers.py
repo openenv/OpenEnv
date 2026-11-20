@@ -10,10 +10,46 @@ This module provides a pluggable architecture for different container providers
 from __future__ import annotations
 
 import os
+import tempfile
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Mapping, Optional, Sequence, TypeVar
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, TypeVar
 
 _ContainerProviderT = TypeVar("_ContainerProviderT", bound="ContainerProvider")
+
+
+@contextmanager
+def _env_file_args(env_vars: Optional[Mapping[str, str]]) -> Iterator[List[str]]:
+    """
+    Yield `--env-file` arguments for the container's environment variables.
+
+    The values (often tokens) stay out of the command line, which other
+    processes can read and errors include, and out of the docker CLI's own
+    environment, where names like `DOCKER_HOST` or `PATH` would change how
+    the CLI runs. The file is readable only by this user and is removed once
+    docker has read it.
+    """
+    if not env_vars:
+        yield []
+        return
+    lines = []
+    for key, value in env_vars.items():
+        key, value = str(key), str(value)
+        if not key or key.startswith("#") or any(c in key for c in "= \t\r\n\0"):
+            raise ValueError(f"Invalid environment variable name: {key!r}")
+        if any(c in value for c in "\r\n\0"):
+            raise ValueError(
+                f"Environment variable {key!r}: values can't contain line breaks "
+                "or NUL characters"
+            )
+        lines.append(f"{key}={value}\n")
+    fd, path = tempfile.mkstemp(prefix="openenv-env-")
+    try:
+        with os.fdopen(fd, "w") as env_file:
+            env_file.writelines(lines)
+        yield ["--env-file", path]
+    finally:
+        os.unlink(path)
 
 
 class ContainerProvider(ABC):
@@ -209,12 +245,6 @@ class LocalDockerProvider(ContainerProvider):
             f"{port}:8000",  # Map port
         ]
 
-        # Add environment variables
-        # Values go through docker's own environment (`-e KEY`), never the command
-        # line, which other processes can read and errors below include.
-        for key in env_vars or {}:
-            cmd.extend(["-e", key])
-
         # Add volume mounts before the image name.
         if volumes:
             for source, config in volumes.items():
@@ -234,13 +264,13 @@ class LocalDockerProvider(ContainerProvider):
 
         # Run container
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True,
-                env={**os.environ, **(env_vars or {})},
-            )
+            with _env_file_args(env_vars) as env_args:
+                result = subprocess.run(
+                    cmd[:2] + env_args + cmd[2:],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
             self._container_id = result.stdout.strip()
         except subprocess.CalledProcessError as e:
             error_msg = f"Failed to start Docker container.\nCommand: {' '.join(cmd)}\nExit code: {e.returncode}\nStderr: {e.stderr}\nStdout: {e.stdout}"
@@ -469,11 +499,6 @@ class DockerSwarmProvider(ContainerProvider):
         if self._overlay_network:
             cmd.extend(["--network", self._overlay_network])
 
-        # Values go through docker's own environment (`--env KEY`), never the
-        # command line, which other processes can read and errors below include.
-        for key in env_vars or {}:
-            cmd.extend(["--env", key])
-
         if cpu_limit is not None:
             cmd.extend(["--limit-cpu", str(cpu_limit)])
 
@@ -497,13 +522,13 @@ class DockerSwarmProvider(ContainerProvider):
                 cmd.extend(command_override)
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True,
-                env={**os.environ, **(env_vars or {})},
-            )
+            with _env_file_args(env_vars) as env_args:
+                result = subprocess.run(
+                    cmd[:3] + env_args + cmd[3:],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
             self._service_id = result.stdout.strip()
         except subprocess.CalledProcessError as e:
             error_msg = (
