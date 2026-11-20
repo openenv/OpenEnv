@@ -77,6 +77,30 @@ def _extractall(tar: tarfile.TarFile, dest: str) -> None:
         tar.extractall(dest)
 
 
+# The only server environment variables the agent's shell gets (plus LC_*, UV_*
+# and the toolkit's own runtime paths). Tokens and keys stay in the server.
+_SHELL_ENV_ALLOWLIST = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "TERM",
+    "TZ",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "PYTHONUNBUFFERED",
+)
+
+
+def set_non_dumpable() -> None:
+    """Linux: other processes of the same user can't read this one's /proc/<pid>/{environ,mem}."""
+    if sys.platform.startswith("linux"):
+        import ctypes
+
+        ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)  # PR_SET_DUMPABLE
+
+
 def _require_terminal_toolkit() -> Any:
     global _CAMEL_IMPORT_ERROR
     if _CAMEL_IMPORT_ERROR is not None:
@@ -92,7 +116,19 @@ def _require_terminal_toolkit() -> Any:
             "camel-ai (TerminalToolkit) is required for TB2. Install from PyPI or from the CAMEL repo."
         ) from exc
 
-    return TerminalToolkit
+    class _TerminalToolkit(TerminalToolkit):
+        """Runs the agent's and the verifier's commands without the server's secrets."""
+
+        def _get_env_vars(self) -> dict[str, str]:
+            return {
+                k: v
+                for k, v in super()._get_env_vars().items()
+                if k in _SHELL_ENV_ALLOWLIST
+                or k.startswith(("LC_", "UV_"))
+                or k in self._runtime_env_vars
+            }
+
+    return _TerminalToolkit
 
 
 def _download_tb2_repo(cache_dir: Path) -> Path:

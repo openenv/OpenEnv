@@ -51,6 +51,7 @@ try:
     from ..models import JuliaAction, JuliaObservation, JuliaState
     from .julia_codeact_env import JuliaCodeActEnv
     from .julia_executor import JuliaExecutor
+    from .julia_sandbox import set_non_dumpable
 except ImportError:
     from models import JuliaAction, JuliaObservation, JuliaState
 
@@ -58,6 +59,11 @@ except ImportError:
     from openenv.core.env_server.http_server import create_app
     from server.julia_codeact_env import JuliaCodeActEnv
     from server.julia_executor import JuliaExecutor
+    from server.julia_sandbox import set_non_dumpable
+
+# Julia code may run as this server's user: keep it from reading this process's
+# environment and memory through /proc.
+set_non_dumpable()
 
 # Configuration from environment variables
 MAX_WORKERS = int(os.getenv("JULIA_MAX_WORKERS", "8"))

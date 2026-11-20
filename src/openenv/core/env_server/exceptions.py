@@ -44,7 +44,10 @@ class SessionCapacityError(OpenEnvError):
     Raised when the server cannot accept new sessions due to capacity limits.
 
     This error is raised when a new WebSocket connection is attempted but
-    the server has already reached max_concurrent_envs active sessions.
+    the server has already reached max_concurrent_envs active sessions. The
+    default message tells the caller which server setting limits the number of
+    sessions, since the client (e.g. a trainer opening one session per
+    concurrent episode) usually cannot see the server configuration.
     """
 
     def __init__(
@@ -59,7 +62,13 @@ class SessionCapacityError(OpenEnvError):
         if message is None:
             message = (
                 f"Server at capacity: {active_sessions}/{max_sessions} sessions active. "
-                f"Cannot accept new connections."
+                f"Cannot accept new connections. To serve more concurrent sessions, "
+                f"start the server with a higher max_concurrent_envs (most "
+                f"environment servers read it from the MAX_CONCURRENT_ENVS "
+                f"environment variable). Values above 1 also require an environment "
+                f"that isolates per-session state and declares "
+                f"SUPPORTS_CONCURRENT_SESSIONS=True. Otherwise, open fewer "
+                f"sessions at once or close idle ones."
             )
 
         super().__init__(message)

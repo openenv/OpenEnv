@@ -13,6 +13,7 @@ import logging
 import sqlite3
 from typing import Any, Dict, List, Optional
 
+from database.session_manager import connect_database
 from fastapi import Body, FastAPI, Query, Request
 from openenv.core.env_server.http_server import HTTPEnvServer
 
@@ -238,7 +239,7 @@ class MCPHTTPEnvServer(HTTPEnvServer):
             db_path = self.session_manager.get_db_path(database_id)
 
             try:
-                conn = sqlite3.connect(db_path)
+                conn = connect_database(db_path)
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
 
@@ -298,7 +299,7 @@ class MCPHTTPEnvServer(HTTPEnvServer):
             db_path = self.session_manager.get_db_path(database_id)
 
             # Drop all existing tables using sqlite3
-            conn = sqlite3.connect(db_path)
+            conn = connect_database(db_path)
             cursor = conn.cursor()
 
             cursor.execute(
@@ -326,7 +327,7 @@ class MCPHTTPEnvServer(HTTPEnvServer):
                 seed_sql = seed_data_fn()
                 used_custom_sql = False
 
-            conn = sqlite3.connect(db_path)
+            conn = connect_database(db_path)
             cursor = conn.cursor()
 
             # Parse and execute SQL statements

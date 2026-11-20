@@ -282,6 +282,20 @@ class HarborEnvironment(MCPEnvironment):
                 ok=False, error=str(exc)[:400], harness=harness, sandbox=sandbox
             ).model_dump_json()
 
+        # Same rule as the web UI: a task that gets this server's environment variables or files
+        # runs only on the server's own endpoint, since the caller's model would see the secrets.
+        if llm_url:
+            from .ui_data import reads_environment
+
+            if reads_environment(split, int(task_index)):
+                return HarborRolloutResult(
+                    ok=False,
+                    error="this task passes the server's environment variables or files into "
+                    "the sandbox, so it runs only on the server's own endpoint, not with llm_url",
+                    harness=harness,
+                    sandbox=sandbox,
+                ).model_dump_json()
+
         # This tool is `async` on purpose. FastMCP dispatches a SYNC tool body through
         # `anyio.to_thread.run_sync` with no limiter (`fastmcp/utilities/async_utils.py`), which
         # uses anyio's default `CapacityLimiter(40)` — and the body holds that worker thread for the
