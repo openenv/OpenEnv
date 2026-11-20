@@ -304,3 +304,45 @@ jobs:
           docker run --rm --network none --pids-limit 64 --memory 2g \
             --mount type=bind,src="$PWD/tests/containers/check_ortools_sandbox.py",dst=/checks.py,readonly \
             --entrypoint /app/.venv/bin/python ortools-isolation /checks.py
+
+  test-data-analysis-env:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Install locked data-analysis environment and test dependencies
+        run: uv sync --python 3.12 --project envs/data_analysis_env --frozen --extra dev
+
+      - name: Run data-analysis regressions
+        env:
+          PYTHONPATH: src:envs
+        run: |
+          uv run --project envs/data_analysis_env --frozen --extra dev pytest \
+            tests/envs/test_data_analysis_env.py tests/envs/test_data_analysis_sandbox.py \
+            -m "not network" -v --tb=short
+
+      - name: Build production image
+        run: docker build -t data-analysis-isolation -f envs/data_analysis_env/server/Dockerfile envs/data_analysis_env
+
+      - name: Check per-session users, secrets and network isolation
+        run: |
+          for mode in netns no-netns; do
+            if [ "$mode" = netns ]; then
+              flags="--cap-add SYS_ADMIN --cap-add SYS_PTRACE"; expect=1
+            else
+              flags=""; expect=0
+            fi
+            docker run --rm --network none --memory 8g $flags \
+              -e HF_TOKEN=hf_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE00 -e EXPECT_NETNS=$expect \
+              --mount type=bind,src="$PWD/tests/containers/check_data_analysis_sandbox.py",dst=/checks.py,readonly \
+              --entrypoint /app/.venv/bin/python data-analysis-isolation /checks.py
+          done

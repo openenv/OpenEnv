@@ -1,0 +1,2 @@
+Not for Hugging Face Spaces: Spaces don't run the container as root, so sessions can't get a uid each,
+and the server needs network access to fetch tasks. Run it locally, in your own container, or next to the trainer.
