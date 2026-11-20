@@ -41,6 +41,16 @@ Upstream responses are buffered to preserve complete capture, then replayed as p
 
 A versioned external evidence report supplies stable, experimental and unstable classifications for the recorded provider/model/adapter combination. No report means unqualified; the UI requires an explicit experimental opt-in. Recorded evidence does not qualify a newly entered endpoint or pin installed agent versions. `harness_profile` selects an explicitly supported ACP or NeMo workflow on a local seam copy, without mutating global defaults. Unknown profiles fail.
 
+### Sandbox supervision
+
+Harbor stops a trial's sandbox in `Trial._finalize`. `openenv.harbor.supervisor` covers what that cannot: a signal that ends the process, provider throttling of creation, and a cancellation that abandons a start mid-flight. `run_rollout` adopts each trial into one process-wide supervisor, which wraps that trial's `agent_environment.start/stop` rather than replacing Harbor's lifecycle.
+
+`OPENENV_HARBOR_MAX_SANDBOX_STARTS` caps how many sandboxes may be starting at once, across every event loop in the process. Unset or `0` is uncapped. It is separate from `MAX_CONCURRENT_ENVS`: a rollout holds a creation slot only while its sandbox starts, so rollout concurrency can stay above what a provider accepts for creation.
+
+The supervisor owns exactly the sandboxes whose start it ran and has not yet stopped. Cleanup stops only those, never by listing or labels, so other processes' sandboxes are untouched. It is safe to call repeatedly and concurrently with Harbor's own stop: each sandbox is stopped once, on the loop that started it. A cancelled start is not abandoned; it completes, and stop waits for it (up to 120 s) before deleting. That wait also applies after Harbor's own start timeout, which delays a hung start's teardown rather than racing it.
+
+On the first sandbox start from the main thread, handlers for SIGINT and SIGTERM are installed over whatever is there, including a server's. A signal stops owned sandboxes (bounded at 180 s: the 120 s wait for an in-flight start, then 60 s to stop), restores the previous handler and re-raises the signal to it, so default termination, `KeyboardInterrupt` and server shutdown behave as before. A second signal skips the wait. A process that starts sandboxes only from worker threads calls `install_signal_handlers()` itself; the Harbor server does so at app startup, since its UI runs each rollout in a worker thread, and a signal then stops those sandboxes on their own loops. Separate verifier environments and sandboxes on an already-closed loop are out of scope.
+
 ### Text-level SFT export
 
 The training contract above is token-level and refuses evaluation rollouts. A second export is text-level: `openenv.harbor.sft.export_sft` (and `openenv harbor export-sft`) turns a rollout into one conversational row, the agent's last request (`request_messages`, `request_tools`) plus its reply. Supervised fine-tuning needs that conversation, not engine tokens, so this export accepts `eval` rollouts against hosted providers as well as `train` ones, and never reads token fields. It does not weaken the token contract: an `eval` rollout still cannot produce a `TrainingTrace`.

@@ -112,9 +112,21 @@ class FinRLEnvironment(Environment):
         self.finrl_env = None
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
-    def reset(self) -> FinRLObservation:
+    def reset(
+        self,
+        seed: int | None = None,
+        episode_id: str | None = None,
+        **kwargs: Any,
+    ) -> FinRLObservation:
         """
         Reset the environment to start a new episode.
+
+        Args:
+            seed (`int`, *optional*):
+                Accepted for API compatibility. The wrapped FinRL environment
+                replays the same data on every episode, so it has no effect.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
 
         Returns:
             FinRLObservation with initial state and portfolio value
@@ -126,7 +138,10 @@ class FinRLEnvironment(Environment):
         state, _ = self.finrl_env.reset()
 
         # Update our state tracking
-        self._state = State(episode_id=str(uuid4()), step_count=0)
+        self._state = State(
+            episode_id=episode_id if episode_id is not None else str(uuid4()),
+            step_count=0,
+        )
 
         # Calculate initial portfolio value
         portfolio_value = self._calculate_portfolio_value(state)

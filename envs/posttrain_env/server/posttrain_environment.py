@@ -33,7 +33,7 @@ from uuid import uuid4
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 from huggingface_hub import HfApi
 from huggingface_hub.errors import HfHubHTTPError
 from openenv.core.env_server.mcp_environment import MCPEnvironment
@@ -125,9 +125,10 @@ class PostTrainEnvironment(MCPEnvironment):
                         owner._score_lock,
                     )
                 meta = context.fastmcp_context.request_context.meta
-                expected = (
-                    None if meta is None else meta.model_dump().get("posttrain_episode")
-                )
+                # FastMCP 4 passes request meta as a dict, FastMCP 3 as a model.
+                if meta is not None and not isinstance(meta, dict):
+                    meta = meta.model_dump()
+                expected = None if meta is None else meta.get("posttrain_episode")
                 if expected is not None and expected != ownership[2]:
                     return ToolResult(
                         structured_content=BrokerError(
