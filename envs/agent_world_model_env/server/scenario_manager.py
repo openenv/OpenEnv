@@ -129,7 +129,10 @@ class _MCPConnection:
             {
                 "name": t.name,
                 "description": t.description or "",
-                "inputSchema": t.inputSchema or {},
+                # mcp 2 renamed the attribute to input_schema.
+                "inputSchema": getattr(t, "input_schema", None)
+                or getattr(t, "inputSchema", None)
+                or {},
             }
             for t in result.tools
         ]
