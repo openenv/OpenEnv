@@ -105,6 +105,12 @@ zygote and the workers are non-dumpable, and so is the server started from
 `server/app.py`, so other processes of the same user can't read their memory
 or environment through `/proc`.
 
+On Linux (x86_64 and aarch64) each worker also installs a seccomp filter
+before it runs any model code: it can't create sockets of any family, so even
+with modules like `requests` or `pandas` authorized, model code has no network.
+The filter needs no capability, so it also applies where network namespaces
+are not available (no `CAP_SYS_ADMIN`). Elsewhere the server logs a warning.
+
 - `CODING_ENV_EXEC_TIMEOUT_S`: hard limit per step (default `30`). A step that
   runs longer is stopped, its worker is killed, and the next step starts with a
   fresh interpreter.
