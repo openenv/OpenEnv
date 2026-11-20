@@ -115,7 +115,7 @@ class DataAnalysisEnvironment(MCPEnvironment):
         """
         conf = tasks.settings()
         split = str(split or conf["split"])
-        calls = int(max_python_calls or DEFAULT_MAX_PYTHON_CALLS)
+        calls = DEFAULT_MAX_PYTHON_CALLS if max_python_calls is None else int(max_python_calls)
         if not 1 <= calls <= MAX_PYTHON_CALLS_LIMIT:
             raise ValueError(
                 f"max_python_calls must be in [1, {MAX_PYTHON_CALLS_LIMIT}]"
@@ -136,6 +136,8 @@ class DataAnalysisEnvironment(MCPEnvironment):
             except tasks.TaskError:
                 if attempt == attempts - 1:
                     raise
+                # Don't draw the same task again on the next attempt.
+                rows = [r for r in rows if r["task_id"] != row["task_id"]]
         with self._lock:
             self._close_session()
             self._task = row

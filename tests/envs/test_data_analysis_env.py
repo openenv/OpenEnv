@@ -356,6 +356,8 @@ def test_python_call_budget(env):
     assert "no run_python calls left" in text(call(env, "run_python", code="3"))
     with pytest.raises(ValueError):
         env.reset(task_id="t1", max_python_calls=1000)
+    with pytest.raises(ValueError):
+        env.reset(task_id="t1", max_python_calls=0)
 
 
 def test_reset_starts_a_fresh_session(env):
@@ -379,6 +381,22 @@ def test_failed_reset_keeps_the_current_episode(env, monkeypatch):
     assert text(call(env, "run_python", code="x")) == "1\n"
     obs = call(env, "submit_answer", answer=GOLD)
     assert (obs.done, obs.reward) == (True, 1.0)
+
+
+def test_random_reset_does_not_retry_a_task_that_failed(env, monkeypatch):
+    fetch = tasks.fetch_task_files
+    tried = []
+
+    def first_fails(row, *args, **kwargs):
+        tried.append(row["task_id"])
+        if len(tried) == 1:
+            raise tasks.TaskError("download failed")
+        return fetch(row, *args, **kwargs)
+
+    monkeypatch.setattr(tasks, "fetch_task_files", first_fails)
+    env.reset(seed=0)
+    assert len(tried) == 2 and tried[1] != tried[0]
+    assert env.state.task_id == tried[1]
 
 
 class _SlowSession:
