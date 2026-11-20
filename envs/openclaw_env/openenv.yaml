@@ -1,0 +1,3 @@
+name: openclaw_env
+version: 0.1.0
+description: OpenClaw agentic environment for RL training

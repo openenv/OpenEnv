@@ -1,0 +1,9 @@
+# OpenClaw Environment Dependencies
+# Core dependencies are inherited from openenv-base image
+# Add environment-specific dependencies here
+
+# No additional dependencies required for core functionality
+# The environment uses standard library modules for:
+# - subprocess (shell execution)
+# - pathlib (file operations)
+# - tempfile (workspace management)
