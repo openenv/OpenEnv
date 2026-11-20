@@ -35,6 +35,8 @@ These invariants must NEVER be violated. If a change would violate them, stop an
    - Never log API keys, tokens, or secrets
    - Never include credentials in error messages
    - Use environment variables for sensitive configuration
+   - Code the model writes (Python, shell, any language) runs in a separate process that never gets the server's secrets: start it from an environment allowlist, never a copy of `os.environ`, and keep tokens the server needs (for example for LLM calls) in the server process
+   - An interpreter that restricts what code can do (smolagents' `LocalPythonExecutor`, `openenv.core.tools.PyExecutor`) is not a sandbox: never run model code with it inside a process that holds secrets
 
 ## Architectural Invariants
 

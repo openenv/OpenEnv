@@ -744,12 +744,15 @@ def test_concurrency_limit_rejects_without_starting_extra_worker(tmp_path):
 
 
 def test_child_timeout_interrupts_inflight_call(tmp_path):
-    controller = make_controller(tmp_path, per_child_timeout_s=0.3)
+    controller = make_controller(tmp_path)
     try:
-        handle = controller.children.spawn("blocked ignore-term")
-        pids = wait_ready(tmp_path)
+        children = controller.children
+        handle = children.spawn("blocked ignore-term")
+        pids = wait_ready(tmp_path, manager=children)
+        # Exercise the in-flight timeout independently of worker startup time.
+        children.limits = replace(children.limits, per_child_timeout_s=0.3)
         with pytest.raises(RuntimeError, match="timeout"):
-            controller.children.wait(handle, timeout_s=15)
+            children.wait(handle, timeout_s=15)
         assert_reaped(pids)
     finally:
         controller.close()
