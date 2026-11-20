@@ -1728,16 +1728,6 @@ class HTTPEnvServer:
                         # Receive message from client
                         raw_message = await websocket.receive_text()
 
-                        # The reaper or shutdown may have destroyed this
-                        # session (closing its env and freeing its slot).
-                        if session_id not in self._sessions:
-                            error_resp = JsonRpcResponse.error_response(
-                                JsonRpcErrorCode.SERVER_ERROR,
-                                "Session expired or was closed; open a new connection",
-                            )
-                            await websocket.send_text(error_resp.model_dump_json())
-                            break
-
                         try:
                             jsonrpc_dict = json.loads(raw_message)
                             jsonrpc_request = JsonRpcRequest(**jsonrpc_dict)
@@ -1755,6 +1745,17 @@ class HTTPEnvServer:
                             )
                             await websocket.send_text(error_resp.model_dump_json())
                             continue
+
+                        # The reaper or shutdown may have destroyed this
+                        # session (closing its env and freeing its slot).
+                        if session_id not in self._sessions:
+                            error_resp = JsonRpcResponse.error_response(
+                                JsonRpcErrorCode.SERVER_ERROR,
+                                "Session expired or was closed; open a new connection",
+                                request_id=jsonrpc_request.id,
+                            )
+                            await websocket.send_text(error_resp.model_dump_json())
+                            break
 
                         try:
                             # Call mcp_handler with session environment

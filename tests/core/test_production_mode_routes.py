@@ -2709,6 +2709,7 @@ class TestMCPSessionReaper:
                 ws.send_json(self.rpc("tools/list", request_id=2))
                 response = ws.receive_json()
                 assert response["error"]["code"] == -32000, response
+                assert response["id"] == 2
                 with pytest.raises(WebSocketDisconnect):
                     ws.receive_json()
 
