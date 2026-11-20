@@ -107,6 +107,9 @@ Each RFC should include the following sections:
 ### Discovery & Distribution
 - [011-ard-catalog-discovery.md](./011-ard-catalog-discovery.md) - Versioned environment metadata, ARD interchange, and a read-only producer-consumer path
 
+### External Environment Imports
+- [015-external-environment-imports.md](./015-external-environment-imports.md) - External Environment Imports (ORS/OpenReward, Verifiers)
+
 ## Questions?
 
 For questions about the RFC process, reach out to the core team or open a discussion in the project repository.
