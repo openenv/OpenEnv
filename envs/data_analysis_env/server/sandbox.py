@@ -19,8 +19,9 @@ layers below decide what that is, from the strongest to defense in depth:
    capability is needed) that refuses to create any socket, before model code runs. With root and
    CAP_SYS_ADMIN the spawner also moves itself into a new network namespace before it forks any
    worker, so workers have no usable interface, not even loopback. The server logs which of the
-   two apply ("network: blocked by seccomp" without CAP_SYS_ADMIN, Docker's default), or
-   "network: NOT isolated" when neither does (not Linux), and then only the audit hook (4) blocks
+   two apply ("network: blocked by seccomp" without the namespace, e.g. Docker's default or a
+   runtime that refuses unshare), or "network: NOT isolated" when neither does (not Linux, a CPU
+   without a filter here, or a kernel that refuses it), and then only the audit hook (4) blocks
    sockets.
 3. **Process limits and hygiene.** A hard per-call timeout (the worker is killed and the next
    call starts a fresh session), an address-space limit, a cap on file size, open files and

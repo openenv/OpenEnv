@@ -33,7 +33,7 @@ correct analysis into tool errors.
 # From the repo root
 docker build -t data-analysis-env:latest -f envs/data_analysis_env/server/Dockerfile envs/data_analysis_env
 docker run --rm -p 8000:8000 data-analysis-env:latest
-# Optional: --cap-add SYS_ADMIN also takes the network away from model code (see "Sandbox")
+# Optional: --cap-add SYS_ADMIN adds a network namespace for model code (see "Sandbox")
 ```
 
 ```python
@@ -140,11 +140,23 @@ forked from a spawner that has pandas, numpy and scikit-learn loaded, with these
    can't read the server's environment, memory or root-only files, another session's home, or signal another session's
    processes. When a session ends, every process left with its uid is killed and its files in `/tmp`, `/var/tmp` and
    `/dev/shm` are removed before the uid is used again.
-2. **No network.** On Linux each worker installs a seccomp filter that refuses to create any socket, before model
-   code runs. It needs no capability, so it also holds on hosts that don't grant `CAP_SYS_ADMIN`, and the server
-   logs `network: blocked by seccomp`. With `CAP_SYS_ADMIN` (`docker run --cap-add SYS_ADMIN`) the spawner also moves
-   into a new network namespace, so workers have no usable interface, not even loopback. When neither applies (not
-   Linux) the server logs `network: NOT isolated` and only the audit hook (4) blocks sockets.
+2. **No network.** Two mechanisms, and which ones apply depends on the host. The server says so once, at startup, in
+   the log line `data_analysis_env sandbox: workers run as ..., network: ...`:
+
+   | Log says | What model code gets |
+   |---|---|
+   | `isolated (namespace and seccomp)` | Both mechanisms below. |
+   | `blocked by seccomp (no namespace: <reason>)` | The seccomp filter only. This is Docker's default (no `CAP_SYS_ADMIN`), a non-root server, `DATA_ANALYSIS_ISOLATE_NETWORK=0`, or a runtime that refuses `unshare` even so (Hugging Face Jobs, for example). |
+   | `isolated (namespace, <reason>)` | The namespace only. |
+   | `NOT isolated (<reasons>)` | Neither. Only the audit hook (4) stops sockets, and it can be bypassed. This is macOS and Windows, Linux on a CPU other than x86_64 or aarch64, or a kernel that refuses the filter. |
+
+   - **seccomp filter** (Linux on x86_64 or aarch64, no capability needed): each worker installs it before model code
+     runs, and it can't be removed from inside the process. It refuses `socket(2)` for every address family and
+     `io_uring_setup(2)`, so model code can't open a network connection or connect to a Unix socket. The spawner
+     checks at startup that the kernel enforces it.
+   - **network namespace** (Linux, server running as root, and `unshare(CLONE_NEWNET)` allowed, which takes
+     `CAP_SYS_ADMIN`, e.g. `docker run --cap-add SYS_ADMIN`): the spawner moves into a new, empty namespace before it
+     forks any worker, so workers have no interface, not even loopback.
 3. **Limits.** A hard timeout per call (30 s, then the worker is killed and the session restarts, with a message
    saying so), 4 GiB of address space, at most 64 processes per session user, 256 open files, 64 MiB per written file,
    no core files. The worker's environment is an allowlist (`PATH`, locale, `HOME`), never a copy of the server's, so
@@ -162,9 +174,10 @@ in its own container when model code is untrusted, which is the case in RL train
 
 Residual risks, by design:
 
-- Code that gets past the audit hook can read anything world-readable on the host and, without the network namespace,
-  open connections. With the internet it could fetch the public dataset and look up the gold answer, which would make
-  the reward meaningless. Give the container `CAP_SYS_ADMIN` (or no network beyond what the server needs) for training.
+- Code that gets past the audit hook can read anything world-readable on the host. Where the startup log says
+  `network: NOT isolated`, it can also open connections: with the internet it could fetch the public dataset and look
+  up the gold answer, which would make the reward meaningless. For training, run the server on Linux (x86_64 or
+  aarch64) and check that the log says `blocked by seccomp` or `isolated`.
 - Without a uid per session, code past the hook could interfere with other sessions on the same server.
 
 `tests/containers/check_data_analysis_sandbox.py` checks these properties in the production image, as root with a fake
