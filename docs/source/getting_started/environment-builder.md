@@ -90,7 +90,7 @@ variables:
   OPENSPIEL_GAME: catch
 ```
 
-CLI `-e` overrides matching keys. Put secrets (API keys, tokens) only on the CLI with `--secret KEY=VALUE`, never in the yaml.
+CLI `-e` overrides matching keys. Put secrets (API keys, tokens) only on the CLI with `--secret KEY=VALUE`, never in the yaml. Secrets are environment variables of the server, so code the model writes must not run in the server process or inherit its environment (see [Keep secrets away from model code](../guides/first-environment.md#keep-secrets-away-from-model-code)).
 
 To fork or update someone else's environment, see [Contributing Environments](contributing-envs.md).
 
