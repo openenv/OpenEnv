@@ -88,6 +88,8 @@ sees them), `difficulty_tier` and `tools`. Harnesses can use the bundled `prompt
 `submit_answer` scores 1.0 when the grader accepts the answer, with the row's own `reward_mode`, `atol` and `rtol`, and
 0.0 otherwise (also for an empty answer or one over 1,000 characters). The state records `grade_method` (`exact`,
 `numeric`, `numeric_scaled`, `list`, `math_verify` or `miss`). An episode that never submits has no reward.
+The reward is on the observation of the submitting step only: later steps of the episode return `done=True` and no
+reward, and `state.reward` keeps it.
 
 For harnesses that end an episode on a reply without a tool call, `data_analysis_env.extract_answer(text)` reads the
 answer from that reply (the last `\boxed{}`, else the last `Answer:` or `Final answer:` line, else the whole reply), so

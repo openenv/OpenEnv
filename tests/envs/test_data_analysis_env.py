@@ -31,7 +31,10 @@ from data_analysis_env.server.data_analysis_environment import (  # noqa: E402
     DataAnalysisEnvironment,
 )
 from openenv.core.env_server.mcp_environment import MCPEnvironment  # noqa: E402
-from openenv.core.env_server.mcp_types import CallToolAction  # noqa: E402
+from openenv.core.env_server.mcp_types import (  # noqa: E402
+    CallToolAction,
+    ListToolsAction,
+)
 
 ENV_DIR = Path(__file__).resolve().parents[2] / "envs" / "data_analysis_env"
 GOLD = "GOLD-SENTINEL-1234"
@@ -340,7 +343,25 @@ def test_episode_run_then_submit(env):
     # The episode is over: no more code, no second answer.
     assert "over" in text(call(env, "run_python", code="1"))
     obs = call(env, "submit_answer", answer="8")
-    assert "already submitted" in text(obs) and obs.reward == 1.0
+    assert "already submitted" in text(obs)
+
+
+def test_reward_is_emitted_only_on_the_submit_step(env):
+    env.reset(task_id="t2")
+    obs = call(env, "submit_answer", answer="7")
+    assert (obs.done, obs.reward) == (True, 1.0)
+    # Steps after the submit end the same way but don't pay the reward again.
+    for obs in (
+        call(env, "submit_answer", answer="7"),
+        call(env, "run_python", code="1"),
+        env.step(ListToolsAction()),
+    ):
+        assert (obs.done, obs.reward) == (True, None)
+    assert env.state.reward == 1.0
+    # A new episode pays its own reward.
+    env.reset(task_id="t1")
+    obs = call(env, "submit_answer", answer="nope")
+    assert (obs.done, obs.reward) == (True, 0.0)
 
 
 def test_wrong_answer_scores_zero(env):

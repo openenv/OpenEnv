@@ -10,7 +10,8 @@ Data-analysis Environment Implementation.
 Each episode is one SmolDataEnvs task: a question about one or more data files. The agent has two
 MCP tools: `run_python(code)`, which runs code in the episode's sandboxed Python session (see
 sandbox.py), and `submit_answer(answer)`, which grades the answer with the dataset's grader and
-ends the episode. The reward (1.0 or 0.0) arrives on the observation of the submitting step.
+ends the episode. The reward (1.0 or 0.0) arrives on the observation of the submitting step
+only: later steps of the same episode return done=True with no reward. `state.reward` keeps it.
 """
 
 import asyncio
@@ -87,6 +88,9 @@ class DataAnalysisEnvironment(MCPEnvironment):
         # A tool call that the MCP layer gave up on keeps running in its thread. The lock makes
         # the next call (or reset, submit, close) wait for it instead of sharing the worker.
         self._lock = threading.Lock()
+        # Set by submit_answer and cleared by the step that returns the reward, so the reward
+        # is emitted once per episode.
+        self._reward_pending = False
 
     def reset(
         self,
@@ -142,6 +146,7 @@ class DataAnalysisEnvironment(MCPEnvironment):
             self._close_session()
             self._task = row
             self._session = SandboxSession(read_dirs=[task_dir])
+            self._reward_pending = False
             self._state = DataAnalysisState(
                 episode_id=episode_id or str(uuid4()),
                 step_count=0,
@@ -199,6 +204,7 @@ class DataAnalysisEnvironment(MCPEnvironment):
         self._state.submitted_answer = str(answer)[:1000]
         self._state.reward = reward
         self._state.grade_method = method
+        self._reward_pending = True
         self._close_session()  # no more code runs in this episode
         return "Answer submitted. The task is over."
 
@@ -208,9 +214,12 @@ class DataAnalysisEnvironment(MCPEnvironment):
             self._session = None
 
     def _finish(self, obs: Observation) -> Observation:
+        # No lock here: step_async runs on the server loop, and a tool call the MCP layer gave
+        # up on may still hold it.
         if self._state.submitted:
             obs.done = True
-            obs.reward = self._state.reward
+            obs.reward = self._state.reward if self._reward_pending else None
+            self._reward_pending = False
         return obs
 
     def _step_impl(
