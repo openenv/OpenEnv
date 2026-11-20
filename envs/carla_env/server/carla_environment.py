@@ -16,6 +16,7 @@ The environment wraps CARLA scenarios and provides OpenEnv-compatible API.
 
 import html
 import math
+import random
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -155,8 +156,9 @@ class WorldWrapper:
 class ActorsHelper:
     """Helper for spawning actors in scenarios."""
 
-    def __init__(self, world):
+    def __init__(self, world, rng: Any = random):
         self.world = world
+        self.rng = rng
         self._spawned_actors = []
 
     def spawn_pedestrian(self, transform):
@@ -193,12 +195,10 @@ class ActorsHelper:
         """
         try:
             blueprint_library = self.world.get_blueprint_library()
-            import random
-
             vehicle_bps = blueprint_library.filter("vehicle.*")
             if not vehicle_bps:
                 return None
-            vehicle_bp = random.choice(vehicle_bps)
+            vehicle_bp = self.rng.choice(vehicle_bps)
 
             actor = self.world.try_spawn_actor(vehicle_bp, transform)
             if actor is not None:
@@ -264,8 +264,13 @@ class CarlaEnvironment(Environment):
     ):
         super().__init__()
 
+        # Random generator for every random choice the environment and its
+        # scenarios make, so reset(seed=...) does not affect other instances.
+        self._rng = random.Random()
+
         # Load scenario
         self.scenario: BaseScenario = get_scenario(scenario_name, scenario_config)
+        self.scenario.rng = self._rng
 
         # Set rubric based on scenario type
         self.rubric = _rubric_for_scenario(self.scenario)
@@ -306,6 +311,9 @@ class CarlaEnvironment(Environment):
         self,
         scenario_name: Optional[str] = None,
         scenario_config: Optional[Dict[str, Any]] = None,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
     ) -> CarlaObservation:
         """
         Reset environment and setup scenario.
@@ -314,6 +322,13 @@ class CarlaEnvironment(Environment):
             scenario_name: Optional scenario name to switch to. If None, uses current scenario.
             scenario_config: Optional dict of config field overrides (e.g. weather, max_steps).
                 Keys must match fields on the scenario's config dataclass.
+            seed: If given, reseed this environment's own random generator
+                before the scenario is set up. That fixes the choices this
+                package makes with it (random weather, maze and route goals,
+                spawn points, NPC vehicle models) and does not touch other
+                environment instances. It does not seed the CARLA simulator,
+                so real mode runs can still differ in traffic and physics.
+            episode_id: Optional episode identifier (generated if omitted)
 
         Returns:
             Initial observation
@@ -331,9 +346,12 @@ class CarlaEnvironment(Environment):
         # Reset rubric state for new episode
         self._reset_rubric()
 
-        # Generate new episode ID
+        if seed is not None:
+            self._rng.seed(seed)
+        self.scenario.rng = self._rng
+
         self._state = CarlaState(
-            episode_id=str(uuid.uuid4()),
+            episode_id=episode_id if episode_id is not None else str(uuid.uuid4()),
             scenario_name=self.scenario.config.name,
             step_count=0,
         )
@@ -715,9 +733,7 @@ class CarlaEnvironment(Environment):
         # Randomly pick from all valid candidates (within max_angle_deg).
         # This avoids always selecting the same spawn point which may have
         # undesirable road features (e.g. speed bumps).
-        import random
-
-        random.shuffle(candidates)
+        self._rng.shuffle(candidates)
         return candidates[0][1]
 
     def _reset_real_mode(self) -> None:
@@ -898,7 +914,7 @@ class CarlaEnvironment(Environment):
             pass
 
         # Create actors helper and runtime for scenarios
-        self.actors_helper = ActorsHelper(self.world)
+        self.actors_helper = ActorsHelper(self.world, self._rng)
         runtime = CarlaRuntime(
             self.world,
             self.vehicle,

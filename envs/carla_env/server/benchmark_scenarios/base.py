@@ -13,6 +13,7 @@ https://github.com/SinatrasC/carla-env
 
 from __future__ import annotations
 
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, Generic, TypeVar
@@ -42,6 +43,10 @@ C = TypeVar("C", bound=ScenarioConfig)
 
 
 class BaseScenario(ABC, Generic[C]):
+    # Source of random choices. CarlaEnvironment replaces it with its own
+    # generator so seeding one environment does not affect another.
+    rng: Any = random
+
     def __init__(self, config: C):
         self.config: C = config
 

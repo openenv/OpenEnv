@@ -12,7 +12,6 @@ Vehicle must navigate to a goal location using basic controls.
 
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 from typing import Any, Dict
 
@@ -53,7 +52,7 @@ class MazeScenario(BaseScenario[MazeConfig]):
                 <= loc.distance(ego)
                 <= self.config.max_goal_distance
             ]
-            loc = random.choice(candidates or spawns)
+            loc = self.rng.choice(candidates or spawns)
             goal = (loc.x, loc.y, loc.z)
         state["scenario_data"]["goal_location"] = goal
 
