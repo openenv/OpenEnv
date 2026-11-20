@@ -8,6 +8,7 @@ The server is fully generic and works with any MCP integration.
 All MCP-specific configuration is loaded from config.py.
 """
 
+import functools
 import asyncio
 import logging
 import sqlite3
@@ -104,6 +105,8 @@ class MCPHTTPEnvServer(HTTPEnvServer):
             Args (in request body, all optional):
                 database_id: Database identifier for multi-tenancy
                 sql_content: Custom SQL content to use for seeding instead of default
+                seed: Accepted for API compatibility, no effect
+                episode_id: Episode identifier (generated if omitted)
 
             Returns:
                 Observation with reset status and database reset result
@@ -134,7 +137,14 @@ class MCPHTTPEnvServer(HTTPEnvServer):
 
             # Execute reset in thread pool (environments may use sync code)
             loop = asyncio.get_event_loop()
-            observation = await loop.run_in_executor(None, self.env.reset)
+            observation = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    self.env.reset,
+                    seed=body.get("seed"),
+                    episode_id=body.get("episode_id"),
+                ),
+            )
 
             # Serialize observation manually
             result = {

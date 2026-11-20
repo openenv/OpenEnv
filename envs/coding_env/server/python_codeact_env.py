@@ -14,6 +14,7 @@ an episode does to the interpreter reaches another session or episode.
 """
 
 import uuid
+from typing import Any, Optional
 
 from openenv.core.env_server.interfaces import (
     Action,
@@ -91,9 +92,19 @@ class PythonCodeActEnv(Environment):
             additional_imports=self._additional_imports, timeout_s=self._timeout_s
         )
 
-    def reset(self) -> Observation:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Observation:
         """
         Reset environment and start fresh execution session.
+
+        Args:
+            seed: Accepted for API compatibility. The environment has no random
+                state of its own, so it has no effect.
+            episode_id: Optional episode identifier (generated if omitted)
 
         Returns:
             Initial observation with empty stdout/stderr and exit_code=0, or
@@ -106,7 +117,7 @@ class PythonCodeActEnv(Environment):
         started = self._executor.start()
 
         # Initialize fresh state
-        self._state = CodeState(episode_id=str(uuid.uuid4()), step_count=0)
+        self._state = CodeState(episode_id=episode_id if episode_id is not None else str(uuid.uuid4()), step_count=0)
         self._state.last_exit_code = 0 if started else 1
 
         # Reset transform to clear any accumulated state
