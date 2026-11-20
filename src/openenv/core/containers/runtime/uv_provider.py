@@ -12,6 +12,7 @@ from typing import Dict, Optional
 
 import requests
 
+from ...utils import _SECRET_ENV_NAME
 from .providers import RuntimeProvider
 
 GIT_URL_PREFIX = "git+"
@@ -137,7 +138,11 @@ class UVProvider(RuntimeProvider):
         reload (`bool`, *optional*, defaults to `False`):
             Whether to enable uvicorn's reload mode.
         env_vars (`dict`, *optional*):
-            Environment variables to pass through to the spawned process.
+            Environment variables to pass through to the spawned process. The
+            server inherits this process's environment except variables named
+            like credentials (`TOKEN`, `KEY`, `SECRET` or `PASSWORD` as a part
+            of the name, such as `HF_TOKEN`), so a credential the server needs
+            has to be passed here.
         context_timeout_s (`float`, *optional*, defaults to `60.0`):
             How long to wait for the environment to become ready.
 
@@ -195,7 +200,8 @@ class UVProvider(RuntimeProvider):
             port (`int`, *optional*):
                 The port to bind the environment to.
             env_vars (`dict`, *optional*):
-                Environment variables to pass to the environment.
+                Environment variables to pass to the environment, on top of
+                the constructor's. Credentials reach the server only this way.
             workers (`int`, *optional*, defaults to `1`):
                 The number of workers to use.
 
@@ -232,7 +238,9 @@ class UVProvider(RuntimeProvider):
             project_path=project_path,
         )
 
-        env = os.environ.copy()
+        # Environment servers can run code a model wrote: they don't inherit
+        # this process's credentials, only the ones passed in env_vars.
+        env = {k: v for k, v in os.environ.items() if not _SECRET_ENV_NAME.search(k)}
 
         if self.env_vars:
             env.update(self.env_vars)
