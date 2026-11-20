@@ -13,24 +13,39 @@ import os
 import tempfile
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, TypeVar
+from typing import (
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+)
 
 _ContainerProviderT = TypeVar("_ContainerProviderT", bound="ContainerProvider")
 
 
 @contextmanager
-def _env_file_args(env_vars: Optional[Mapping[str, str]]) -> Iterator[List[str]]:
+def _env_file_args(
+    env_vars: Optional[Mapping[str, str]],
+) -> Iterator[Tuple[List[str], Optional[str]]]:
     """
-    Yield `--env-file` arguments for the container's environment variables.
+    Yield `--env-file` arguments for the container's environment variables,
+    and the text to send to docker's stdin.
 
     The values (often tokens) stay out of the command line, which other
     processes can read and errors include, and out of the docker CLI's own
     environment, where names like `DOCKER_HOST` or `PATH` would change how
-    the CLI runs. The file is readable only by this user and is removed once
-    docker has read it.
+    the CLI runs. Docker reads them from its stdin (`/dev/stdin`), so no file
+    is written and a CLI with a private `/tmp` (snap) still gets them. Windows
+    has no `/dev/stdin`: there they go in a temporary file only this user can
+    read, removed once docker returns.
     """
     if not env_vars:
-        yield []
+        yield [], None
         return
     lines = []
     for key, value in env_vars.items():
@@ -43,11 +58,14 @@ def _env_file_args(env_vars: Optional[Mapping[str, str]]) -> Iterator[List[str]]
                 "or NUL characters"
             )
         lines.append(f"{key}={value}\n")
+    if os.name != "nt":
+        yield ["--env-file", "/dev/stdin"], "".join(lines)
+        return
     fd, path = tempfile.mkstemp(prefix="openenv-env-")
     try:
         with os.fdopen(fd, "w") as env_file:
             env_file.writelines(lines)
-        yield ["--env-file", path]
+        yield ["--env-file", path], None
     finally:
         os.unlink(path)
 
@@ -264,9 +282,10 @@ class LocalDockerProvider(ContainerProvider):
 
         # Run container
         try:
-            with _env_file_args(env_vars) as env_args:
+            with _env_file_args(env_vars) as (env_args, env_input):
                 result = subprocess.run(
                     cmd[:2] + env_args + cmd[2:],
+                    input=env_input,
                     capture_output=True,
                     text=True,
                     check=True,
@@ -522,9 +541,10 @@ class DockerSwarmProvider(ContainerProvider):
                 cmd.extend(command_override)
 
         try:
-            with _env_file_args(env_vars) as env_args:
+            with _env_file_args(env_vars) as (env_args, env_input):
                 result = subprocess.run(
                     cmd[:3] + env_args + cmd[3:],
+                    input=env_input,
                     capture_output=True,
                     text=True,
                     check=True,

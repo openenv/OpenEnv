@@ -1,4 +1,3 @@
-import os
 import subprocess
 import time
 from types import SimpleNamespace
@@ -114,11 +113,8 @@ def test_env_values_reach_only_the_container(monkeypatch, provider_cls):
 
     def fake_run(command, **kwargs):
         if command[1] in ("run", "service") and "--env-file" in command:
-            path = command[command.index("--env-file") + 1]
-            seen["mode"] = os.stat(path).st_mode & 0o777
-            with open(path) as env_file:
-                seen["contents"] = env_file.read()
-            seen["path"] = path
+            seen["env_file"] = command[command.index("--env-file") + 1]
+            seen["stdin"] = kwargs.get("input")
             seen["command"] = command
             seen["env"] = kwargs.get("env")
             raise subprocess.CalledProcessError(125, command, "", "no such image")
@@ -133,11 +129,11 @@ def test_env_values_reach_only_the_container(monkeypatch, provider_cls):
     with pytest.raises(RuntimeError) as error:
         provider.start_container("echo-env:latest", env_vars=env_vars)
 
-    assert seen["contents"] == (
+    # Docker reads them from its stdin: no file, so a confined CLI gets them too.
+    assert seen["env_file"] == "/dev/stdin"
+    assert seen["stdin"] == (
         "HF_TOKEN=fake-token-value\nDOCKER_HOST=tcp://fake-host:1\n"
     )
-    assert seen["mode"] == 0o600
-    assert not os.path.exists(seen["path"])
     assert "fake-token-value" not in " ".join(seen["command"])
     assert "fake-token-value" not in str(error.value)
     # The docker CLI keeps its own environment: DOCKER_HOST is the container's.
