@@ -28,12 +28,18 @@ try:
 
     from ..models import KernelAction, KernelObservation, KernelState
     from .kernrl_environment import KernelOptEnvironment
+    from .profiler import set_non_dumpable
 except ImportError:
     from models import KernelAction, KernelObservation, KernelState
 
     # Standalone imports (when environment is standalone with openenv from pip)
     from openenv.core.env_server.http_server import create_app
     from server.kernrl_environment import KernelOptEnvironment
+    from server.profiler import set_non_dumpable
+
+# The solution's code runs as this server's user: keep it from reading this
+# process's environment and memory through /proc.
+set_non_dumpable()
 
 # Create the app with web interface and README integration
 # Pass the class (factory) instead of an instance for WebSocket session support

@@ -937,3 +937,22 @@ def test_tbench2_env_smoke():
 
     env.step(Tbench2Action(action_type="close"))
     env.close()
+
+
+@pytest.mark.skipif(camel is None, reason="camel-ai not installed")
+def test_agent_shell_gets_no_server_secrets(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HF_TOKEN", "hf_FAKEtoken0000000000000000000000000")
+    monkeypatch.setenv("MY_API_KEY", "fake-key")
+    toolkit = tbench2_env_environment._require_terminal_toolkit()(
+        timeout=20,
+        working_directory=str(tmp_path),
+        use_docker_backend=False,
+        session_logs_dir=str(tmp_path / "logs"),
+        safe_mode=False,
+    )
+
+    output = toolkit.shell_exec(id="s", command="env", block=True, timeout=20)
+
+    assert "PATH=" in output
+    assert "HF_TOKEN" not in output
+    assert "fake-key" not in output

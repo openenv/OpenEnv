@@ -132,6 +132,10 @@ While Docker provides container isolation, there is no sandboxing within the con
 - Resource consumption (GPU memory, CPU)
 - Module imports
 
+The solution's code gets only an allowlist of the server's environment variables (`PATH`, `HOME`, locale, `PYTHONPATH`,
+`LD_LIBRARY_PATH` and `CUDA_*`, `NVIDIA_*`, `TORCH_*`, `TRITON_*`, `OMP_*`), so tokens and keys set on the server
+don't reach it, and on Linux the server is non-dumpable, so that code can't read the server's environment through `/proc`.
+
 This is acceptable for trusted research environments but should be documented as a security consideration.
 For production deployments, consider additional isolation measures.
 

@@ -45,13 +45,19 @@ try:
 
     from ..models import REPLAction, REPLObservation, REPLState
     from .gradio_ui import build_repl_gradio_app
+    from .python_executor import set_non_dumpable
     from .repl_environment import REPLEnvironment
 except ImportError:
     from models import REPLAction, REPLObservation, REPLState
     from openenv.core.env_server.http_server import create_app
     from server.gradio_ui import build_repl_gradio_app
+    from server.python_executor import set_non_dumpable
     from server.repl_environment import REPLEnvironment
 
+
+# The model's code runs in worker processes that may share this server's user:
+# keep them from reading this process's environment and memory through /proc.
+set_non_dumpable()
 
 # ============== CONFIGURATION ==============
 LLM_MODEL = os.environ.get("LLM_MODEL", "Qwen/Qwen3.5-9B")

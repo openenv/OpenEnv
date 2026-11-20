@@ -284,7 +284,19 @@ class JupyterEnvironment(MCPEnvironment):
                 "KAGGLE_DATA_DIR",
                 f"/fsx/{os.environ.get('USER', '')}/data/kaggle-data-10000",
             )
-            data_dir = Path(kaggle_data_dir) / kaggle_name
+            # The client names the dataset and files, so only files under the data dir are read.
+            base_dir = Path(kaggle_data_dir).resolve()
+            data_dir = (base_dir / kaggle_name).resolve()
+            if not data_dir.is_relative_to(base_dir):
+                return Observation(
+                    done=True,
+                    reward=None,
+                    metadata={
+                        "status": "error",
+                        "sandbox_id": self._state.sandbox_id,
+                        "message": "kaggle_dataset_name is outside the data directory.",
+                    },
+                )
             if data_dir.exists():
                 # Ensure /home/user/input/ exists
                 self._sandbox.run_shell("mkdir -p /home/user/input")
@@ -296,6 +308,9 @@ class JupyterEnvironment(MCPEnvironment):
                             for f in data_dir.rglob("*")
                             if f.name.lower() == filename.lower()
                         ]
+                    candidates = [
+                        f for f in candidates if f.resolve().is_relative_to(base_dir)
+                    ]
                     if candidates:
                         try:
                             with open(candidates[0], "rb") as f:
