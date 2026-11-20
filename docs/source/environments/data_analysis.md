@@ -201,9 +201,9 @@ world-readable files.
 ## Development and testing
 
 ```bash
-# From the repo root
-uv sync --project envs/data_analysis_env --extra dev
-PYTHONPATH=src:envs uv run --project envs/data_analysis_env --extra dev pytest \
+# From the repo root. tests/data_analysis_runtime locks the env against the repo's core.
+uv sync --project tests/data_analysis_runtime
+PYTHONPATH=src:envs uv run --project tests/data_analysis_runtime pytest \
   tests/envs/test_data_analysis_env.py tests/envs/test_data_analysis_sandbox.py -m "not network"
 
 # The OS boundary, in the production image
