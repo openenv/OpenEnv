@@ -55,4 +55,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
-CMD ["sh", "-c", "cd /app/env && gunicorn -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 server.app:app"]
+CMD ["sh", "-c", "cd /app/env && exec gunicorn -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 server.app:app"]
