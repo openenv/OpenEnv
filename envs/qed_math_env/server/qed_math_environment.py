@@ -758,7 +758,10 @@ class QEDMathEnvironment(MCPEnvironment):
                     Tool(
                         name=t.name,
                         description=t.description or "",
-                        input_schema=t.inputSchema if hasattr(t, "inputSchema") else {},
+                        # mcp 2 (FastMCP 4) renamed the attribute to input_schema.
+                        input_schema=getattr(t, "input_schema", None)
+                        or getattr(t, "inputSchema", None)
+                        or {},
                     )
                     for t in tools_result
                 ]
