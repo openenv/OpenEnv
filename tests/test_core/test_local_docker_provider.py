@@ -5,10 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from openenv.core.containers.runtime import (
-    DockerSwarmProvider,
-    LocalDockerProvider,
-)
+from openenv.core.containers.runtime import DockerSwarmProvider, LocalDockerProvider
 from openenv.core.generic_client import GenericEnvClient
 from websockets.protocol import State
 
