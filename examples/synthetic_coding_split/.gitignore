@@ -1,0 +1,25 @@
+# This example publishes only tooling, docs, and its generated-fixture tests.
+*
+!/.gitignore
+!/LICENSE
+!/README.md
+!/split.py
+!/container_check.py
+!/test_split.py
+
+# Private payloads, inventories, execution evidence, and credentials stay local.
+/outputs/
+/tasks/
+/payload/
+/private*/
+/task-file-hashes.json
+*inventory*
+.env
+.env.*
+.netrc
+.git-credentials
+*credential*
+*secret*
+*token*
+*.pem
+*.key

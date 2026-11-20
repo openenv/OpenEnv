@@ -291,4 +291,6 @@ frozen cloud bundles.
 
 `src/openenv/core/harness/capture/` records inference calls independently of a trainer or tokenizer. `src/openenv/harbor/` runs Harbor tasks, reconciles their trajectories, and exposes the shared training contract through clients and the Gradio playground. `envs/harbor_env/` is the installable environment wrapper. `examples/harbor/nemo_shell_profile/` provides the explicitly qualified NeMo shell workflow.
 
+`examples/synthetic_coding_split/` provides offline control replay and packaging tools for externally supplied native tasks and hash inventories. Task payloads and experiment results stay outside the public example. `examples/tasksmith_campaign/` documents the separate upstream Tasksmith generation workflow and its downstream validation boundary.
+
 See `docs/source/guides/harbor-provider-qualification.md` for provider and adapter evidence, `rfcs/012-harbor-capture-providers.md` for explicit evaluation/training and session ownership, and `tests/envs/test_harbor*.py` / `test_capture*.py` for deterministic capture regressions.
