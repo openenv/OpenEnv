@@ -744,7 +744,9 @@ def test_concurrency_limit_rejects_without_starting_extra_worker(tmp_path):
 
 
 def test_child_timeout_interrupts_inflight_call(tmp_path):
-    controller = make_controller(tmp_path, per_child_timeout_s=0.3)
+    # The timeout counts from the child's ready message, and the child starts
+    # its code worker before the call: leave time for that on a loaded runner.
+    controller = make_controller(tmp_path, per_child_timeout_s=5)
     try:
         handle = controller.children.spawn("blocked ignore-term")
         pids = wait_ready(tmp_path)
