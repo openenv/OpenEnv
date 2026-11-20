@@ -1234,7 +1234,7 @@ wheels = [
 
 [[package]]
 name = "openenv"
-version = "0.13.1.dev0"
+version = "0.14.1.dev0"
 source = { directory = "../../" }
 dependencies = [
     { name = "fastapi" },
@@ -1261,7 +1261,7 @@ dependencies = [
 requires-dist = [
     { name = "azure-containerapps-sandbox", marker = "extra == 'aca'", specifier = ">=0.1.0b2,<0.2.0" },
     { name = "azure-identity", marker = "extra == 'aca'", specifier = ">=1.23.0" },
-    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.136.0" },
+    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.136.0,<1" },
     { name = "fastapi", specifier = ">=0.116.0" },
     { name = "fastapi-guard", marker = "extra == 'security'", specifier = ">=8.0.3,<9.0.0" },
     { name = "fastmcp", specifier = ">=3.0.0,<4.0.0" },

@@ -31,6 +31,7 @@ from .profiler import (
     NsysProfile,
     RooflineMetrics,
     SanitizerResult,
+    solution_env,
     TorchProfile,
 )
 
@@ -431,6 +432,7 @@ except Exception as e:
             proc = subprocess.run(
                 [sys.executable, "-c", check_script],
                 capture_output=True,
+                env=solution_env(),
                 text=True,
                 timeout=30,
             )
@@ -545,6 +547,7 @@ except Exception as e:
             proc = subprocess.run(
                 [sys.executable, "-c", correctness_script],
                 capture_output=True,
+                env=solution_env(),
                 text=True,
                 timeout=self.timeout,
             )
@@ -686,6 +689,7 @@ except Exception as e:
             proc = subprocess.run(
                 [sys.executable, "-c", benchmark_script],
                 capture_output=True,
+                env=solution_env(),
                 text=True,
                 timeout=self.timeout * 2,  # Longer timeout for benchmark
             )

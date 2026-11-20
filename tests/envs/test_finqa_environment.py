@@ -92,6 +92,11 @@ class TestLatexPercentages:
         """Test LaTeX format with dollar sign wrappers."""
         assert compute_reward("57.73", r"$\boxed{57.730}$") == 1.0
 
+    def test_latex_text_inside_boxed(self):
+        r"""Test \text{} annotations inside \boxed{}."""
+        assert compute_reward(r"\boxed{6.118\text{ million}}", r"\boxed{6.118}") == 1.0
+        assert compute_reward(r"\boxed{7.118\text{ million}}", r"\boxed{6.118}") == 0.0
+
 
 class TestDecimalPrecisionMatching:
     """Test decimal precision matching within tolerance for percentages."""
@@ -504,6 +509,47 @@ class TestMultiValueYearKeyMatching:
             )
             == 1.0
         )
+
+
+class TestMultiValueThousandsSeparators:
+    r"""Thousands separators in answers with one \boxed{} per value."""
+
+    def test_separators_with_labels(self):
+        """A comma inside "-3,514" is part of the number, not a value separator."""
+        gt = r"2022: \boxed{-3514}, 2023: \boxed{1424}, 2024: \boxed{7425}"
+        assert compute_reward("2022: -3,514, 2023: 1,424, 2024: 7,425", gt) == 1.0
+        assert compute_reward("2022: -3,514; 2023: 1,424; 2024: 7,425", gt) == 1.0
+
+    def test_separators_without_labels(self):
+        gt = r"2022: \boxed{-3514}, 2023: \boxed{1424}, 2024: \boxed{7425}"
+        assert compute_reward("-3,514, 1,424, 7,425", gt) == 1.0
+        assert compute_reward("-3,514; 1,424; 7,425", gt) == 1.0
+
+    def test_boxed_values_with_separators(self):
+        gt = r"2022: \boxed{-3514}, 2023: \boxed{1424}, 2024: \boxed{7425}"
+        assert (
+            compute_reward(r"\boxed{-3,514}, \boxed{1,424}, \boxed{7,425}", gt) == 1.0
+        )
+        assert (
+            compute_reward(
+                r"2022: \boxed{-3,514}, 2023: \boxed{1,424}, 2024: \boxed{7,425}", gt
+            )
+            == 1.0
+        )
+
+    def test_wrong_values_with_separators_fail(self):
+        gt = r"2022: \boxed{-3514}, 2023: \boxed{1424}, 2024: \boxed{7425}"
+        assert compute_reward("2022: -3,514, 2023: 1,424, 2024: 8,425", gt) == 0.0
+        assert (
+            compute_reward(r"\boxed{-3,514}, \boxed{1,424}, \boxed{8,425}", gt) == 0.0
+        )
+        assert compute_reward("-3,514, 1,424", gt) == 0.0
+
+    def test_bare_comma_list_still_splits(self):
+        """Without spaces, "250,300,410" is still read as three values."""
+        gt = r"\boxed{250} \boxed{300} \boxed{410}"
+        assert compute_reward("250,300,410", gt) == 1.0
+        assert compute_reward("250,300,450", gt) == 0.0
 
 
 # ---------------------------------------------------------------------------
