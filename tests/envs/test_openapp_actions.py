@@ -64,3 +64,29 @@ def test_arguments_cannot_add_actions(env_and_browser, action):
     (sent,) = browser.actions
     (call,) = ast.parse(sent).body
     assert call.value.func.id == action.action_type
+
+
+class _ResettableBrowser:
+    """Records the seed BrowserGym's reset receives."""
+
+    def __init__(self) -> None:
+        self.seeds: list[int | None] = []
+
+    def reset(self, seed: int | None = None):
+        self.seeds.append(seed)
+        return {"url": "http://localhost:5001"}, {}
+
+
+def test_reset_passes_seed_and_keeps_episode_id(monkeypatch):
+    monkeypatch.setenv("OPENAPPS_URL", "http://localhost:5001")
+    env = OpenAppEnvironment(openapps_url="http://localhost:5001")
+    browser = _ResettableBrowser()
+    env._browser_env = browser
+
+    env.reset(seed=7, episode_id="ep-1")
+    assert browser.seeds == [7]
+    assert env.state.episode_id == "ep-1"
+
+    env.reset()
+    assert browser.seeds == [7, None]
+    assert env.state.episode_id not in ("", "ep-1")

@@ -290,15 +290,24 @@ class OpenAppEnvironment(Environment):
             "app_state": self._app_state,
         }
 
-    def reset(self) -> OpenAppObservation:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> OpenAppObservation:
         """
         Reset the environment.
+
+        Args:
+            seed: Optional seed, passed to the BrowserGym environment's reset
+            episode_id: Optional episode identifier (generated if omitted)
 
         Returns:
             OpenAppObservation with initial state
         """
         # Reset state
-        self._state = State(episode_id=str(uuid4()), step_count=0)
+        self._state = State(episode_id=episode_id or str(uuid4()), step_count=0)
         self._episode_reward = 0.0
         self._last_action_error = None
 
@@ -312,7 +321,7 @@ class OpenAppEnvironment(Environment):
 
         # Reset the BrowserGym environment
         try:
-            obs, info = self._browser_env.reset()
+            obs, info = self._browser_env.reset(seed=seed)
             # Extract observation data from BrowserGym
             self._current_url = obs.get("url", self.openapps_url)
             self._current_html = obs.get("dom_txt", "")
