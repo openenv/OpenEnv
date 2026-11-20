@@ -29,6 +29,7 @@ from data_analysis_env.models import DataAnalysisState  # noqa: E402
 from data_analysis_env.server import grading, sandbox, tasks  # noqa: E402
 from data_analysis_env.server.data_analysis_environment import (  # noqa: E402
     DataAnalysisEnvironment,
+    MAX_TOOL_OUTPUT_CHARS,
 )
 from openenv.core.env_server.mcp_environment import MCPEnvironment  # noqa: E402
 from openenv.core.env_server.mcp_types import (  # noqa: E402
@@ -344,6 +345,14 @@ def test_episode_run_then_submit(env):
     assert "over" in text(call(env, "run_python", code="1"))
     obs = call(env, "submit_answer", answer="8")
     assert "already submitted" in text(obs)
+
+
+def test_error_after_a_large_print_reaches_the_model(env):
+    env.reset(task_id="t2")
+    obs = call(env, "run_python", code="print('x' * 30_000)\n1 / 0")
+    out = text(obs)
+    assert "ZeroDivisionError" in out and "(output truncated)" in out
+    assert len(out) <= MAX_TOOL_OUTPUT_CHARS
 
 
 def test_reward_is_emitted_only_on_the_submit_step(env):

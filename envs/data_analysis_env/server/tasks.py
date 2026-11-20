@@ -323,9 +323,20 @@ def build_prompt(row: dict, file_paths: List[str]) -> str:
     return DATA_TEMPLATE.format(file_list=file_list, question=row["question"])
 
 
+OUTPUT_CUT = "\n... (output truncated)"
+
+
 def tool_output(stdout: str, stderr: str, exit_code: int, max_chars: int) -> str:
-    """What the model sees after `run_python`: stdout, then stderr (errors or warnings), capped."""
+    """What the model sees after `run_python`: stdout, then stderr (errors or warnings), capped.
+
+    stderr keeps up to half of `max_chars` and stdout is cut to the room left, so the error of
+    a call that printed a lot before failing still reaches the model.
+    """
     stdout, stderr = stdout or "", stderr or ""
+    stderr = stderr[: max_chars // 2]
+    room = max_chars - len(stderr) - 1  # one for the newline between the two
+    if len(stdout) > room:
+        stdout = stdout[: room - len(OUTPUT_CUT)] + OUTPUT_CUT
     sep = "\n" if stdout and stderr and not stdout.endswith("\n") else ""
     output = stdout + sep + stderr
     if not output.strip():
