@@ -22,6 +22,7 @@ except ModuleNotFoundError:
 else:
     _INSERTED_GYMNASIUM_STUB = False
 
+from envs.browsergym_env.models import BrowserGymAction
 from envs.browsergym_env.server import browsergym_environment
 from envs.browsergym_env.server.browsergym_environment import BrowserGymEnvironment
 
@@ -179,3 +180,44 @@ def test_failed_task_switch_keeps_previous_browsergym_env(
     assert env.task_name == "enter-text"
     assert env.env_id == "browsergym/miniwob.enter-text"
     assert observation.goal == "goal for browsergym/miniwob.enter-text"
+
+
+class _RecordingGymEnv(_FakeGymEnv):
+    def __init__(self, env_id: str) -> None:
+        super().__init__(env_id)
+        self.actions: list[str] = []
+
+    def step(self, action: str):
+        self.actions.append(action)
+        return {"url": "http://example.test"}, 0.0, False, False, {}
+
+
+@pytest.mark.parametrize(
+    "action_str",
+    [
+        "goto('file:///home/user/.cache/huggingface/token')",
+        "goto(url='FILE:///x')",
+        "click('12')\ngoto('view-source:file:///x')",
+    ],
+)
+def test_goto_never_opens_a_server_file(
+    monkeypatch: pytest.MonkeyPatch, action_str: str
+) -> None:
+    """The client writes the action, and a file:// URL would show a file of this server."""
+    pytest.importorskip("browsergym.core.action.parsers")
+    env = _make_browsergym_environment(monkeypatch)
+    gym_env = _RecordingGymEnv("browsergym/miniwob.click-test")
+    env.gym_env = gym_env
+    obs = env.step(BrowserGymAction(action_str=action_str))
+    assert gym_env.actions == []
+    assert obs.last_action_error
+    assert "only http(s)" in obs.error
+
+
+def test_goto_opens_web_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("browsergym.core.action.parsers")
+    env = _make_browsergym_environment(monkeypatch)
+    gym_env = _RecordingGymEnv("browsergym/miniwob.click-test")
+    env.gym_env = gym_env
+    env.step(BrowserGymAction(action_str="goto('https://example.test/page')"))
+    assert gym_env.actions == ["goto('https://example.test/page')"]

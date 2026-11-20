@@ -105,13 +105,22 @@ This is budget headroom, not a guarantee that every agent query fits.
 
 DuckDB's [memory limit covers its buffer manager](https://duckdb.org/docs/current/operations_manual/limits),
 not the Python heap or every DuckDB allocation. Its spill cap excludes the
-base database. Agent query results never enter Python, where neither the memory
-limit nor the query deadline applies: rows are only counted, timed and compared
-inside DuckDB. Allocations DuckDB does not track, such as one huge `repeat()`,
-are bounded only by the container, which may kill the server with an
-out-of-memory error. The Dockerfile and a direct `uvicorn` launch do not enforce
-the YAML budgets themselves: deployments must configure their runtime limits
-explicitly.
+base database. Agent query results never enter Python: rows are only counted,
+timed and compared inside DuckDB.
+
+Agent SQL runs in a separate worker process, never in the server. The server
+kills the worker when a query passes the 15 s deadline, or when the worker
+crashes or runs out of memory, and starts a fresh one for the next query; the
+query gets an error and no credit. Allocations DuckDB does not track, such as
+one huge `repeat()`, are bounded by the container. On Linux the worker marks
+itself as the kernel's preferred out-of-memory victim, so when the container
+runs out of memory the worker is killed and the server keeps running. That
+holds when the OOM killer picks a single process, as under Docker's defaults; a
+runtime that kills a container's processes as a group still stops the server.
+The worker's address space is also capped at 1 GiB, a backstop for deployments
+without a container memory limit. The Dockerfile and a direct `uvicorn` launch do not
+enforce the YAML budgets themselves: deployments must configure their runtime
+limits explicitly.
 
 ## Tests
 

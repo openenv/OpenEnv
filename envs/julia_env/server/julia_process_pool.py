@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Optional
 
 from .julia_executor import CodeExecResult
+from .julia_sandbox import sandboxed, worker_env
 
 # Use julia_env hierarchy to inherit handlers from app.py's setup_logging()
 logger = logging.getLogger("julia_env.pool")
@@ -105,8 +106,10 @@ class JuliaWorkerProcess:
         cmd.append(self.worker_script)
 
         try:
+            # No network and no server secrets for the code this worker runs.
             self.process = subprocess.Popen(
-                cmd,
+                sandboxed(cmd),
+                env=worker_env(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
