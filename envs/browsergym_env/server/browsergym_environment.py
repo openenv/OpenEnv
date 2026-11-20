@@ -15,17 +15,19 @@ import io
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import gymnasium as gym
 import numpy as np
+from openenv.core.env_server.interfaces import Environment
+from PIL import Image
+
 from browsergym_env.models import (
     BrowserGymAction,
     BrowserGymObservation,
     BrowserGymState,
 )
-from openenv.core.env_server.interfaces import Environment
-from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +125,25 @@ _MINIWOB_LOAD_HELP = (
     "set the MINIWOB_URL environment variable to the served base URL such as "
     "`http://localhost:8888/miniwob/`."
 )
+
+
+def _off_web_url(action_str: str) -> Optional[str]:
+    """The first URL a `goto` in `action_str` opens that is not http(s), such as a server file.
+
+    Parsed with BrowserGym's own action parser, the one it runs the action with.
+    """
+    if "goto" not in action_str:  # BrowserGym runs an action by its exact name
+        return None
+    from browsergym.core.action.parsers import highlevel_action_parser, NamedArgument
+
+    calls = sum(highlevel_action_parser.search_string(action_str).as_list(), [])
+    for name, args in calls:
+        if name == "goto":
+            for arg in args:
+                url = str(arg.value if isinstance(arg, NamedArgument) else arg)
+                if urlparse(url.strip()).scheme not in ("http", "https"):
+                    return url
+    return None
 
 
 class BrowserGymEnvironment(Environment):
@@ -318,6 +339,10 @@ class BrowserGymEnvironment(Environment):
 
         # Execute action in gym environment
         try:
+            # The client picks the URL, and a file:// one would show a file of this server.
+            url = _off_web_url(action.action_str)
+            if url is not None:
+                raise ValueError(f"goto opens only http(s) URLs, not {url!r}")
             obs, reward, terminated, truncated, info = _on_playwright_thread(
                 self.gym_env.step, action.action_str
             )
