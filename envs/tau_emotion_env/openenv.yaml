@@ -1,0 +1,23 @@
+spec_version: 1
+name: tau_emotion_env
+version: 0.1.0
+type: space
+runtime: fastapi
+app: tau_emotion_env.server.app:app
+port: 8000
+validation:
+  reward:
+    # 1 when the task is solved, 0 when it is not, -1 when the user gave up on the agent.
+    range: [-1.0, 1.0]
+    oracle_tolerance: 0.0
+    floor_margin: 0.5
+  resources:
+    cpu: 1.0
+    memory_mb: 2048
+    disk_mb: 1024
+    episode_timeout_s: 900.0
+  capabilities:
+    verifier:
+      kind: reward_channel
+  types:
+    tags: [customer-service, multi-turn, tool-use, emotion]
