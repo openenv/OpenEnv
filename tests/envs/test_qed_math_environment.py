@@ -637,7 +637,10 @@ class TestLoadProblems:
         problems = load_problems([str(first), str(second)])
 
         assert [row["problem"] for row in problems] == ["first", "second"]
-        assert [row["problem_id"] for row in problems] == ["problem_000003", explicit_id]
+        assert [row["problem_id"] for row in problems] == [
+            "problem_000003",
+            explicit_id,
+        ]
 
 
 # QEDMathEnvironment: reset
