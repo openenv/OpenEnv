@@ -64,3 +64,40 @@ class TestResetSeed:
         assert env.state.episode_id == ""
         env.reset()
         assert env.state.episode_id not in (None, "", "episode-1")
+
+
+class TestStepAfterDone:
+    """Once the episode ends, step() returns the final observation until reset()."""
+
+    @staticmethod
+    def _play_to_end(env):
+        obs = env.reset(seed=0)
+        while not obs.done:
+            obs = env.step(WildfireAction(action="wait"))
+        return obs
+
+    def test_later_steps_repeat_the_final_observation(self):
+        env = WildfireEnvironment(width=8, height=8, max_steps=5)
+        final = self._play_to_end(env)
+        steps = env.state.step_count
+        fire = final.grid.index(2) if 2 in final.grid else 0
+
+        for action in (
+            WildfireAction(action="wait"),
+            WildfireAction(action="water", x=fire % 8, y=fire // 8),
+            WildfireAction(action="break", x=0, y=0),
+        ):
+            again = env.step(action)
+            assert again.done is True
+            assert again.reward == final.reward
+            assert again.grid == final.grid
+        assert env.state.step_count == steps
+        assert env.state.remaining_water == final.remaining_water
+
+    def test_reset_starts_a_new_episode(self):
+        env = WildfireEnvironment(width=8, height=8, max_steps=5)
+        self._play_to_end(env)
+        env.reset(seed=1)
+        obs = env.step(WildfireAction(action="wait"))
+        assert env.state.step_count == 1
+        assert obs.step == 1

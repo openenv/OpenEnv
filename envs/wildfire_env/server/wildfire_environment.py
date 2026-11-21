@@ -116,6 +116,8 @@ class WildfireEnvironment(Environment):
         # We can't use WildfireState() directly due to Pydantic/dataclass conflicts,
         # so we'll initialize it in reset() and handle None case in state property
         self._state: WildfireState | None = None
+        # Kept once the episode ends; later steps return it again until reset().
+        self._final_observation: WildfireObservation | None = None
 
     # --- Core API ---
 
@@ -185,10 +187,16 @@ class WildfireEnvironment(Environment):
             burn_timers=burn_timers,
         )
 
+        self._final_observation = None
         obs = self._make_observation(reward_hint=0.0)
         return obs
 
     def step(self, action: WildfireAction) -> WildfireObservation:
+        # After the episode ended (fire out or max steps reached), the fire does
+        # not spread and nothing is scored: return the final observation again.
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
+
         st = self._state
         reward = 0.0
 
@@ -259,6 +267,8 @@ class WildfireEnvironment(Environment):
         obs = self._make_observation(reward_hint=reward)
         obs.done = done
         obs.reward = reward
+        if done:
+            self._final_observation = obs.model_copy(deep=True)
         return obs
 
     def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
