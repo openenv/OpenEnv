@@ -89,7 +89,7 @@ grid_2d = np.array(obs.grid).reshape(obs.height, obs.width)  # grid_2d[y][x]
 
 `env.state()` returns a `WildfireState` with `episode_id`, `step_count`, `total_burned`, `total_extinguished`, `last_action` and the full grid and timers.
 
-The episode ends when no cell is burning or after `max_steps` steps (default 128).
+The episode ends when no cell is burning or after `max_steps` steps (default 128). Further `step()` calls before the next `reset()` return the final observation again (`done=True`, same reward): the fire does not spread and the end-of-episode bonus is not paid again.
 
 ## Reward
 
