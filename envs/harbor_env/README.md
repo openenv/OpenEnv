@@ -766,6 +766,12 @@ Space, run the UI yourself.
 **Exit code 137.** The agent was killed inside the sandbox, almost always by the OOM killer on a
 large input. That is a task failure, not a capture failure.
 
+Harnesses that Harbor installs inside the sandbox share the task's memory limit with the code they
+run. OpenCode's own process takes about 0.75 GB, so under a 1 GB task limit it is the agent, not the
+task, that runs out: we saw 19% of training rollouts and 8% of eval trials killed this way. Set
+`OPENENV_HARBOR_SANDBOX_MEMORY_MB` (for example `4096`) to raise every sandbox to at least that much.
+It never lowers a task's own `memory_mb`. Measure the base model under the same setting.
+
 ## References
 
 - [Harbor](https://github.com/laude-institute/harbor), which provides the datasets, sandboxes,
