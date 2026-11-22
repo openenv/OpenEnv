@@ -326,6 +326,18 @@ class TestMathProofRubricParseResponse:
         score, _ = rubric._parse_response(text)
         assert score == 1
 
+    def test_self_closing_errors_tag_preserves_trailing_score(self):
+        rubric = self._rubric()
+        text = "<assessment>Great.</assessment><errors/><score>7</score>"
+        score, _ = rubric._parse_response(text)
+        assert score == 7
+
+    def test_unclosed_prose_tag_preserves_trailing_score(self):
+        rubric = self._rubric()
+        text = "<assessment>Good.<errors>1. minor<score>6</score>"
+        score, _ = rubric._parse_response(text)
+        assert score == 6
+
 
 class TestMathProofRubricBuildPrompt:
     def _rubric(self, template: str = "") -> MathProofRubric:
@@ -1983,3 +1995,4 @@ class TestQEDMathServerIntegration:
             "submit_proof", proof="Let a=2m and b=2n, so a+b=2(m+n)."
         )
         assert result is not None
+      
