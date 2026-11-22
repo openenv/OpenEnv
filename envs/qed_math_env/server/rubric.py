@@ -93,7 +93,11 @@ _DEFAULT_RETRY_BACKOFF = [15, 30, 60]
 _TEMPLATE_VARS = ("{problem}", "{human_solution}", "{marking_scheme}", "{solution}")
 
 _PROSE_BLOCK_RE = re.compile(
-    r"<(assessment|errors)\b[^>]*>.*?(?:</\1\s*>|$)",
+    r"<(assessment|errors)\b[^>]*(?<!/)>.*?</\1\s*>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_UNCLOSED_PROSE_RE = re.compile(
+    r"<(assessment|errors)\b[^>]*(?<!/)>.*$",
     flags=re.DOTALL | re.IGNORECASE,
 )
 _GRADER_TAG_RE = re.compile(
@@ -563,7 +567,10 @@ class MathProofRubric(Rubric):
             and *feedback* is the full response text.
         """
         cleaned = _PROSE_BLOCK_RE.sub("", text)
-        matches = re.findall(r"<score>(\d+)</score>", cleaned)
+        without_unclosed = _UNCLOSED_PROSE_RE.sub("", cleaned)
+        matches = re.findall(r"<score>(\d+)</score>", without_unclosed) or re.findall(
+            r"<score>(\d+)</score>", cleaned
+        )
         if matches:
             score = max(0, min(MAX_SCORE, int(matches[-1])))
             return score, text
