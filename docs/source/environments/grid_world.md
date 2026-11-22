@@ -66,7 +66,7 @@ docker run -p 8000:8000 grid-world-env:latest
 - `-0.1` for every step that doesn't reach the goal
 - `+1.0` for reaching the goal at `(4, 4)`, which ends the episode
 
-There is no step limit: the episode only ends at the goal.
+There is no step limit: the episode only ends at the goal. Further `step()` calls before the next `reset()` return the final observation again (`done=True`, same reward): the agent does not move, and the goal pays only once.
 
 ## Code Layout
 

@@ -48,3 +48,26 @@ class TestResetSeed:
         env = Connect4Environment()
         asyncio.run(env.reset_async(seed=3, episode_id="async-1"))
         assert env.state.episode_id == "async-1"
+
+
+class TestStepAfterDone:
+    """Steps after the game ends return the final observation again."""
+
+    def test_finished_game_stays_finished(self):
+        env = Connect4Environment()
+        env.reset()
+        for column in (0, 1, 0, 1, 0, 1, 0):
+            final = env.step(Connect4Action(column=column))
+        assert final.done and final.reward == 1.0
+
+        assert env.step(Connect4Action(column=3)) == final
+        assert env.state.step_count == 7
+        assert env.state.board == final.board
+
+    def test_invalid_move_ends_the_game(self):
+        env = Connect4Environment()
+        env.reset()
+        final = env.step(Connect4Action(column=9))
+        assert final.done and final.reward == -1
+
+        assert env.step(Connect4Action(column=0)) == final

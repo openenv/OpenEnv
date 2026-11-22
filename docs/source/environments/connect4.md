@@ -50,6 +50,8 @@ Invalid moves (out-of-range or full column) result in a reward of `-1` and end t
 | Invalid move | `-1.0` |
 | Otherwise | `0.0` |
 
+Once the game ends, further `step()` calls before the next `reset()` return the final observation again (`done=True`, same reward) and drop no piece.
+
 ## State
 
 | Field | Type | Description |

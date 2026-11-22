@@ -106,6 +106,8 @@ with ChessEnv(base_url="http://localhost:8000").sync() as env:
 | Draw | 0.0 |
 | Illegal move | -0.1 |
 
+Once the game ends, further `step()` calls before the next `reset()` return the final observation again (`done=True`, same reward and result) and play no move.
+
 ## Configuration
 
 The environment supports these configuration options:
