@@ -134,11 +134,41 @@ def agent_steps(atif: dict[str, Any]) -> list[dict[str, Any]]:
     return [s for s in (atif.get("steps") or []) if s.get("source") == "agent"]
 
 
-def atif_turn_lengths(atif: dict[str, Any]) -> list[int]:
-    return [
-        int((s.get("metrics") or {}).get("completion_tokens") or 0)
-        for s in agent_steps(atif)
-    ]
+def atif_turn_lengths(
+    atif: dict[str, Any], *, include_reasoning: bool = False
+) -> list[int]:
+    """Per-step completion token counts.
+
+    `include_reasoning` adds `metrics.extra.reasoning_tokens`. Some converters split reasoning out
+    of `completion_tokens` (Harbor's opencode reports OpenCode's `tokens.output`, which is visible
+    output only), while the intercept counts every token the engine sampled, thinking included.
+    """
+    lengths = []
+    for s in agent_steps(atif):
+        metrics = s.get("metrics") or {}
+        n = int(metrics.get("completion_tokens") or 0)
+        if include_reasoning:
+            n += int((metrics.get("extra") or {}).get("reasoning_tokens") or 0)
+        lengths.append(n)
+    return lengths
+
+
+def _reasoning_split_lengths(ours: list[int], atif: dict[str, Any]) -> list[int] | None:
+    """ATIF lengths with reasoning added back, if that is what makes them agree with the intercept.
+
+    Only consulted after the plain comparison fails, so a converter that already counts reasoning
+    inside `completion_tokens` never has it added twice. Returns None unless adding reasoning gives
+    an exact match, or a high-coverage subsequence that the auxiliary-call logic below would accept
+    anyway, so a genuine disagreement still reaches the FATAL path unchanged.
+    """
+    split = atif_turn_lengths(atif, include_reasoning=True)
+    if split == atif_turn_lengths(atif):
+        return None
+    if ours == split:
+        return split
+    if _subsequence_gap(split, ours) is not None and len(split) >= 0.5 * len(ours):
+        return split
+    return None
 
 
 def _subsequence_gap(needle: list[int], haystack: list[int]) -> list[int] | None:
@@ -379,6 +409,18 @@ def reconcile(document: dict[str, Any], atif: dict[str, Any] | None) -> Report:
     turns = [t for t in document.get("turns", []) if t["root_id"] in agent_roots]
     ours_all = [t["n_sampled"] for t in turns]
     theirs = atif_turn_lengths(atif)
+    if ours_all != theirs:
+        split = _reasoning_split_lengths(ours_all, atif)
+        if split is not None:
+            report.add(
+                WARN,
+                "atif_reasoning_split",
+                "ATIF completion_tokens exclude reasoning (it is in metrics.extra.reasoning_tokens); "
+                "the counts agree once it is added back.\n"
+                f"        ATIF completion_tokens : {theirs}\n"
+                f"        + reasoning_tokens     : {split}",
+            )
+            theirs = split
 
     if _partial_usage_matches_by_call_id(turns, agent_steps(atif)):
         report.add(
@@ -538,7 +580,10 @@ def merge_into_atif(atif: dict[str, Any], document: dict[str, Any]) -> dict[str,
     steps_all = [s for s in atif.get("steps") or [] if s.get("source") == "agent"]
     if len(turns_meta) != len(steps_all):
         return atif
-    if [t["n_sampled"] for t in turns_meta] != atif_turn_lengths(atif):
+    ours = [t["n_sampled"] for t in turns_meta]
+    if ours != atif_turn_lengths(atif) and ours != atif_turn_lengths(
+        atif, include_reasoning=True
+    ):
         return atif
 
     merged = json.loads(json.dumps(atif))  # never mutate Harbor's artifact in place
