@@ -92,6 +92,15 @@ _DEFAULT_RETRY_BACKOFF = [15, 30, 60]
 # QED-Nano's prompts/evaluator_prompts/*.md files.
 _TEMPLATE_VARS = ("{problem}", "{human_solution}", "{marking_scheme}", "{solution}")
 
+_PROSE_BLOCK_RE = re.compile(
+    r"<(assessment|errors)\b[^>]*>.*?(?:</\1\s*>|$)",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_GRADER_TAG_RE = re.compile(
+    r"<\s*/?\s*(?:score|assessment|errors)\b[^>]*>",
+    flags=re.IGNORECASE,
+)
+
 
 @dataclass
 class GradingResult:
@@ -430,6 +439,7 @@ class MathProofRubric(Rubric):
         Falls back to a minimal constructed prompt when the template does
         not contain any of the expected format variables.
         """
+        proof = _GRADER_TAG_RE.sub("", proof)
         if self.prompt_template and any(
             v in self.prompt_template for v in _TEMPLATE_VARS
         ):
@@ -552,9 +562,10 @@ class MathProofRubric(Rubric):
             ``(score, feedback)`` where *score* is clamped to [0, MAX_SCORE]
             and *feedback* is the full response text.
         """
-        match = re.search(r"<score>(\d+)</score>", text)
-        if match:
-            score = max(0, min(MAX_SCORE, int(match.group(1))))
+        cleaned = _PROSE_BLOCK_RE.sub("", text)
+        matches = re.findall(r"<score>(\d+)</score>", cleaned)
+        if matches:
+            score = max(0, min(MAX_SCORE, int(matches[-1])))
             return score, text
         return 0, text
 
