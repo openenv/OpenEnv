@@ -8,6 +8,7 @@ that the harness drives. There is no meaningful `step()` to expose while opencod
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import time
@@ -19,6 +20,8 @@ from openenv.core.env_server.mcp_environment import MCPEnvironment
 from openenv.core.env_server.types import Observation
 
 from .models import HarborState
+
+logger = logging.getLogger(__name__)
 
 # A rollout is minutes, not seconds. OpenEnv's MCP tools default to 30s and there is no config knob,
 # so the only way to raise it is to shadow `step`/`step_async` and inject a default.
@@ -73,7 +76,11 @@ def prune_trials(
         return 0
     cutoff = (time.time() if now is None else now) - max_age_s
     removed = 0
-    for entry in trials_dir.iterdir():
+    try:
+        entries = list(trials_dir.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
         try:
             if not entry.is_dir() or entry.is_symlink():
                 continue
@@ -412,13 +419,18 @@ class HarborEnvironment(MCPEnvironment):
 
         result = await _resolve_and_run()
 
-        # Scratch cleanup for long training runs: opt-in, after the rollout, never fatal. Runs in a
-        # worker thread so a large directory does not stall the event loop serving other sessions.
-        max_age_s = _trials_max_age_s()
-        if max_age_s > 0:
-            import asyncio
+        # Scratch cleanup for long training runs: opt-in, after the rollout, never fatal. The rollout
+        # already finished, so nothing here may turn its result into a tool error: a malformed setting
+        # or an unreadable directory is logged and skipped. Runs in a worker thread so a large
+        # directory does not stall the event loop serving other sessions.
+        try:
+            max_age_s = _trials_max_age_s()
+            if max_age_s > 0:
+                import asyncio
 
-            await asyncio.to_thread(prune_trials, _trials_dir(), max_age_s)
+                await asyncio.to_thread(prune_trials, _trials_dir(), max_age_s)
+        except Exception as exc:  # noqa: BLE001 - cleanup must not fail a finished rollout
+            logger.warning("trial cleanup skipped: %s", exc)
 
         self._state.rollouts_completed += 1
         self._state.last_reward = result.reward

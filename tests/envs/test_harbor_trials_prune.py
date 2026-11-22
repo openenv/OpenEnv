@@ -98,3 +98,66 @@ def test_max_age_env_parsing(monkeypatch):
         monkeypatch.setenv("OPENENV_HARBOR_TRIALS_MAX_AGE_S", bad)
         with pytest.raises(ValueError):
             env_mod._trials_max_age_s()
+
+
+def test_unreadable_trials_dir_is_a_no_op(tmp_path, monkeypatch):
+    root = tmp_path / "trials"
+    root.mkdir()
+
+    def boom(self):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(type(root), "iterdir", boom)
+    assert prune_trials(root, 60, now=NOW) == 0
+
+
+async def test_cleanup_errors_never_fail_a_finished_rollout(monkeypatch, tmp_path):
+    """The rollout already finished; a bad cleanup setting must not turn its result into an error."""
+    import json
+    from types import SimpleNamespace
+
+    rollout_mod = pytest.importorskip("openenv.harbor.rollout")
+    HarborRolloutResult = pytest.importorskip(
+        "openenv.harbor.models"
+    ).HarborRolloutResult
+
+    task = tmp_path / "tasks" / "t"
+    (task / "environment").mkdir(parents=True)
+    (task / "instruction.md").write_text("Say hi.\n")
+    (task / "environment" / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    (task / "task.toml").write_text('version = "1.0"\n')
+    monkeypatch.setattr(env_mod.HarborEnvironment, "_datasets", [str(tmp_path)])
+    env = env_mod.HarborEnvironment()
+    pool = SimpleNamespace(default=(None, "tokens"))
+    service = SimpleNamespace(
+        capture=SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(upstreams=pool)), registry=None
+        ),
+        capture_level="tokens",
+        model="m",
+        public_url="http://proxy",
+        local_url="http://127.0.0.1:1",
+    )
+    monkeypatch.setattr(env, "_service", lambda: service)
+
+    async def finished(**kwargs):
+        return HarborRolloutResult(
+            ok=True, reward=1.0, harness="opencode", sandbox="docker"
+        )
+
+    monkeypatch.setattr(rollout_mod, "run_rollout", finished)
+    monkeypatch.setenv("OPENENV_HARBOR_TRIALS_MAX_AGE_S", "soon")
+
+    result = json.loads(
+        await env._run_rollout(
+            split=str(tmp_path),
+            task_index=0,
+            harness="opencode",
+            sandbox="docker",
+            reward_key="",
+            keep_sandbox=False,
+            force_build=False,
+        )
+    )
+    assert result["ok"] is True
+    assert result["reward"] == 1.0
