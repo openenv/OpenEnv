@@ -134,7 +134,10 @@ class ChessEnvironment(Environment):
 
         # Check if starting position is already terminal (e.g., custom FEN with checkmate/stalemate)
         _, done = self._calculate_reward_and_done()
-        return self._make_observation(done=done)
+        obs = self._make_observation(done=done)
+        if done:
+            self._final_observation = obs.model_copy(deep=True)
+        return obs
 
     def step(self, action: ChessAction):
         """
