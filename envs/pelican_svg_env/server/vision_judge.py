@@ -246,7 +246,8 @@ def build_checklist(task: Task) -> dict[str, str]:
     """
     questions: dict[str, str] = {
         "subject_recognisable": (
-            f"Is the animal in this drawing recognisably a {task.subject.name}, "
+            "Is the animal in this drawing recognisably "
+            f"{task.subject.article} {task.subject.name}, "
             "rather than a generic animal shape?"
         ),
         "vehicle_recognisable": (
