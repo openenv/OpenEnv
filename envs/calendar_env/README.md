@@ -91,7 +91,7 @@ Each step returns a shaped reward:
 | `ListToolsAction` | +0.1 |
 | Tool call with a 2xx status | +1.0 |
 | Tool call that succeeds without a status code | +0.5 |
-| Tool result with an `error` key or a 4xx/5xx status | -0.5 |
+| Tool result with an `error` key, `isError: true`, or a 4xx/5xx status | -0.5 |
 | Unknown tool | -0.5 |
 | Missing `tool_name`, invalid access token or tool execution failure | -1.0 |
 

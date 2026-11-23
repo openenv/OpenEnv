@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
+import asyncio
+
 import pytest
 
 # Import your client and models DIRECTLY
@@ -52,3 +54,43 @@ def test_grid_world_web_playground():
     assert "★" in grid
     assert "#" not in grid  # theme colours only, so it reads in dark mode
     assert env.render_web({}) is None
+
+
+class TestResetSeed:
+    """reset(seed=..., episode_id=...) must be accepted.
+
+    Grid World has no randomness, so a seed changes nothing: the agent always
+    starts at [0, 0]. The server only passes arguments that `reset` declares, so
+    an environment that omits them silently drops the caller's seed and episode id.
+    """
+
+    def test_seeded_reset_gives_same_start(self):
+        env = GridWorldEnvironment()
+        unseeded = env.reset()
+        for seed in (0, 1, 1234):
+            obs = env.reset(seed=seed)
+            assert (obs.x, obs.y) == (unseeded.x, unseeded.y) == (0, 0)
+            assert env.state.step_count == 0
+
+    def test_episode_id_is_kept_or_generated(self):
+        env = GridWorldEnvironment()
+        env.reset(episode_id="game-1")
+        assert env.state.episode_id == "game-1"
+        env.reset(seed=3, episode_id="game-2")
+        assert env.state.episode_id == "game-2"
+        env.reset()
+        first = env.state.episode_id
+        env.reset()
+        assert first and env.state.episode_id != first
+
+    def test_seeded_reset_returns_agent_to_start(self):
+        env = GridWorldEnvironment()
+        env.step(GridWorldAction(action=MoveAction.DOWN))
+        obs = env.reset(seed=5)
+        assert (obs.x, obs.y) == (0, 0)
+        assert env.state.step_count == 0
+
+    def test_reset_async_forwards_seed_and_episode_id(self):
+        env = GridWorldEnvironment()
+        asyncio.run(env.reset_async(seed=3, episode_id="async-1"))
+        assert env.state.episode_id == "async-1"
