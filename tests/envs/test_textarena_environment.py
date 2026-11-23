@@ -72,6 +72,18 @@ def test_wordle_reset_clears_accumulated_state():
     assert obs2.prompt == obs3.prompt
 
 
+def test_wordle_reset_clears_reward_signals_from_raw_state():
+    pytest.importorskip("textarena", reason="textarena not installed")
+    env = TextArenaEnvironment(env_id="Wordle-v0", num_players=1)
+    env.reset()
+    env.step(TextArenaAction(message="[crane]"))
+    assert "reward_signals" in env.state.raw_state
+
+    env.reset()
+
+    assert "reward_signals" not in env.state.raw_state
+
+
 def test_textarena_web_playground():
     pytest.importorskip("textarena", reason="textarena not installed")
     env = TextArenaEnvironment(env_id="Wordle-v0", num_players=1)
