@@ -59,6 +59,7 @@ DEFAULT_EVALUATOR_PROMPT = (
 logger = logging.getLogger(__name__)
 
 DatasetSource = str | dict[str, Any] | list[str | dict[str, Any]] | None
+_PROBLEM_ID_KEYS = ("problem_id", "id")
 
 
 def _default_verifier_workers() -> int:
@@ -386,7 +387,7 @@ def _normalize_problem(
     )
     problem_id = _first_present_value(
         raw_problem,
-        ("problem_id", "id"),
+        _PROBLEM_ID_KEYS,
         f"problem_{index:06d}",
     )
     resolved_dataset_source = _first_present_value(
@@ -444,7 +445,7 @@ def _normalize_problem(
 def _load_problems_from_spec(
     spec: str | dict[str, Any],
     start_index: int,
-) -> list[dict[str, Any]]:
+) -> list[tuple[dict[str, Any], bool]]:
     if isinstance(spec, dict):
         if "path" in spec:
             path = Path(spec["path"])
@@ -473,18 +474,19 @@ def _load_problems_from_spec(
                 "Dataset source must be a local .json/.jsonl path or a Hugging Face dataset id like 'owner/name'."
             )
 
-    problems: list[dict[str, Any]] = []
+    problems: list[tuple[dict[str, Any], bool]] = []
     for offset, row in enumerate(rows, start=1):
         try:
-            problems.append(
-                _normalize_problem(row, start_index + offset, dataset_source)
-            )
+            problem = _normalize_problem(row, start_index + offset, dataset_source)
         except ValueError:
             logger.warning(
                 "Skipping invalid QED math dataset row from %s at offset %d",
                 dataset_source,
                 offset,
             )
+            continue
+        generated = _first_present_value(row, _PROBLEM_ID_KEYS) is None
+        problems.append((problem, generated))
 
     return problems
 
@@ -504,13 +506,40 @@ def load_problems(dataset_path: DatasetSource) -> list[dict]:
         return _bootstrap_problems()
 
     problems: list[dict[str, Any]] = []
+    generated_problems: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for spec in dataset_specs:
-        problems.extend(_load_problems_from_spec(spec, start_index=len(problems)))
+        for problem, generated in _load_problems_from_spec(spec, len(problems)):
+            problems.append(problem)
+            if generated:
+                generated_problems.append(problem)
+            else:
+                # Answer cache keys strip whitespace from caller-supplied IDs.
+                seen_ids.add(problem["problem_id"].strip())
 
     if not problems:
         raise ValueError(
             "No valid QED math problems were loaded from the configured dataset source."
         )
+
+    # The fallback index counts accepted rows between sources, but includes
+    # skipped rows within a source. Preserve explicit IDs and the first
+    # occurrence of each otherwise unclaimed generated ID before replacing
+    # collisions. Fresh allocations must also avoid later existing IDs.
+    if len(dataset_specs) > 1:
+        reserved_ids = seen_ids.union(
+            problem["problem_id"] for problem in generated_problems
+        )
+        next_index = len(problems) + 1
+        for problem in generated_problems:
+            problem_id = problem["problem_id"]
+            if problem_id in seen_ids:
+                while f"problem_{next_index:06d}" in reserved_ids:
+                    next_index += 1
+                problem["problem_id"] = f"problem_{next_index:06d}"
+                next_index += 1
+            else:
+                seen_ids.add(problem_id)
 
     return problems
 
@@ -758,7 +787,10 @@ class QEDMathEnvironment(MCPEnvironment):
                     Tool(
                         name=t.name,
                         description=t.description or "",
-                        input_schema=t.inputSchema if hasattr(t, "inputSchema") else {},
+                        # mcp 2 (FastMCP 4) renamed the attribute to input_schema.
+                        input_schema=getattr(t, "input_schema", None)
+                        or getattr(t, "inputSchema", None)
+                        or {},
                     )
                     for t in tools_result
                 ]

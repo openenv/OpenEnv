@@ -95,7 +95,7 @@ class MazeEnvironment(Environment[MazeAction, MazeObservation, MazeState]):
     def reset(
         self,
         seed: Optional[int] = None,
-        start_cell: Optional[Tuple[int, int]] = None,
+        start_cell: Optional[Tuple[int, int] | List[int]] = None,
         episode_id: Optional[str] = None,
         **kwargs: Any,
     ) -> MazeObservation:
@@ -103,9 +103,13 @@ class MazeEnvironment(Environment[MazeAction, MazeObservation, MazeState]):
         Reset the environment.
 
         Args:
-            seed: Optional random seed for environment initialization
-            start_cell: Optional starting cell (col, row) for the agent
-            episode_id: Optional episode ID to set for the new episode
+            seed (`int`, *optional*):
+                Random seed for environment initialization.
+            start_cell (`tuple[int, int]` or `list[int]`, *optional*):
+                Starting cell (col, row) for the agent. A JSON reset request
+                sends it as a `[col, row]` list.
+            episode_id (`str`, *optional*):
+                Episode ID to set for the new episode.
 
         Returns:
             MazeObservation with initial maze state
@@ -113,7 +117,12 @@ class MazeEnvironment(Environment[MazeAction, MazeObservation, MazeState]):
         if seed is not None:
             np.random.seed(seed)
 
-        self.env.reset(self._start_cell if start_cell is None else start_cell)
+        # Maze compares cells as tuples, and JSON delivers a list.
+        self.env.reset(
+            self._start_cell
+            if start_cell is None
+            else (int(start_cell[0]), int(start_cell[1]))
+        )
         self._state = MazeState(
             episode_id=episode_id if episode_id is not None else str(uuid4()),
             step_count=0,

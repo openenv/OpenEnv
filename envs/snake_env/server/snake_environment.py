@@ -18,6 +18,9 @@ from uuid import uuid4
 import gym
 import marlenv.envs  # Register marlenv environments with gym
 import numpy as np
+from marlenv.core.grid_util import dfs_sweep_empty
+from marlenv.core.snake import Snake
+from marlenv.envs.snake_env import SnakeEnv as MarlenvSnake
 
 # Support both in-repo and standalone imports
 try:
@@ -77,6 +80,48 @@ class SingleAgentWrapper(gym.Wrapper):
         done = bool(done)
 
         return obs, reward, done, info
+
+
+class SeedableSnakeEnv(MarlenvSnake):
+    """
+    marlenv's SnakeEnv with a per-instance random generator.
+
+    marlenv draws the snake spawn and the fruit positions from the process-wide
+    ``np.random``, and its ``seed()`` method only sets an ``np_random`` attribute
+    that nothing reads. Seeding ``np.random`` would be shared by all sessions of
+    the server, so this subclass draws from its own generator once ``set_rng``
+    has been called. Until then it behaves exactly like marlenv's SnakeEnv.
+    """
+
+    _rng: Optional[np.random.Generator] = None
+
+    def set_rng(self, seed: int) -> None:
+        """Draw from a new generator seeded with ``seed`` from now on."""
+        self._rng = np.random.default_rng(seed)
+
+    def _generate_snakes(self):
+        if self._rng is None:
+            return super()._generate_snakes()
+        # Same as marlenv's, with the generator in place of np.random
+        candidates = dfs_sweep_empty(self.grid, self.snake_length)
+        while True:
+            sample_idx = self._rng.permutation(len(candidates))[: self.num_snakes]
+            samples = [candidates[si] for si in sample_idx]
+            if self._clear_overlap(samples):
+                break
+        return [Snake(idx, coords) for idx, coords in enumerate(samples)]
+
+    def _generate_fruits(self, num_fruits=1):
+        if self._rng is None:
+            return super()._generate_fruits(num_fruits)
+        xs = ys = None
+        if num_fruits:
+            xs, ys = np.where(self.grid == 0)
+            if len(xs) == 0:
+                return None, None
+            idxes = self._rng.integers(0, len(xs), size=num_fruits)
+            xs, ys = xs[idxes], ys[idxes]
+        return xs, ys
 
 
 def _json_safe(value: Any) -> Any:
@@ -163,9 +208,7 @@ class SnakeEnvironment(Environment):
 
         # Create the marlenv snake environment for single agent
         # Note: We don't use gym.make directly to avoid gym 0.24.1 wrappers
-        from marlenv.envs.snake_env import SnakeEnv as MarlenvSnake
-
-        self.base_env = MarlenvSnake(
+        self.base_env = SeedableSnakeEnv(
             height=height,
             width=width,
             num_snakes=1,  # Single agent
@@ -220,14 +263,34 @@ class SnakeEnvironment(Environment):
             + "</div>"
         )
 
-    def reset(self) -> SnakeObservation:
+    def reset(
+        self,
+        seed: int | None = None,
+        episode_id: str | None = None,
+        **kwargs: Any,
+    ) -> SnakeObservation:
         """
         Reset the environment.
+
+        Args:
+            seed (`int`, *optional*):
+                Seeds this environment's own random generator, which places the
+                snake and the fruits, from this reset on. The same seed always
+                yields the same observations for the same actions. marlenv has no
+                per-instance seed, so this is a ``SeedableSnakeEnv`` generator and
+                the process-wide ``np.random`` is left alone.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
 
         Returns:
             SnakeObservation with initial game state
         """
-        self._state = State(episode_id=str(uuid4()), step_count=0)
+        if seed is not None:
+            self.base_env.set_rng(seed)
+        self._state = State(
+            episode_id=episode_id if episode_id is not None else str(uuid4()),
+            step_count=0,
+        )
         self._episode_score = 0.0
         self._episode_fruits = 0
         self._episode_kills = 0
