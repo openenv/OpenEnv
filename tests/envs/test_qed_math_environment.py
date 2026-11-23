@@ -512,6 +512,136 @@ class TestLoadProblems:
         assert obs.problem_id == "id_beta"
         assert obs.problem == "P2"
 
+    def test_mixed_sources_only_rename_colliding_generated_ids(
+        self, tmp_path, monkeypatch
+    ):
+        from datasets import Dataset
+
+        first = tmp_path / "first.jsonl"
+        first.write_text('{"answer": "0"}\n{"problem": "first", "answer": "4"}\n')
+        last = tmp_path / "last.json"
+        last.write_text(json.dumps([{"problem": "last", "id": "problem_000005"}]))
+        hub_calls = []
+
+        def load_hub_dataset(hub_id, config, *, split, trust_remote_code):
+            hub_calls.append((hub_id, config, split, trust_remote_code))
+            return Dataset.from_list(
+                [
+                    {"problem": "second", "answer": "6"},
+                    {"problem": "third", "answer": "8"},
+                ]
+            )
+
+        monkeypatch.setattr(
+            "qed_math_env.server.qed_math_environment.load_dataset", load_hub_dataset
+        )
+        sources = [
+            str(first),
+            {"hub_id": "owner/math", "config": "contest", "split": "test"},
+            {"path": str(last), "dataset_source": "custom"},
+        ]
+        problems = load_problems(sources)
+
+        assert hub_calls == [("owner/math", "contest", "test", True)]
+        assert [row["problem"] for row in problems] == [
+            "first",
+            "second",
+            "third",
+            "last",
+        ]
+        assert [row["dataset_source"] for row in problems] == [
+            "first",
+            "owner/math",
+            "owner/math",
+            "custom",
+        ]
+        assert [row["problem_id"] for row in problems] == [
+            "problem_000002",
+            "problem_000006",
+            "problem_000003",
+            "problem_000005",
+        ]
+        assert load_problems(sources) == problems
+
+    def test_generated_ids_and_explicit_duplicates_preserve_legacy_order(
+        self, tmp_path
+    ):
+        rows = [
+            {"problem": "first"},
+            {"answer": "invalid"},
+            {"problem": "third"},
+            {"problem": "explicit alias", "problem_id": None, "id": "chosen"},
+            {"problem": "same explicit ID", "id": "chosen"},
+            {"problem": "explicit empty ID", "problem_id": "", "id": "ignored"},
+        ]
+        path = tmp_path / "first.json"
+        path.write_text(json.dumps(rows))
+        expected_ids = ["problem_000001", "problem_000003", "chosen", "chosen", ""]
+        assert [row["problem_id"] for row in load_problems(str(path))] == expected_ids
+
+        second = tmp_path / "second.json"
+        second.write_text(json.dumps([{"answer": "invalid"}, {"problem": "next"}]))
+        problems = load_problems([str(path), str(second)])
+        assert [row["problem_id"] for row in problems] == expected_ids + [
+            "problem_000007"
+        ]
+
+    def test_distinct_hub_configs_can_share_dataset_source_name(self, monkeypatch):
+        from datasets import Dataset
+
+        calls = []
+
+        def load_hub_dataset(hub_id, config=None, *, split, trust_remote_code):
+            calls.append((hub_id, config, split, trust_remote_code))
+            if config is None:
+                return Dataset.from_list([{"problem": None}, {"problem": "first"}])
+            return Dataset.from_list([{"problem": "second"}])
+
+        monkeypatch.setattr(
+            "qed_math_env.server.qed_math_environment.load_dataset", load_hub_dataset
+        )
+        problems = load_problems(
+            [
+                "owner/math",
+                {
+                    "dataset": "owner/math",
+                    "config": "contest",
+                    "trust_remote_code": False,
+                },
+            ]
+        )
+
+        assert calls == [
+            ("owner/math", None, "train", True),
+            ("owner/math", "contest", "train", False),
+        ]
+        assert [row["problem"] for row in problems] == ["first", "second"]
+        assert [row["dataset_source"] for row in problems] == [
+            "owner/math",
+            "owner/math",
+        ]
+        assert [row["problem_id"] for row in problems] == [
+            "problem_000002",
+            "problem_000003",
+        ]
+
+    @pytest.mark.parametrize("explicit_id", ["problem_000002", " problem_000002 "])
+    def test_explicit_id_takes_precedence_over_inferred_collision(
+        self, tmp_path, explicit_id
+    ):
+        first = tmp_path / "first.json"
+        first.write_text(json.dumps([{"answer": "invalid"}, {"problem": "first"}]))
+        second = tmp_path / "second.json"
+        second.write_text(json.dumps([{"problem": "second", "id": explicit_id}]))
+
+        problems = load_problems([str(first), str(second)])
+
+        assert [row["problem"] for row in problems] == ["first", "second"]
+        assert [row["problem_id"] for row in problems] == [
+            "problem_000003",
+            explicit_id,
+        ]
+
 
 # QEDMathEnvironment: reset
 
@@ -1096,6 +1226,26 @@ class TestVerifyAnswerWorker:
         response = _verify_answer_worker(request)
         assert response.status == "wrong"
 
+    @pytest.mark.parametrize(
+        ("prediction", "gold", "status"),
+        [
+            (r"\boxed{\sqrt{51}}", r"\boxed{\sqrt{51}}", "correct"),
+            (r"\boxed{1+x^2}", r"\boxed{x^2+1}", "correct"),
+            (r"\boxed{49, 50, 51}", r"\boxed{51}", "wrong"),
+            (r"\boxed{x = 7 \text{ or } x = 51}", r"\boxed{51}", "wrong"),
+        ],
+    )
+    def test_boxed_content_is_parsed_as_latex(self, prediction, gold, status):
+        """Answer-mode gold is boxed, so the prediction has to stay boxed too."""
+        request = VerifyRequest(
+            request_id="req-boxed",
+            prediction=prediction,
+            gold=gold,
+            strict=True,
+            timeout_seconds=1,
+        )
+        assert _verify_answer_worker(request).status == status
+
     def test_no_boxed_answer(self):
         request = VerifyRequest(
             request_id="req-3",
@@ -1121,14 +1271,13 @@ class TestVerifyAnswerWorker:
     def test_unparsable_prediction(self):
         request = VerifyRequest(
             request_id="req-5",
-            prediction=r"\boxed{@#$%^&*()}",
+            prediction=r"\boxed{51",
             gold="4",
             strict=True,
             timeout_seconds=1,
         )
         response = _verify_answer_worker(request)
-        # Should be unparsable or internal_error depending on what math_verify does
-        assert response.status in {"unparsable", "internal_error"}
+        assert response.status == "unparsable"
 
     def test_unparsable_gold(self):
         request = VerifyRequest(

@@ -250,7 +250,14 @@ def _engine_ms(conn: duckdb.DuckDBPyConnection, query: str, runs: int) -> float:
             # Bounded on purpose: a plan is tiny, so anything larger is not a
             # plan and must not be pulled into Python wholesale.
             rows = cur.execute(f"EXPLAIN ANALYZE {query}").fetchmany(_MAX_PLAN_ROWS)
-        match = _TOTAL_TIME_RE.search("\n".join(str(r[-1]) for r in rows))
+        # DuckDB 1.5 prints the statement on one line above the timing box.
+        # Skip it, so "Total Time: 0s" in the agent's SQL is not read as its time.
+        profile = "\n".join(
+            line
+            for line in "\n".join(str(r[-1]) for r in rows).split("\n")
+            if not line.startswith("EXPLAIN ANALYZE ")
+        )
+        match = _TOTAL_TIME_RE.search(profile)
         if match is None:
             raise RuntimeError("EXPLAIN ANALYZE output has no total time")
         timings.append(float(match.group(1)) * 1000.0)

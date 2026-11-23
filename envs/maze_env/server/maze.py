@@ -185,11 +185,8 @@ class Maze:
         self.__total_reward += reward
         status = self.__status()
         state = self.__observe()
-        logging.debug(
-            "action: {:10s} | reward: {: .2f} | status: {}".format(
-                Action(action).name, reward, status
-            )
-        )
+        # An action outside Action is scored as an impossible move.
+        logging.debug("action: %s | reward: %.2f | status: %s", action, reward, status)
         return state, reward, status
 
     def __execute(self, action):
