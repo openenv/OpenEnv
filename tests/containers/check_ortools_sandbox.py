@@ -195,6 +195,33 @@ subprocess.Popen([sys.executable, '-c',
         for uid in uids:
             self.assertEqual(sandbox._processes_of(uid), [])
 
+    def test_no_network_and_no_reaching_into_other_processes(self):
+        code = """
+import ctypes, errno, platform, socket
+for family in (socket.AF_INET, socket.AF_INET6, socket.AF_UNIX):
+    try:
+        socket.socket(family)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError(family)
+libc = ctypes.CDLL(None, use_errno=True)
+# ptrace, process_vm_readv, process_vm_writev, pidfd_getfd, io_uring_setup/enter/register
+nrs = {"x86_64": [101, 310, 311, 438, 425, 426, 427], "aarch64": [117, 270, 271, 438, 425, 426, 427]}
+for nr in nrs[platform.machine()]:
+    ctypes.set_errno(0)
+    assert (libc.syscall(nr, 0, 0, 0, 0, 0), ctypes.get_errno()) == (-1, errno.EPERM), nr
+"""
+        result = self.run_code(code)
+        self.assertEqual(result["returncode"], 0, result["output"])
+        result = self.run_code(
+            "from ortools.sat.python import cp_model\n"
+            "m = cp_model.CpModel(); x = m.NewIntVar(0, 9, 'x'); m.Add(x == instance['value'] % 10)\n"
+            "s = cp_model.CpSolver(); assert s.Solve(m) == cp_model.OPTIMAL and s.Value(x) == 2",
+            allow_ortools=True,
+        )
+        self.assertEqual(result["returncode"], 0, result["output"])
+
     def test_killer_does_not_hold_the_servers_descriptors(self):
         # Another thread's Popen waits for EOF on its error pipe: the killer must not keep it open.
         uid = sandbox.new_uid()
