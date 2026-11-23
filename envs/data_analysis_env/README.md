@@ -139,9 +139,9 @@ forked from a spawner that has pandas, numpy and scikit-learn loaded, with these
 1. **A user per session.** When the server is root on Linux (the Docker image runs it as root on purpose), each
    worker switches to its own unprivileged uid (from 61000, no groups, no capabilities) before any model code runs. It
    can't read the server's environment, memory or root-only files, another session's home, or signal another session's
-   processes. When a session ends, every process left with its uid is killed, and its files in `/tmp`, `/var/tmp` and
-   `/dev/shm` and its SysV IPC objects (shared memory, message queues, semaphores) are removed, before the uid is used
-   again.
+   processes. When a session ends, every process left with its uid is killed, and its files in `/tmp`, `/var/tmp`,
+   `/dev/shm`, `/run/lock` and `/dev/mqueue` and its SysV IPC objects (shared memory, message queues, semaphores) are
+   removed, before the uid is used again.
 2. **No network.** Two mechanisms, and which ones apply depends on the host. The server says so once, at startup, in
    the log line `data_analysis_env sandbox: workers run as ..., network: ...`:
 

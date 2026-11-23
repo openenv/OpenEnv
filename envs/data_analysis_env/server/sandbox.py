@@ -13,8 +13,9 @@ layers below decide what that is, from the strongest to defense in depth:
    switches to its own unprivileged uid (`DATA_ANALYSIS_SANDBOX_UID_BASE` + n) right after the
    fork, before any model code runs. It can't read the server's `/proc/<pid>/environ` or memory,
    files only root can read, or another session's home, and it can't signal other sessions. When
-   a session ends, every process left with its uid is killed, and its files in /tmp, /var/tmp and
-   /dev/shm and its SysV IPC objects are removed, before the uid is used again.
+   a session ends, every process left with its uid is killed, and its files in /tmp, /var/tmp,
+   /dev/shm, /run/lock and /dev/mqueue and its SysV IPC objects are removed, before the uid is
+   used again.
 2. **No network.** On Linux every worker installs a seccomp filter (after no_new_privs, so no
    capability is needed) that refuses to create any socket, before model code runs. With root and
    CAP_SYS_ADMIN the spawner also moves itself into a new network namespace before it forks any
@@ -1104,7 +1105,8 @@ def _spawner_main(fd: int, isolate_network: bool) -> None:
         conn.send_bytes(json.dumps(reply).encode())
 
 
-_SWEEP_DIRS = ("/tmp", "/var/tmp", "/dev/shm")
+# World-writable in the image. Those missing on a host are skipped.
+_SWEEP_DIRS = ("/tmp", "/var/tmp", "/dev/shm", "/run/lock", "/dev/mqueue")
 
 
 def _sweep_uid(uid: int) -> bool:

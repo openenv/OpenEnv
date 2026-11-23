@@ -633,11 +633,15 @@ def test_closing_a_session_kills_its_strays_and_temp_files(task_dir):
         extra_groups=[],
         env={},
     )
-    _as_uid(uid, "open('/tmp/data_analysis_env_stray', 'w').write('x')")
-    assert os.path.exists("/tmp/data_analysis_env_stray")
+    # Every world-writable directory of the image, where it exists here.
+    dirs = ("/tmp", "/var/tmp", "/dev/shm", "/run/lock", "/dev/mqueue")
+    strays = [f"{d}/data_analysis_env_stray" for d in dirs if os.path.isdir(d)]
+    r = _as_uid(uid, "import sys\nfor p in sys.argv[1:]: open(p, 'w')", *strays)
+    assert r.returncode == 0, r.stderr
+    assert all(os.path.exists(p) for p in strays)
     s.close()
     assert stray.wait(timeout=10) == -signal.SIGKILL
-    assert not os.path.exists("/tmp/data_analysis_env_stray")
+    assert not any(os.path.exists(p) for p in strays)
 
 
 @root_only
