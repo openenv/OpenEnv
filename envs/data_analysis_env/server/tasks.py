@@ -324,16 +324,18 @@ def build_prompt(row: dict, file_paths: List[str]) -> str:
 
 
 OUTPUT_CUT = "\n... (output truncated)"
+ERROR_CUT = "(output truncated) ...\n"
 
 
 def tool_output(stdout: str, stderr: str, exit_code: int, max_chars: int) -> str:
     """What the model sees after `run_python`: stdout, then stderr (errors or warnings), capped.
 
-    stderr keeps up to half of `max_chars` and stdout is cut to the room left, so the error of
-    a call that printed a lot before failing still reaches the model.
+    stderr keeps its last half of `max_chars` (the error comes last) and stdout is cut to the
+    room left, so the error of a call that printed a lot before failing still reaches the model.
     """
     stdout, stderr = stdout or "", stderr or ""
-    stderr = stderr[: max_chars // 2]
+    if len(stderr) > max_chars // 2:
+        stderr = ERROR_CUT + stderr[-(max_chars // 2 - len(ERROR_CUT)) :]
     room = max_chars - len(stderr) - 1  # one for the newline between the two
     if len(stdout) > room:
         stdout = stdout[: room - len(OUTPUT_CUT)] + OUTPUT_CUT

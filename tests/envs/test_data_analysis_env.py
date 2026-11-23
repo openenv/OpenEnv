@@ -355,6 +355,14 @@ def test_error_after_a_large_print_reaches_the_model(env):
     assert len(out) <= MAX_TOOL_OUTPUT_CHARS
 
 
+def test_error_after_long_stderr_reaches_the_model(env):
+    env.reset(task_id="t2")
+    code = "import sys\nfor i in range(2000):\n    print('step', i, file=sys.stderr)\n1 / 0"
+    out = text(call(env, "run_python", code=code))
+    assert "ZeroDivisionError" in out and "(output truncated)" in out
+    assert len(out) <= MAX_TOOL_OUTPUT_CHARS
+
+
 def test_reward_is_emitted_only_on_the_submit_step(env):
     env.reset(task_id="t2")
     obs = call(env, "submit_answer", answer="7")
