@@ -313,7 +313,9 @@ def _parse_exit_code_marker(output: str) -> int:
 class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2State]):
     """OpenEnv wrapper around Terminal-Bench 2 tasks (local execution)."""
 
-    SUPPORTS_CONCURRENT_SESSIONS: bool = True
+    # Sessions share the host, the task folders and the verifier's fixed paths
+    # (/tests, /logs/verifier), so they can't run side by side.
+    SUPPORTS_CONCURRENT_SESSIONS: bool = False
 
     def __init__(
         self,
