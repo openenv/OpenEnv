@@ -787,6 +787,7 @@ def _has_account(uid: int) -> bool:
 
 _spawner: Optional[_Spawner] = None
 _uids: Optional[_UidPool] = None
+_homes: Optional[str] = None
 _global_lock = threading.Lock()
 
 
@@ -831,6 +832,17 @@ def _get_uid_pool() -> _UidPool:
             conf = settings()
             _uids = _UidPool(int(conf["uid_base"]), int(conf["uid_count"]))
         return _uids
+
+
+def _get_homes_dir() -> str:
+    """Parent of the session homes, owned by the server and 0711. A uid sweep only removes the
+    uid's own top-level entries in /tmp, so it never walks a home: the server removes it."""
+    global _homes
+    with _global_lock:
+        if _homes is None:
+            _homes = tempfile.mkdtemp(prefix="data_analysis_env_homes_")
+            os.chmod(_homes, 0o711)
+        return _homes
 
 
 def sandbox_status() -> Dict[str, object]:
@@ -904,7 +916,7 @@ class SandboxSession:
                 cleanup.callback(lambda: pool.release(uid, swept[0]))
                 if dirty:
                     spawner.sweep(uid)
-            self._home = tempfile.mkdtemp(prefix="data_analysis_env_")
+            self._home = tempfile.mkdtemp(prefix="session_", dir=_get_homes_dir())
             cleanup.callback(shutil.rmtree, self._home, ignore_errors=True)
             if self._uid is not None:
                 os.chown(self._home, self._uid, self._uid)

@@ -615,3 +615,17 @@ def test_closing_a_session_kills_its_strays_and_temp_files(task_dir):
     s.close()
     assert stray.wait(timeout=10) == -signal.SIGKILL
     assert not os.path.exists("/tmp/data_analysis_env_stray")
+
+
+@root_only
+def test_a_uid_sweep_leaves_the_session_home_to_the_server(task_dir):
+    """The spawner sweeps a uid under a time limit, so it must not walk the home (any size)."""
+    s = SandboxSession(read_dirs=[task_dir], timeout_s=TIMEOUT_S)
+    assert s.run("open('note', 'w').write('x')")[2] == 0
+    home = s.home
+    try:
+        sandbox._get_spawner().sweep(s.uid)
+        assert os.path.exists(os.path.join(home, "note"))
+    finally:
+        s.close()
+    assert not os.path.exists(home)
