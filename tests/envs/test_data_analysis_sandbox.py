@@ -19,6 +19,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -444,6 +445,28 @@ def test_timeout_kills_and_restarts_the_session(session):
         os.kill(pid, 0)
     code, _, err = run(session, "print(x)")  # the session was restarted
     assert code == 1 and "NameError" in err
+    assert run(session, "1 + 1")[:2] == (0, "2\n")
+
+
+def test_a_stalled_reply_times_out_and_the_session_restarts(session):
+    """Model code that writes part of a reply frame and stalls must not block the server."""
+    stall = (
+        "import os, struct, sys, time\n"
+        "f = sys._getframe()\n"
+        "while 'conn' not in f.f_locals:\n"
+        "    f = f.f_back\n"
+        "os.write(f.f_locals['conn'].fileno(), struct.pack('!i', 1000) + b'x')\n"
+        "time.sleep(60)\n"
+    )
+    result = []
+    start = time.time()
+    caller = threading.Thread(target=lambda: result.append(run(session, stall)))
+    caller.start()
+    caller.join(TIMEOUT_S + 3)
+    assert result, "the call did not return"
+    code, _, err = result[0]
+    assert code == 1 and "TimeoutError" in err
+    assert time.time() - start < TIMEOUT_S + 3
     assert run(session, "1 + 1")[:2] == (0, "2\n")
 
 

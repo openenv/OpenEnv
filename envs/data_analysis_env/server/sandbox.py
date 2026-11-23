@@ -57,6 +57,7 @@ import sys
 import sysconfig
 import tempfile
 import threading
+import time
 import weakref
 from multiprocessing.connection import Connection
 from multiprocessing.reduction import recv_handle, send_handle
@@ -941,11 +942,12 @@ class SandboxSession:
         """Run one call. Returns (stdout, stderr, exit_code)."""
         if not self.start():
             return "", START_FAILED_MESSAGE, 1
+        deadline = time.monotonic() + self._timeout_s
+        # Kill the worker at the deadline, so a reply that stalls (even mid-frame) ends in EOF.
+        timer = threading.Timer(self._timeout_s, os.kill, (self._pid, signal.SIGKILL))
+        timer.start()
         try:
             self._conn.send_bytes(json.dumps({"code": str(code)}).encode())
-            if not self._conn.poll(self._timeout_s):
-                self.close()
-                return "", TIMEOUT_MESSAGE.format(seconds=self._timeout_s), 1
             # Bounded JSON with typed fields only: the worker runs model code and is not trusted.
             reply = json.loads(self._conn.recv_bytes(MAX_REPLY_BYTES))
             stdout, stderr = reply["stdout"], reply["stderr"]
@@ -959,9 +961,13 @@ class SandboxSession:
                 raise ValueError("malformed worker reply")
             return stdout, stderr, exit_code
         except (EOFError, OSError, ValueError, KeyError, TypeError):
-            logger.warning("data_analysis_env worker process failed, restarting it")
             self.close()
+            if time.monotonic() >= deadline:
+                return "", TIMEOUT_MESSAGE.format(seconds=self._timeout_s), 1
+            logger.warning("data_analysis_env worker process failed, restarting it")
             return "", CRASH_MESSAGE, 1
+        finally:
+            timer.cancel()
 
     def close(self) -> None:
         """Kill the worker, sweep its uid and remove its home. Safe to call more than once."""
