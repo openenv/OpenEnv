@@ -399,6 +399,18 @@ def test_submit_through_step_async(env):
     assert (obs.done, obs.reward) == (True, 1.0)
 
 
+@pytest.mark.parametrize("answer", [7, 7.0])
+def test_numeric_answers_are_accepted(env, answer):
+    env.reset(task_id="t2")
+    obs = call(env, "submit_answer", answer=answer)
+    assert (obs.done, obs.reward) == (True, 1.0)
+    assert env.state.submitted_answer == str(answer)
+    tools = env.step(ListToolsAction()).tools
+    schema = next(t for t in tools if t.name == "submit_answer").input_schema
+    types = {t["type"] for t in schema["properties"]["answer"]["anyOf"]}
+    assert types == {"string", "integer", "number"}
+
+
 def test_wrong_answer_scores_zero(env):
     env.reset(task_id="t1")
     obs = call(env, "submit_answer", answer="nope")

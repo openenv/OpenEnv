@@ -65,7 +65,7 @@ class DataAnalysisEnvironment(MCPEnvironment):
             return await asyncio.to_thread(self._run_python, code)
 
         @mcp.tool
-        async def submit_answer(answer: str) -> str:
+        async def submit_answer(answer: str | int | float) -> str:
             """
             Submit the final answer. Only one answer is accepted, and it ends the task.
 
@@ -76,7 +76,7 @@ class DataAnalysisEnvironment(MCPEnvironment):
             Returns:
                 A confirmation.
             """
-            return await asyncio.to_thread(self._submit_answer, answer)
+            return await asyncio.to_thread(self._submit_answer, str(answer))
 
         super().__init__(mcp)
         self._state = DataAnalysisState(episode_id=str(uuid4()), step_count=0)
