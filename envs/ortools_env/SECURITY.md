@@ -37,6 +37,16 @@ can read them. The per-uid process limit doesn't bound the container's total
 either: enough sessions together can reach the container's process limit, and
 then new calls fail to start.
 
+## Network
+
+On Linux (x86_64 and aarch64), each session's code starts under a seccomp filter
+that needs no capability and can't be removed from inside: `socket(2)` of any
+address family and `io_uring` return `EPERM`, and so do `ptrace(2)`,
+`process_vm_readv/writev(2)` and `pidfd_getfd(2)`, which could take a socket or
+memory from another process. It also covers hosts where network namespaces are
+not available, such as Hugging Face Spaces and Jobs. An `--internal` network
+(see the README) is still recommended.
+
 ## Unresolved: aggregate resource containment
 
 RLIMIT_AS applies per process, so a session can still use many times its
@@ -50,8 +60,9 @@ narrow fix.
 checks the UID/interpreter boundary after removing the hook, exercises privileged
 file I/O with synthetic data, and checks that a detached child does not outlive
 its call, that sessions get separate uids, that the process count is limited, that
-cleanup holds no descriptor of the server and survives a failed setup, and that a
-uid released mid-call goes back to the pool only when the call ends.
+cleanup holds no descriptor of the server and survives a failed setup, that a
+uid released mid-call goes back to the pool only when the call ends, and that the
+code can't create sockets.
 The CI container's PID/memory limits protect the test runner as a whole. They do
 not isolate individual submissions.
 
