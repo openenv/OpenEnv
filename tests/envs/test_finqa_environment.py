@@ -1107,6 +1107,18 @@ class TestTaskAPI:
             env.reset(split="test", index=self.N, episode_id="x")
         assert env.state.model_dump() == state
 
+    def test_invalid_selection_with_a_seed_keeps_the_order(self, data_path):
+        env, twin = self._make_env(data_path), self._make_env(data_path)
+        env.reset(seed=3)
+        twin.reset(seed=3)
+        with pytest.raises(IndexError):
+            env.reset(split="test", index=self.N, seed=9)
+        with pytest.raises(ValueError):
+            env.reset(split="train", seed=9)
+        env.reset()
+        twin.reset()
+        assert env.state.question_id == twin.state.question_id
+
     def test_task_api_is_not_an_mcp_tool(self, data_path):
         from envs.finqa_env.models import AVAILABLE_TOOLS
         from openenv.core.env_server.mcp_types import ListToolsAction

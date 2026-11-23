@@ -141,7 +141,7 @@ curl -s localhost:8000/reset -H 'Content-Type: application/json' -d '{"split": "
 - A reset without `index` keeps the seeded shuffle: `seed` sets the order of the unindexed resets, and an indexed reset does not move it.
 - `seed` does not change an indexed question, since FinQA has no seeded variants. For pass@k, run several samples per task at a temperature above 0.
 - An unknown split raises `ValueError`, with or without `index`, and an index outside the split raises `IndexError` (`400` on `/finqa_env/task`).
-- The routes need `openenv-core` 0.4.1 or later on the server, and the reset schema on `/schema` needs 0.11.0 or later.
+- The routes need `openenv` 0.4.1 or later on the server, and the reset schema on `/schema` needs 0.11.0 or later.
 
 ## Reward Computation
 
