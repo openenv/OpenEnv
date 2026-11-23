@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 from typing import Any
 from uuid import uuid4
@@ -48,10 +49,18 @@ _INVALID_ARGS_KEYWORDS = [
     "schema",
 ]
 _TIMEOUT_KEYWORDS = ["timeout", "timed out"]
+# fastapi-mcp's message when the endpoint returned an HTTP error status.
+_HTTP_ERROR_RE = re.compile(r"Error calling \S+\. Status code: (\d+)\.")
 
 
 def _classify_tool_error(error_msg: str) -> str:
     """Classify a tool call error into a reward_type string."""
+    http_error = _HTTP_ERROR_RE.match(error_msg)
+    if http_error:
+        # The tool exists and its endpoint answered. The response body is the
+        # app's own message (e.g. "Order 5 not found"), so only FastAPI's request
+        # validation status (422) counts as a malformed call.
+        return "invalid_args" if http_error.group(1) == "422" else "server_error"
     lower = error_msg.lower()
     if any(kw in lower for kw in _TOOL_NOT_FOUND_KEYWORDS):
         return "tool_not_found"
@@ -163,8 +172,14 @@ class AWMEnvironment(Environment):
             reward_config.copy() if reward_config else DEFAULT_REWARD_CONFIG.copy()
         )
 
-        self._llm_base_url = llm_base_url or os.environ.get("OPENENV_AWM_LLM_BASE_URL")
-        self._llm_api_key = llm_api_key or os.environ.get("OPENENV_AWM_LLM_API_KEY")
+        # The server key only ever goes to the server URL: a client that names its own
+        # endpoint must bring its own key.
+        if llm_base_url:
+            self._llm_base_url = llm_base_url
+            self._llm_api_key = llm_api_key
+        else:
+            self._llm_base_url = os.environ.get("OPENENV_AWM_LLM_BASE_URL")
+            self._llm_api_key = llm_api_key or os.environ.get("OPENENV_AWM_LLM_API_KEY")
         self._llm_model = llm_model or os.environ.get("OPENENV_AWM_LLM_MODEL")
 
         if task is not None:

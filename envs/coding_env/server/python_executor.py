@@ -25,9 +25,11 @@ by every executor in a process. `IsolatedPyExecutor` therefore runs one
 episodes never share interpreter state. Workers are forked from a zygote, a
 template process started once per server with a minimal environment (no
 server secrets) and with smolagents already imported. Each worker drops to
-an unprivileged user right after the fork when the server is root, and is
-killed on timeout. Server and workers exchange bounded
-JSON only, never pickle, because workers run untrusted code.
+an unprivileged user right after the fork when the server is root, installs
+a seccomp filter that refuses to create sockets or to reach into other
+processes (Linux, no capability needed), and is killed on timeout. Server
+and workers exchange bounded JSON only, never pickle, because workers run
+untrusted code.
 """
 
 from __future__ import annotations
@@ -73,6 +75,18 @@ UNPRIVILEGED_UID = 65534  # nobody
 WORKER_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 PR_SET_PDEATHSIG = 1
 PR_SET_DUMPABLE = 4
+PR_SET_SECCOMP = 22
+PR_SET_NO_NEW_PRIVS = 38
+SECCOMP_MODE_FILTER = 2
+# Per architecture: (AUDIT_ARCH_*, syscalls the workers' seccomp filter denies). socket(2) for
+# every address family; io_uring_setup/enter/register(2), which could open sockets without
+# socket(2); and ptrace(2), process_vm_readv/writev(2) and pidfd_getfd(2), which could take
+# a socket or memory from another process of the same uid (a non-root server's workers share
+# its uid).
+_SECCOMP_DENIED = {
+    "x86_64": (0xC000003E, (41, 425, 426, 427, 101, 310, 311, 438)),
+    "aarch64": (0xC00000B7, (198, 425, 426, 427, 117, 270, 271, 438)),
+}
 # The zygote turns non-dumpable before importing anything, so a same-uid
 # process can't read its memory while it loads. Workers inherit the flag.
 _ZYGOTE_BOOT = (
@@ -240,6 +254,89 @@ def set_non_dumpable() -> None:
     _prctl(PR_SET_DUMPABLE, 0)
 
 
+def _socket_filter(arch: int, denied: tuple[int, ...]) -> bytes:
+    """A seccomp BPF program: EPERM for `denied` syscalls and for any other ABI, allow the rest."""
+    import struct
+
+    ld, jeq, jge, ret = (
+        0x20,
+        0x15,
+        0x35,
+        0x06,
+    )  # BPF_LD|W|ABS, BPF_JMP|JEQ|K, JGE|K, RET|K
+    allow, deny = (
+        0x7FFF0000,
+        0x00050000 | 1,
+    )  # SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO | EPERM
+    prog = [(ld, 0, 0, 4), (jeq, 1, 0, arch), (ret, 0, 0, deny), (ld, 0, 0, 0)]
+    checks = [(jge, 0x40000000)] + [(jeq, nr) for nr in denied]  # x32 syscalls too
+    for i, (op, k) in enumerate(checks):
+        prog.append((op, len(checks) - i, 0, k))  # to the final deny
+    prog += [(ret, 0, 0, allow), (ret, 0, 0, deny)]
+    return b"".join(struct.pack("=HBBI", *ins) for ins in prog)
+
+
+def _socket_filter_unavailable() -> str:
+    """Why this platform has no socket filter, or "" if it has one."""
+    import platform
+
+    if not sys.platform.startswith("linux"):
+        return f"seccomp needs Linux (this is {sys.platform})"
+    if platform.machine() not in _SECCOMP_DENIED:
+        return f"no seccomp socket filter for {platform.machine()}"
+    return ""
+
+
+def block_sockets() -> None:
+    """Linux: install a seccomp filter so this process and its children can't create sockets
+    or reach into other processes (see `_SECCOMP_DENIED`).
+
+    It needs no capability (no_new_privs is set first) and can't be undone from
+    inside the process. Raises OSError if not possible.
+    """
+    import platform
+
+    reason = _socket_filter_unavailable()
+    if reason:
+        raise OSError(reason)
+    import ctypes
+
+    arch, denied = _SECCOMP_DENIED[platform.machine()]
+    code = _socket_filter(arch, denied)
+    buf = ctypes.create_string_buffer(code, len(code))
+
+    class _Prog(ctypes.Structure):
+        _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
+
+    prog = _Prog(len(code) // 8, ctypes.addressof(buf))
+    libc = ctypes.CDLL(None, use_errno=True)
+    prctl = libc.prctl
+    prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
+    prctl.argtypes += [ctypes.c_ulong, ctypes.c_ulong]  # unused arguments must be 0
+    prctl.restype = ctypes.c_int
+    if prctl(PR_SET_NO_NEW_PRIVS, 1, None, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_NO_NEW_PRIVS) failed")
+    if prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog), 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_SECCOMP) failed")
+
+
+def _check_socket_filter() -> str:
+    """Install the socket filter in a throwaway child: "" if that works, else why not."""
+    if _socket_filter_unavailable():
+        return ""  # the server warns that model code has network access
+    pid = os.fork()
+    if pid == 0:
+        try:
+            block_sockets()
+            os._exit(0)
+        except OSError as e:
+            os._exit(e.errno or 255)
+        finally:
+            os._exit(255)
+    code = os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
+    return "" if code == 0 else f"prctl failed: {os.strerror(code)}"
+
+
 def _worker_env(home: str) -> dict[str, str]:
     env = {k: os.environ[k] for k in WORKER_ENV_ALLOWLIST if k in os.environ}
     # The zygote imports this module the way the server did.
@@ -293,8 +390,16 @@ class _Zygote:
                     cwd=home,
                 )
             cleanup.callback(_kill, self._proc)
-            if self._receive(ZYGOTE_STARTUP_TIMEOUT_S) != {"ready": True}:
+            reply = self._receive(ZYGOTE_STARTUP_TIMEOUT_S)
+            if "error" in reply:
+                raise RuntimeError(
+                    "coding_env: can't install the seccomp filter that keeps model "
+                    f"code off the network ({reply['error']})"
+                )
+            if reply != {"ready": True}:
                 raise ValueError("bad zygote handshake")
+            if reason := _socket_filter_unavailable():
+                logger.warning("coding_env: model code has network access, %s", reason)
         except BaseException:
             self.close()
             raise
@@ -533,6 +638,9 @@ def _zygote_main(fd: int) -> None:
     # Keep the imported objects out of the workers' garbage collections, so
     # those don't write to (and copy) the memory pages they share.
     gc.freeze()
+    if error := _check_socket_filter():
+        conn.send_bytes(json.dumps({"error": error}).encode())
+        return
     conn.send_bytes(b'{"ready":true}')
     while True:
         try:
@@ -572,6 +680,8 @@ def _worker_main(fd: int, config: dict) -> None:
         # Changing the uid resets the dumpable flag and the parent-death signal.
         set_non_dumpable()
     _prctl(PR_SET_PDEATHSIG, signal.SIGKILL)  # die with the zygote
+    if not _socket_filter_unavailable():
+        block_sockets()  # no socket from here on; if it fails, the worker stops
     home = config["home"]
     os.chdir(home)
     os.environ.update(HOME=home, TMPDIR=home, TMP=home, TEMP=home)
