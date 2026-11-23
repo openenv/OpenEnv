@@ -407,7 +407,7 @@ class MCPEnvironment(Environment):
         """
         # Check for errors in result
         if isinstance(result, dict):
-            if "error" in result:
+            if "error" in result or result.get("isError"):
                 return -0.5
 
             # Check status code if present
