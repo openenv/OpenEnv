@@ -244,6 +244,8 @@ See [Evaluating with Environments](../tutorials/evaluation-inspect) for a worked
 
 [[autodoc]] openenv.core.evals.inspect_harness.InspectAIHarness
 
+[[autodoc]] openenv.core.evals.env_harness.EnvEvalHarness
+
 ## Rubrics
 
 [[autodoc]] openenv.core.rubrics.base.Rubric
