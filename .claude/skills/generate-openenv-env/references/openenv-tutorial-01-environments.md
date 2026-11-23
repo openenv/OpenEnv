@@ -1138,7 +1138,7 @@ COPY --from=builder /app/env/.venv /app/.venv
 COPY --from=builder /app/env /app/env
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
-CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "cd /app/env && exec uvicorn server.app:app --host 0.0.0.0 --port 8000"]
 ```
 
 ### 🎓 Examples to Study

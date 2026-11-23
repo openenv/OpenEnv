@@ -56,6 +56,7 @@ from envs.pelican_svg_env.server.tasks import (
     task_from_ids,
 )
 from envs.pelican_svg_env.server.vision_judge import (
+    build_checklist,
     DEFAULT_JUDGE_MODEL,
     HFVisionClient,
     VisionJudge,
@@ -637,6 +638,20 @@ class TestTasks:
     def test_prompt_forbids_the_two_known_cheats(self):
         prompt = make_task("pelican", "bicycle").prompt
         assert "raster" in prompt and "text" in prompt
+
+    @pytest.mark.parametrize(
+        ("subject", "vehicle", "animal"),
+        [
+            ("pelican", "bicycle", "a pelican"),
+            ("octopus", "unicycle", "an octopus"),
+            ("axolotl", "scooter", "an axolotl"),
+        ],
+    )
+    def test_prompt_uses_the_subjects_article(self, subject, vehicle, animal):
+        task = make_task(subject, vehicle)
+        assert f"of {animal} riding a {vehicle}." in task.prompt
+        question = build_checklist(task)["subject_recognisable"]
+        assert f"recognisably {animal}," in question
 
     def test_forbidden_terms_cover_subject_and_vehicle(self):
         terms = make_task("pelican", "bicycle").forbidden_terms
