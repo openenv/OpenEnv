@@ -26,8 +26,16 @@ real and saved uids are one used by nothing else (the session's uid minus 5000),
 so neither the session's processes nor other sessions' cleanups can signal it,
 and none can start another process in between. That includes children
 that called `setsid` to leave the process group. The server then reaps them, and
-a uid goes back to the pool only once none of its processes is left. Each uid
+a uid goes back to the pool only once none of its processes is left, and not
+while a call still runs its code (a session closed mid-call gives its uid back
+when that call ends). The pool hands out the uid released longest ago. Each uid
 can run at most 256 processes and threads (`RLIMIT_NPROC`).
+
+Not covered: files a session writes outside its working directory (for example
+in `/tmp` or `/dev/shm`) stay there, and a later session that gets the same uid
+can read them. The per-uid process limit doesn't bound the container's total
+either: enough sessions together can reach the container's process limit, and
+then new calls fail to start.
 
 ## Unresolved: aggregate resource containment
 
@@ -41,7 +49,9 @@ narrow fix.
 `tests/containers/check_ortools_sandbox.py` runs against the production image,
 checks the UID/interpreter boundary after removing the hook, exercises privileged
 file I/O with synthetic data, and checks that a detached child does not outlive
-its call, that sessions get separate uids and that the process count is limited.
+its call, that sessions get separate uids, that the process count is limited, that
+cleanup holds no descriptor of the server and survives a failed setup, and that a
+uid released mid-call goes back to the pool only when the call ends.
 The CI container's PID/memory limits protect the test runner as a whole. They do
 not isolate individual submissions.
 
