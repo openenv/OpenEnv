@@ -311,7 +311,7 @@ def _python_roots() -> List[str]:
         __name__.split(".")[0],
     ):
         module = sys.modules.get(name)
-        if module is not None and getattr(module, "__file__", None):
+        if module is not None and module.__file__:
             # The directory holding the package: site-packages, or the source tree in dev.
             paths.append(os.path.dirname(os.path.dirname(module.__file__)))
     paths.append("/usr/share/zoneinfo")
@@ -1185,10 +1185,10 @@ def _drop_blocked_modules() -> None:
     def _refused(*args, **kwargs):
         raise SandboxViolation("sandbox: subprocesses are not allowed")
 
-    if hasattr(_subprocess, "_fork_exec"):
+    if sys.version_info >= (3, 11):  # subprocess._fork_exec is new in 3.11
         _subprocess._fork_exec = _refused
     posixsub = sys.modules.get("_posixsubprocess")
-    if posixsub is not None and hasattr(posixsub, "fork_exec"):
+    if posixsub is not None:
         with contextlib.suppress(AttributeError):
             del posixsub.fork_exec
     for name in list(sys.modules):

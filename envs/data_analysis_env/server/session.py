@@ -74,9 +74,7 @@ def _format_warnings(caught) -> str:
     """Warnings raised by the call, one line each, deduplicated and capped."""
     lines: list[str] = []
     for w in caught:
-        line = f"{getattr(w.category, '__name__', 'Warning')}: {w.message}"[
-            :MAX_WARNING_CHARS
-        ]
+        line = f"{w.category.__name__}: {w.message}"[:MAX_WARNING_CHARS]
         if line not in lines:
             lines.append(line)
         if len(lines) >= MAX_WARNINGS:
