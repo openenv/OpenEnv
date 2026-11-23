@@ -13,8 +13,8 @@ layers below decide what that is, from the strongest to defense in depth:
    switches to its own unprivileged uid (`DATA_ANALYSIS_SANDBOX_UID_BASE` + n) right after the
    fork, before any model code runs. It can't read the server's `/proc/<pid>/environ` or memory,
    files only root can read, or another session's home, and it can't signal other sessions. When
-   a session ends, every process left with its uid is killed and its files in /tmp, /var/tmp and
-   /dev/shm are removed before the uid is used again.
+   a session ends, every process left with its uid is killed, and its files in /tmp, /var/tmp and
+   /dev/shm and its SysV IPC objects are removed, before the uid is used again.
 2. **No network.** On Linux every worker installs a seccomp filter (after no_new_privs, so no
    capability is needed) that refuses to create any socket, before model code runs. With root and
    CAP_SYS_ADMIN the spawner also moves itself into a new network namespace before it forks any
@@ -93,6 +93,7 @@ PR_SET_DUMPABLE = 4
 PR_SET_SECCOMP = 22
 PR_SET_NO_NEW_PRIVS = 38
 SECCOMP_MODE_FILTER = 2
+IPC_RMID = 0
 # Per architecture: (AUDIT_ARCH_*, syscalls the workers' seccomp filter denies). socket(2) for
 # every address family, and io_uring_setup(2), which could open sockets without socket(2).
 _SECCOMP_DENIED = {
@@ -1107,9 +1108,9 @@ _SWEEP_DIRS = ("/tmp", "/var/tmp", "/dev/shm")
 
 
 def _sweep_uid(uid: int) -> bool:
-    """As `uid`, in a child: kill every process of that uid and remove its top-level entries in
-    the shared temp directories. Running as the uid itself, not root, means nothing here can be
-    tricked into touching files that uid could not touch anyway."""
+    """As `uid`, in a child: kill every process of that uid, and remove its top-level entries in
+    the shared temp directories and its SysV IPC objects. Running as the uid itself, not root,
+    means nothing here can be tricked into touching files that uid could not touch anyway."""
     if not drops_privileges() or uid < 1000:
         return False
     pid = os.fork()
@@ -1133,6 +1134,19 @@ def _sweep_uid(uid: int) -> bool:
                                 shutil.rmtree(entry.path, ignore_errors=True)
                             else:
                                 os.unlink(entry.path)
+            # SysV IPC objects. As this uid, IPC_RMID only removes the ones it owns or created.
+            import ctypes
+
+            libc = ctypes.CDLL(None)
+            remove = {
+                "shm": lambda i: libc.shmctl(i, IPC_RMID, None),
+                "msg": lambda i: libc.msgctl(i, IPC_RMID, None),
+                "sem": lambda i: libc.semctl(i, 0, IPC_RMID),
+            }
+            for kind, rm in remove.items():
+                with contextlib.suppress(OSError), open(f"/proc/sysvipc/{kind}") as f:
+                    for row in f.read().splitlines()[1:]:
+                        rm(int(row.split()[1]))
             code = 0
         finally:
             os._exit(code)

@@ -12,6 +12,7 @@ per session) and run on Linux as root, as in the Docker image. tests/containers/
 check_data_analysis_sandbox.py runs the same boundary checks inside the production image.
 """
 
+import ctypes
 import json
 import os
 import shutil
@@ -651,3 +652,35 @@ def test_a_uid_sweep_leaves_the_session_home_to_the_server(task_dir):
     finally:
         s.close()
     assert not os.path.exists(home)
+
+
+_SYSV_IPC = """
+import ctypes
+libc = ctypes.CDLL(None)
+print(libc.shmget(0, 4096, 0o600), libc.msgget(0, 0o600), libc.semget(0, 1, 0o600))
+"""
+
+
+def _ipc_ids(kind: str) -> set:
+    rows = Path(f"/proc/sysvipc/{kind}").read_text().splitlines()[1:]
+    return {row.split()[1] for row in rows}
+
+
+@root_only
+def test_closing_a_session_removes_its_sysv_ipc_objects(task_dir):
+    s = SandboxSession(read_dirs=[task_dir], timeout_s=TIMEOUT_S)
+    assert s.run("1")[2] == 0
+    r = _as_uid(s.uid, _SYSV_IPC)
+    created = dict(zip(("shm", "msg", "sem"), r.stdout.split()))
+    assert len(created) == 3 and "-1" not in created.values(), r.stdout + r.stderr
+
+    def alive():
+        return [kind for kind, i in created.items() if i in _ipc_ids(kind)]
+
+    assert alive() == ["shm", "msg", "sem"]
+    libc = ctypes.CDLL(None)
+    servers = libc.shmget(0, 4096, 0o600)  # another user's: must stay
+    s.close()
+    assert alive() == []
+    assert str(servers) in _ipc_ids("shm")
+    libc.shmctl(servers, sandbox.IPC_RMID, None)
