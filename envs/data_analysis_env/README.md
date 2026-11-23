@@ -105,7 +105,7 @@ the split is kept in memory only, never on disk where model code could read it.
 
 Nothing is bundled with the environment.
 
-- **Tasks**: SmolDataEnvs (MIT license) at a pinned version (`DATASET_REVISION` in `server/tasks.py`), downloaded once
+- **Tasks**: SmolDataEnvs (MIT license) at the v1.1 tag (`DATASET_REVISION` in `server/tasks.py`), downloaded once
   per server into memory.
 - **Verified splits**: [SmolDataEnvs](https://huggingface.co/datasets/FineEnvs/SmolDataEnvs) v1.1 adds `eval_verified`
   (61 tasks) and `test_verified` (85): golds checked with an independent solution, ambiguous or seed-dependent tasks
@@ -115,7 +115,7 @@ Nothing is bundled with the environment.
   into `<DATA_ANALYSIS_TASKS_ROOT>/<split>/<task_id>/`, read-only for model code. Files over
   `DATA_ANALYSIS_MAX_FILE_MB` (10 MiB) are not served. They come from public Kaggle datasets, each under its own
   license.
-- **Grader**: SmolDataEnvs' `grader.py`, vendored unmodified at the same commit in `server/grader.py` (a test checks its
+- **Grader**: SmolDataEnvs' `grader.py`, vendored unmodified from v1.0 (unchanged in v1.1) in `server/grader.py` (a test checks its
   hash).
 
 Every download is anonymous: requests carry no `Authorization` header, whatever is in the server's environment, so the

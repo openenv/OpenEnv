@@ -19,7 +19,8 @@ class DataAnalysisState(State):
     Episode state. The gold answer is never part of it: it stays in the server process.
 
     Attributes:
-        split: SmolDataEnvs split the task comes from (`train`, `eval` or `test`).
+        split: SmolDataEnvs split the task comes from (`train`, `eval`, `test`, `eval_verified` or
+            `test_verified`).
         task_id: SmolDataEnvs task id.
         question: The question to answer.
         files: Absolute paths of the task's data files, as model code sees them.

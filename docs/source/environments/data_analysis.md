@@ -91,7 +91,7 @@ the split is kept in memory only, never on disk where model code could read it.
 
 Nothing is bundled with the environment.
 
-- **Tasks**: SmolDataEnvs (MIT license) at a pinned version (`DATASET_REVISION` in `server/tasks.py`), downloaded once
+- **Tasks**: SmolDataEnvs (MIT license) at the v1.1 tag (`DATASET_REVISION` in `server/tasks.py`), downloaded once
   per server into memory.
 - **Verified splits**: [SmolDataEnvs](https://huggingface.co/datasets/FineEnvs/SmolDataEnvs) v1.1 adds `eval_verified`
   (61 tasks) and `test_verified` (85): golds checked with an independent solution, ambiguous or seed-dependent tasks
@@ -101,7 +101,7 @@ Nothing is bundled with the environment.
   into `<DATA_ANALYSIS_TASKS_ROOT>/<split>/<task_id>/`, read-only for model code. Files over
   `DATA_ANALYSIS_MAX_FILE_MB` (10 MiB) are not served. They come from public Kaggle datasets, each under its own
   license.
-- **Grader**: SmolDataEnvs' `grader.py`, vendored unmodified at the same commit in `server/grader.py` (a test checks its
+- **Grader**: SmolDataEnvs' `grader.py`, vendored unmodified from v1.0 (unchanged in v1.1) in `server/grader.py` (a test checks its
   hash).
 
 Every download is anonymous: requests carry no `Authorization` header, whatever is in the server's environment, so the
@@ -125,8 +125,9 @@ forked from a spawner that has pandas, numpy and scikit-learn loaded, with these
 1. **A user per session.** When the server is root on Linux (the Docker image runs it as root on purpose), each
    worker switches to its own unprivileged uid (from 61000, no groups, no capabilities) before any model code runs. It
    can't read the server's environment, memory or root-only files, another session's home, or signal another session's
-   processes. When a session ends, every process left with its uid is killed and its files in `/tmp`, `/var/tmp` and
-   `/dev/shm` are removed before the uid is used again.
+   processes. When a session ends, every process left with its uid is killed, and its files in `/tmp`, `/var/tmp`,
+   `/dev/shm`, `/run/lock` and `/dev/mqueue` and its SysV IPC objects (shared memory, message queues, semaphores) are
+   removed, before the uid is used again.
 2. **No network.** Two mechanisms, and which ones apply depends on the host. The server says so once, at startup, in
    the log line `data_analysis_env sandbox: workers run as ..., network: ...`:
 
@@ -146,7 +147,10 @@ forked from a spawner that has pandas, numpy and scikit-learn loaded, with these
      forks any worker, so workers have no interface, not even loopback.
 3. **Limits.** A hard timeout per call (30 s, then the worker is killed and the session restarts, with a message
    saying so), 4 GiB of address space, at most 64 processes per session user, 256 open files, 64 MiB per written file,
-   no core files. The worker's environment is an allowlist (`PATH`, locale, `HOME`), never a copy of the server's, so
+   no core files. The session's home may hold 512 MiB and 100,000 files and directories: the server checks it every
+   second while a call runs and after it, and past either cap the call is stopped and the session restarts with an
+   empty home, with a message saying so. Files written outside the home, which only code past the audit hook can do,
+   are not counted. The worker's environment is an allowlist (`PATH`, locale, `HOME`), never a copy of the server's, so
    tokens and keys don't reach it. The server and the spawner are non-dumpable, so a process of the same uid can't
    ptrace them or read their memory. The server reads the worker's replies as bounded JSON, never pickle.
 4. **An audit hook** (PEP 578), armed before model code: reads only under the task's data, the session's home and the
@@ -156,8 +160,10 @@ forked from a spawner that has pandas, numpy and scikit-learn loaded, with these
 
 When the server is **not root** (local development, or platforms that run containers as a non-root user, such as
 Hugging Face Docker Spaces), layer 1 is not available: workers run as the server's user and only layers 3 and 4
-separate sessions. The non-dumpable server still keeps its memory and environment out of reach. Run the server as root
-in its own container when model code is untrusted, which is the case in RL training.
+separate sessions. The non-dumpable server still keeps its memory and environment out of reach, but model code that
+gets past the audit hook can read any file the server's user can (for example `~/.cache/huggingface/token`), and on
+macOS it can also reach the network. Don't run untrusted model code with a non-root server on a machine that holds
+tokens. Run the server as root in its own container when model code is untrusted, which is the case in RL training.
 
 Residual risks, by design:
 

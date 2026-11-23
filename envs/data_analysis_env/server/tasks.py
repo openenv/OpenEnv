@@ -6,7 +6,7 @@
 
 """SmolDataEnvs tasks inside the server: load a split, pick a task, fetch its files, build the prompt.
 
-Tasks come from the Hugging Face dataset FineEnvs/SmolDataEnvs (MIT) at a pinned commit. Each
+Tasks come from the Hugging Face dataset FineEnvs/SmolDataEnvs (MIT) at the v1.1 tag. Each
 row is a question about one or more data files that live in a public Hugging Face bucket. Nothing
 is bundled with the environment: the split is downloaded once per server into memory (it holds
 the gold answers, so it is never written to disk where model code could read it), and each
