@@ -97,11 +97,11 @@ class DIPGEnvironment(Environment):
         self._start_new_pass()
 
     def _load_dataset(self, path: str) -> list:
-        """Loads the dataset from the specified file path."""
+        """Loads the JSONL dataset at `path`, skipping blank lines."""
         if not Path(path).is_file():
             raise FileNotFoundError(f"Dataset file not found at path: {path}")
-        with open(path, "r") as f:
-            return [json.loads(line) for line in f]
+        with open(path, "r", encoding="utf-8") as f:
+            return [json.loads(line) for line in f if line.strip()]
 
     def _start_new_pass(self) -> None:
         """Shuffle the full dataset into a new order and start from the top."""
@@ -160,7 +160,10 @@ class DIPGEnvironment(Environment):
                     try:
                         expected_answer = json.loads(expected_answer_str)
                     except (json.JSONDecodeError, TypeError):
-                        # Fallback for simple string ground truth
+                        expected_answer = None
+                    if not isinstance(expected_answer, dict):
+                        # Plain ground truth, including answers that parse as a
+                        # JSON number, string, list or null, such as "42"
                         expected_answer = {"final": expected_answer_str, "proof": ""}
 
                     self._state = DIPGState(
