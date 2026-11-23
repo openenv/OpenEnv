@@ -2,8 +2,8 @@
 
 **Status**: In Review
 **Created**: 2026-09-26
-**Updated**: 2026-11-15
-**Revised**: 2026-10-12 — removed a CLI limitation fixed by #1237, updated the RFC 008 reference to #1321, and corrected four small inaccuracies; 2026-10-16 — added results on three more seeds, replaced the token-weighted formula, scoped the first evaluation to environments whose turns the trainer drives, listed the gaps in the collect pipeline, offered the curriculum as an example, linked the trial's code and logs, and stated how the token weights treat unseen keys and many keys; 2026-10-22 — after review, removed weighting by cost and the `cost` argument from the curriculum, stated the two hooks a sampler needs in a trainer and their limits in TRL, added `metrics()` to the protocol, left shares across sources to the trainer, reported how far the signal formula over-predicts, cited prior work on rollout allocation and filtering, narrowed the reference experiment to uniform sampling against the curriculum on five new seeds, answered open question 6 and proposed a direction for open question 5; 2026-10-28 — removed the prime-rl wrapper sketch and the TRL dataset path, as the approving review suggested, changed how samplers treat a rollout the environment could not score (a reward of None), a rule RFC 014's `posttrain_env` relies on, so that it counts in groups, episodes and cost but in nothing estimated from rewards, added open question 10, and stated how evaluation counts each case: such a rollout, and one lost to a failure of the infrastructure, leaves `success_rate`, `mean_reward` and `pass@k` and is reported separately, a failure of the policy gets the environment's own score or counts as not solved, `mean_reward` is read only together with `error_rate`, and checkpoint comparison lists the tasks it leaves out; 2026-11-15 — reported the reference experiment (the curriculum ahead of uniform sampling on all five seeds, by 8.2 points per generated token and 7.2 per episode on average) and linked its code, logs, reading rules and analysis, replaced the example's untrained scores and overlap counts with those of the reference runs, stated that the endpoint must serve the weights of the step being evaluated and how evaluation counts an episode the harness ends after a step that returned a reward, aligned `EvalSchedule`, `SequentialSampler` and `id_key` with the implementation, and updated huggingface/trl#7609 (merged), #1156 (closed) and Harbor's `reset`
+**Updated**: 2026-11-23
+**Revised**: 2026-10-12 — removed a CLI limitation fixed by #1237, updated the RFC 008 reference to #1321, and corrected four small inaccuracies; 2026-10-16 — added results on three more seeds, replaced the token-weighted formula, scoped the first evaluation to environments whose turns the trainer drives, listed the gaps in the collect pipeline, offered the curriculum as an example, linked the trial's code and logs, and stated how the token weights treat unseen keys and many keys; 2026-10-22 — after review, removed weighting by cost and the `cost` argument from the curriculum, stated the two hooks a sampler needs in a trainer and their limits in TRL, added `metrics()` to the protocol, left shares across sources to the trainer, reported how far the signal formula over-predicts, cited prior work on rollout allocation and filtering, narrowed the reference experiment to uniform sampling against the curriculum on five new seeds, answered open question 6 and proposed a direction for open question 5; 2026-10-28 — removed the prime-rl wrapper sketch and the TRL dataset path, as the approving review suggested, changed how samplers treat a rollout the environment could not score (a reward of None), a rule RFC 014's `posttrain_env` relies on, so that it counts in groups, episodes and cost but in nothing estimated from rewards, added open question 10, and stated how evaluation counts each case: such a rollout, and one lost to a failure of the infrastructure, leaves `success_rate`, `mean_reward` and `pass@k` and is reported separately, a failure of the policy gets the environment's own score or counts as not solved, `mean_reward` is read only together with `error_rate`, and checkpoint comparison lists the tasks it leaves out; 2026-11-15 — reported the reference experiment (the curriculum ahead of uniform sampling on all five seeds, by 8.2 points per generated token and 7.2 per episode on average) and linked its code, logs, reading rules and analysis, replaced the example's untrained scores and overlap counts with those of the reference runs, stated that the endpoint must serve the weights of the step being evaluated and how evaluation counts an episode the harness ends after a step that returned a reward, aligned `EvalSchedule`, `SequentialSampler` and `id_key` with the implementation, and updated huggingface/trl#7609 (merged), #1156 (closed) and Harbor's `reset`; 2026-11-23 — aligned the interfaces with the code built for every rollout step: `EnvEvalHarness` takes the policy as a model step and writes the records of `openenv collect`, its reproducibility check and the line between infrastructure and policy failures are stated, `TaskAPIClient` takes its options by keyword, the samplers' signal rule is a tolerance, `openenv eval` keeps only collect's endpoint flags, the collect changes of rollout step 5 are named, a text answer's reading rule is stated, and tasks are read with `iter_tasks`
 **Authors**: @Matheus-F-Scatolin, @tiagoperrupato
 **RFC ID**: 013
 
@@ -101,12 +101,13 @@ A generic helper in `openenv.core` that calls the standard Task API routes for a
 
 ```python
 class TaskAPIClient:
-    def __init__(self, base_url: str, env_name: str,
+    def __init__(self, base_url: str, *, env_name: str,
                  headers: dict[str, str] | None = None): ...
     @classmethod
-    def from_env_client(cls, env: EnvClient, env_name: str | None = None,
+    def from_env_client(cls, env: EnvClient | SyncEnvClient, *,
+                        env_name: str | None = None,
                         headers: dict[str, str] | None = None) -> "TaskAPIClient": ...
-    def list_splits(self) -> list[dict[str, str]]: ...
+    def list_splits(self) -> list[dict[str, Any]]: ...
     def list_tasks(self, split: str) -> list[Any]: ...
     def num_tasks(self, split: str) -> int: ...
     def get_task(self, split: str, index: int) -> Any: ...
@@ -115,7 +116,7 @@ class TaskAPIClient:
     def iter_tasks(self, split: str, page_size: int = 256) -> Iterator[Any]: ...
 ```
 
-It returns task specs as untyped JSON, exactly as the routes serve them, and maps `501` to `NotImplementedError` and `400` to `IndexError`, mirroring the server. `iter_tasks` pages with `get_task_range` and relies on `num_tasks` for the true total, since `list_tasks` may return a bounded preview. `headers` are sent with every request, as `EnvClient` and `MCPToolClient` send theirs since #1403 (for example a token for a private Space). Environment clients can keep their own typed helpers (for example `HarborEnv.get_task` returning a `HarborTaskRef`) and build them on this client. See D6 for why this belongs in core although core clients currently leave Task API methods out.
+It returns task specs as untyped JSON, exactly as the routes serve them, and maps `501` to `NotImplementedError` and `400` to `IndexError`, mirroring the server. Since an environment may cap `get_task_range`, a caller that needs a whole split reads it with `iter_tasks`. `iter_tasks` pages with `get_task_range` and relies on `num_tasks` for the true total, since `list_tasks` may return a bounded preview. `headers` are sent with every request, as `EnvClient` and `MCPToolClient` send theirs since #1403 (for example a token for a private Space). Environment clients can keep their own typed helpers (for example `HarborEnv.get_task` returning a `HarborTaskRef`) and build them on this client. See D6 for why this belongs in core although core clients currently leave Task API methods out.
 
 #### 3. `TaskSampler`
 
@@ -150,7 +151,7 @@ The rewards passed to `update` are the environment's own, one per rollout, not a
 
 The samplers proposed here keep the same counters and return them from `metrics()`, so their training logs report efficiency the same way:
 
-- `groups` and `episodes` (every group and every rollout reported, scored or not), `signal_groups` (groups whose scored rewards have non-zero variance; a group with fewer than two scored rewards has no signal), and `cost` (the sum of reported costs)
+- `groups` and `episodes` (every group and every rollout reported, scored or not), `signal_groups` (groups whose scored rewards have a population standard deviation of at least `1e-6`, so that a difference from rounding does not count; a group with fewer than two scored rewards has no signal), and `cost` (the sum of reported costs)
 - derived: `signal_groups_per_episode`, `signal_groups_per_cost`, and `zero_signal_fraction`
 
 A trainer reports costs for every group or for none: these samplers raise `ValueError` on a group without costs after one with costs, and the reverse, and with none they leave `cost` and `signal_groups_per_cost` out of `metrics()`. Another `TaskSampler` returns from `metrics()` whatever it tracks, as numbers for the log. The zero-signal fraction on its own is misleading: in the pilot the curriculum had the lower zero-signal fraction and the worse result per token. Logs should report signal groups per episode and per unit of cost.
@@ -164,7 +165,7 @@ Two implementations ship in core:
 
 A third, **`CurriculumSampler(tasks, *, group_size, key="difficulty", ...)`**, described below, is offered as an example in `examples/`, and moves to core if the maintainers prefer (open question 9).
 
-The tasks a sampler draws, for example `sampler.sample(num_episodes)`, are a valid `tasks` iterable for the existing `CollectRunner`, so `openenv collect` and the evaluation harness gain task selection without changes to that interface. Selection does not work end to end yet, though, for four reasons. Inside `CollectRunner`: it passes no seed to the session, and it writes no record for an episode that fails. Outside it: the `reasoning_gym_env` session factory receives the task and does not use it, and the `openenv collect` command never passes tasks. Rollout steps 3 and 5 close these gaps. An adaptive sampler also needs each episode's reward, which `CollectRunner` does not report back to its `tasks` iterable today; trainers call `update` from their own loop (see the example), and open question 7 asks whether `CollectRunner` should take a per-episode callback.
+The tasks a sampler draws, for example `sampler.sample(num_episodes)`, are a valid `tasks` iterable for the existing `CollectRunner`, so `openenv collect` and the evaluation harness gain task selection without changes to how tasks are passed. Selection does not work end to end yet, though, for four reasons. Inside `CollectRunner`: it passes no seed to the session, and it writes no record for an episode that fails. Outside it: the `reasoning_gym_env` session factory receives the task and does not use it, and the `openenv collect` command never passes tasks. Rollout steps 3 and 5 close these gaps. An adaptive sampler also needs each episode's reward, which `CollectRunner` does not report back to its `tasks` iterable today; trainers call `update` from their own loop (see the example), and open question 7 asks whether `CollectRunner` should take a per-episode callback.
 
 #### 4. `CurriculumSampler`
 
@@ -200,14 +201,15 @@ An implementation of the existing `EvalHarness` base class:
 class EnvEvalHarness(EvalHarness):
     def __init__(self, session_factory: ResourceSessionFactory,
                  harness_adapter: HarnessAdapter,
-                 tasks: Sequence[Any],
-                 output_dir: Path | None = None): ...
+                 tasks: Iterable[Mapping[str, Any]], *,
+                 model_step: ModelStep,
+                 output_dir: str | Path | None = None): ...
 
     def run(self, harness_version, library_versions, dataset, eval_parameters) -> dict:
         ...
 ```
 
-`tasks` is the list of task specs to evaluate, for example `TaskAPIClient.get_task_range("test")`; the harness does not need the client itself. `eval_parameters` accepts:
+`tasks` is the list of task specs to evaluate, for example `list(TaskAPIClient.iter_tasks("test"))`; the harness does not need the client itself. Each task spec is a mapping with a unique string `id`, which `per_task` and checkpoint comparison key on. The policy is a model step, as `CollectRunner.run` takes it: `build_model_step(OpenAIClient(...))` for an OpenAI-compatible endpoint, or a step that generates in process, for example on the weights a trainer holds. `eval_parameters` accepts:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -216,25 +218,26 @@ class EnvEvalHarness(EvalHarness):
 | `samples_per_task` | `1` | `n` completions per task, for pass@k. |
 | `temperature` | `0.0` | Sampling temperature; must be > 0 when `samples_per_task > 1`. |
 | `success_threshold` | `1.0` | Reward at or above which an episode counts as solved. |
-| `model`, `llm_endpoint`, `max_tokens`, `max_turns` | as in `openenv collect` | Policy and rollout limits. |
+| `max_tokens`, `max_turns` | `200`, `9` | Passed to the model step, and the harness's turn limit. |
+| `model`, `llm_endpoint` | | Recorded in the result's config; the model step reaches the policy. |
 
-It enumerates `tasks` with a `SequentialSampler`, starts each episode through the session factory with its task and seed, runs it through the harness adapter as `CollectRunner` does, writes every episode as JSONL through the existing `RolloutSerializer`, failed episodes included, and returns scores:
+It walks `tasks` in the order a `SequentialSampler` gives, each task with every seed, starts each episode through the session factory with its task and seed, runs it through the harness adapter as `CollectRunner` does, and reads who ended it and its reward as `openenv collect` does. With `output_dir`, each run writes a new folder `run-NNNN` with the files and records of `openenv collect`, through the existing `RolloutSerializer`: `results.jsonl` for the episodes with a reward, `errors.jsonl` for the others, each record with its outcome, seed and generated ids, and `metadata.json`. It returns scores:
 
-- `success_rate` with its standard error, `mean_reward`, `mean_turns`, `mean_completion_tokens`
+- `success_rate` with its standard error, `mean_reward`, `mean_turns`, `mean_completion_tokens`, and `num_tasks` and `num_episodes`
 - `pass@k` for each `k ≤ samples_per_task`, with the unbiased estimator `1 - C(n - c, k) / C(n, k)`
 - `error_rate`: episodes the harness ended because of the policy before the environment ended them, whatever reward an earlier step returned, for example at the harness's own turn limit in a multi-turn environment. A failure the policy's output can cause counts here even when it surfaces as an exception, such as a tool call the harness cannot parse or that names no tool of the session, or a request past the context length; when the cause is unclear, it counts here. They count as not solved in `success_rate` and `pass@k`, so a policy cannot raise its score by failing to answer, and `error_rate` shows how many of the failures were not wrong answers. `mean_reward` averages only the scores of episodes the environment ended, so it leaves these episodes out and is read only together with `error_rate`: a policy that stops answering the questions it would fail raises `mean_reward`
 - `unscored_rate`: episodes the environment ended with a reward of None, which it does only for a failure of its own, such as a failed score job
-- `infra_error_rate`: episodes lost to a failure of the infrastructure that the policy's output cannot cause, in the harness, the model endpoint or the environment's server, such as a crash or an unreachable server
+- `infra_error_rate`: episodes lost to a failure of the infrastructure that the policy's output cannot cause, in the harness, the model endpoint or the environment's server, such as a crash or an unreachable server. In practice an exception counts here when it is a lost connection to the environment (a `ConnectionError`, such as `SessionLostError`, or a closed WebSocket), when the model client reports a failure to connect, a timeout, an authentication, permission or routing error, a rate limit or a server error, when the session cannot be created, or when `verify` forwards a reward that differs from the environment's. Any other exception, such as an environment step that times out or the same failures raised by a client the harness does not know, counts in `error_rate` by the rule for unclear causes
 - `by_difficulty` and `by_group` breakdowns when task specs carry those keys
-- `per_task`: task id → outcome (solved, not solved, or left out when every one of its episodes was unscored or an infrastructure failure), which is what checkpoint comparison needs
+- `per_task`: task id → outcome (solved, not solved, or left out when every one of its episodes was unscored or an infrastructure failure), which is what checkpoint comparison needs, and `reproducible`, the result of the checks of D4
 
-Unscored episodes and infrastructure failures are left out of `success_rate`, `mean_reward` and `pass@k` and reported separately. In `pass@k`, `n` and `c` count the task's remaining samples (a failure of the policy stays in `n`, not solved), the average runs over the tasks with at least `k` of them, and each `pass@k` reports how many tasks it averages; a score with nothing to average is None. Leaving an episode out is sound only if whether it is lost does not depend on the policy, which this RFC asks of environments and harnesses but cannot check, so `unscored_rate` and `infra_error_rate` are always reported next to `success_rate`.
+Unscored episodes and infrastructure failures are left out of `success_rate`, `mean_reward` and `pass@k` and reported separately. In `pass@k`, `n` and `c` count the task's remaining samples, over all its seeds (a failure of the policy stays in `n`, not solved), the average runs over the tasks with at least `k` of them, and each `pass@k` reports how many tasks it averages; a score with nothing to average is None. Leaving an episode out is sound only if whether it is lost does not depend on the policy, which this RFC asks of environments and harnesses but cannot check, so `unscored_rate` and `infra_error_rate` are always reported next to `success_rate`.
 
-An episode the harness ends after a step that returned a reward, such as at its own turn limit, keeps in its collect record the last reward a step returned, as `openenv collect` does today, though the environment never scored the episode as a whole (section 3); rollout step 5 adds a mark that the harness ended it. Evaluation reads the mark, not that reward, and counts the episode in `error_rate`. What a trainer passes to `update` for such an episode is still open question 10.
+An episode the harness ends after a step that returned a reward, such as at its own turn limit, keeps in its collect record the last reward a step returned, as `openenv collect` does today, though the environment never scored the episode as a whole (section 3); rollout step 5 adds a mark that the harness ended it, the record's `outcome`. Evaluation writes such an episode the same way and reads the mark, not that reward, and counts the episode in `error_rate`. What a trainer passes to `update` for such an episode is still open question 10.
 
 `mean_completion_tokens` needs the generated token count of each episode. The pipeline has it and drops it today: the model client does not keep the provider's usage numbers, and the episode record does not copy the generated ids that the harness collects. Rollout step 5 keeps them.
 
-In a single-turn text environment such as `reasoning_gym_env`, the harness expects the answer as a tool call: a plain-text answer ends the episode without a reward, and it counts as not solved (`error_rate`). The harness adapter for such an environment needs a model step that turns the text into that call (rollout step 5); with it, the environment scores a text answer like any other, in evaluation and in training.
+In a single-turn text environment such as `reasoning_gym_env`, the harness expects the answer as a tool call: a plain-text answer ends the episode without a reward, and it counts as not solved (`error_rate`). The harness adapter for such an environment needs a model step that turns the text into that call (rollout step 5); with it, the environment scores a text answer like any other, in evaluation and in training. Which part of the text is the answer is the step's rule: `reasoning_gym_env`'s step reads the last `<answer>` block, which every dataset can ask for, while a task with numeric answers may also read the last number, as the reference experiment's trainer did. A small model that does not write the tags is scored very differently by the two: on the first 10 test questions of the example of rollout step 6, the untrained Llama-3.2-1B wrote them in 2 replies, and the tags-only rule solved none of the 10 where the numeric rule solved 5. Transcripts made with such a step hold a tool call the model did not write, so they are not supervised fine-tuning data.
 
 A helper compares two results:
 
@@ -247,7 +250,7 @@ diff.left_out     # task ids left out in either result, in neither list above
 
 #### 6. `openenv eval`
 
-A CLI command with the same flags as `openenv collect` for environment, endpoint and model, plus `--split` and the `eval_parameters` above. It reads the tasks through `TaskAPIClient`, writes episodes and an `EvalResult` JSON to `--output-dir`, and `--compare <other_result.json>` prints the fixed, regressed and left-out tasks.
+A CLI command with `openenv collect`'s flags for the environment, an OpenAI-compatible endpoint and the model, plus `--split`, `--system-prompt` and the `eval_parameters` above; collect's `--provider`, `--llm-port` and `--dataset-config` are left out. It reads the tasks through `TaskAPIClient`, writes the episodes to `run-0000/` in `--output-dir` and the `EvalResult` to `result.json` beside it, and `--compare <other_result.json>` prints the fixed, regressed and left-out tasks. The endpoint must answer with a tool call: a plain-text reply counts in `error_rate`.
 
 #### 7. Trainer integration
 
@@ -285,15 +288,15 @@ Shares across environments or data sources are also the trainer's. Large runs se
 
 #### D3. Evaluation reuses the collect pipeline's pieces
 
-- **Chosen approach**: `EnvEvalHarness` is built from the same pieces as `CollectRunner` (the session factory, the harness adapter and `RolloutSerializer`), plus a `SequentialSampler` and aggregation.
+- **Chosen approach**: `EnvEvalHarness` is built from the same pieces as `CollectRunner` (the session factory, the harness adapter, `EpisodeRecord` and `RolloutSerializer`), plus the order of a `SequentialSampler` and aggregation.
 - **Rationale**: Training rollouts, collected datasets, and evaluation episodes then go through one code path and one serialization format (design principle 1). Evaluation episodes can be pushed to the Hub with the existing `push_to_hf_hub` for inspection.
 - **Trade-offs**: `CollectRunner` itself passes no seed to the session and writes nothing for a failed episode, so until rollout step 5 adds both, the harness drives the pieces itself instead of calling `CollectRunner`. Evaluation also inherits the limits of the collect pipeline. The `openenv collect` CLI resolves only `openspiel:<game>` and `reasoning_gym:<dataset>` environment specs today, so `openenv eval` would start with the same environment coverage and grow with `collect`; the Python `EnvEvalHarness` accepts any `ResourceSessionFactory` from the start. And the pipeline drives every turn of an episode, while a Harbor server runs a whole agent in one tool call, `run_rollout`, which takes the task as its arguments (Harbor's `reset` selects no task), so the first version does not cover Harbor (open question 8).
 
 #### D4. Evaluation checks reproducibility instead of assuming it
 
-- **Chosen approach**: Before a run, `EnvEvalHarness` makes two checks with fresh sessions. It resets two sessions with the same `(split, index, seed)` and compares a hash of the initial observations; then it resets two sessions with different tasks and checks that their initial observations differ. If either check fails, it warns and records `reproducible: false` in the result.
-- **Rationale**: An eval that silently sees different tasks across checkpoints produces curves that cannot be trusted. Environments that ignore `seed` have existed (#1102, #1250), and RFC 008's `runtime.seed_control` and `runtime.episode_determinism` checks (pending in #1321) address the same concern at validation time. The second check catches an environment that ignores the task selection, which the first cannot see: the server passes `reset()` only the arguments its signature names, so an environment whose `reset()` does not name `split` and `index` returns the same default task twice and looks reproducible. `reasoning_gym_env` behaves this way today.
-- **Trade-offs**: Four extra resets per run. The checks cover the initial observation only, not later nondeterminism in the environment.
+- **Chosen approach**: Before a run, `EnvEvalHarness` makes two checks with fresh sessions. It resets two sessions with the first task and seed and compares their initial messages; then it resets a session with the second task and checks that its initial messages differ from the first. If either check fails, it warns and records `reproducible: false` in the result.
+- **Rationale**: An eval that silently sees different tasks across checkpoints produces curves that cannot be trusted. Environments that ignore `seed` have existed (#1102, #1250; #1647 found 14 more), and RFC 008's `runtime.seed_control` and `runtime.episode_determinism` checks (pending in #1321) address the same concern at validation time. The second check catches an environment that ignores the task selection, which the first cannot see: the server passes `reset()` only the arguments its signature names, so an environment whose `reset()` does not name `split` and `index` returns the same default task twice and looks reproducible. `reasoning_gym_env` behaves this way today.
+- **Trade-offs**: Three extra resets per run. The checks compare the initial messages, which a session builds from the observation; a session that copied the task spec into its messages would pass the second check for an environment that ignores the task. They cover the start of an episode only, not later nondeterminism in the environment.
 
 #### D5. Task metadata stays on HTTP for now
 
@@ -365,10 +368,13 @@ The library has no level with negative numbers, so these tiers have none, unlike
 
 ```python
 client = TaskAPIClient.from_env_client(env)
-tasks = client.get_task_range("train")
+tasks = list(client.iter_tasks("train"))
 sampler = CurriculumSampler(tasks, group_size=8, key="difficulty")
 
-evaluator = EnvEvalHarness(session_factory, harness_adapter, client.get_task_range("test"))
+evaluator = EnvEvalHarness(
+    session_factory, harness_adapter, list(client.iter_tasks("test")),
+    model_step=build_model_step(OpenAIClient(POLICY_URL, None, model="policy")),
+)
 schedule = EvalSchedule(
     evaluator,
     EvalConfig(harness_name="EnvEvalHarness", harness_version="0.1",
@@ -517,8 +523,8 @@ Each step is a separate PR:
 2. Reserved task spec keys in the Task API guide, including guidance on tier spacing and on train and test overlap, and `TaskAPIClient` (with `headers`) with tests against a stub server.
 3. Task API support in `reasoning_gym_env`, with difficulty tiers from reasoning-gym's curriculum levels and a session factory that turns a task into `reset(split, index, seed)`; then `finqa_env`, whose `reset(seed)` fix (#1252) is merged.
 4. `SequentialSampler` and `UniformSampler` in core, and `CurriculumSampler` as an example (or in core, if the maintainers prefer), with unit tests on synthetic reward and cost streams (for example, a simulated policy whose success rate per tier improves over time and whose completion length grows with difficulty).
-5. `EnvEvalHarness`, `compare_eval_results`, and `openenv eval`. In the collect pipeline: pass the seed to the session, write a record for a failed episode, keep apart in the episode record a reward of None with which the environment ended the episode, a failure of the policy in the harness and a failure of the infrastructure (the record's reward is a `float` today, because `_resolve_env_reward`, which `build_harness_rollout_func` also uses, raises when the environment gave none), keep the generated token count of each episode (the provider's usage numbers in the model client, the generated ids in the episode record), let `openenv collect` pass tasks, and a model step that turns a text answer into a single-turn environment's tool call.
-6. `EvalSchedule`, with a TRL `TrainerCallback` that calls it, and the reference experiment as an example in `examples/` (a plain loop and an MLX loop for Apple Silicon). A TRL example that draws its prompts from a sampler is left for later.
+5. `EnvEvalHarness`, `compare_eval_results`, and `openenv eval`. In the collect pipeline: pass the seed to the session (`CollectRunner(seeds=...)`), write a record for a failed episode (`errors.jsonl`, with the record's `outcome` and `error`), keep apart in the episode record a reward of None with which the environment ended the episode, a failure of the policy in the harness and a failure of the infrastructure (the record's reward is a `float` today, because `_resolve_env_reward`, which `build_harness_rollout_func` also uses, raises when the environment gave none), keep the generated token count of each episode (the provider's usage numbers in the model client, the generated ids in the episode record's `completion_ids`), let `openenv collect` pass tasks (`--tasks`), and a model step that turns a text answer into a single-turn environment's tool call.
+6. `EvalSchedule`, with a TRL `TrainerCallback` that calls it, and an example in `examples/` with the reference experiment's settings and reading rule (a plain loop and an MLX loop for Apple Silicon); it stops after a number of steps rather than on a token budget, so its numbers are not the experiment's. A TRL example that draws its prompts from a sampler is left for later.
 
 ## Alternatives Considered
 
@@ -539,7 +545,7 @@ Each step is a separate PR:
 7. Should `CollectRunner` accept a per-episode callback (task, `EpisodeRecord`) so adaptive samplers can be driven by `openenv collect` and not only by a trainer loop?
 8. Should the first version of the evaluation cover environments whose server runs a whole agent per call, such as Harbor's `run_rollout`, which takes its task as arguments instead of through `reset`?
 9. Should `CurriculumSampler` ship in core, next to the two simple samplers, or stay an example? A review suggested keeping it as an example, which is how this RFC offers it.
-10. What should a trainer pass to `update` for an episode the harness ends before the environment ends it, such as at the harness's own turn limit in a multi-turn environment, or for one lost to a failure of the infrastructure (the harness, the model endpoint or the environment's server)? Neither has an environment score, a 0 from the trainer would be a reward computed outside the environment, and `None` is for the environment's own failures. For the first, one option is a harness whose limits are never lower than the environment's, so that the environment enforces them and scores the episode.
+10. What should a trainer pass to `update` for an episode the harness ends before the environment ends it, such as at the harness's own turn limit in a multi-turn environment, or for one lost to a failure of the infrastructure (the harness, the model endpoint or the environment's server)? Neither has an environment score, a 0 from the trainer would be a reward computed outside the environment, and `None` is for the environment's own failures. For the first, one option is a harness whose limits are never lower than the environment's, so that the environment enforces them and scores the episode; an environment can declare its episode timeout in `openenv.yaml` (`resources.episode_timeout_s`), which a harness could read.
 
 ## Related RFCs and Work
 
