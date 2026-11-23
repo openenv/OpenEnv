@@ -1276,6 +1276,35 @@ class TestAWMEnvironmentUnit:
         assert _classify_tool_error("Operation timed out") == "timeout"
         assert _classify_tool_error("Connection refused") == "server_error"
 
+    def test_http_error_classification(self):
+        """fastapi-mcp HTTP errors are classified by status, not by the app's message."""
+        from envs.agent_world_model_env.server.awm_environment import (
+            _classify_tool_error,
+        )
+
+        def http_error(status, body):
+            return f"Error calling get_order. Status code: {status}. Response: {body}"
+
+        assert (
+            _classify_tool_error(http_error(404, '{"detail":"Order 5 not found"}'))
+            == "server_error"
+        )
+        assert (
+            _classify_tool_error(http_error(400, '{"detail":"Invalid coupon code"}'))
+            == "server_error"
+        )
+        assert (
+            _classify_tool_error(http_error(500, "Internal Server Error"))
+            == "server_error"
+        )
+        assert (
+            _classify_tool_error(
+                http_error(422, '{"detail":[{"type":"missing","loc":["query","id"]}]}')
+            )
+            == "invalid_args"
+        )
+        assert _classify_tool_error("Unknown tool: get_orders") == "tool_not_found"
+
     def test_get_reward_default_config(self, mock_data_dir):
         """Test _get_reward with default reward config."""
         from envs.agent_world_model_env.server.awm_environment import AWMEnvironment

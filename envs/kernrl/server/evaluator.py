@@ -502,6 +502,12 @@ try:
     ref_f = ref_out.float() if isinstance(ref_out, torch.Tensor) else torch.tensor(ref_out).float()
     sol_f = sol_out.float() if isinstance(sol_out, torch.Tensor) else torch.tensor(sol_out).float()
 
+    # An output of another shape could broadcast against the reference below.
+    if sol_f.shape != ref_f.shape:
+        raise ValueError(
+            f"Output shape {{tuple(sol_f.shape)}} does not match the reference shape {{tuple(ref_f.shape)}}"
+        )
+
     # Compute statistics
     diff = (ref_f - sol_f).abs()
     max_diff = diff.max().item()
