@@ -57,6 +57,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Final runtime stage
 FROM ${BASE_IMAGE}
 
+# tini runs as PID 1 and reaps the processes that sessions leave behind, which are reparented to it.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy the virtual environment from builder
@@ -82,4 +87,5 @@ ENV ENABLE_WEB_INTERFACE=true
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
+ENTRYPOINT ["tini", "--"]
 CMD ["uvicorn", "data_analysis_env.server.app:app", "--host", "0.0.0.0", "--port", "8000"]
