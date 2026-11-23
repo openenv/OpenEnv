@@ -17,6 +17,7 @@ which only the `ortools` group can read. Without `SANDBOX_USER` (local developme
 interpreter and an import blocker that it can remove. See SECURITY.md for what is not contained.
 """
 
+import collections
 import json
 import os
 import platform
@@ -38,7 +39,14 @@ SANDBOX_PYTHON = os.environ.get("SANDBOX_PYTHON", sys.executable)
 SANDBOX_ORTOOLS_PYTHON = os.environ.get("SANDBOX_ORTOOLS_PYTHON", sys.executable)
 # One uid per session, with no account behind it. Below 65534 (nobody): containers on
 # Hugging Face map only uids 0-65535.
-_free_uids = list(range(60_000, 65_000))
+# First in, first out: a released uid goes to the back, so the next session rarely gets
+# the uid just given back.
+_free_uids = collections.deque(range(60_000, 65_000))
+# Calls running code of each uid. A uid released while a call runs (a client that
+# disconnects mid-call) goes back to the pool when that call ends, so the call's
+# cleanup never runs once the uid belongs to another session.
+_running: dict[int, int] = {}
+_closing: set[int] = set()
 # Each session uid has its own killer uid (uid - 5000, so 55000-59999), see _start_killer.
 KILLER_OFFSET = 5_000
 _uids_lock = threading.Lock()
@@ -150,16 +158,39 @@ def new_uid() -> int | None:
     with _uids_lock:
         if not _free_uids:
             raise RuntimeError("no free sandbox uid: too many sessions")
-        return _free_uids.pop()
+        return _free_uids.popleft()
 
 
 def release_uid(uid: int | None) -> None:
-    """Stop every process of `uid` and make it available to another session."""
+    """Stop every process of `uid` and make it available to another session.
+
+    If a call is still running code of `uid`, the uid goes back when that call ends.
+    """
     if uid is None:
         return
+    with _uids_lock:
+        if uid in _running:
+            _closing.add(uid)
+            return
+    _put_back(uid)
+
+
+def _put_back(uid: int) -> None:
     if _kill_all(uid):
         with _uids_lock:
             _free_uids.append(uid)
+
+
+def _call_ended(uid: int) -> None:
+    with _uids_lock:
+        _running[uid] -= 1
+        if _running[uid]:
+            return
+        del _running[uid]
+        if uid not in _closing:
+            return
+        _closing.discard(uid)
+    _put_back(uid)
 
 
 def _processes_of(uid: int) -> list[tuple[int, int]]:
@@ -189,10 +220,21 @@ def _start_killer(uid: int) -> tuple[int, int]:
     it, it can't signal them, and it doesn't count against the session's process limit.
     """
     read_fd, write_fd = os.pipe()
-    pid = os.fork()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
     if pid == 0:
         try:
             os.close(write_fd)
+            # A fork copies every descriptor of the server, including the error
+            # pipe of a Popen running in another thread, which would then wait
+            # until this process exits. Keep only this process's own pipe.
+            os.dup2(read_fd, 3)
+            read_fd = 3
+            os.closerange(4, os.sysconf("SC_OPEN_MAX"))
             os.setgroups([])
             os.setresgid(uid - KILLER_OFFSET, uid - KILLER_OFFSET, uid - KILLER_OFFSET)
             os.setresuid(uid - KILLER_OFFSET, uid, uid - KILLER_OFFSET)
@@ -329,16 +371,24 @@ def run(
                 "group": gid,
                 "extra_groups": ["ortools"] if allow_ortools else [],
             }
-        killer = _start_killer(uid) if user else None
+        if user:
+            with _uids_lock:
+                _running[uid] = _running.get(uid, 0) + 1
+        try:
+            killer = _start_killer(uid) if user else None
+        except BaseException:
+            if user:
+                _call_ended(uid)
+            raise
         start = time.monotonic()
-        # Output goes to a file, so processes the code leaves behind cannot hold the call open through a pipe.
-        with (
-            tempfile.TemporaryFile("w+", errors="replace") as log,
-            tempfile.TemporaryFile("w+") as input_file,
-        ):
-            json.dump({"code": code, "instance": instance}, input_file)
-            input_file.seek(0)
-            try:
+        try:
+            # Output goes to a file, so processes the code leaves behind cannot hold the call open through a pipe.
+            with (
+                tempfile.TemporaryFile("w+", errors="replace") as log,
+                tempfile.TemporaryFile("w+") as input_file,
+            ):
+                json.dump({"code": code, "instance": instance}, input_file)
+                input_file.seek(0)
                 proc = subprocess.Popen(
                     [
                         SANDBOX_ORTOOLS_PYTHON if allow_ortools else SANDBOX_PYTHON,
@@ -364,29 +414,32 @@ def run(
                     else None,
                     **user,
                 )
-            except BaseException:
-                if killer:
-                    _kill_all(uid, killer)  # don't leave the killer waiting
-                raise
-            try:
-                returncode, timed_out = proc.wait(timeout=timeout_s), False
-            except subprocess.TimeoutExpired:
-                returncode, timed_out = None, True
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.wait()
+                try:
+                    returncode, timed_out = proc.wait(timeout=timeout_s), False
+                except subprocess.TimeoutExpired:
+                    returncode, timed_out = None, True
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+                if user:
+                    # Also the children that left the process group (setsid).
+                    pre_started, killer = killer, None  # used once, here
+                    _kill_all(user["user"], pre_started)
+                log.seek(0)
+                output = log.read(8001)
+                if len(output) > 8000:
+                    log.seek(0, os.SEEK_END)
+                    end = log.tell()
+                    log.seek(max(0, end - 4000))
+                    output = output[:4000] + "\n... [truncated] ...\n" + log.read(4000)
+        finally:
+            if killer:
+                # Something failed before the cleanup: don't leave the killer waiting.
+                _kill_all(uid, killer)
             if user:
-                # Also the children that left the process group (setsid).
-                _kill_all(user["user"], killer)
-            log.seek(0)
-            output = log.read(8001)
-            if len(output) > 8000:
-                log.seek(0, os.SEEK_END)
-                end = log.tell()
-                log.seek(max(0, end - 4000))
-                output = output[:4000] + "\n... [truncated] ...\n" + log.read(4000)
+                _call_ended(uid)
         result = {
             "output": output,
             "elapsed_s": time.monotonic() - start,

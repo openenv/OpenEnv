@@ -8,6 +8,7 @@
 
 import importlib.util
 import os
+import select
 import tempfile
 import time
 import unittest
@@ -220,6 +221,67 @@ for nr in nrs[platform.machine()]:
             allow_ortools=True,
         )
         self.assertEqual(result["returncode"], 0, result["output"])
+
+    def test_killer_does_not_hold_the_servers_descriptors(self):
+        # Another thread's Popen waits for EOF on its error pipe: the killer must not keep it open.
+        uid = sandbox.new_uid()
+        self.addCleanup(sandbox.release_uid, uid)
+        read_fd, write_fd = os.pipe()
+        killer = sandbox._start_killer(uid)
+        os.close(write_fd)
+        try:
+            ready, _, _ = select.select([read_fd], [], [], 5)
+            self.assertEqual(ready, [read_fd], "the killer kept a copy of the pipe")
+            self.assertEqual(os.read(read_fd, 1), b"")
+        finally:
+            os.close(read_fd)
+            sandbox._kill_all(uid, killer)
+
+    def test_setup_failure_does_not_leave_the_killer(self):
+        uid = sandbox.new_uid()
+        self.addCleanup(sandbox.release_uid, uid)
+
+        def no_temporary_files(*args, **kwargs):
+            raise OSError("no space left")
+
+        original = sandbox.tempfile.TemporaryFile
+        sandbox.tempfile.TemporaryFile = no_temporary_files
+        try:
+            with self.assertRaises(OSError):
+                sandbox.run("print(1)", {}, self.workdir.name, 10, uid=uid)
+        finally:
+            sandbox.tempfile.TemporaryFile = original
+        deadline = time.monotonic() + 5
+        while (
+            sandbox._processes_of(uid - sandbox.KILLER_OFFSET)
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        self.assertEqual(sandbox._processes_of(uid - sandbox.KILLER_OFFSET), [])
+
+    def test_uid_released_mid_call_returns_to_the_pool_when_the_call_ends(self):
+        # A client that disconnects mid-call releases its uid while the code still runs:
+        # another session must not get the uid before that call has cleaned up.
+        import threading
+
+        uid = sandbox.new_uid()
+        thread = threading.Thread(
+            target=sandbox.run,
+            args=("import time; time.sleep(3)", {}, self.workdir.name, 10),
+            kwargs={"uid": uid},
+        )
+        thread.start()
+        deadline = time.monotonic() + 10
+        while not sandbox._processes_of(uid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(sandbox._processes_of(uid), "the code never started")
+
+        sandbox.release_uid(uid)
+        self.assertNotIn(uid, sandbox._free_uids)
+
+        thread.join(30)
+        self.assertIn(uid, sandbox._free_uids)
+        self.assertEqual(sandbox._processes_of(uid), [])
 
 
 if __name__ == "__main__":
