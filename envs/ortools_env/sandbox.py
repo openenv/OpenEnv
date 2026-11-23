@@ -109,15 +109,17 @@ def release_uid(uid: int | None) -> None:
     if uid is None:
         return
     with _uids_lock:
+        _closing.add(uid)  # no new call starts with it from now on
         if uid in _running:
-            _closing.add(uid)
             return
     _put_back(uid)
 
 
 def _put_back(uid: int) -> None:
-    if _kill_all(uid):
-        with _uids_lock:
+    killed = _kill_all(uid)
+    with _uids_lock:
+        _closing.discard(uid)
+        if killed:
             _free_uids.append(uid)
 
 
@@ -129,8 +131,7 @@ def _call_ended(uid: int) -> None:
         del _running[uid]
         if uid not in _closing:
             return
-        _closing.discard(uid)
-    _put_back(uid)
+    _put_back(uid)  # still closing while it cleans up, so no call starts with it
 
 
 def _processes_of(uid: int) -> list[tuple[int, int]]:
@@ -252,7 +253,20 @@ def run(
         with `solve=True`, `solution` (`None` if the run failed).
     """
     own_uid = None
-    directory_fd = os.open(workdir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    if SANDBOX_USER is not None:
+        if uid is None:
+            uid = own_uid = new_uid()
+        # From here until the call ends, the uid can't go back to the pool.
+        with _uids_lock:
+            if uid in _closing:
+                raise RuntimeError("this session's sandbox uid was released")
+            _running[uid] = _running.get(uid, 0) + 1
+    try:
+        directory_fd = os.open(workdir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except BaseException:
+        if SANDBOX_USER is not None:
+            _call_ended(uid)
+        raise
     try:
         blocked = list(BLOCKED_ALWAYS) + ([] if allow_ortools else ["ortools"])
         # Never open an existing sandbox-owned entry for a privileged write. Replace
@@ -303,23 +317,13 @@ def run(
                 36, 1, 0, 0, 0
             )  # PR_SET_CHILD_SUBREAPER
             gid = pwd.getpwnam(SANDBOX_USER).pw_gid
-            if uid is None:
-                uid = own_uid = new_uid()
             os.fchown(directory_fd, uid, gid)
             user = {
                 "user": uid,
                 "group": gid,
                 "extra_groups": ["ortools"] if allow_ortools else [],
             }
-        if user:
-            with _uids_lock:
-                _running[uid] = _running.get(uid, 0) + 1
-        try:
-            killer = _start_killer(uid) if user else None
-        except BaseException:
-            if user:
-                _call_ended(uid)
-            raise
+        killer = _start_killer(uid) if user else None
         start = time.monotonic()
         try:
             # Output goes to a file, so processes the code leaves behind cannot hold the call open through a pipe.
@@ -378,8 +382,6 @@ def run(
             if killer:
                 # Something failed before the cleanup: don't leave the killer waiting.
                 _kill_all(uid, killer)
-            if user:
-                _call_ended(uid)
         result = {
             "output": output,
             "elapsed_s": time.monotonic() - start,
@@ -414,4 +416,6 @@ def run(
         return result
     finally:
         os.close(directory_fd)
+        if SANDBOX_USER is not None:
+            _call_ended(uid)
         release_uid(own_uid)
