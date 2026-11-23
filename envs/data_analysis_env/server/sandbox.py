@@ -25,10 +25,12 @@ layers below decide what that is, from the strongest to defense in depth:
    sockets.
 3. **Process limits and hygiene.** A hard per-call timeout (the worker is killed and the next
    call starts a fresh session), an address-space limit, a cap on file size, open files and
-   (with a uid per session) processes, no core files. The worker's environment is built from an
-   allowlist, never copied from the server, so no token or key reaches it. Server and spawner are
-   non-dumpable (no ptrace, no `/proc/<pid>/mem`) and workers die with the spawner. Server and
-   workers exchange bounded JSON only, never pickle.
+   (with a uid per session) processes, no core files. The home's size and file count are checked
+   while a call runs: past the cap the worker is killed and the next call gets an empty home.
+   The worker's environment is built from an allowlist, never copied from the server, so no
+   token or key reaches it. Server and spawner are non-dumpable (no ptrace, no
+   `/proc/<pid>/mem`) and workers die with the spawner. Server and workers exchange bounded JSON
+   only, never pickle.
 4. **An audit hook** (PEP 578), armed after the worker's imports. File reads only under the
    task's data directory, the session home and the Python installation. Writes only under the
    session home. No sockets, subprocesses, signals, ctypes/cffi, pyarrow file readers, or
@@ -69,6 +71,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_EXEC_TIMEOUT_S = 30.0
 DEFAULT_MEM_LIMIT_MB = 4096
 DEFAULT_FILE_LIMIT_MB = 64  # largest file model code may write in its home
+HOME_LIMIT_MB = 512  # disk a session's home may use
+HOME_FILES_LIMIT = 100_000  # files and directories in a session's home
+HOME_CHECK_S = 1.0  # how often the home is checked while a call runs
 DEFAULT_UID_BASE = 61000
 DEFAULT_UID_COUNT = 1024
 NPROC_LIMIT = 64  # processes and threads per session uid
@@ -161,6 +166,11 @@ TIMEOUT_MESSAGE = (
 CRASH_MESSAGE = (
     "RuntimeError: the Python session crashed (for example it ran out of memory) and was "
     "restarted, so variables and imports from earlier calls are gone."
+)
+HOME_LIMIT_MESSAGE = (
+    f"OSError: the working directory went over {HOME_LIMIT_MB} MiB or {HOME_FILES_LIMIT:,} "
+    "files, so this call was stopped. The Python session was restarted with an empty working "
+    "directory, so files, variables and imports from earlier calls are gone."
 )
 START_FAILED_MESSAGE = (
     "RuntimeError: the Python session could not start. Try again later."
@@ -960,6 +970,14 @@ class SandboxSession:
         timer.start()
         try:
             self._conn.send_bytes(json.dumps({"code": str(code)}).encode())
+            # The home is checked while the call runs and once more when it is done.
+            while True:
+                done = self._conn.poll(HOME_CHECK_S)
+                if _home_over_limit(self._home):
+                    self.close()
+                    return "", HOME_LIMIT_MESSAGE, 1
+                if done:
+                    break
             # Bounded JSON with typed fields only: the worker runs model code and is not trusted.
             reply = json.loads(self._conn.recv_bytes(MAX_REPLY_BYTES))
             stdout, stderr = reply["stdout"], reply["stderr"]
@@ -987,6 +1005,22 @@ class SandboxSession:
             self._finalizer()
         self._spawner = self._pid = self._uid = self._home = None
         self._conn = self._finalizer = None
+
+
+def _home_over_limit(home: str) -> bool:
+    """Whether `home` uses more than HOME_LIMIT_MB or holds more than HOME_FILES_LIMIT entries.
+    Stops walking as soon as it is over."""
+    size, count, pending = 0, 0, [home]
+    while pending:
+        with contextlib.suppress(OSError), os.scandir(pending.pop()) as entries:
+            for entry in entries:
+                count += 1
+                size += entry.stat(follow_symlinks=False).st_blocks * 512
+                if count > HOME_FILES_LIMIT or size > HOME_LIMIT_MB * 1024 * 1024:
+                    return True
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(entry.path)
+    return False
 
 
 def _reap_quietly(spawner: _Spawner, pid: int) -> None:

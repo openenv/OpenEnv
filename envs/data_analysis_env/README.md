@@ -160,7 +160,10 @@ forked from a spawner that has pandas, numpy and scikit-learn loaded, with these
      forks any worker, so workers have no interface, not even loopback.
 3. **Limits.** A hard timeout per call (30 s, then the worker is killed and the session restarts, with a message
    saying so), 4 GiB of address space, at most 64 processes per session user, 256 open files, 64 MiB per written file,
-   no core files. The worker's environment is an allowlist (`PATH`, locale, `HOME`), never a copy of the server's, so
+   no core files. The session's home may hold 512 MiB and 100,000 files and directories: the server checks it every
+   second while a call runs and after it, and past either cap the call is stopped and the session restarts with an
+   empty home, with a message saying so. Files written outside the home, which only code past the audit hook can do,
+   are not counted. The worker's environment is an allowlist (`PATH`, locale, `HOME`), never a copy of the server's, so
    tokens and keys don't reach it. The server and the spawner are non-dumpable, so a process of the same uid can't
    ptrace them or read their memory. The server reads the worker's replies as bounded JSON, never pickle.
 4. **An audit hook** (PEP 578), armed before model code: reads only under the task's data, the session's home and the

@@ -430,6 +430,28 @@ def test_file_size_is_capped(session):
     assert code == 1 and "OSError" in err
 
 
+def test_home_size_and_file_count_are_capped(session, monkeypatch):
+    monkeypatch.setattr(sandbox, "HOME_LIMIT_MB", 1)
+    monkeypatch.setattr(sandbox, "HOME_FILES_LIMIT", 50)
+    assert run(session, "x = 1\nopen('small', 'w').write('x' * 1000)")[0] == 0
+    home = session.home
+    # Over the size cap while the call runs: stopped before its timeout.
+    start = time.time()
+    code, _, err = run(
+        session,
+        "open('big', 'wb').write(b'x' * 2 * 1024 * 1024)\nimport time\ntime.sleep(60)",
+    )
+    assert code == 1 and "working directory went over" in err, err
+    assert time.time() - start < TIMEOUT_S
+    assert not os.path.exists(home)
+    # The session restarted with an empty home.
+    assert run(session, "import os\nos.listdir('.')")[:2] == (0, "[]\n")
+    assert run(session, "x")[0] == 1
+    # Over the file count cap when the call ends.
+    code, _, err = run(session, "for i in range(100):\n    open(f'f{i}', 'w').close()")
+    assert code == 1 and "working directory went over" in err, err
+
+
 # --- The worker process ---------------------------------------------------------------------------
 
 
