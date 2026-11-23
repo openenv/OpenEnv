@@ -9,6 +9,7 @@
 Network-free except the tests marked `network`, which download one small task anonymously.
 """
 
+import asyncio
 import concurrent.futures
 import hashlib
 import io
@@ -379,6 +380,14 @@ def test_reward_is_emitted_only_on_the_submit_step(env):
     env.reset(task_id="t1")
     obs = call(env, "submit_answer", answer="nope")
     assert (obs.done, obs.reward) == (True, 0.0)
+
+
+def test_submit_through_step_async(env):
+    """The WebSocket server steps through step_async."""
+    env.reset(task_id="t2")
+    action = CallToolAction(tool_name="submit_answer", arguments={"answer": "7"})
+    obs = asyncio.run(env.step_async(action))
+    assert (obs.done, obs.reward) == (True, 1.0)
 
 
 def test_wrong_answer_scores_zero(env):
