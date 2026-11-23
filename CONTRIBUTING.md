@@ -24,7 +24,7 @@ We actively welcome your pull requests.
 
 We use GitHub issues to track public bugs. Please ensure your description is clear and has sufficient instructions to reproduce the issue.
 
-Meta has a [bounty program](https://bugbounty.meta.com/) for the safe disclosure of security bugs. In those cases, please go through the process outlined on that page and do not file a public issue.
+Do not file a public issue for a security bug. Report it privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
