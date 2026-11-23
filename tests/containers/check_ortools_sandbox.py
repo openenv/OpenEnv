@@ -278,6 +278,9 @@ for nr in nrs[platform.machine()]:
 
         sandbox.release_uid(uid)
         self.assertNotIn(uid, sandbox._free_uids)
+        # A released uid can't start another call either.
+        with self.assertRaises(RuntimeError):
+            sandbox.run("print(1)", {}, self.workdir.name, 10, uid=uid)
 
         thread.join(30)
         self.assertIn(uid, sandbox._free_uids)
