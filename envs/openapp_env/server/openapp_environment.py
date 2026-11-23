@@ -19,6 +19,7 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
@@ -419,7 +420,7 @@ class OpenAppEnvironment(Environment):
                 return self._execute_click_playwright(bid)
 
             # BrowserGym action format: click("bid")
-            action = f'click("{bid}")'
+            action = f"click({bid!r})"
             obs, reward, done, truncated, info = self._browser_env.step(action)
 
             # Update current state from observation
@@ -450,7 +451,7 @@ class OpenAppEnvironment(Environment):
                 return self._execute_fill_playwright(bid, text)
 
             # BrowserGym action format: fill("bid", "text")
-            action = f'fill("{bid}", "{text}")'
+            action = f"fill({bid!r}, {text!r})"
             obs, reward, done, truncated, info = self._browser_env.step(action)
 
             # Update current state from observation
@@ -541,7 +542,7 @@ class OpenAppEnvironment(Environment):
 
         try:
             # BrowserGym action format: select_option("bid", "value")
-            action = f'select_option("{bid}", "{value}")'
+            action = f"select_option({bid!r}, {value!r})"
             obs, reward, done, truncated, info = self._browser_env.step(action)
 
             # Update current state from observation
@@ -560,9 +561,14 @@ class OpenAppEnvironment(Environment):
             self._current_url = url
             return 0.0
 
+        # The client picks the URL, and a file:// one would show a file of this server.
+        if urlparse(url.strip()).scheme not in ("http", "https"):
+            self._last_action_error = f"goto opens only http(s) URLs, not {url!r}"
+            return -0.1
+
         try:
             # BrowserGym action format: goto("url")
-            action = f'goto("{url}")'
+            action = f"goto({url!r})"
             obs, reward, done, truncated, info = self._browser_env.step(action)
 
             # Update current state from observation
@@ -583,7 +589,7 @@ class OpenAppEnvironment(Environment):
 
         try:
             # BrowserGym action format: scroll("direction")
-            action = f'scroll("{direction}")'
+            action = f"scroll({direction!r})"
             obs, reward, done, truncated, info = self._browser_env.step(action)
 
             # Update current state from observation
@@ -607,7 +613,7 @@ class OpenAppEnvironment(Environment):
                 return self._execute_press_key_playwright("Enter")
 
             # BrowserGym action format: send_keys("text")
-            action = f'send_keys("{text}")'
+            action = f"send_keys({text!r})"
             obs, reward, done, truncated, info = self._browser_env.step(action)
 
             # Update current state from observation
