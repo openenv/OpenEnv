@@ -86,8 +86,10 @@ Select an episode with `reset(split="test", index=3, seed=0)`, through
 0 for train and 500,000,000 for test. An omitted seed selects variant 0.
 The same split, index and seed reproduce the same question. These selections
 cannot be combined with `dataset_name`, `dataset_config`, `dataset_specs` or
-`size`. Resets without `index` keep the dataset configuration and reuse behavior
-described below.
+`size`. An indexed reset replaces the current dataset with a one-question
+`chain_sum` dataset, so a later reset without arguments repeats that question.
+Otherwise, resets without `index` keep the dataset configuration and reuse
+behavior described below.
 
 Distinct train and test seeds do not guarantee distinct questions: levels 0 and
 1 have few possible questions. With variant 0, 100 of the 100 test questions

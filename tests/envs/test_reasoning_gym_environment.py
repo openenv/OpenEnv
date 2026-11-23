@@ -651,6 +651,29 @@ class TestTaskAPI:
                 .question
             )
 
+    def test_selection_over_websocket(self) -> None:
+        from fastapi.testclient import TestClient
+        from openenv.core.env_server.http_server import create_app
+
+        app = create_app(
+            ReasoningGymEnvironment,
+            ReasoningGymAction,
+            ReasoningGymObservation,
+            env_name="reasoning_gym_env",
+        )
+        expected = (
+            ReasoningGymEnvironment().reset(split="test", index=3, seed=0).question
+        )
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.send_json(
+                {"type": "reset", "data": {"split": "test", "index": 3, "seed": 0}}
+            )
+            assert ws.receive_json()["data"]["observation"]["question"] == expected
+            # The indexed task is now the session's dataset, so a plain reset
+            # repeats its question.
+            ws.send_json({"type": "reset", "data": {}})
+            assert ws.receive_json()["data"]["observation"]["question"] == expected
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
