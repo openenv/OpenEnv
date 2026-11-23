@@ -266,6 +266,7 @@ def run(
     except BaseException:
         if SANDBOX_USER is not None:
             _call_ended(uid)
+        release_uid(own_uid)
         raise
     try:
         blocked = list(BLOCKED_ALWAYS) + ([] if allow_ortools else ["ortools"])
