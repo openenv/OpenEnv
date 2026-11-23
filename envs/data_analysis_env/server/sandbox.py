@@ -967,21 +967,26 @@ class SandboxSession:
         if not self.start():
             return "", START_FAILED_MESSAGE, 1
         deadline = time.monotonic() + self._timeout_s
-        # Kill the worker at the deadline, so a reply that stalls (even mid-frame) ends in EOF.
-        timer = threading.Timer(self._timeout_s, os.kill, (self._pid, signal.SIGKILL))
+        # At the deadline, shut the server's end of the socket: a reply that stalls (even
+        # mid-frame) ends in EOF, and close() lets the spawner, the worker's parent, kill it.
+        # Never signal the worker by pid from here: once it exits its pid can be reused.
+        sock = socket.socket(fileno=os.dup(self._conn.fileno()))
+        timer = threading.Timer(self._timeout_s, sock.shutdown, (socket.SHUT_RDWR,))
         timer.start()
         try:
             self._conn.send_bytes(json.dumps({"code": str(code)}).encode())
-            # The home is checked while the call runs and once more when it is done.
-            while True:
-                done = self._conn.poll(HOME_CHECK_S)
+            # The home is checked while the call runs, and once more after the reply is read.
+            while not self._conn.poll(HOME_CHECK_S):
                 if _home_over_limit(self._home):
                     self.close()
                     return "", HOME_LIMIT_MESSAGE, 1
-                if done:
-                    break
+            raw = self._conn.recv_bytes(MAX_REPLY_BYTES)
+            timer.cancel()
+            if _home_over_limit(self._home):
+                self.close()
+                return "", HOME_LIMIT_MESSAGE, 1
             # Bounded JSON with typed fields only: the worker runs model code and is not trusted.
-            reply = json.loads(self._conn.recv_bytes(MAX_REPLY_BYTES))
+            reply = json.loads(raw)
             stdout, stderr = reply["stdout"], reply["stderr"]
             exit_code = reply["exit_code"]
             if not (
@@ -1000,6 +1005,8 @@ class SandboxSession:
             return "", CRASH_MESSAGE, 1
         finally:
             timer.cancel()
+            timer.join()
+            sock.close()
 
     def close(self) -> None:
         """Kill the worker, sweep its uid and remove its home. Safe to call more than once."""

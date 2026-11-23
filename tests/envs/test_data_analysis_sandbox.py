@@ -493,6 +493,37 @@ def test_a_stalled_reply_times_out_and_the_session_restarts(session):
     assert run(session, "1 + 1")[:2] == (0, "2\n")
 
 
+def test_the_timeout_never_signals_the_worker_by_pid(session, monkeypatch):
+    """A worker's pid can be reused once the spawner reaps it, so the timer thread must not kill by pid."""
+    assert run(session, "x = 1")[0] == 0
+    caller = threading.current_thread()
+    from_other_threads = []
+    real_kill = os.kill
+
+    def kill(pid, sig):
+        if threading.current_thread() is not caller:
+            from_other_threads.append(pid)
+        real_kill(pid, sig)
+
+    monkeypatch.setattr(os, "kill", kill)
+    code, _, err = run(session, "import time\ntime.sleep(60)")
+    assert code == 1 and "TimeoutError" in err
+    assert from_other_threads == []
+
+
+def test_a_slow_home_check_after_the_reply_keeps_the_session(session, monkeypatch):
+    """The timer stops once the reply is read, so a slow home check can't kill a finished call's worker."""
+    check = sandbox._home_over_limit
+    monkeypatch.setattr(
+        sandbox,
+        "_home_over_limit",
+        lambda home: time.sleep(TIMEOUT_S + 1) or check(home),
+    )
+    assert run(session, "x = 5\nprint(1)")[:2] == (0, "1\n")
+    monkeypatch.setattr(sandbox, "_home_over_limit", check)
+    assert run(session, "print(x)")[:2] == (0, "5\n")
+
+
 def test_worker_exit_is_a_crash_and_the_session_restarts(session):
     code, _, err = run(session, "import os\nos._exit(0)")
     assert code == 1 and "crashed" in err
