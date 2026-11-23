@@ -119,7 +119,11 @@ class DataAnalysisEnvironment(MCPEnvironment):
         """
         conf = tasks.settings()
         split = str(split or conf["split"])
-        calls = DEFAULT_MAX_PYTHON_CALLS if max_python_calls is None else int(max_python_calls)
+        calls = (
+            DEFAULT_MAX_PYTHON_CALLS
+            if max_python_calls is None
+            else int(max_python_calls)
+        )
         if not 1 <= calls <= MAX_PYTHON_CALLS_LIMIT:
             raise ValueError(
                 f"max_python_calls must be in [1, {MAX_PYTHON_CALLS_LIMIT}]"
