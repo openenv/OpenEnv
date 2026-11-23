@@ -28,6 +28,8 @@ import sys
 import threading
 from typing import Optional, Tuple
 
+from .sandbox import set_non_dumpable
+
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
@@ -51,6 +53,7 @@ def _grader_main() -> None:
     """Helper process: one JSON request per line on stdin, one JSON reply per line on stdout."""
     from importlib import import_module
 
+    set_non_dumpable()  # it holds gold answers
     grader = import_module(_GRADER_MODULE)
     for line in sys.stdin:
         try:

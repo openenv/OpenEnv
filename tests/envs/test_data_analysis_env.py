@@ -16,6 +16,7 @@ import io
 import os
 import random
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -96,6 +97,14 @@ def test_grade_answer_edge_cases():
     assert grading.grade_answer(row(), "   ") == (0.0, "empty")
     assert grading.grade_answer(row(), "x" * 1001) == (0.0, "too_long")
     assert grading.grade_answer(row(atol=float("nan")), GOLD)[0] == 1.0
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux prctl")
+def test_grader_helper_is_not_dumpable():
+    """It holds gold answers: another process of the same uid must not read its memory."""
+    grading.grade_answer(row(), GOLD)
+    # Non-dumpable: /proc/<pid>/mem belongs to root whatever the process uid.
+    assert os.stat(f"/proc/{grading._grader._proc.pid}/mem").st_uid == 0
 
 
 def test_model_text_is_never_executed(tmp_path):
