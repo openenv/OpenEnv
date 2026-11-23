@@ -325,10 +325,11 @@ jobs:
           uv lock --check
           uv sync --python 3.12 --frozen
 
-      - name: Run data-analysis regressions
+      - name: Verify dependencies and run data-analysis regressions
         env:
           PYTHONPATH: src:envs
         run: |
+          uv run --python 3.12 --frozen --project tests/data_analysis_runtime python -c 'import pandas, fastmcp, openpyxl, sklearn, math_verify'
           uv run --python 3.12 --frozen --project tests/data_analysis_runtime pytest \
             tests/envs/test_data_analysis_env.py tests/envs/test_data_analysis_sandbox.py \
             -m "not network" -v --tb=short
