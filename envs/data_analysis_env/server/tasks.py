@@ -34,12 +34,10 @@ import urllib.request
 from typing import Dict, List, Optional, Sequence, Tuple
 
 DATASET_ID = "FineEnvs/SmolDataEnvs"
-DATASET_REVISION = (
-    "6c439f075cf550793b1bfd7b887a41e51f3b23ab"  # grader.py vendored from it
-)
+DATASET_REVISION = "v1.1"  # grader.py is vendored from v1.0 and unchanged in v1.1
 HUB = "https://huggingface.co"
-# SmolDataEnvs v1.1 adds `eval_verified` and `test_verified` (golds checked against an independent
-# solution). DATASET_REVISION moves to v1.1 once it is released. Until then they are not found.
+# `eval_verified` and `test_verified` are the v1.1 subsets whose golds were checked against an
+# independent solution.
 SPLITS = ("train", "eval", "test", "eval_verified", "test_verified")
 DEFAULT_EXTENSIONS = (".csv", ".tsv", ".json")
 DEFAULT_MAX_FILE_MB = 10
