@@ -46,12 +46,6 @@ class StaticManifestGrader:
                 f"declared variance_tolerance {reward.variance_tolerance} exceeds "
                 f"the policy maximum {bounds.max_variance_tolerance}"
             )
-        timeout = subject.manifest.resources.episode_timeout_s
-        if timeout > bounds.max_episode_timeout_s:
-            problems.append(
-                f"declared episode_timeout_s {timeout} exceeds the "
-                f"policy maximum {bounds.max_episode_timeout_s}"
-            )
         return CheckResult(
             check_id=self.check_id,
             status=CheckStatus.FAIL if problems else CheckStatus.PASS,
@@ -59,7 +53,6 @@ class StaticManifestGrader:
                 "oracle_tolerance": reward.oracle_tolerance,
                 "floor_margin": reward.floor_margin,
                 "variance_tolerance": reward.variance_tolerance,
-                "episode_timeout_s": timeout,
                 "bounds": bounds.model_dump(),
             },
             evidence=problems or ["manifest is schema-valid and within policy bounds"],

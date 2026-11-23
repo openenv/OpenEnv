@@ -99,7 +99,7 @@ def test_valid_package_names_unimplemented_static_checks():
     report = run_validation(
         FIXTURES / "served_min_pass", max_level=Level.STATIC, skip_build=True
     )
-    # A PASS on static.manifest alone must not read as full static coverage.
+    # Passing implemented checks must not read as full static coverage.
     assert report.verdict is Verdict.WARN
     assert report.lane is Lane.LOCAL
     assert report.levels_run == [Level.STATIC]
@@ -107,7 +107,16 @@ def test_valid_package_names_unimplemented_static_checks():
     by_id = {r.check_id: r for r in report.results}
     manifest_check = by_id.pop("static.manifest")
     assert manifest_check.status is CheckStatus.PASS
-    assert len(by_id) == 9
+    resources = by_id.pop("static.resource_declaration")
+    assert resources.status is CheckStatus.PASS
+    assert resources.measured == {
+        "cpu": 1.0,
+        "memory_mb": 1024,
+        "disk_mb": 512,
+        "episode_timeout_s": 60.0,
+    }
+    assert by_id.pop("static.timeout_ceiling").status is CheckStatus.PASS
+    assert len(by_id) == 7
     assert all(
         r.check_id.startswith("static.")
         and r.status is CheckStatus.SKIP
@@ -146,6 +155,69 @@ def test_out_of_bounds_declaration_fails_static_manifest(tmp_path):
     result = next(r for r in report.results if r.check_id == "static.manifest")
     assert result.status is CheckStatus.FAIL
     assert "floor_margin" in "\n".join(result.evidence)
+
+
+@pytest.mark.parametrize(
+    ("maximum", "timeout", "expected"),
+    [
+        (120.0, 120.0, CheckStatus.PASS),
+        (120.0, 120.5, CheckStatus.FAIL),
+        (3600.0, 3600.0001, CheckStatus.FAIL),
+    ],
+)
+def test_timeout_ceiling_uses_the_selected_policy(tmp_path, maximum, timeout, expected):
+    src = (FIXTURES / "served_min_pass" / "openenv.yaml").read_text()
+    (tmp_path / "openenv.yaml").write_text(
+        src.replace("episode_timeout_s: 60.0", f"episode_timeout_s: {timeout}")
+    )
+    policy = load_policy("v1")
+    policy.bounds.max_episode_timeout_s = maximum
+    report = run_validation(tmp_path, max_level=Level.STATIC, policy=policy)
+    by_id = {r.check_id: r for r in report.results}
+    assert by_id["static.manifest"].status is CheckStatus.PASS
+    result = by_id["static.timeout_ceiling"]
+    assert result.status is expected
+    assert result.measured == {
+        "episode_timeout_s": timeout,
+        "max_episode_timeout_s": maximum,
+    }
+    if expected is CheckStatus.FAIL:
+        assert result.evidence == [
+            f"declared episode timeout {timeout}s exceeds the policy maximum {maximum}s"
+        ]
+    assert report.verdict is (
+        Verdict.FAIL if expected is CheckStatus.FAIL else Verdict.WARN
+    )
+
+
+def test_missing_resource_is_reported_as_a_manifest_error(tmp_path):
+    src = (FIXTURES / "served_min_pass" / "openenv.yaml").read_text()
+    (tmp_path / "openenv.yaml").write_text(src.replace("    disk_mb: 512\n", ""))
+    report = run_validation(tmp_path, max_level=Level.STATIC)
+    by_id = {r.check_id: r for r in report.results}
+    assert report.verdict is Verdict.FAIL
+    assert by_id["static.manifest"].status is CheckStatus.FAIL
+    assert any(
+        "resources.disk_mb" in line for line in by_id["static.manifest"].evidence
+    )
+    assert by_id["static.resource_declaration"].status is CheckStatus.SKIP
+
+
+@pytest.mark.parametrize(
+    ("field", "value"), [("cpu", "1.0"), ("episode_timeout_s", "60.0")]
+)
+def test_infinite_resource_produces_valid_failure_report(tmp_path, field, value):
+    src = (FIXTURES / "served_min_pass" / "openenv.yaml").read_text()
+    (tmp_path / "openenv.yaml").write_text(
+        src.replace(f"{field}: {value}", f"{field}: .inf")
+    )
+
+    report = run_validation(tmp_path, max_level=Level.STATIC)
+
+    assert report.verdict is Verdict.FAIL
+    assert ValidationReport.model_validate_json(report.model_dump_json()) == report
+    result = next(r for r in report.results if r.check_id == "static.manifest")
+    assert result.evidence == [f"resources.{field} must be finite"]
 
 
 def test_ambiguous_package_raises_signature_error():

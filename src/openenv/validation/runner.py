@@ -36,7 +36,11 @@ from .graders.runtime.repeatability import (
     SeedControlGrader,
     TrajectoryRecordGrader,
 )
-from .graders.static import StaticManifestGrader
+from .graders.static import (
+    ResourceDeclarationGrader,
+    StaticManifestGrader,
+    TimeoutCeilingGrader,
+)
 from .manifest import ManifestError, NormalizedManifest, NormalizedManifestV2
 from .parsers import ParserRegistry
 from .parsers.harbor_toml import HarborTaskParser
@@ -130,6 +134,8 @@ def default_grader_registry(policy: SeverityPolicy) -> GraderRegistry:
     """The graders shipped in this build, including their selection metadata."""
     registry = GraderRegistry()
     registry.register(StaticManifestGrader(policy.bounds))
+    registry.register(ResourceDeclarationGrader())
+    registry.register(TimeoutCeilingGrader(policy.bounds))
     registry.register(RewardWellFormedGrader())
     registry.register(ObservationSchemaGrader())
     registry.register(StateContractGrader())

@@ -437,6 +437,8 @@ def test_success_grades_semantic_checks_with_native_raw_evidence(
     assert source_digest(task) == original
     passed = {
         "static.manifest",
+        "static.resource_declaration",
+        "static.timeout_ceiling",
         "runtime.startup",
         "runtime.reward_well_formed",
         "runtime.episode_determinism",
@@ -1038,6 +1040,22 @@ def test_anonymous_volumes_are_registered_removed_and_rechecked(
     )
     assert "unrelated-volume" in volumes
     assert "anonymous-owned" in cleanup["before"]["volumes"]
+
+
+def test_excessive_episode_timeout_blocks_harbor_trials(task, boundary):
+    path = task / "validation/openenv.json"
+    contract = json.loads(path.read_text())
+    contract["resources"]["episode_timeout_s"] = 3601
+    path.write_text(json.dumps(contract))
+
+    report = run_validation(task)
+
+    assert report.verdict is Verdict.FAIL
+    assert result(report, "static.timeout_ceiling").status is CheckStatus.FAIL
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.SKIP
+    assert "static.timeout_ceiling" in startup.evidence[0]
+    assert not boundary.trials
 
 
 def test_static_and_skip_build_do_not_start_trials(task, boundary):

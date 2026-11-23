@@ -1181,8 +1181,13 @@ def validate_harbor(
                 "served-package providers, including --space; "
                 + "run Harbor trials on HF Jobs with --sandbox hf-sandbox"
             )
-        if any(result.status is not CheckStatus.PASS for result in results):
-            problem = "unmet dependency: static.manifest"
+        failed_checks = [
+            result.check_id
+            for result in results
+            if result.status is not CheckStatus.PASS
+        ]
+        if failed_checks:
+            problem = "unmet dependency: " + ", ".join(failed_checks)
         startup = _result(
             "runtime.startup",
             CheckStatus.SKIP,

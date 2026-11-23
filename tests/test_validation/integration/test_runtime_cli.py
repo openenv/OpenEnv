@@ -45,8 +45,6 @@ STATIC_PENDING = {
     "static.layout",
     "static.sbom",
     "static.oci_labels",
-    "static.resource_declaration",
-    "static.timeout_ceiling",
     "static.dependency_pinning",
     "static.task_distribution_pinning",
 }

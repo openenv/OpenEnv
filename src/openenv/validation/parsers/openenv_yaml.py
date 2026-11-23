@@ -1,5 +1,6 @@
 """Parser for the served OpenEnv format (`openenv.yaml`)."""
 
+import math
 from pathlib import Path
 
 import yaml
@@ -106,9 +107,20 @@ class OpenEnvYamlParser:
 
         try:
             model = NormalizedManifestV2 if has_execution else NormalizedManifest
-            return model.model_validate(data)
+            manifest = model.model_validate(data)
         except ValidationError as exc:
             raise ManifestError(
                 _format_validation_error(exc),
                 remediation=SCHEMA_REMEDIATION,
             ) from exc
+
+        # Schema v1 accepts infinities, which cannot round-trip in a JSON report.
+        resources = manifest.resources
+        errors = [
+            f"resources.{field} must be finite"
+            for field in ("cpu", "episode_timeout_s")
+            if not math.isfinite(getattr(resources, field))
+        ]
+        if errors:
+            raise ManifestError(errors, remediation=SCHEMA_REMEDIATION)
+        return manifest

@@ -37,9 +37,11 @@ def test_echo_env_exits_zero():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     report = ValidationReport.model_validate_json(result.stdout)
-    # Static graders other than static.manifest are named SKIPs: WARN, exit 0.
     assert report.verdict.value == "warn"
-    assert any(r.check_id == "static.manifest" for r in report.results)
+    checks = {check.check_id: check.status.value for check in report.results}
+    assert checks["static.manifest"] == "pass"
+    assert checks["static.resource_declaration"] == "pass"
+    assert checks["static.timeout_ceiling"] == "pass"
 
 
 def test_json_report_is_schema_valid():
@@ -48,7 +50,6 @@ def test_json_report_is_schema_valid():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     report = ValidationReport.model_validate_json(result.stdout)
-    # Static graders other than static.manifest are named SKIPs: WARN, exit 0.
     assert report.verdict.value == "warn"
 
 
