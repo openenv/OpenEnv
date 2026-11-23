@@ -174,8 +174,10 @@ forked from a spawner that has pandas, numpy and scikit-learn loaded, with these
 
 When the server is **not root** (local development, or platforms that run containers as a non-root user, such as
 Hugging Face Docker Spaces), layer 1 is not available: workers run as the server's user and only layers 3 and 4
-separate sessions. The non-dumpable server still keeps its memory and environment out of reach. Run the server as root
-in its own container when model code is untrusted, which is the case in RL training.
+separate sessions. The non-dumpable server still keeps its memory and environment out of reach, but model code that
+gets past the audit hook can read any file the server's user can (for example `~/.cache/huggingface/token`), and on
+macOS it can also reach the network. Don't run untrusted model code with a non-root server on a machine that holds
+tokens. Run the server as root in its own container when model code is untrusted, which is the case in RL training.
 
 Residual risks, by design:
 
