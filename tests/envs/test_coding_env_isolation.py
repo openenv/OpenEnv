@@ -9,8 +9,10 @@ must only stop its own session.
 
 from __future__ import annotations
 
+import errno
 import gc
 import os
+import platform
 import secrets
 import subprocess
 import sys
@@ -429,3 +431,56 @@ def test_dead_zygote_is_replaced(make_env):
     assert env.reset().exit_code == 0
     assert _run(env, "1 + 1").stdout == "2"
     assert python_executor._zygote is not zygote
+
+
+@pytest.mark.skipif(
+    bool(python_executor._socket_filter_unavailable()),
+    reason="the socket filter exists for Linux on x86_64 and aarch64",
+)
+def test_workers_cannot_create_sockets(make_env):
+    """Even with `socket` authorized, model code gets no socket of any family."""
+    env = make_env(additional_imports=["socket"])
+    env.reset()
+    for family in ("AF_INET", "AF_INET6", "AF_UNIX"):
+        result = _run(env, f"import socket\nsocket.socket(socket.{family})")
+        assert result.exit_code != 0
+        assert "not permitted" in result.stderr, result.stderr
+    assert _run(env, "1 + 1").stdout == "2"
+    with open(f"/proc/{env._executor.pid}/status") as status:
+        assert "Seccomp:\t2" in status.read()
+
+
+@pytest.mark.skipif(
+    bool(python_executor._socket_filter_unavailable()),
+    reason="the socket filter exists for Linux on x86_64 and aarch64",
+)
+def test_workers_cannot_reach_into_other_processes(make_env):
+    """ptrace, process_vm_readv/writev, pidfd_getfd and io_uring get EPERM, even with ctypes."""
+    env = make_env(additional_imports=["ctypes"])
+    env.reset()
+    # ptrace, process_vm_readv, process_vm_writev, pidfd_getfd, io_uring_enter, io_uring_register
+    syscalls = {
+        "x86_64": [101, 310, 311, 438, 426, 427],
+        "aarch64": [117, 270, 271, 438, 426, 427],
+    }[platform.machine()]
+    code = (
+        "import ctypes\n"
+        "libc = ctypes.CDLL(None, use_errno=True)\n"
+        f"for nr in {syscalls}:\n"
+        "    ctypes.set_errno(0)\n"
+        "    print(nr, libc.syscall(nr, 0, 0, 0, 0, 0), ctypes.get_errno())\n"
+    )
+    lines = _run(env, code).stdout.splitlines()[: len(syscalls)]
+    assert lines == [f"{nr} -1 {errno.EPERM}" for nr in syscalls]
+
+
+@linux_only
+def test_a_socket_filter_that_cannot_be_installed_is_reported(monkeypatch):
+    """Under qemu, for example, prctl can fail: the zygote reports it at startup."""
+
+    def block_sockets():
+        raise OSError(errno.EINVAL, "prctl(PR_SET_SECCOMP) failed")
+
+    monkeypatch.setattr(python_executor, "_socket_filter_unavailable", lambda: "")
+    monkeypatch.setattr(python_executor, "block_sockets", block_sockets)
+    assert python_executor._check_socket_filter() == "prctl failed: Invalid argument"

@@ -48,12 +48,16 @@ class Subject:
         features (`tuple[str, ...]`):
             Distinguishing features a competent drawing should show. These are
             put to the judge as individual questions.
+        article (`str`, *optional*, defaults to `"a"`):
+            Indefinite article used before `name` in the prompt and the judge
+            questions.
     """
 
     name: str
     synonyms: tuple[str, ...]
     family: tuple[str, ...]
     features: tuple[str, ...]
+    article: str = "a"
 
 
 @dataclass(frozen=True)
@@ -102,12 +106,14 @@ SUBJECTS: dict[str, Subject] = {
         ("axolotl",),
         ("salamander", "amphibian", "animal"),
         ("feathery external gills on the head", "a wide flat smiling mouth"),
+        "an",
     ),
     "octopus": Subject(
         "octopus",
         ("octopus",),
         ("cephalopod", "animal"),
         ("a large bulbous head", "multiple curling tentacles"),
+        "an",
     ),
     "hedgehog": Subject(
         "hedgehog",
@@ -181,7 +187,7 @@ class Task:
     def prompt(self) -> str:
         """`str`: The instruction shown to the model under test."""
         return (
-            f"Generate an SVG of a {self.subject.name} riding a "
+            f"Generate an SVG of {self.subject.article} {self.subject.name} riding a "
             f"{self.vehicle.name}.\n\n"
             "Reply with the SVG document only. Draw it using vector primitives "
             "such as path, circle, ellipse, rect, line and polygon. Do not embed "
