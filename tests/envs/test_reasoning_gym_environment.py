@@ -495,5 +495,162 @@ class TestReasoningGymIntegration:
         assert env.state.step_count == 0
 
 
+class TestTaskAPI:
+    def test_discovery_on_fresh_instance_has_no_side_effects(self) -> None:
+        env = ReasoningGymEnvironment()
+        before = env.state.model_dump()
+        assert env.list_splits() == ["train", "test"]
+        for split, size in [("train", 20000), ("test", 1000)]:
+            assert env.num_tasks(split) == size
+            tasks = env.list_tasks(split)
+            assert len(tasks) == size
+            assert tasks[13] == {
+                "id": f"chain_sum-{split}-13",
+                "split": split,
+                "index": 13,
+                "group": "chain_sum",
+                "difficulty": 3,
+            }
+            assert env.get_task_range(split, -3, None) == tasks[-3:]
+            assert env.get_task_range(split, 2, 6) == tasks[2:6]
+            assert env.get_task_range(split, 5, 2) == []
+            assert env.get_task_range(split) == tasks
+            assert env.get_task_range(split, size - 1, size + 5) == tasks[-1:]
+        assert env.state.model_dump() == before
+        assert env._dataset is None
+
+    @pytest.mark.parametrize("index", [-1, 1000])
+    def test_invalid_index(self, index: int) -> None:
+        with pytest.raises(IndexError):
+            ReasoningGymEnvironment().get_task("test", index)
+
+    def test_unknown_split(self) -> None:
+        with pytest.raises(ValueError):
+            ReasoningGymEnvironment().num_tasks("missing")
+
+    @pytest.mark.parametrize("index", [-1, 0, 5000])
+    def test_unknown_split_wins_over_the_index(self, index: int) -> None:
+        with pytest.raises(ValueError):
+            ReasoningGymEnvironment().get_task("missing", index)
+
+    def test_indexed_reset_after_a_scored_answer(self) -> None:
+        env = ReasoningGymEnvironment()
+        env.reset(split="test", index=3, seed=0)
+        answer = env._current_entry["answer"]
+        assert env.step(ReasoningGymAction(answer="wrong")).reward == 0.0
+        assert env.step(ReasoningGymAction(answer=answer)).reward == 0.0
+        env.reset(split="test", index=3, seed=0)
+        assert env.step(ReasoningGymAction(answer=answer)).reward == 1.0
+
+    @pytest.mark.parametrize(
+        "split,index,error",
+        [
+            ("test", 1000, IndexError),
+            ("test", -1, IndexError),
+            ("missing", 0, ValueError),
+            ("missing", -1, ValueError),
+        ],
+    )
+    def test_invalid_selection_leaves_state(
+        self, split: str, index: int, error: type[Exception]
+    ) -> None:
+        env = ReasoningGymEnvironment()
+        env.reset(split="test", index=3, seed=0, episode_id="kept")
+        before = (env.state.model_dump(), env._current_entry, env._dataset)
+        with pytest.raises(error):
+            env.reset(split=split, index=index, seed=0)
+        assert (env.state.model_dump(), env._current_entry, env._dataset) == before
+
+    @pytest.mark.parametrize("index", range(10))
+    @pytest.mark.parametrize("split,offset", [("train", 0), ("test", 500000000)])
+    def test_selected_question_and_reward(
+        self, index: int, split: str, offset: int
+    ) -> None:
+        import reasoning_gym
+
+        settings = [
+            (2, 1),
+            (3, 1),
+            (3, 2),
+            (4, 2),
+            (4, 3),
+            (5, 3),
+            (5, 4),
+            (6, 4),
+            (6, 5),
+            (7, 5),
+        ]
+        terms, digits = settings[index]
+        entry = reasoning_gym.create_dataset(
+            "chain_sum",
+            seed=2000000000 + offset + index,
+            size=1,
+            min_terms=terms,
+            max_terms=terms,
+            min_digits=digits,
+            max_digits=digits,
+        )[0]
+        env = ReasoningGymEnvironment()
+        obs = env.reset(split=split, index=index, seed=2, episode_id="task")
+        assert obs.question == entry["question"]
+        assert env.state.episode_id == "task"
+        assert env.reset(split=split, index=index, seed=2).question == obs.question
+        assert env.step(ReasoningGymAction(answer=entry["answer"])).reward == 1.0
+
+    def test_selection_variants(self) -> None:
+        env = ReasoningGymEnvironment()
+        question = env.reset(index=3).question
+        assert env.reset(index=3, seed=0).question == question
+        assert env.reset(index=13).question != question
+        assert env.reset(index=3, split="test").question != question
+        assert env.reset(index=3, seed=1).question != question
+
+    @pytest.mark.parametrize(
+        "option,value",
+        [
+            ("dataset_name", "chain_sum"),
+            ("dataset_config", {}),
+            ("dataset_specs", []),
+            ("size", 1),
+        ],
+    )
+    def test_selection_rejects_dataset_options(
+        self, option: str, value: object
+    ) -> None:
+        env = ReasoningGymEnvironment()
+        before = env.state.model_dump()
+        with pytest.raises(ValueError):
+            env.reset(index=3, **{option: value})
+        assert env.state.model_dump() == before
+        assert env._dataset is None
+
+    def test_selection_over_http(self) -> None:
+        from fastapi.testclient import TestClient
+        from openenv.core.env_server.http_server import create_app
+
+        app = create_app(
+            ReasoningGymEnvironment,
+            ReasoningGymAction,
+            ReasoningGymObservation,
+            env_name="reasoning_gym_env",
+        )
+        with TestClient(app) as client:
+            response = client.post(
+                "/reasoning_gym_env/num_tasks", json={"split": "test"}
+            )
+            assert response.status_code == 200
+            assert response.json() == {"num_tasks": 1000}
+            response = client.post(
+                "/reset", json={"split": "test", "index": 3, "seed": 0}
+            )
+            assert response.status_code == 200
+            assert (
+                response.json()["observation"]["question"]
+                == ReasoningGymEnvironment()
+                .reset(split="test", index=3, seed=0)
+                .question
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -67,6 +67,47 @@ That's it! The `ReasoningGymEnv.from_docker_image()` method handles:
 - Connecting to the environment
 - Container cleanup when you call `close()`
 
+## Tasks
+
+The Task API publishes finite `chain_sum` splits: 20,000 train tasks and
+1,000 test tasks, with 2,000 and 100 tasks per difficulty level respectively.
+Discovery does not start an episode or generate a question.
+
+Levels interleave: task `index` has difficulty `index % 10`. The ten levels
+use the following fixed numbers of terms and digits, without negative numbers:
+
+| Difficulty | Terms | Digits per term |
+|------------|-------|-----------------|
+| 0 | 2 | 1 |
+| 1 | 3 | 1 |
+| 2 | 3 | 2 |
+| 3 | 4 | 2 |
+| 4 | 4 | 3 |
+| 5 | 5 | 3 |
+| 6 | 5 | 4 |
+| 7 | 6 | 4 |
+| 8 | 6 | 5 |
+| 9 | 7 | 5 |
+
+List tasks through `GET /reasoning_gym_env/splits` and
+`POST /reasoning_gym_env/tasks`, `/num_tasks`, `/task`, or `/task_range`.
+Task specs include `id`, `split`, `index`, `group` (`chain_sum`) and `difficulty`.
+Ranges follow Python slice semantics. See the [Task API guide](https://huggingface.co/docs/openenv/guides/task-api).
+
+Select an episode with `reset(split="test", index=3, seed=0)`, through
+`POST /reset` or a WebSocket reset message. The question seed is
+`(seed or 0) * 1_000_000_000 + split_offset + index`, where the split offset is
+0 for train and 500,000,000 for test. An omitted seed selects variant 0.
+The same split, index and seed reproduce the same question. These selections
+cannot be combined with `dataset_name`, `dataset_config`, `dataset_specs` or
+`size`. Resets without `index` keep the dataset configuration and reuse behavior
+described below.
+
+Distinct train and test seeds do not guarantee distinct questions: levels 0 and
+1 have few possible questions. With variant 0, 100 of the 100 test questions
+at level 0 and 47 at level 1 also occur in train. Exclude these levels from a
+held-out evaluation or report them separately.
+
 ## Building the Docker Image
 
 Before using the environment, you need to build the Docker image:
