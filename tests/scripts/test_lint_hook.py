@@ -22,6 +22,7 @@ import shutil
 import subprocess
 
 import pytest
+import yaml
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 LINT_HOOK = REPO_ROOT / ".claude" / "hooks" / "lint.sh"
@@ -343,3 +344,33 @@ def test_test_hook_clears_git_hook_environment(repo: pathlib.Path) -> None:
         line for line in result.stdout.splitlines() if line.split("=")[0] in git_env
     ]
     assert passed_on == [], f"test.sh passed {passed_on} on to pytest."
+
+
+def test_test_hook_skips_what_ci_skips(repo: pathlib.Path) -> None:
+    """test.sh must skip every test file that the CI test job skips.
+
+    CI skips the files that need dependencies or setup it does not provide. If
+    test.sh collects one, pytest can stop at its import error, and pre-push
+    fails before any test runs.
+    """
+    (repo.parent / "stubbin" / "uv").write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "test.yml").read_text()
+    )
+    (step,) = [
+        s for s in workflow["jobs"]["test"]["steps"] if s.get("name") == "Run tests"
+    ]
+    ci_script = repo.parent / "ci-run-tests.sh"
+    ci_script.write_text(step["run"])
+
+    ci = _run_hook(repo, ci_script)
+    hook = _run_hook(repo, TEST_HOOK)
+
+    assert ci.returncode == 0, ci.stdout + ci.stderr
+    assert hook.returncode == 0, hook.stdout + hook.stderr
+    ci_skips = {arg for arg in ci.stdout.splitlines() if arg.startswith("--ignore=")}
+    hook_skips = {
+        arg for arg in hook.stdout.splitlines() if arg.startswith("--ignore=")
+    }
+    missing = sorted(ci_skips - hook_skips)
+    assert missing == [], f"CI skips {missing}, but test.sh collects them."
