@@ -131,6 +131,74 @@ def test_context_limit_stops_without_fabricating_a_captured_turn(
         assert response.json()["choices"][0]["finish_reason"] == "stop"
 
 
+def _cut_at(completion_tokens: int):
+    """An engine reply that stopped for `length` after `completion_tokens` tokens."""
+
+    async def completion(request):
+        return {
+            "id": "cut",
+            "object": "chat.completion",
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "partial"},
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 131072 - completion_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": 131072,
+            },
+        }
+
+    return completion
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_completion_cut_by_the_context_window_stops_like_the_400(
+    app_and_engine, stream
+):
+    # Newer vLLM serves a request that does not fit and stops when the window is full, instead of
+    # answering 400: `length` well before the 8192 tokens the proxy asked for
+    app, engine = app_and_engine
+    session = app.state.registry.create(max_model_calls=17)
+    with TestClient(app) as client:
+        _chat(client, session.session_id)
+        before = session.graph.stats()["n_turns"]
+        engine.completion = _cut_at(100)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {session.session_id}"},
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "long"}],
+                "stream": stream,
+            },
+        )
+    assert response.status_code == 200
+    assert session.budget_stop_count == 1
+    assert session.graph.stats()["n_turns"] == before
+    assert any("context_budget_exhausted" in finding for finding in session.findings)
+    if stream:
+        assert '"finish_reason":"stop"' in response.text.replace(" ", "")
+    else:
+        assert response.json()["choices"][0]["finish_reason"] == "stop"
+
+
+def test_completion_that_reaches_max_tokens_is_forwarded(app_and_engine):
+    # `length` at exactly the requested 8192 tokens is the output cap, not the context window
+    app, engine = app_and_engine
+    session = app.state.registry.create(max_model_calls=17)
+    with TestClient(app) as client:
+        engine.completion = _cut_at(8192)
+        response = _chat(client, session.session_id)
+    assert response.json()["choices"][0]["finish_reason"] == "length"
+    assert session.budget_stop_count == 0
+    assert session.graph.stats()["n_turns"] == 1
+
+
 @pytest.mark.parametrize(
     "upstream_status, expected_status", [(400, 400), (413, 413), (422, 422), (500, 502)]
 )
