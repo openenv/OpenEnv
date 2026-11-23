@@ -62,6 +62,9 @@ with DataAnalysisEnv(base_url="http://localhost:8000").sync() as env:
 `call_tool` returns the tool's text only. The reward arrives on the observation of the step that calls
 `submit_answer`, so call it through `step`.
 
+[`examples/data_analysis_env_episode.py`](../../examples/data_analysis_env_episode.py) plays a full scripted episode
+through the tools.
+
 ## Tools
 
 | Tool | What it does |
