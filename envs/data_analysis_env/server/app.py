@@ -23,7 +23,6 @@ Environment variables:
     MAX_CONCURRENT_ENVS: concurrent WebSocket sessions (64).
 """
 
-import inspect
 import os
 
 from openenv.core.env_server.http_server import create_app
@@ -38,21 +37,14 @@ from .sandbox import set_non_dumpable
 # audit hook ptrace this process or read its memory, which holds the gold answers (Linux only).
 set_non_dumpable()
 
-# Older openenv releases lack these parameters.
-_params = inspect.signature(create_app).parameters
-_kwargs = {}
-if "reset_observation_cls" in _params:
-    _kwargs["reset_observation_cls"] = Observation
-if "state_cls" in _params:
-    _kwargs["state_cls"] = DataAnalysisState
-
 app = create_app(
     DataAnalysisEnvironment,
     CallToolAction,
     CallToolObservation,
     env_name="data_analysis_env",
     max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "64")),
-    **_kwargs,
+    reset_observation_cls=Observation,
+    state_cls=DataAnalysisState,
 )
 
 
