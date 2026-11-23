@@ -286,6 +286,12 @@ for nr in nrs[platform.machine()]:
         self.assertIn(uid, sandbox._free_uids)
         self.assertEqual(sandbox._processes_of(uid), [])
 
+    def test_a_missing_workdir_does_not_take_a_uid_from_the_pool(self):
+        free = len(sandbox._free_uids)
+        with self.assertRaises(FileNotFoundError):
+            sandbox.run("print(1)", {}, "/nonexistent-workdir", 10)
+        self.assertEqual(len(sandbox._free_uids), free)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
