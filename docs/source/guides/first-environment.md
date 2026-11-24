@@ -22,6 +22,8 @@ my_env/
 ├── openenv.yaml               # Manifest
 ├── pyproject.toml             # Package metadata and dependencies
 ├── uv.lock
+├── validation/
+│   └── runtime.json           # Replay plan for runtime validation
 └── server/
     ├── __init__.py
     ├── app.py                 # FastAPI app built with create_app
@@ -218,6 +220,11 @@ runtime: fastapi
 app: server.app:app
 port: 8000
 validation:
+  execution:
+    kind: openenv_ws
+    probe_path: validation/runtime.json
+    dockerfile: server/Dockerfile
+    context: .
   reward:
     range: [0.0, 1.0]
     oracle_tolerance: 0.0
@@ -239,6 +246,27 @@ Check it before deploying:
 ```bash
 openenv validate --level static --skip-build
 ```
+
+`validation.execution` tells the validator how to run the environment: it builds the image from `server/Dockerfile`, starts it and replays `validation/runtime.json`, one reset and a short list of actions:
+
+```json
+{
+  "plan_schema_version": "1",
+  "reset": {"episode_id": "my_env-smoke", "seed": 0},
+  "actions": [
+    {"message": "Hello"},
+    {"message": "Hello, World!"}
+  ]
+}
+```
+
+With Docker running, the runtime checks (startup, observation schema, reward range, state, seeding, isolation, network and resource bounds) run against the real server:
+
+```bash
+openenv validate --level runtime
+```
+
+When you change `MyAction`, update the actions in `validation/runtime.json` so they stay valid actions for your environment.
 
 ### Keep secrets away from model code
 
