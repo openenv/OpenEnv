@@ -300,6 +300,21 @@ class TestOpenClawEnvironmentEdgeCases:
         result = obs.result.structured_content.get("result", obs.result.data)
         assert result["success"] is False
 
+    def test_edit_rejects_empty_search_text(self, env):
+        path = env._workspace / "edit.txt"
+        path.write_text("hello", encoding="utf-8")
+
+        obs = env.step(
+            CallToolAction(
+                tool_name="edit",
+                arguments={"path": path.name, "old_string": "", "new_string": "x"},
+            )
+        )
+
+        result = obs.result.structured_content.get("result", obs.result.data)
+        assert result["success"] is False
+        assert path.read_text(encoding="utf-8") == "hello"
+
     def test_write_creates_directories(self, env):
         """Test that write creates parent directories."""
         action = CallToolAction(
@@ -340,6 +355,26 @@ class TestOpenClawEnvironmentEdgeCases:
         assert result["lines_read"] == 10
         assert "Line 50" in result["content"]
         assert "Line 59" in result["content"]
+
+    def test_read_counts_lines_across_chunks(self, env, monkeypatch):
+        from envs.openclaw_env.server import openclaw_environment
+
+        monkeypatch.setattr(openclaw_environment, "MAX_FILE_SIZE", 8)
+        path = env._workspace / "read.txt"
+        path.write_text("a long line\nsecond\nlast", encoding="utf-8")
+
+        for offset, expected, truncated in [(1, "a long l", True), (3, "last", False)]:
+            obs = env.step(
+                CallToolAction(
+                    tool_name="read",
+                    arguments={"path": path.name, "offset": offset, "limit": 1},
+                )
+            )
+            result = obs.result.structured_content.get("result", obs.result.data)
+            assert result["content"] == expected
+            assert result["lines_read"] == 1
+            assert result["total_lines"] == 3
+            assert result["truncated"] is truncated
 
 
 class TestOpenClawBoundaries:

@@ -47,7 +47,7 @@ from openenv.core.env_server.mcp_environment import MCPEnvironment
 from openenv.core.env_server.types import Action, Observation, State
 
 
-# Maximum file size to read (50KB)
+# Maximum characters to return from a read.
 MAX_FILE_SIZE = 50 * 1024
 # Maximum lines to read
 MAX_LINES = 2000
@@ -117,7 +117,7 @@ class OpenClawEnvironment(MCPEnvironment):
             Read contents of a file.
 
             Supports text files with optional line range. Output is truncated
-            to MAX_LINES or 50KB, whichever is hit first.
+            to 2,000 lines or 51,200 characters, whichever is hit first.
 
             Args:
                 path: Path to the file (relative to workspace or absolute)
@@ -135,26 +135,34 @@ class OpenClawEnvironment(MCPEnvironment):
             if not file_path.is_file():
                 return {"error": f"Not a file: {path}"}
 
+            if limit < 0:
+                return {"error": "limit must be nonnegative"}
+
             try:
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    lines = f.readlines()
-
-                total_lines = len(lines)
                 start_idx = max(0, offset - 1)
-                end_idx = min(start_idx + limit, total_lines)
-
-                selected_lines = lines[start_idx:end_idx]
-                content = "".join(selected_lines)
-
-                # Truncate by size if needed
+                end_idx = start_idx + min(limit, MAX_LINES)
+                total_lines = 0
+                unfinished_line = False
+                remaining = MAX_FILE_SIZE
+                parts = []
                 truncated = False
-                if len(content) > MAX_FILE_SIZE:
-                    content = content[:MAX_FILE_SIZE]
-                    truncated = True
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    # Bound each read even if the file contains one very long line.
+                    while chunk := f.readline(MAX_FILE_SIZE):
+                        if start_idx <= total_lines < end_idx:
+                            if remaining:
+                                parts.append(chunk[:remaining])
+                            truncated |= len(chunk) > remaining
+                            remaining = max(0, remaining - len(chunk))
+                        unfinished_line = not chunk.endswith("\n")
+                        if not unfinished_line:
+                            total_lines += 1
+                total_lines += unfinished_line
+                truncated |= limit > MAX_LINES and total_lines > end_idx
 
                 return {
-                    "content": content,
-                    "lines_read": len(selected_lines),
+                    "content": "".join(parts),
+                    "lines_read": max(0, min(total_lines, end_idx) - start_idx),
                     "total_lines": total_lines,
                     "truncated": truncated,
                     "path": str(file_path),
@@ -214,6 +222,9 @@ class OpenClawEnvironment(MCPEnvironment):
             Returns:
                 Dictionary with 'success', 'replacements', and 'path'
             """
+            if not old_string:
+                return {"error": "old_string must not be empty", "success": False}
+
             file_path = env._resolve_path(path)
 
             if not file_path.exists():
