@@ -44,11 +44,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
-from .compat import behaviour_warnings, diagnose, MAX_FIXES
+from .compat import behaviour_warnings, diagnose, MAX_FIXES, ParamFix
 from .upstream import (
     auth_headers,
     normalise_engine_base,
@@ -68,6 +70,25 @@ ENGINE_HINT = (
     "EVAL backend: you get the reward and the full trace, but no token ids or logprobs, so nothing "
     "from it is trainable."
 )
+
+
+# How many times the probe repeats the SAME request after an error that names nothing it can fix.
+# Hosted routers occasionally answer a valid request with a 400 or 5xx that a resend clears: observed
+# as one task in ~150 aborting before it ran, against an endpoint that served the other 149.
+PROBE_RETRIES = 2
+PROBE_RETRY_DELAY = 1.0
+# Errors no resend or rewrite can fix: bad credentials, no access, no such route or model. Retrying
+# these only delays a message the user needs now.
+_FATAL_HTTP = frozenset({401, 403, 404})
+# Statuses with which a provider rejects a request it doesn't accept, e.g. unsupported capture params.
+_PARAM_REJECTION_HTTP = frozenset({400, 422})
+# What the eval fallback drops. `logprobs` also takes `top_logprobs` with it (see `ParamFix.apply`).
+_CAPTURE_PARAMS = ("return_token_ids", "logprobs")
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    reason = getattr(exc, "reason", None)
+    return isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError)
 
 
 @dataclass
@@ -574,7 +595,10 @@ def validate_llm(
     # or gate it behind different scopes than inference, and refusing there would reject an endpoint
     # that serves completions perfectly well. The completion probe below is the real test; a missing
     # list only costs us the model-name check.
-    listed_model = model.rsplit(":", 1)[0] if provider == "hf" else model
+    # The HF router lists bare ids but routes `<id>:<provider>` (also `:fastest`, `:cheapest`). The
+    # CLI reaches it with the default provider, so recognise the router by its host as well.
+    hf_router = urlsplit(base).hostname == "router.huggingface.co"
+    listed_model = model.rsplit(":", 1)[0] if provider == "hf" or hf_router else model
     if served and model not in served and listed_model not in served:
         # Worth failing on rather than warning: a mismatched name is silently accepted by some
         # servers and then every request 404s at rollout time instead of at startup.
@@ -603,6 +627,7 @@ def validate_llm(
     applied: list = []
     payload: dict | None = None
     failure = ""
+    retries_left = PROBE_RETRIES
 
     # Negotiate down. Each 400 that names a parameter costs one retry and removes one obstacle; the
     # capture params are the ones most likely to go, and losing them is what decides the level.
@@ -630,13 +655,40 @@ def validate_llm(
                     fix = diagnose(json.loads(detail))
                 except json.JSONDecodeError:
                     fix = diagnose(detail)
-            if fix is None or not fix.apply(body):
-                failure = f"probe failed: HTTP {exc.code}: {detail[:300]}"
+            if fix is not None and fix.apply(body):
+                fixes.append(str(fix))
+                applied.append(fix)
+                continue
+            failure = f"probe failed: HTTP {exc.code}: {detail[:300]}"
+            if exc.code in _FATAL_HTTP:
                 break
-            fixes.append(str(fix))
-            applied.append(fix)
+            # An error that names no parameter is first treated as transient: the same request again.
+            if retries_left:
+                retries_left -= 1
+                time.sleep(PROBE_RETRY_DELAY)
+                continue
+            # Still failing. Some providers reject the capture params with a bare 400 that names
+            # nothing, so ask once more without them. If that answers, the endpoint is an eval
+            # backend (the level is graded from what comes back), which is what `ENGINE_HINT`
+            # promises. A `purpose="train"` rollout still refuses it, since the level is not `tokens`.
+            # Only a request error can be about the params: a 5xx or a 429 that outlasts the retries
+            # is reported, rather than grading a busy token-capable engine as `text`.
+            if exc.code not in _PARAM_REJECTION_HTTP:
+                break
+            dropped = [ParamFix(param=p) for p in _CAPTURE_PARAMS]
+            dropped = [f for f in dropped if f.apply(body)]
+            if not dropped:
+                break
+            for f in dropped:
+                fixes.append(f"{f} (eval fallback after HTTP {exc.code})")
+                applied.append(f)
         except Exception as exc:  # noqa: BLE001
             failure = f"probe failed: {type(exc).__name__}: {str(exc)[:300]}"
+            # A timeout is worth repeating. Anything else here (connection refused, DNS) is not.
+            if _is_timeout(exc) and retries_left:
+                retries_left -= 1
+                time.sleep(PROBE_RETRY_DELAY)
+                continue
             break
 
     if payload is None:

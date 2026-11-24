@@ -1,10 +1,16 @@
+import json
+
 import pytest
 from conftest import (
     INVALID_MANIFEST_FIXTURES,
     load_fixture_manifest,
     VALID_MANIFEST_FIXTURES,
 )
-from openenv.validation.manifest import NormalizedManifest, VerifierBinding
+from openenv.validation.manifest import (
+    CapabilitiesSpec,
+    NormalizedManifest,
+    VerifierBinding,
+)
 from pydantic import ValidationError
 
 
@@ -15,6 +21,28 @@ def test_valid_fixture_manifests_round_trip(name):
     assert (
         NormalizedManifest.model_validate(manifest.model_dump(mode="json")) == manifest
     )
+
+
+@pytest.mark.parametrize("tools", [False, True])
+@pytest.mark.parametrize("counts", [False, True])
+def test_declaration_omission_survives_dict_and_json_round_trips(tools, counts):
+    declarations = {}
+    if tools:
+        declarations["declared_tools"] = []
+    if counts:
+        declarations["declared_task_count"] = {}
+    capabilities = CapabilitiesSpec(verifier={"kind": "reward_channel"}, **declarations)
+    for payload in (
+        capabilities.model_dump(),
+        json.loads(capabilities.model_dump_json()),
+    ):
+        assert ("declared_tools" in payload) is tools
+        assert ("declared_task_count" in payload) is counts
+        assert payload["task_api"] is False  # Other defaults remain serialized.
+        restored = CapabilitiesSpec.model_validate(payload)
+        assert ("declared_tools" in restored.model_fields_set) is tools
+        assert ("declared_task_count" in restored.model_fields_set) is counts
+        assert restored.model_dump() == payload
 
 
 @pytest.mark.parametrize("name", INVALID_MANIFEST_FIXTURES)

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import shutil
-import sys
 import tempfile
 from fnmatch import fnmatch
 from pathlib import Path
@@ -407,14 +406,14 @@ def _prepare_staging_directory(
                     # Add base_path to existing frontmatter
                     lines = readme_content.split("\n")
                     new_lines = []
-                    _in_frontmatter = True
                     for i, line in enumerate(lines):
                         new_lines.append(line)
                         if line.strip() == "---" and i > 0:
                             # End of frontmatter, add base_path before this line
                             if "base_path:" not in "\n".join(new_lines):
                                 new_lines.insert(-1, "base_path: /web")
-                            _in_frontmatter = False
+                            new_lines.extend(lines[i + 1 :])
+                            break
                     readme_path.write_text("\n".join(new_lines))
                 else:
                     # No frontmatter, add it
@@ -682,7 +681,6 @@ def push(
     if no_interface and interface:
         console.print(
             "[bold red]Error:[/bold red] Cannot specify both --interface and --no-interface",
-            file=sys.stderr,
         )
         raise typer.Exit(1)
 

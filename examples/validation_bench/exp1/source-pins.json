@@ -1,0 +1,1085 @@
+{
+  "schema": "exp1-input-pins-v1",
+  "framework_commit": "2781faaa59f00b7192145282950193d570d07659",
+  "environments": [
+    {
+      "config": {
+        "name": "ScottWuMath",
+        "package": "scott_wu_math",
+        "source_repo": "FineEnvs/ScottWuMath",
+        "revision": "4de8125d314fca0a3f137fa1bab04b966a3efc15",
+        "app": "scott_wu_math.server.app",
+        "action": {
+          "expression": "10 + 13 - 3 + 4"
+        },
+        "observation_key": "target",
+        "leak_file": "server/environment.py",
+        "leak_replace": [
+          "            submitted=False,",
+          "            submitted=self._state.submitted,"
+        ],
+        "leak_witness": "already answered",
+        "plan": {
+          "plan_schema_version": "1",
+          "reset": {
+            "episode_id": "exp1-paired-fixed",
+            "seed": 20261109,
+            "options": {
+              "split": "train",
+              "index": 0
+            }
+          },
+          "actions": [
+            {
+              "expression": "10 + 13 - 3 + 4"
+            }
+          ]
+        },
+        "manifest": {
+          "manifest_schema_version": "1",
+          "name": "ScottWuMath",
+          "signature": "openenv.yaml",
+          "reward": {
+            "range": [
+              0,
+              1
+            ],
+            "oracle_tolerance": 0,
+            "floor_margin": 0.5
+          },
+          "resources": {
+            "cpu": 2,
+            "memory_mb": 16000,
+            "disk_mb": 50000,
+            "episode_timeout_s": 3
+          },
+          "capabilities": {
+            "verifier": {
+              "kind": "reward_channel"
+            }
+          },
+          "types": {
+            "tags": [
+              "math"
+            ]
+          }
+        }
+      },
+      "files": [
+        {
+          "path": ".dockerignore",
+          "sha256": "a4938eb3c0a0b3fe97c6ae9d3f427b878b14789b71b857653d9b7627772dcd93",
+          "bytes": 61,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/.dockerignore"
+        },
+        {
+          "path": ".gitattributes",
+          "sha256": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361",
+          "bytes": 1519,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/.gitattributes"
+        },
+        {
+          "path": ".gitignore",
+          "sha256": "02aebf61ed68848abb10451a19a888694c216b34cf9ee36b0ab9158c811a0eb4",
+          "bytes": 54,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/.gitignore"
+        },
+        {
+          "path": "Dockerfile",
+          "sha256": "ae626557f8ae154a69c29a5ee1dc7ffea06f1be100dfaaaee8e647b13b80cb64",
+          "bytes": 512,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/Dockerfile"
+        },
+        {
+          "path": "README.md",
+          "sha256": "e8e9ec1cd5ea55d4461be5978ba478c5f1d8b9baceb68fcf82dc00435c2148cd",
+          "bytes": 8588,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/README.md"
+        },
+        {
+          "path": "__init__.py",
+          "sha256": "74e21bc8966a5ff6650583e73eba0b18e2c7dade95c74d067778a1c5fe6bce89",
+          "bytes": 257,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/__init__.py"
+        },
+        {
+          "path": "client.py",
+          "sha256": "67042b8b0fa2a9ad8138565af0c0870dae3fee2cc4bad95248c1286d86ca047b",
+          "bytes": 1265,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/client.py"
+        },
+        {
+          "path": "data/tasks/test.jsonl",
+          "sha256": "bc62c7e882e8d7e3b9923446aea8620f6bf8117acb0c8f364406789fc0ab3e35",
+          "bytes": 116689,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/data/tasks/test.jsonl"
+        },
+        {
+          "path": "data/tasks/train.jsonl",
+          "sha256": "cf2dd6215fb3e48c1490a86219d69f5a4b67bb12c82499fb73baccbf15485fab",
+          "bytes": 2337279,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/data/tasks/train.jsonl"
+        },
+        {
+          "path": "data/tasks/video.jsonl",
+          "sha256": "843a03a6cc5e0e369d2eb40d6fc4fdda4f7c8106081db23cbc399e8a832bf600",
+          "bytes": 1284,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/data/tasks/video.jsonl"
+        },
+        {
+          "path": "game/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/game/__init__.py"
+        },
+        {
+          "path": "game/cards.py",
+          "sha256": "beb9d5d5ddd45e40b307eb23d502699f46340da0aef0709e11dac32f3af725d1",
+          "bytes": 1902,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/game/cards.py"
+        },
+        {
+          "path": "game/expr.py",
+          "sha256": "af38154bacc51a2b2ff282cb3a75b5291b7b01b676ad81e5b5c9f1f0c86f695a",
+          "bytes": 6922,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/game/expr.py"
+        },
+        {
+          "path": "game/prompts.py",
+          "sha256": "fefd73246480c5b1c98a6aa8b5079693f220d5488a7e1b2223ac4d181145f6fa",
+          "bytes": 1235,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/game/prompts.py"
+        },
+        {
+          "path": "game/reward.py",
+          "sha256": "846dc2bcabf0b3c57f3ba7804edc76eac0ef9171802d487ab265e7b9563cd475",
+          "bytes": 2047,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/game/reward.py"
+        },
+        {
+          "path": "game/solver.py",
+          "sha256": "ddcc2cbe75b1c0e414763316b42871a230bf46e6f190bb3b6ec37f0254c9dfaf",
+          "bytes": 5130,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/game/solver.py"
+        },
+        {
+          "path": "game/tasks.py",
+          "sha256": "2d0798ba4f045f6ef274617564f807566e06ad2d549a3f4d4e55e65f8c10ad19",
+          "bytes": 3602,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/game/tasks.py"
+        },
+        {
+          "path": "models.py",
+          "sha256": "827ca8d7a914dd64b515bc3620186fcd5bf1c0c1037a26ec0036f38b322fa517",
+          "bytes": 1781,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/models.py"
+        },
+        {
+          "path": "openenv.yaml",
+          "sha256": "807688c540d79e4afd062f6aed971eb569bf691d2c963a1dd9409b6870df0541",
+          "bytes": 110,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/openenv.yaml"
+        },
+        {
+          "path": "pyproject.toml",
+          "sha256": "412abe90b85a1d445263c25023e006342179174e771f36f84fbf8dfdc164a91d",
+          "bytes": 1022,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/pyproject.toml"
+        },
+        {
+          "path": "scripts/build_tasks.py",
+          "sha256": "b6250f1174efa91153e8d80006366f2fc280945394f39cd09468da76934edce7",
+          "bytes": 2846,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/scripts/build_tasks.py"
+        },
+        {
+          "path": "server/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/server/__init__.py"
+        },
+        {
+          "path": "server/app.py",
+          "sha256": "d804f14a1d82f77b797c952494d88ed62342a17c1f801f5251f9ee2dd8c25ba1",
+          "bytes": 1734,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/server/app.py"
+        },
+        {
+          "path": "server/environment.py",
+          "sha256": "3a7484d653b1a194e774c17747671a2fe45792d3f217a660d7f3ac3aa93af4b8",
+          "bytes": 5988,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/server/environment.py"
+        },
+        {
+          "path": "server/web/app.css",
+          "sha256": "f2133af64a80008a05a728eaf1e5b041d67b044ac5fcb6b9959c975d1fdac31e",
+          "bytes": 11890,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/server/web/app.css"
+        },
+        {
+          "path": "server/web/app.js",
+          "sha256": "07aa06c6fb566d6df930bc86651946f1b926501927057d83a0e2646f68988e25",
+          "bytes": 15495,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/server/web/app.js"
+        },
+        {
+          "path": "server/web/card.html",
+          "sha256": "a63b588ab249ab9a4d613e9e78183237cbb8e8d475f97b6b0c8eb3e378ad83bd",
+          "bytes": 1890,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/server/web/card.html"
+        },
+        {
+          "path": "server/web/cards.js",
+          "sha256": "c84f2a3e4ec503176d0849a462f503e48d69d50893c4797c051481f82d8fb003",
+          "bytes": 3506,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/server/web/cards.js"
+        },
+        {
+          "path": "server/web/index.html",
+          "sha256": "923ad9ed35d2e2bbc42009e8fbb0458b58b79acf476b507f392f2f455212d831",
+          "bytes": 4915,
+          "url": "https://huggingface.co/spaces/FineEnvs/ScottWuMath/resolve/4de8125d314fca0a3f137fa1bab04b966a3efc15/server/web/index.html"
+        }
+      ]
+    },
+    {
+      "config": {
+        "name": "PortSimEnv",
+        "package": "portsimenv",
+        "source_repo": "FineEnvs/PortSimEnv",
+        "revision": "fddf26c4d84f9f9ca4dcfb2503ee188473e53be9",
+        "app": "berth_openenv.server",
+        "import_paths": [
+          "core",
+          "openenv"
+        ],
+        "action": {
+          "tool_name": "check_plan",
+          "arguments": {
+            "plan": [
+              {
+                "ship": 0,
+                "berth_hour": 6,
+                "section": 5,
+                "cranes": 2
+              },
+              {
+                "ship": 1,
+                "berth_hour": 17,
+                "section": 5,
+                "cranes": 2
+              },
+              {
+                "ship": 2,
+                "berth_hour": 17,
+                "section": 10,
+                "cranes": 4
+              },
+              {
+                "ship": 3,
+                "berth_hour": 64,
+                "section": 8,
+                "cranes": 2
+              },
+              {
+                "ship": 4,
+                "berth_hour": 78,
+                "section": 4,
+                "cranes": 2
+              },
+              {
+                "ship": 5,
+                "berth_hour": 109,
+                "section": 8,
+                "cranes": 2
+              },
+              {
+                "ship": 6,
+                "berth_hour": 120,
+                "section": 18,
+                "cranes": 4
+              },
+              {
+                "ship": 7,
+                "berth_hour": 150,
+                "section": 4,
+                "cranes": 3
+              },
+              {
+                "ship": 8,
+                "berth_hour": 176,
+                "section": 4,
+                "cranes": 2
+              },
+              {
+                "ship": 9,
+                "berth_hour": 185,
+                "section": 8,
+                "cranes": 5
+              },
+              {
+                "ship": 10,
+                "berth_hour": 191,
+                "section": 4,
+                "cranes": 2
+              },
+              {
+                "ship": 11,
+                "berth_hour": 214,
+                "section": 9,
+                "cranes": 5
+              },
+              {
+                "ship": 12,
+                "berth_hour": 265,
+                "section": 4,
+                "cranes": 2
+              },
+              {
+                "ship": 13,
+                "berth_hour": 252,
+                "section": 13,
+                "cranes": 3
+              },
+              {
+                "ship": 14,
+                "berth_hour": 265,
+                "section": 8,
+                "cranes": 2
+              },
+              {
+                "ship": 15,
+                "berth_hour": 275,
+                "section": 9,
+                "cranes": 2
+              },
+              {
+                "ship": 16,
+                "berth_hour": 288,
+                "section": 4,
+                "cranes": 3
+              },
+              {
+                "ship": 17,
+                "berth_hour": 300,
+                "section": 9,
+                "cranes": 4
+              },
+              {
+                "ship": 18,
+                "berth_hour": 329,
+                "section": 4,
+                "cranes": 3
+              },
+              {
+                "ship": 19,
+                "berth_hour": 331,
+                "section": 8,
+                "cranes": 2
+              }
+            ]
+          }
+        },
+        "observation_key": "tool_name",
+        "leak_file": "openenv/berth_openenv/environment.py",
+        "leak_replace": [
+          "self._state = BerthState(episode_id=ep.episode_id, step_count=0, task_id=task.task_id, split=task.split)",
+          "self._state = BerthState(episode_id=ep.episode_id, step_count=0, task_id=task.task_id, split=task.split, checks_used=self._state.checks_used)"
+        ],
+        "leak_state_key": "checks_used",
+        "plan": {
+          "plan_schema_version": "1",
+          "reset": {
+            "episode_id": "exp1-portsim-fixed",
+            "seed": 20261109,
+            "options": {
+              "split": "train",
+              "index": 0
+            }
+          },
+          "actions": [
+            {
+              "tool_name": "get_situation",
+              "arguments": {}
+            },
+            {
+              "tool_name": "check_plan",
+              "arguments": {
+                "plan": [
+                  {
+                    "ship": 0,
+                    "berth_hour": 6,
+                    "section": 5,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 1,
+                    "berth_hour": 17,
+                    "section": 5,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 2,
+                    "berth_hour": 17,
+                    "section": 10,
+                    "cranes": 4
+                  },
+                  {
+                    "ship": 3,
+                    "berth_hour": 64,
+                    "section": 8,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 4,
+                    "berth_hour": 78,
+                    "section": 4,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 5,
+                    "berth_hour": 109,
+                    "section": 8,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 6,
+                    "berth_hour": 120,
+                    "section": 18,
+                    "cranes": 4
+                  },
+                  {
+                    "ship": 7,
+                    "berth_hour": 150,
+                    "section": 4,
+                    "cranes": 3
+                  },
+                  {
+                    "ship": 8,
+                    "berth_hour": 176,
+                    "section": 4,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 9,
+                    "berth_hour": 185,
+                    "section": 8,
+                    "cranes": 5
+                  },
+                  {
+                    "ship": 10,
+                    "berth_hour": 191,
+                    "section": 4,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 11,
+                    "berth_hour": 214,
+                    "section": 9,
+                    "cranes": 5
+                  },
+                  {
+                    "ship": 12,
+                    "berth_hour": 265,
+                    "section": 4,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 13,
+                    "berth_hour": 252,
+                    "section": 13,
+                    "cranes": 3
+                  },
+                  {
+                    "ship": 14,
+                    "berth_hour": 265,
+                    "section": 8,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 15,
+                    "berth_hour": 275,
+                    "section": 9,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 16,
+                    "berth_hour": 288,
+                    "section": 4,
+                    "cranes": 3
+                  },
+                  {
+                    "ship": 17,
+                    "berth_hour": 300,
+                    "section": 9,
+                    "cranes": 4
+                  },
+                  {
+                    "ship": 18,
+                    "berth_hour": 329,
+                    "section": 4,
+                    "cranes": 3
+                  },
+                  {
+                    "ship": 19,
+                    "berth_hour": 331,
+                    "section": 8,
+                    "cranes": 2
+                  }
+                ]
+              }
+            },
+            {
+              "tool_name": "submit_plan",
+              "arguments": {
+                "plan": [
+                  {
+                    "ship": 0,
+                    "berth_hour": 6,
+                    "section": 5,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 1,
+                    "berth_hour": 17,
+                    "section": 5,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 2,
+                    "berth_hour": 17,
+                    "section": 10,
+                    "cranes": 4
+                  },
+                  {
+                    "ship": 3,
+                    "berth_hour": 64,
+                    "section": 8,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 4,
+                    "berth_hour": 78,
+                    "section": 4,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 5,
+                    "berth_hour": 109,
+                    "section": 8,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 6,
+                    "berth_hour": 120,
+                    "section": 18,
+                    "cranes": 4
+                  },
+                  {
+                    "ship": 7,
+                    "berth_hour": 150,
+                    "section": 4,
+                    "cranes": 3
+                  },
+                  {
+                    "ship": 8,
+                    "berth_hour": 176,
+                    "section": 4,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 9,
+                    "berth_hour": 185,
+                    "section": 8,
+                    "cranes": 5
+                  },
+                  {
+                    "ship": 10,
+                    "berth_hour": 191,
+                    "section": 4,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 11,
+                    "berth_hour": 214,
+                    "section": 9,
+                    "cranes": 5
+                  },
+                  {
+                    "ship": 12,
+                    "berth_hour": 265,
+                    "section": 4,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 13,
+                    "berth_hour": 252,
+                    "section": 13,
+                    "cranes": 3
+                  },
+                  {
+                    "ship": 14,
+                    "berth_hour": 265,
+                    "section": 8,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 15,
+                    "berth_hour": 275,
+                    "section": 9,
+                    "cranes": 2
+                  },
+                  {
+                    "ship": 16,
+                    "berth_hour": 288,
+                    "section": 4,
+                    "cranes": 3
+                  },
+                  {
+                    "ship": 17,
+                    "berth_hour": 300,
+                    "section": 9,
+                    "cranes": 4
+                  },
+                  {
+                    "ship": 18,
+                    "berth_hour": 329,
+                    "section": 4,
+                    "cranes": 3
+                  },
+                  {
+                    "ship": 19,
+                    "berth_hour": 331,
+                    "section": 8,
+                    "cranes": 2
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "control_expectations": {
+          "runtime.startup": "pass",
+          "runtime.observation_schema": "fail",
+          "runtime.reward_well_formed": "pass",
+          "runtime.state_contract": "pass"
+        },
+        "manifest": {
+          "manifest_schema_version": "1",
+          "name": "PortSimEnv",
+          "signature": "openenv.yaml",
+          "reward": {
+            "range": [
+              0,
+              1
+            ],
+            "oracle_tolerance": 0,
+            "floor_margin": 0.5
+          },
+          "resources": {
+            "cpu": 2,
+            "memory_mb": 16000,
+            "disk_mb": 50000,
+            "episode_timeout_s": 3
+          },
+          "capabilities": {
+            "verifier": {
+              "kind": "reward_channel"
+            }
+          },
+          "types": {
+            "tags": [
+              "simulation"
+            ]
+          }
+        }
+      },
+      "files": [
+        {
+          "path": ".gitattributes",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/.gitattributes",
+          "bytes": 1519,
+          "sha256": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361"
+        },
+        {
+          "path": "Dockerfile",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/Dockerfile",
+          "bytes": 981,
+          "sha256": "e1ab7dddafd3cc89b405de8fdc430802e0d462603489e952e50d7f0cddc5f49e"
+        },
+        {
+          "path": "README.md",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/README.md",
+          "bytes": 3799,
+          "sha256": "5155c2d0920532880695a7e2eefb0e8a417e0a7eb2ab7a09c2c394c6287ae0d7"
+        },
+        {
+          "path": "__init__.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/__init__.py",
+          "bytes": 306,
+          "sha256": "a3084e5e158611fb2d7615d8e1ebd0f9a9a0dcd22831ceda34c3e18385036fbf"
+        },
+        {
+          "path": "client.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/client.py",
+          "bytes": 551,
+          "sha256": "2516ce0eea8f2ea7f467524df83445d9093185e3e84e5b0de359f87cb325d76d"
+        },
+        {
+          "path": "core/berth_core/__init__.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/__init__.py",
+          "bytes": 679,
+          "sha256": "39210c2e2c33b51bd146f7bf638c866f01c6656f5ee500c9f76257633de15077"
+        },
+        {
+          "path": "core/berth_core/baselines.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/baselines.py",
+          "bytes": 2507,
+          "sha256": "cebd8547beb31654f194302269df62604c63d95af3bf85fc0a074553221c5d93"
+        },
+        {
+          "path": "core/berth_core/build.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/build.py",
+          "bytes": 4888,
+          "sha256": "2c2aa373f81dd6066689c0e936bfef40f50b89f64d7e5f6e0bf0ca2dda8314db"
+        },
+        {
+          "path": "core/berth_core/build_dock.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/build_dock.py",
+          "bytes": 5517,
+          "sha256": "1c3fd6a35fb913c533071fb0fed7331a4c844ae594a9e635bf7ccaa89fbc32c5"
+        },
+        {
+          "path": "core/berth_core/build_frontier.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/build_frontier.py",
+          "bytes": 2592,
+          "sha256": "5e05432fbfb5124c587952d7bbe894d578b7a824de8db124de607f22549a61a3"
+        },
+        {
+          "path": "core/berth_core/check.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/check.py",
+          "bytes": 8290,
+          "sha256": "102828dac78e91f555cdbdd6a34f38bbc761d62daf8410bb48460471f6a8667d"
+        },
+        {
+          "path": "core/berth_core/data.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/data.py",
+          "bytes": 1838,
+          "sha256": "cef15c2021caa00697091dc737c3b97f7dddc0d6c4a00f2ee05a9341d5a88768"
+        },
+        {
+          "path": "core/berth_core/dock.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/dock.py",
+          "bytes": 17393,
+          "sha256": "85faddc5e92d23621ffa67db439aa76357a4ac1675c258da50f6ccaccdb34475"
+        },
+        {
+          "path": "core/berth_core/generate.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/generate.py",
+          "bytes": 19462,
+          "sha256": "63a8fe7c8f99277681d2cfa9a73eaf0e7ebeb914ee0a3817b4170689f4a68af8"
+        },
+        {
+          "path": "core/berth_core/model.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/model.py",
+          "bytes": 10535,
+          "sha256": "7ccbb2bfc3c12ae07e21ac70de742441de77ae6759e4e6d3c83b122452005db4"
+        },
+        {
+          "path": "core/berth_core/pack.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/pack.py",
+          "bytes": 3562,
+          "sha256": "35e09daff771141469b2e83ff2c39e5e7eee46b7fc1b47a75a7649a29e04a9ba"
+        },
+        {
+          "path": "core/berth_core/prompts.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/prompts.py",
+          "bytes": 8702,
+          "sha256": "bea00ab834c3d0864c6f2918e726d5c7ce355c0b02cd5b878b78a7e8a77a2a4e"
+        },
+        {
+          "path": "core/berth_core/reward.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/reward.py",
+          "bytes": 5011,
+          "sha256": "cfc16c255834449f473a0fdd45081afe1d99bbb059a2630376f65af7e9e375b9"
+        },
+        {
+          "path": "core/berth_core/solve.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/berth_core/solve.py",
+          "bytes": 9266,
+          "sha256": "31d05efe2fa1ef2691d93e6545d3d92dfce1b6c3d94b0fbd99db7c8ac205f6c8"
+        },
+        {
+          "path": "core/pyproject.toml",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/core/pyproject.toml",
+          "bytes": 508,
+          "sha256": "e95931de40815aa0ed09e7ee3e3b035f8e57d9c82160ba2b38ae8e43a8007555"
+        },
+        {
+          "path": "fetch_assets.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/fetch_assets.py",
+          "bytes": 1039,
+          "sha256": "8d89090be4c0d86ccf99a39f6f7be7e23a89d277a7af64c8596044d3745ebb16"
+        },
+        {
+          "path": "models.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/models.py",
+          "bytes": 427,
+          "sha256": "94152d1f503f637df25ecb64b0290ba4ee3860e0acd026ac41820b8ea613e393"
+        },
+        {
+          "path": "openenv.yaml",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv.yaml",
+          "bytes": 1632,
+          "sha256": "98fe519b44edc2969f8f801f3bba9a31c8111b9a3eab33a686f29aa165a42c11"
+        },
+        {
+          "path": "openenv/Dockerfile",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/Dockerfile",
+          "bytes": 971,
+          "sha256": "0bad2bb4a3dc1588554b71afa5c4e7c56f466136503d3423b95427c6b5eeca1a"
+        },
+        {
+          "path": "openenv/README.md",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/README.md",
+          "bytes": 2958,
+          "sha256": "80636866883faa4b03f2e1b36a2db71435232a353db771ea6a31503e35d12a31"
+        },
+        {
+          "path": "openenv/berth_openenv/__init__.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/__init__.py",
+          "bytes": 105,
+          "sha256": "ea660b1c56e79d8d8155d145ed7dfca6a03297c72f990d69e2241260d161c7a7"
+        },
+        {
+          "path": "openenv/berth_openenv/agent.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/agent.py",
+          "bytes": 21254,
+          "sha256": "2da1e75ba877f29ec01f9a67f6e0f4799d2355eb7355275cdf92d13f7ce1af44"
+        },
+        {
+          "path": "openenv/berth_openenv/api.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/api.py",
+          "bytes": 5910,
+          "sha256": "6857d18b9f02c5fadc3762a72e0a35b208fb7a499dd8017c7a8f2b9b9e2f5860"
+        },
+        {
+          "path": "openenv/berth_openenv/environment.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/environment.py",
+          "bytes": 13094,
+          "sha256": "9c1d570445ab872f0b44331403dd19139c3609bbbe8830eedf99d6c6e3984aea"
+        },
+        {
+          "path": "openenv/berth_openenv/explorer.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/explorer.py",
+          "bytes": 1321,
+          "sha256": "a510d991c6edb0a4d54529fcfc2acb43623e8bfd135dbd31c02d1b8e4393a7eb"
+        },
+        {
+          "path": "openenv/berth_openenv/gradio_ui.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/gradio_ui.py",
+          "bytes": 3379,
+          "sha256": "8dcb9549f8693f51a2871be32a846c94077c1175ea14ee1024c9cf314320fc67"
+        },
+        {
+          "path": "openenv/berth_openenv/rubric.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/rubric.py",
+          "bytes": 3415,
+          "sha256": "41dc267d9febcce88d0f3dcae550efce86e2ebfdce971eb078743e4b9cf2512a"
+        },
+        {
+          "path": "openenv/berth_openenv/server.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/server.py",
+          "bytes": 2514,
+          "sha256": "7c82b8ac754795fe392a550cb5efe0bcb73d26bb90303d0cb0becd786b7681b8"
+        },
+        {
+          "path": "openenv/berth_openenv/web/dev_server.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/dev_server.py",
+          "bytes": 2534,
+          "sha256": "6985be83c2c629c7bfa4edd16565534eb8c59e0a212128a5498799446b50cedd"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/episode_ep-live-19c0.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/episode_ep-live-19c0.json",
+          "bytes": 12132,
+          "sha256": "f85ac1a4f4dbe0935279d1c5446c3df92d7ced4cc3c45fa77bffad690591d48a"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/episode_ep-live-7f3a.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/episode_ep-live-7f3a.json",
+          "bytes": 10417,
+          "sha256": "e1d3ee408791f7f5cb41edeb45e49d75088ce2c0fa75a6dc61eb7de164f80720"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/episodes.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/episodes.json",
+          "bytes": 579,
+          "sha256": "8c66fe70df2361b39f3e24beaa3a493f426fc118e216375d15f93bfd2f1e0d7f"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/reference_bcn-24B-w30-hard-0.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/reference_bcn-24B-w30-hard-0.json",
+          "bytes": 2260,
+          "sha256": "fc0f00f0ec57af8a0f82b41728f07b1b5503a9b0877e609aa4bfb48cdf88c4f5"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/reference_bcn-36A-w44-hard-0.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/reference_bcn-36A-w44-hard-0.json",
+          "bytes": 3032,
+          "sha256": "e9632c6e771df176728f8a139d1e9c349696065303a207ef139eb990ada96fd0"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/reference_dock-24B-w15x2-storm-3.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/reference_dock-24B-w15x2-storm-3.json",
+          "bytes": 3960,
+          "sha256": "caa1971ca09d484f071c73f2b082c8f8d058955f0ebbcc8ae4d273ad15d5c982"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/rollout_fixture.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/rollout_fixture.json",
+          "bytes": 23651,
+          "sha256": "c478cefda876fd6d432c2ff8296387e7fcc49e24b44d8e3341caa412e7cb58e5"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/run_fixture-run.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/run_fixture-run.json",
+          "bytes": 290,
+          "sha256": "0b2c40aa00f8a47208ad73dde7c69b3785fee3ea1148d1dd4ecf4e36c7f5761d"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/runs.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/runs.json",
+          "bytes": 109,
+          "sha256": "56c3528a9ba73ffab26ab5120a5bdbb8d54e6c3f69f496ac91c3dcda72882a3a"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/task_bcn-24B-w30-hard-0.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/task_bcn-24B-w30-hard-0.json",
+          "bytes": 6609,
+          "sha256": "229554e741934b807e564b069ad507e26c69614ef4fc93d697c52e9b4f3c898c"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/task_bcn-36A-w44-expert-0.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/task_bcn-36A-w44-expert-0.json",
+          "bytes": 9710,
+          "sha256": "6564908acf2f969b5b2777dad6bafe800570f0be7b9387b87d9b693d491f8453"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/task_bcn-36A-w44-hard-0.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/task_bcn-36A-w44-hard-0.json",
+          "bytes": 8800,
+          "sha256": "4aa46742658873fccf6b371906b213ffc0e73b3c2bdb26b2562f9321287b4aca"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/task_dock-24B-w15x2-storm-3.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/task_dock-24B-w15x2-storm-3.json",
+          "bytes": 14654,
+          "sha256": "ae1e20ba33ea5f3ee22724c5fc497208382593666880e235655036821e105d4b"
+        },
+        {
+          "path": "openenv/berth_openenv/web/fixtures/tasks.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/fixtures/tasks.json",
+          "bytes": 1116,
+          "sha256": "7d01dd003c7d988fef6901b95790ae507943d86fed1baa9ad8264701da37a26a"
+        },
+        {
+          "path": "openenv/berth_openenv/web/twin/SOURCES.md",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/berth_openenv/web/twin/SOURCES.md",
+          "bytes": 2915,
+          "sha256": "0bee73691b93043c43efb1bd72e253ba88fc0f11cff143541d390f607b587ce9"
+        },
+        {
+          "path": "openenv/openenv.yaml",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/openenv.yaml",
+          "bytes": 1632,
+          "sha256": "98fe519b44edc2969f8f801f3bba9a31c8111b9a3eab33a686f29aa165a42c11"
+        },
+        {
+          "path": "openenv/oracle/solve.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/oracle/solve.py",
+          "bytes": 1753,
+          "sha256": "191d190d266616c310887a806ddf8ada322c2bc1d642ca262982e091dcc3f46f"
+        },
+        {
+          "path": "openenv/pyproject.toml",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/pyproject.toml",
+          "bytes": 781,
+          "sha256": "532cfcc98ade29bc70e35976a0b8e382b2243179363c137c9515aa7d916e2e5e"
+        },
+        {
+          "path": "openenv/rollout.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/openenv/rollout.py",
+          "bytes": 2228,
+          "sha256": "032537b1fa4b92b7874aeea87f397922c0622aed20f6e258ca7f9a0074456812"
+        },
+        {
+          "path": "oracle/solve.py",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/oracle/solve.py",
+          "bytes": 1753,
+          "sha256": "191d190d266616c310887a806ddf8ada322c2bc1d642ca262982e091dcc3f46f"
+        },
+        {
+          "path": "pyproject.toml",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/pyproject.toml",
+          "bytes": 472,
+          "sha256": "2ac66a73e1c0b5ff04ac8bebaa99c0d6f1a93a458ecacd217fccf8608dd58737"
+        },
+        {
+          "path": "tasks/dock-v1-eval/manifest.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/tasks/dock-v1-eval/manifest.json",
+          "bytes": 654,
+          "sha256": "f08f3b7080dcafde3fee77d3aa4e3680a755f0794ffcae61de7a8482c2a4f376"
+        },
+        {
+          "path": "tasks/dock-v1-eval/tasks.jsonl",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/tasks/dock-v1-eval/tasks.jsonl",
+          "bytes": 877428,
+          "sha256": "9edea99e2b2730b9107574a8f6a437d910391493f776f123645af0c4ecfad882"
+        },
+        {
+          "path": "tasks/dock-v1-train/manifest.json",
+          "url": "https://huggingface.co/spaces/FineEnvs/PortSimEnv/resolve/fddf26c4d84f9f9ca4dcfb2503ee188473e53be9/tasks/dock-v1-train/manifest.json",
+          "bytes": 875,
+          "sha256": "686d84cf5848f7bfa77a048a944ef1c6b598c6cd4f305f4c726cca62653638a5"
+        }
+      ],
+      "bucket": {
+        "url": "https://huggingface.co/buckets/FineEnvs/PortSimEnv/resolve/tasks/dock-v1-train/tasks.jsonl.gz",
+        "status": 200,
+        "etag": "\"d330dd3c751b884300de8592c23c0747c2235bbbcc0f267868ce40af9fd89836\"",
+        "content_type": "application/gzip",
+        "content_length": "1138365",
+        "compressed_bytes": 1138365,
+        "compressed_sha256": "c6444a67286b9f59a719eb88108667f54f92ea302b7f4f01185c272d1d3c436c",
+        "uncompressed_bytes": 17774800,
+        "uncompressed_sha256": "6d0d79f9e8c473b20e2daaa0f631bcb8b3f6eb7af54a41ee95d5ef13fd3bbbcb",
+        "manifest_sha256": "6d0d79f9e8c473b20e2daaa0f631bcb8b3f6eb7af54a41ee95d5ef13fd3bbbcb",
+        "manifest_matches": true,
+        "rows": 1050,
+        "splits": {
+          "train": 1050
+        },
+        "first_task_id": "dock-24B-w03x2-busy-3",
+        "first_row_keys": [
+          "task_id",
+          "split",
+          "quay",
+          "terminal",
+          "first_section",
+          "last_section",
+          "section_m",
+          "week",
+          "week_start_utc",
+          "ships",
+          "blocks",
+          "notices",
+          "disruptions",
+          "difficulty",
+          "reference",
+          "rules"
+        ]
+      }
+    }
+  ]
+}

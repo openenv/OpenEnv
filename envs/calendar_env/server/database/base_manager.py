@@ -7,6 +7,8 @@ import sqlite3
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from database.session_manager import connect_database
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,7 +20,7 @@ class BaseManager:
 
     def execute_query(self, query: str, params: tuple = ()) -> List[Dict]:
         """Execute a SELECT query and return results"""
-        conn = sqlite3.connect(self.db_path)
+        conn = connect_database(self.db_path)
         conn.row_factory = sqlite3.Row
         try:
             cursor = conn.execute(query, params)
@@ -28,7 +30,7 @@ class BaseManager:
 
     def execute_insert(self, query: str, params: tuple = ()) -> int:
         """Execute an INSERT query and return the last row ID"""
-        conn = sqlite3.connect(self.db_path)
+        conn = connect_database(self.db_path)
         try:
             cursor = conn.execute(query, params)
             conn.commit()
@@ -41,7 +43,7 @@ class BaseManager:
 
     def execute_update(self, query: str, params: tuple = ()) -> int:
         """Execute an UPDATE query and return the number of affected rows"""
-        conn = sqlite3.connect(self.db_path)
+        conn = connect_database(self.db_path)
         try:
             cursor = conn.execute(query, params)
             conn.commit()
@@ -51,7 +53,7 @@ class BaseManager:
 
     def execute_delete(self, query: str, params: tuple = ()) -> int:
         """Execute a DELETE query and return the number of affected rows"""
-        conn = sqlite3.connect(self.db_path)
+        conn = connect_database(self.db_path)
         try:
             cursor = conn.execute(query, params)
             conn.commit()

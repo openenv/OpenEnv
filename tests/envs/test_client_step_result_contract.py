@@ -102,6 +102,51 @@ class TestSophistryClient:
         assert result.observation.done is True
 
 
+class TestSQLOptimClient:
+    def parse(self, **fields):
+        from sql_optim_env.client import SQLOptimEnv
+        from sql_optim_env.models import SQLOptimObservation
+
+        observation = SQLOptimObservation(
+            task_id="task_1_basic_antipatterns",
+            task_name="Basic anti-patterns",
+            task_description="Rewrite the query.",
+            sql_query="SELECT * FROM orders",
+            schema_info="",
+            dialect="duckdb",
+            difficulty="easy",
+            step_count=1,
+            max_steps=3,
+            issues_found_so_far=[],
+            **fields,
+        )
+        return SQLOptimEnv._parse_result(None, serialize_observation(observation))
+
+    def test_observation_agrees_with_the_step_result(self):
+        result = self.parse(done=True, reward=0.75)
+
+        assert result.reward == 0.75
+        assert result.done is True
+        assert result.observation.reward == 0.75
+        assert result.observation.done is True
+
+    def test_reset_leaves_reward_unscored(self):
+        """`reset` carries no reward yet, and must not be coerced to 0.0."""
+        result = self.parse()
+
+        assert result.reward is None
+        assert result.done is False
+        assert result.observation.reward is None
+        assert result.observation.done is False
+
+    def test_other_observation_fields_still_arrive(self):
+        result = self.parse(done=True, reward=0.5)
+
+        assert result.observation.task_id == "task_1_basic_antipatterns"
+        assert result.observation.sql_query == "SELECT * FROM orders"
+        assert result.observation.max_steps == 3
+
+
 class TestGridWorldClient:
     def test_step_result_carries_reward_and_done(self):
         from grid_world_env.client import GridWorldEnv

@@ -12,7 +12,7 @@ LICENSE file in the root directory of this source tree.
 # OpenApp Environment
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/huggingface/OpenEnv/main/envs/openapp_env/assets/OpenApps_OpenEnv_RL.png" alt="OpenApps Environment" width="800"/>
+<img src="https://raw.githubusercontent.com/openenv/OpenEnv/main/envs/openapp_env/assets/OpenApps_OpenEnv_RL.png" alt="OpenApps Environment" width="800"/>
 </div>
 
 *A web application simulation environment for OpenEnv that wraps the [OpenApps](https://github.com/facebookresearch/OpenApps) framework and BrowserGym.*
@@ -24,7 +24,7 @@ LICENSE file in the root directory of this source tree.
 Agents interact with simulated web apps (calendar, todo list, messenger, maps) through BrowserGym browser actions: click, fill forms, navigate, scroll and type.
 
 <div align="center">
-<img src="https://raw.githubusercontent.com/huggingface/OpenEnv/main/envs/openapp_env/assets/openapps-demo.gif" alt="OpenApps Demo" width="800"/>
+<img src="https://raw.githubusercontent.com/openenv/OpenEnv/main/envs/openapp_env/assets/openapps-demo.gif" alt="OpenApps Demo" width="800"/>
 </div>
 
 ## Quick Start
@@ -53,7 +53,7 @@ with OpenAppEnv.from_docker_image("openapp-env:latest").sync() as client:
 
 Element IDs (`bid`) come from the observation's `axtree_txt`. To use the async client, `await OpenAppEnv.from_docker_image(...)` instead of calling `.sync()`.
 
-A complete script is in [`examples/openapp_example.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/openapp_example.py):
+A complete script is in [`examples/openapp_example.py`](https://github.com/openenv/OpenEnv/blob/main/examples/openapp_example.py):
 
 ```bash
 python examples/openapp_example.py --mode docker --num-steps 20

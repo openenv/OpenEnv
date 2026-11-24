@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: BSD-3-Clause
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-posttrain-env"
+version = "0.1.0"
+description = "Post-training environment for OpenEnv: train models through brokered, budgeted HF Jobs"
+requires-python = ">=3.11"
+dependencies = [
+    "openenv>=0.9.0",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+    # Jobs, job artifact buckets and volume mounts.
+    "huggingface_hub>=2.3.0",
+    # Checks the requirements agents pass to their jobs.
+    "packaging>=23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "posttrain_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["posttrain_env", "posttrain_env.server"]
+package-dir = { "posttrain_env" = ".", "posttrain_env.server" = "server" }
+
+[tool.setuptools.package-data]
+"posttrain_env.server" = ["eval_scripts/*.py"]

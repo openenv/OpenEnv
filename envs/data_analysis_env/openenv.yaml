@@ -1,0 +1,25 @@
+spec_version: 1
+name: data_analysis_env
+version: 0.1.0
+type: space
+runtime: fastapi
+app: data_analysis_env.server.app:app
+port: 8000
+validation:
+  # submit_answer scores 1.0 when the dataset's grader accepts the answer, else 0.0.
+  reward:
+    range: [0.0, 1.0]
+    oracle_tolerance: 0.0
+    floor_margin: 0.5
+  resources:
+    cpu: 2.0
+    # One worker per session, each capped at 4 GiB of address space (DATA_ANALYSIS_MEM_LIMIT_MB).
+    memory_mb: 4096
+    disk_mb: 2048
+    episode_timeout_s: 900.0
+  capabilities:
+    verifier:
+      kind: reward_channel
+    declared_tools: [run_python, submit_answer]
+  types:
+    tags: [data-analysis, code, python, pandas]

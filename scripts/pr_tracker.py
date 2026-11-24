@@ -27,7 +27,7 @@ from typing import Optional
 from github import Github, Auth
 
 # Configuration
-DEFAULT_REPO = "huggingface/OpenEnv"
+DEFAULT_REPO = "openenv/OpenEnv"
 DEFAULT_STATE_FILE = Path.home() / ".openenv-review-state.json"
 
 
@@ -291,7 +291,7 @@ def post_review(
 {body}
 
 ---
-*Automated review by Claude Code | [Learn more](https://github.com/huggingface/OpenEnv/blob/main/CLAUDE.md)*"""
+*Automated review by Claude Code | [Learn more](https://github.com/openenv/OpenEnv/blob/main/CLAUDE.md)*"""
 
     pr.create_review(body=formatted_body, event=event)
 

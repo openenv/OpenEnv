@@ -218,3 +218,45 @@ class TestResetSeed:
         assert env.state.episode_id == ""
         env.reset()
         assert env.state.episode_id not in (None, "", "episode-1")
+
+
+class TestDatasetLoading:
+    """Custom DIPG_DATASET_PATH files with blank lines or plain answers."""
+
+    @staticmethod
+    def _row(i, answer):
+        return json.dumps(
+            {
+                "messages": [
+                    {},
+                    {"content": f"Context {i}\n\nQuestion {i}"},
+                    {"content": answer},
+                ]
+            }
+        )
+
+    def test_blank_lines_are_skipped(self, tmp_path):
+        path = tmp_path / "dataset.jsonl"
+        rows = ["", self._row(0, "A"), "", "   ", self._row(1, "B"), "", ""]
+        path.write_text("\n".join(rows), encoding="utf-8")
+        env = _make_env(path)
+        assert len(env.dataset) == 2
+        questions = {env.reset(seed=0).question, env.reset().question}
+        assert questions == {"Question 0", "Question 1"}
+
+    @pytest.mark.parametrize("answer", ["42", '"Drug A"', "[1, 2]", "null", "true"])
+    def test_non_object_json_answer_is_used_as_the_final_answer(self, tmp_path, answer):
+        path = tmp_path / "dataset.jsonl"
+        path.write_text(self._row(0, answer) + "\n", encoding="utf-8")
+        env = _make_env(path)
+        obs = env.reset()
+        assert obs.question == "Question 0"
+        assert env.state.expected_answer == {"final": answer, "proof": ""}
+
+    def test_object_answer_is_kept(self, tmp_path):
+        answer = json.dumps({"final": "Drug A is effective.", "proof": "Trial."})
+        path = tmp_path / "dataset.jsonl"
+        path.write_text(self._row(0, answer) + "\n", encoding="utf-8")
+        env = _make_env(path)
+        env.reset()
+        assert env.state.expected_answer == json.loads(answer)

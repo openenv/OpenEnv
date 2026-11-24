@@ -275,8 +275,8 @@ container isolation and RFC 005 alignment still require review.
 
 ## License
 
-BSD 3-Clause License (see [LICENSE](https://github.com/huggingface/OpenEnv/blob/main/LICENSE))
+BSD 3-Clause License (see [LICENSE](https://github.com/openenv/OpenEnv/blob/main/LICENSE))
 
 ## Contributing
 
-See [CONTRIBUTING.md](https://github.com/huggingface/OpenEnv/blob/main/CONTRIBUTING.md) for contribution guidelines.
+See [CONTRIBUTING.md](https://github.com/openenv/OpenEnv/blob/main/CONTRIBUTING.md) for contribution guidelines.

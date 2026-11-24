@@ -7,13 +7,13 @@
 """
 Julia Process Pool for high-performance code execution.
 
-This module provides a pool of persistent Julia processes that can be reused
-for multiple code executions, eliminating the overhead of spawning new processes.
-
-Expected speedup: 50-100x for repeated executions compared to spawning new processes.
+This module keeps a pool of Julia processes started ahead of time, so an
+execution does not wait for Julia to start. Each process runs one execution and
+is then replaced in the background: code can redefine methods and globals for
+every later caller of the same process, so no state crosses sessions or episodes.
 
 Features:
-- Persistent Julia processes (no startup overhead)
+- Pre-started Julia processes (no startup wait while the pool keeps up)
 - Thread-safe process allocation
 - Automatic recovery from process failures
 - Proper cleanup on shutdown
@@ -37,9 +37,10 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .julia_executor import CodeExecResult
+from .julia_sandbox import sandboxed, worker_env
 
 # Use julia_env hierarchy to inherit handlers from app.py's setup_logging()
 logger = logging.getLogger("julia_env.pool")
@@ -66,6 +67,7 @@ class JuliaWorkerProcess:
         julia_path: str,
         worker_script: str,
         optimization_flags: bool = True,
+        on_spawn: Optional[Callable[[subprocess.Popen], None]] = None,
     ):
         """
         Initialize a Julia worker process.
@@ -75,6 +77,8 @@ class JuliaWorkerProcess:
             julia_path: Path to Julia executable
             worker_script: Path to julia_repl_worker.jl script
             optimization_flags: Enable Julia optimization flags
+            on_spawn: Called with the process as soon as it exists, before it
+                is ready, so its owner can stop a process stuck starting
         """
         self.worker_id = worker_id
         self.julia_path = julia_path
@@ -84,6 +88,7 @@ class JuliaWorkerProcess:
         self.is_busy = False
         self.is_healthy = True
         self.lock = threading.Lock()
+        self._on_spawn = on_spawn
 
         # Start the worker process
         self._start_process()
@@ -105,14 +110,18 @@ class JuliaWorkerProcess:
         cmd.append(self.worker_script)
 
         try:
+            # No network and no server secrets for the code this worker runs.
             self.process = subprocess.Popen(
-                cmd,
+                sandboxed(cmd),
+                env=worker_env(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,  # Line buffered
             )
+            if self._on_spawn is not None:
+                self._on_spawn(self.process)
 
             # Wait for "Julia worker ready" message on stderr
             ready_msg = self.process.stderr.readline()
@@ -127,6 +136,7 @@ class JuliaWorkerProcess:
         except Exception as e:
             self.is_healthy = False
             logger.error(f"Failed to start worker {self.worker_id}: {e}")
+            self._kill_process()
             raise
 
     def execute(self, code: str, timeout: Optional[int] = None) -> CodeExecResult:
@@ -298,7 +308,7 @@ class JuliaWorkerProcess:
 
 class JuliaProcessPool:
     """
-    Pool of persistent Julia processes for high-performance code execution.
+    Pool of pre-started Julia processes for fast code execution, one execution each.
 
     This class manages multiple Julia worker processes and distributes
     code execution among them, providing significant speedup by eliminating
@@ -346,6 +356,8 @@ class JuliaProcessPool:
         self.available_workers: deque[JuliaWorkerProcess] = deque()
         self.pool_lock = threading.Lock()
         self.shutdown_flag = False
+        # Replacement processes still starting, for shutdown() to stop.
+        self._starting: set[subprocess.Popen] = set()
 
         self.size = size
         # Read timeout from env var if not explicitly provided
@@ -496,23 +508,48 @@ class JuliaProcessPool:
 
     def _return_worker(self, worker: JuliaWorkerProcess) -> None:
         """
-        Return a worker to the available pool.
+        Replace a worker that ran code with a fresh one, started in the background.
 
-        If the worker is unhealthy and auto_recover is enabled, attempts to
-        recover the worker before returning it to the pool. This ensures
-        workers are not leaked when they fail during execution.
+        Code can redefine methods (including Base and Test) and globals for every
+        later caller of the same Julia process, so a worker runs one execution,
+        and no state crosses sessions or episodes.
         """
+        worker.shutdown()
+        threading.Thread(
+            target=self._replace_worker, args=(worker,), daemon=True
+        ).start()
+
+    def _replace_worker(self, worker: JuliaWorkerProcess) -> None:
+        spawned: list[subprocess.Popen] = []
+
+        def track(process: subprocess.Popen) -> None:
+            with self.pool_lock:
+                spawned.append(process)
+                if self.shutdown_flag:
+                    process.kill()
+                else:
+                    self._starting.add(process)
+
+        try:
+            new_worker = JuliaWorkerProcess(
+                worker_id=worker.worker_id,
+                julia_path=self.julia_path,
+                worker_script=self.worker_script,
+                optimization_flags=self.optimization_flags,
+                on_spawn=track,
+            )
+        except Exception as e:
+            logger.error(f"Failed to replace worker {worker.worker_id}: {e}")
+            # Back as unhealthy: the next caller that gets it restarts it.
+            worker.is_healthy = False
+            new_worker = worker
         with self.pool_lock:
+            self._starting.difference_update(spawned)
             if self.shutdown_flag:
+                new_worker.shutdown()
                 return
-
-            # If worker is unhealthy, try to recover it immediately
-            if not worker.is_healthy and self.auto_recover:
-                worker = self._recover_worker(worker)
-
-            # Always return the worker to the pool (healthy or not)
-            # Unhealthy workers will be recovered when next acquired
-            self.available_workers.append(worker)
+            self.workers[new_worker.worker_id] = new_worker
+            self.available_workers.append(new_worker)
 
     def execute(self, code: str, timeout: Optional[int] = None) -> CodeExecResult:
         """
@@ -575,6 +612,14 @@ class JuliaProcessPool:
 
             self.workers.clear()
             self.available_workers.clear()
+
+            # A replacement stuck starting: killing it ends its wait for "ready".
+            for process in self._starting:
+                try:
+                    process.kill()
+                except Exception as e:
+                    logger.error(f"Error stopping a starting worker: {e}")
+            self._starting.clear()
 
         logger.info("Julia process pool shutdown complete")
 

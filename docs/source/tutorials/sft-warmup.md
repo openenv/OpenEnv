@@ -1,6 +1,6 @@
 # Collect Rollouts for SFT
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/sft_warmup.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/openenv/OpenEnv/blob/main/examples/sft_warmup.ipynb)
 
 OpenEnv environments are not only useful for RL training — they are also a natural tool for **collecting
 rollouts that become supervised training data**. The environment handles episode management, automatic scoring,
@@ -36,7 +36,7 @@ bookkeeping. An OpenEnv environment gives you all three out of the box:
 |---|---|
 | **Student model** | [`Qwen/Qwen3-1.7B`](https://huggingface.co/Qwen/Qwen3-1.7B) |
 | **Teacher model** | `gpt-5-mini` via the OpenAI API |
-| **Environment** | [`reasoning_gym_env`](https://github.com/huggingface/OpenEnv/tree/main/envs/reasoning_gym_env) / `chain_sum` |
+| **Environment** | [`reasoning_gym_env`](https://github.com/openenv/OpenEnv/tree/main/envs/reasoning_gym_env) / `chain_sum` |
 | **SFT trainer** | [TRL `SFTTrainer`](https://huggingface.co/docs/trl/main/en/sft_trainer) |
 | **Next step** | [End-to-end walkthrough with GRPO](end-to-end-walkthrough) |
 

@@ -3,9 +3,13 @@
 """OpenEnv validate command."""
 
 import json
+import shutil
 import signal
+import tempfile
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
+from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -28,6 +32,39 @@ EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_UNSUPPORTED = 2
 EXIT_INTERNAL = 3
+
+
+@dataclass
+class _LazyHFSandboxProvider:
+    """Defer Jobs hardware preflight until the runner needs runtime capabilities."""
+
+    name = "hf-sandbox"
+
+    space_id: str
+    revision: str
+    flavor: str
+
+    @cached_property
+    def _provider(self):
+        from openenv.validation.providers.hf_sandbox import HFSandboxValidationProvider
+
+        return HFSandboxValidationProvider(
+            self.space_id, self.revision, flavor=self.flavor
+        )
+
+    @property
+    def supported_network_modes(self):
+        return self._provider.supported_network_modes
+
+    @property
+    def capabilities(self):
+        return self._provider.capabilities
+
+    def build(self, root, execution):
+        return self._provider.build(root, execution)
+
+    def start(self, spec):
+        return self._provider.start(spec)
 
 
 @contextmanager
@@ -168,14 +205,62 @@ def validate(
             min=0.1,
         ),
     ] = 5.0,
+    space: Annotated[
+        str | None,
+        typer.Option(
+            "--space",
+            help="Validate a Hugging Face Space (e.g. openenv/echo_env) on HF Jobs",
+        ),
+    ] = None,
+    revision: Annotated[
+        str | None,
+        typer.Option(
+            "--revision",
+            help="Space branch, tag or commit hash to validate (default: main)",
+        ),
+    ] = None,
+    flavor: Annotated[
+        str,
+        typer.Option(
+            "--flavor",
+            help=(
+                "HF Jobs hardware flavor for --space or --sandbox hf-sandbox, "
+                "e.g. cpu-basic or t4-small"
+            ),
+        ),
+    ] = "cpu-basic",
+    sandbox: Annotated[
+        str,
+        typer.Option(
+            "--sandbox",
+            help=(
+                "Where Harbor task trials run: docker (local daemon) or "
+                "hf-sandbox (one HF Job per trial)"
+            ),
+        ),
+    ] = "docker",
+    namespace: Annotated[
+        str | None,
+        typer.Option(
+            "--namespace",
+            help="User or organization that owns the --sandbox hf-sandbox jobs",
+        ),
+    ] = None,
 ) -> None:
     """
     Validate a local package or a running OpenEnv server.
 
     Local validation detects the package format by its well-known file (the
-    formats this build can parse; currently `openenv.yaml`), parses it into the
+    formats this build can parse: `openenv.yaml` or Harbor `task.toml`), parses it into the
     normalized manifest, runs the applicable graders up to the requested level,
     applies the severity policy, and emits a report.
+
+    Native Harbor tasks require the optional Harbor dependency and an explicit
+    `validation/openenv.json` contract. Fresh trials grade the oracle, the
+    do-nothing floor and any declared canaries under the semantic check ids. They
+    run on the local Docker daemon, or with `--sandbox hf-sandbox` as one Hugging
+    Face Job per trial from the task's digest-pinned image. Checks without an
+    implementation are named SKIPs, so the report is WARN at best.
 
     Exit codes: 0 pass/warn · 1 fail · 2 unrecognized/unsupported package · 3
     internal or policy error.
@@ -194,8 +279,43 @@ def validate(
 
     # Probe a running server (legacy runtime probe)
     openenv validate --url http://localhost:8000
+
+    # Validate a Hub Space on HF Jobs GPU hardware
+    openenv validate --space openenv/echo_env --level runtime --flavor t4-small
+
+    # Run a Harbor task's trials as HF Jobs instead of local Docker
+    openenv validate path/to/task --sandbox hf-sandbox --flavor cpu-upgrade
     ```
     """
+    if space is not None and (target is not None or url is not None or local):
+        typer.echo(
+            "Error: --space cannot be combined with a path, --url or --local", err=True
+        )
+        raise typer.Exit(EXIT_FAIL)
+    if sandbox not in ("docker", "hf-sandbox"):
+        typer.echo(
+            f"Error: unknown sandbox {sandbox!r}; expected docker or hf-sandbox",
+            err=True,
+        )
+        raise typer.Exit(EXIT_FAIL)
+    hf_sandbox = sandbox == "hf-sandbox"
+    running_url = url is not None or (target is not None and _looks_like_url(target))
+    if hf_sandbox and (space is not None or running_url):
+        typer.echo(
+            "Error: --sandbox cannot be combined with --space or a running URL",
+            err=True,
+        )
+        raise typer.Exit(EXIT_FAIL)
+    if space is None and revision is not None:
+        typer.echo("Error: --revision requires --space", err=True)
+        raise typer.Exit(EXIT_FAIL)
+    if space is None and not hf_sandbox and flavor != "cpu-basic":
+        typer.echo("Error: --flavor requires --space or --sandbox hf-sandbox", err=True)
+        raise typer.Exit(EXIT_FAIL)
+    if namespace is not None and not hf_sandbox:
+        typer.echo("Error: --namespace requires --sandbox hf-sandbox", err=True)
+        raise typer.Exit(EXIT_FAIL)
+
     runtime_target = url
     if (
         runtime_target is not None
@@ -249,22 +369,52 @@ def validate(
         raise typer.Exit(EXIT_INTERNAL)
 
     package_root = Path(target) if target is not None else Path.cwd()
-    if not package_root.is_dir():
+    if space is None and not package_root.is_dir():
         typer.echo(f"Error: not a package directory: {package_root}", err=True)
         raise typer.Exit(EXIT_UNSUPPORTED)
 
     try:
         if output is not None and not output.parent.is_dir():
             raise OSError("report output directory does not exist")
-        with _sigterm_as_interrupt():
+        with ExitStack() as stack:
+            provider = None
+            if space is not None:
+                from huggingface_hub import HfApi, snapshot_download
+
+                # Download and report one commit, even if a branch moves.
+                revision = (
+                    HfApi()
+                    .space_info(
+                        space, revision="main" if revision is None else revision
+                    )
+                    .sha
+                )
+                package_root = (
+                    Path(stack.enter_context(tempfile.TemporaryDirectory())) / "source"
+                )
+                # Copy the repository snapshot out of the SDK cache, dereferencing
+                # its blob links without adding local_dir download metadata.
+                shutil.copytree(
+                    snapshot_download(space, repo_type="space", revision=revision),
+                    package_root,
+                )
+                provider = _LazyHFSandboxProvider(space, revision, flavor)
+            stack.enter_context(_sigterm_as_interrupt())
             validation_report = run_validation(
                 package_root,
                 max_level=_LEVELS[level],
                 skip_build=skip_build,
                 policy=load_policy(policy_version) if policy_version else None,
+                provider=provider,
                 artifacts_dir=(
                     output.parent / (output.stem + ".artifacts") if output else None
                 ),
+                report_target=f"spaces/{space}@{revision}"
+                if space is not None
+                else None,
+                sandbox=sandbox,
+                flavor=flavor,
+                namespace=namespace,
             )
         report_json = write_report(validation_report, output)
     except (SignatureError, UnsupportedPackageError) as exc:

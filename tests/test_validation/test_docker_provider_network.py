@@ -39,6 +39,63 @@ threading.Thread = Thread
     assert result.stdout == b"first responsesecond response"
 
 
+def run_probe(tmp_path, links, unreadable=None):
+    """Run the real PROBE_SCRIPT on a fake /sys/class/net with every sink denied.
+
+    `links` maps an entry name to its hex flags, or to `None` for a regular file
+    such as bonding_masters. Reading `unreadable`'s flags raises EACCES.
+    """
+    net = tmp_path / "net"
+    net.mkdir()
+    for name, flags in links.items():
+        if flags is None:
+            (net / name).write_text("\n")
+        else:
+            (net / name).mkdir()
+            (net / name / "flags").write_text(flags + "\n")
+    script = _netns.PROBE_SCRIPT.replace("/sys/class/net", str(net)).replace(
+        "/proc/net", str(tmp_path / "proc")
+    )
+    assert str(net) in script and str(tmp_path / "proc") in script
+    fault = str(net / unreadable / "flags") if unreadable else None
+    setup = f"""
+import builtins, errno, socket
+def unreachable(*args, **kwargs):
+    raise OSError(errno.ENETUNREACH, "Network is unreachable")
+socket.create_connection = socket.socket = unreachable
+real_open = builtins.open
+def open(path, *args, **kwargs):
+    if path == {fault!r}:
+        raise PermissionError(errno.EACCES, "Permission denied", path)
+    return real_open(path, *args, **kwargs)
+builtins.open = open
+"""
+    return subprocess.run(
+        [sys.executable, "-c", setup + script, SINK_IP],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_probe_reports_only_links_that_are_up(tmp_path):
+    links = {
+        "lo": "0x9",
+        "eth0": "0x1003",
+        "gre0": "0x80",
+        "sit0": "0x80",
+        "bonding_masters": None,
+    }
+    probe = run_probe(tmp_path, links)
+    assert probe.returncode == 0, probe.stderr
+    assert json.loads(probe.stdout)["namespace"]["interfaces"] == ["eth0", "lo"]
+
+
+def test_unreadable_link_state_fails_the_probe(tmp_path):
+    probe = run_probe(tmp_path, {"lo": "0x9", "eth0": "0x1003"}, unreadable="eth0")
+    assert probe.returncode != 0 and probe.stdout == ""
+
+
 def launch_spec(mode="no-network"):
     return LaunchSpec(
         image_ref=IMAGE,

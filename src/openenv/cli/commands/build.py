@@ -14,6 +14,11 @@ from typing import Annotated
 
 import typer
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
 from .._cli_utils import console
 
 app = typer.Typer(help="Build Docker images for OpenEnv environments")
@@ -96,26 +101,13 @@ def _prepare_standalone_build(env_path: Path, temp_dir: Path) -> Path:
     pyproject_path = build_dir / "pyproject.toml"
     if pyproject_path.exists():
         with open(pyproject_path, "rb") as f:
-            try:
-                import tomli
-
-                pyproject = tomli.load(f)
-                deps = pyproject.get("project", {}).get("dependencies", [])
-
-                # Check if openenv dependency is declared
-                has_openenv = any(dep.startswith("openenv") for dep in deps)
-
-                if not has_openenv:
-                    console.print(
-                        "[yellow]Warning:[/yellow] pyproject.toml doesn't list the openenv dependency",
-                    )
-                    console.print(
-                        "[yellow]You may need to add:[/yellow] openenv>=0.2.0",
-                    )
-            except ImportError:
-                console.print(
-                    "[yellow]Warning:[/yellow] tomli not available, skipping dependency check",
-                )
+            pyproject = tomllib.load(f)
+        deps = pyproject.get("project", {}).get("dependencies", [])
+        if not any(dep.startswith("openenv") for dep in deps):
+            console.print(
+                "[yellow]Warning:[/yellow] pyproject.toml doesn't list the openenv dependency",
+            )
+            console.print("[yellow]You may need to add:[/yellow] openenv>=0.2.0")
 
     return build_dir
 
@@ -156,45 +148,27 @@ def _prepare_inrepo_build(env_path: Path, repo_root: Path, temp_dir: Path) -> Pa
         pyproject_path = build_dir / "pyproject.toml"
         if pyproject_path.exists():
             with open(pyproject_path, "rb") as f:
-                try:
-                    import tomli
+                pyproject = tomllib.load(f)
+            deps = pyproject.get("project", {}).get("dependencies", [])
+            pyproject["project"]["dependencies"] = [
+                dep for dep in deps if not _is_openenv_runtime_dependency(dep)
+            ] + ["openenv @ file:///app/env/openenv"]
 
-                    pyproject = tomli.load(f)
-                    deps = pyproject.get("project", {}).get("dependencies", [])
+            try:
+                import tomli_w
+            except ImportError:
+                console.print(
+                    "[yellow]Warning:[/yellow] tomli_w not available, using pyproject.toml as-is",
+                )
+            else:
+                with open(pyproject_path, "wb") as out_f:
+                    tomli_w.dump(pyproject, out_f)
+                console.print("[cyan]Updated pyproject.toml to use local core[/cyan]")
+                lockfile = build_dir / "uv.lock"
+                if lockfile.exists():
+                    lockfile.unlink()
+                    console.print("[cyan]Removed outdated uv.lock[/cyan]")
 
-                    # Replace OpenEnv package references with local source.
-                    new_deps = []
-                    for dep in deps:
-                        if _is_openenv_runtime_dependency(dep):
-                            # Skip - we'll use local core
-                            continue
-                        new_deps.append(dep)
-
-                    # Write back with local OpenEnv reference
-                    pyproject["project"]["dependencies"] = new_deps + [
-                        "openenv @ file:///app/env/openenv"
-                    ]
-
-                    # Write updated pyproject.toml
-                    with open(pyproject_path, "wb") as out_f:
-                        import tomli_w
-
-                        tomli_w.dump(pyproject, out_f)
-
-                    console.print(
-                        "[cyan]Updated pyproject.toml to use local core[/cyan]"
-                    )
-
-                    # Remove old lockfile since dependencies changed
-                    lockfile = build_dir / "uv.lock"
-                    if lockfile.exists():
-                        lockfile.unlink()
-                        console.print("[cyan]Removed outdated uv.lock[/cyan]")
-
-                except ImportError:
-                    console.print(
-                        "[yellow]Warning:[/yellow] tomli/tomli_w not available, using pyproject.toml as-is",
-                    )
     else:
         console.print(
             "[yellow]Warning:[/yellow] OpenEnv package not found, building without it"

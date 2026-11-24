@@ -21,7 +21,7 @@ A typical workflow looks like:
 
 - Python 3.11+ and [`uv`](https://github.com/astral-sh/uv) for dependency locking
 - Docker Desktop / Docker Engine
-- The OpenEnv library installed: `pip install https://github.com/huggingface/OpenEnv.git`
+- The OpenEnv library installed: `pip install https://github.com/openenv/OpenEnv.git`
 
 ## Step-by-Step Guide
 
@@ -261,7 +261,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Run the FastAPI server
 # The module path is constructed to work with the /app/env structure
-CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "cd /app/env && exec uvicorn server.app:app --host 0.0.0.0 --port 8000"]
 
 ```
 
@@ -453,10 +453,10 @@ websockets.exceptions.ConnectionClosedError: keepalive ping timeout
 
 ```dockerfile
 # Before (default - 20 second timeout)
-CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "cd /app/env && exec uvicorn server.app:app --host 0.0.0.0 --port 8000"]
 
 # After (5 minute timeout)
-CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000 --ws-ping-interval 300 --ws-ping-timeout 300"]
+CMD ["sh", "-c", "cd /app/env && exec uvicorn server.app:app --host 0.0.0.0 --port 8000 --ws-ping-interval 300 --ws-ping-timeout 300"]
 ```
 
 After modifying the Dockerfile, rebuild and redeploy:
@@ -485,4 +485,4 @@ openenv push
 
 Your next steps are to:
 
-- [Try out the end-to-end tutorial](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb)
+- [Try out the end-to-end tutorial](https://colab.research.google.com/github/openenv/OpenEnv/blob/main/examples/OpenEnv_Tutorial.ipynb)

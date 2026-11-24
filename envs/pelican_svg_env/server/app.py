@@ -7,7 +7,13 @@ import os
 from openenv.core.env_server import create_app
 
 from ..models import PelicanSvgAction, PelicanSvgObservation, PelicanSvgState
-from .pelican_svg_environment import PelicanSvgEnvironment
+from .pelican_svg_environment import _judge_from_env, PelicanSvgEnvironment
+
+# Check the judge configuration once at startup. Environments are built per
+# session, and an error raised there reaches the client only as a generic
+# factory error, so a misconfigured judge would otherwise fail every session
+# without saying why.
+_judge_from_env()
 
 # The class is passed rather than an instance so each WebSocket session gets
 # its own environment and its own sampled task.

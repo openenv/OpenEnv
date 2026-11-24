@@ -9,7 +9,14 @@ import math
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from .types import SignatureKind
 
@@ -47,9 +54,13 @@ class RewardDeclaration(BaseModel):
         range (`tuple[float, float]`):
             Declared reward range, defaults to `(0.0, 1.0)`. Must be strictly increasing.
         oracle_tolerance (`float`):
-            The oracle check passes when `reward(oracle) >= max - oracle_tolerance`.
+            Fraction of the declared range allowed below the maximum.
+            The oracle check requires `reward(oracle) >= max - oracle_tolerance * width`,
+            where `width = max - min`.
         floor_margin (`float`):
-            The gap check requires `max - measured_floor >= floor_margin`.
+            Fraction of the declared range required below the maximum and every oracle.
+            Both `max - measured_floor` and `reward(oracle) - measured_floor` must be
+            at least `floor_margin * width`.
         variance_tolerance (`float`, *optional*):
             Required iff the environment declares `llm_judged`; bounds reward variance
             for variance-mode determinism checks.
@@ -241,6 +252,14 @@ class CapabilitiesSpec(BaseModel):
     declared_tools: list[str] = Field(default_factory=list)
     declared_task_count: dict[str, int] = Field(default_factory=dict)
 
+    @model_serializer(mode="wrap")
+    def _preserve_declaration_presence(self, serialize):
+        data = serialize(self)
+        for field in ("declared_tools", "declared_task_count"):
+            if field not in self.model_fields_set:
+                data.pop(field, None)
+        return data
+
     @model_validator(mode="after")
     def _injected_state_requires_set_state(self) -> "CapabilitiesSpec":
         if (
@@ -365,6 +384,18 @@ class ExecutionDeclaration(BaseModel):
         return value
 
 
+class HarborExecutionDeclaration(BaseModel):
+    """Native process execution of a Harbor task through fresh Docker trials."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["harbor_task"]
+    agent_boundary: Literal["process"] = "process"
+    profile: Literal["harbor-semantic-v1"] = "harbor-semantic-v1"
+    contract_path: Literal["validation/openenv.json"] = "validation/openenv.json"
+    requires_credentials: bool = Field(default=False, strict=True)
+
+
 class NormalizedManifestV2(NormalizedManifest):
     """
     Version 2 adds the runtime execution declaration without changing schema 1.
@@ -375,7 +406,7 @@ class NormalizedManifestV2(NormalizedManifest):
     """
 
     manifest_schema_version: Literal["2"]
-    execution: ExecutionDeclaration
+    execution: ExecutionDeclaration | HarborExecutionDeclaration
 
     @model_validator(mode="after")
     def _finite_declarations(self) -> "NormalizedManifestV2":

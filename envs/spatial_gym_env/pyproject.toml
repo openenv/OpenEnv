@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-spatial_gym_env"
+version = "0.1.0"
+description = "Spatial-Gym for OpenEnv: SPaRC grid pathfinding puzzles, solved one move per step"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.8.0",
+    "Spatial-Gym>=0.1.5",
+    "datasets>=3.6.0",
+    "gymnasium>=0.28.1",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.24.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.urls]
+Homepage = "https://sparc.gipplab.org/"
+Repository = "https://github.com/lkaesberg/Spatial-Gym"
+Paper = "https://arxiv.org/abs/2604.09338"
+
+[project.scripts]
+# uv run --project . server
+server = "spatial_gym_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["spatial_gym_env", "spatial_gym_env.server"]
+package-dir = { "spatial_gym_env" = ".", "spatial_gym_env.server" = "server" }

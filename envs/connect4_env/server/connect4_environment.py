@@ -25,7 +25,22 @@ class Connect4Environment(Environment):
         self._opponent = opponent
         self.reset()
 
-    def reset(self):
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Connect4Observation:
+        """
+        Start a new game on an empty board.
+
+        Args:
+            seed (`int`, *optional*):
+                Accepted for API compatibility. Connect4 has no randomness, so it
+                has no effect.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
+        """
         self.board = np.zeros((self.ROWS, self.COLUMNS), dtype=np.int8)
         self.next_player = 1
         self.invalid_move_played = False
@@ -33,7 +48,7 @@ class Connect4Environment(Environment):
         self._state = Connect4State(
             board=self.board.copy().tolist(),
             next_player=self.next_player,
-            episode_id=str(uuid.uuid4()),
+            episode_id=episode_id if episode_id is not None else str(uuid.uuid4()),
             step_count=0,
         )
         return self._make_observation()

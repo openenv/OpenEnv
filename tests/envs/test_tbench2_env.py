@@ -402,6 +402,37 @@ def test_evaluate_missing_verdict_raises_not_zero(tmp_path: Path, staged_paths):
     assert not stage_logs.exists()
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_evaluate_non_finite_verdict_raises(value, tmp_path: Path, staged_paths):
+    """reward.txt holding nan or inf is no verdict either. float() reads
+    both, so without a check the trainer would get a NaN or infinite
+    reward."""
+    stage_tests, stage_logs = staged_paths
+    task = _make_task_dir(tmp_path)
+    env = Tbench2Environment(withhold_tests=True)
+    env._task_dir = task
+    env._workdir = str(tmp_path)
+    env._terminal_toolkit = _RecordingToolkit(output=f"__TB2_REWARD__:{value}")
+    env._withhold_verifier_assets(task)
+
+    with pytest.raises(RuntimeError, match="produced no verdict"):
+        env._evaluate_task()
+
+    assert not stage_tests.exists()
+    assert not stage_logs.exists()
+
+
+def test_evaluate_docker_non_finite_verdict_raises(tmp_path: Path):
+    """Docker-mode twin: a nan verdict errors out instead of scoring NaN."""
+    task = _make_task_dir(tmp_path)
+    env = Tbench2DockerEnvironment()
+    env._container = _FakeContainer(exec_output=b"__TB2_REWARD__:nan\n")
+    env._task_dir = task
+
+    with pytest.raises(RuntimeError, match="produced no verdict"):
+        env._evaluate_docker()
+
+
 def test_evaluate_without_tests_scores_zero(tmp_path: Path, staged_paths):
     task = tmp_path / "empty-task"
     task.mkdir()
@@ -906,3 +937,22 @@ def test_tbench2_env_smoke():
 
     env.step(Tbench2Action(action_type="close"))
     env.close()
+
+
+@pytest.mark.skipif(camel is None, reason="camel-ai not installed")
+def test_agent_shell_gets_no_server_secrets(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HF_TOKEN", "hf_FAKEtoken0000000000000000000000000")
+    monkeypatch.setenv("MY_API_KEY", "fake-key")
+    toolkit = tbench2_env_environment._require_terminal_toolkit()(
+        timeout=20,
+        working_directory=str(tmp_path),
+        use_docker_backend=False,
+        session_logs_dir=str(tmp_path / "logs"),
+        safe_mode=False,
+    )
+
+    output = toolkit.shell_exec(id="s", command="env", block=True, timeout=20)
+
+    assert "PATH=" in output
+    assert "HF_TOKEN" not in output
+    assert "fake-key" not in output

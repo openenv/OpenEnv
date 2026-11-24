@@ -244,6 +244,7 @@ def test_live_view_follows_its_own_session_with_concurrent_rollouts(
         capture_level="text",
         model="test-model",
         public_url="https://capture.example",
+        local_url="http://127.0.0.1:8100",
         llm_url="",
     )
     monkeypatch.setattr("openenv.harbor.serving.HarborService.current", lambda: service)
@@ -613,6 +614,45 @@ def test_served_tasks_that_read_the_server_environment_cannot_run(
     # The operator's own model is the operator's to point at its own keys: it goes on, and stops
     # here only because this test runs no capture proxy.
     assert "no capture proxy" in said(server_default=True)
+
+
+def test_ui_rejects_client_import_paths_before_starting_a_rollout(
+    monkeypatch, tmp_path
+):
+    import sys
+    from types import SimpleNamespace
+
+    from openenv.harbor import ui, ui_runs
+
+    _clear_ui_env(monkeypatch)
+    monkeypatch.setenv("OPENENV_HARBOR_UI_SECRET", "test")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    (tmp_path / "ui_client_import.py").write_text(
+        "raise AssertionError('must not import')\n"
+    )
+    monkeypatch.setattr(
+        ui,
+        "_capabilities",
+        lambda *a, **k: SimpleNamespace(
+            available_sandboxes=["e2b"], sandboxes=[], harnesses=[]
+        ),
+    )
+    monkeypatch.setattr(ui, "_card", lambda *args, **kwargs: args[3])
+    monkeypatch.setattr(
+        ui_runs.RunManager,
+        "start",
+        lambda *a, **k: pytest.fail("unknown harness reached the rollout manager"),
+    )
+    app = ui.harbor_gradio_builder(datasets=["org/served"])
+    handler = next(b.fn for b in app.fns.values() if b.fn.__name__ == "on_run")
+    response = handler(
+        {"ok": True, "server_default": True, "allowed_harnesses": ["opencode"]},
+        {"spec": "org/served", "index": 0},
+        "visitor",
+        SimpleNamespace(_data={"agent": "ui_client_import:Agent", "sandbox": "e2b"}),
+    )
+    assert "outside the qualified set" in response[0][1]
+    assert "ui_client_import" not in sys.modules
 
 
 def test_a_compose_file_that_reads_the_host_is_found(monkeypatch, tmp_path):
@@ -1746,6 +1786,7 @@ def test_a_page_run_with_several_rewards_is_shown_not_failed(monkeypatch, tmp_pa
             ),
         ),
         public_url="",
+        local_url="http://127.0.0.1:8100",
         capture_level="text",
         model="m",
     )
@@ -1753,6 +1794,7 @@ def test_a_page_run_with_several_rewards_is_shown_not_failed(monkeypatch, tmp_pa
     monkeypatch.delenv("OPENENV_HARBOR_REWARD_KEY", raising=False)
     asyncio.run(ui_runs._rollout(*args, lambda s: None))
     assert seen["require_reward"] is False and seen["reward_key"] == ""
+    assert seen["local_intercept_url"] == service.local_url
     monkeypatch.setenv("OPENENV_HARBOR_REWARD_KEY", "correctness")
     asyncio.run(ui_runs._rollout(*args, lambda s: None))
     assert seen["reward_key"] == "correctness"

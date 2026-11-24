@@ -9,10 +9,11 @@ on:
 
 jobs:
   build:
-    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@90ddd199e07144a13408c523680c76987343c95f  # main
+    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@7b35a31ae9844db8b177ef3ca869184a79d791f8  # main
     with:
       commit_sha: ${{ github.sha }}
       package: openenv
+      repo_owner: openenv
       version_tag_suffix: ""
     secrets:
       hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}

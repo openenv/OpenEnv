@@ -30,7 +30,8 @@ def env():
     """Provides a fresh PythonCodeActEnv for each test."""
     environment = PythonCodeActEnv()
     environment.reset()
-    return environment
+    yield environment
+    environment.close()
 
 
 @pytest.fixture
