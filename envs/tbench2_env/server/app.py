@@ -29,7 +29,7 @@ Usage:
 
 Environment Variables:
     TB2_MODE: Execution mode - "local" (default) or "docker"
-    MAX_CONCURRENT_ENVS: Maximum concurrent WebSocket sessions (default: 8)
+    MAX_CONCURRENT_ENVS: Maximum concurrent WebSocket sessions (default: 8 in docker mode, 1 in local mode)
 """
 
 import os
@@ -81,7 +81,10 @@ else:
 
 
 # Create the app with web interface and README integration
-max_concurrent = int(os.getenv("MAX_CONCURRENT_ENVS", "8"))
+# Local mode serves one session at a time (see Tbench2Environment).
+max_concurrent = int(
+    os.getenv("MAX_CONCURRENT_ENVS", "8" if _TB2_MODE == "docker" else "1")
+)
 
 app = create_app(
     _DEFAULT_ENVIRONMENT,
