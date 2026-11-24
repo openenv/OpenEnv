@@ -17,7 +17,7 @@ See the [CLI reference](../reference/cli.md) for every command and flag.
 
 Declare Python dependencies in the environment's `pyproject.toml` and regenerate `uv.lock` with `uv lock`. Install anything else (system packages, binaries) in `server/Dockerfile`, before the step that removes temporary files.
 
-The template's [`server/Dockerfile`](https://github.com/huggingface/OpenEnv/blob/main/src/openenv/cli/templates/openenv_env/server/Dockerfile) is a multi-stage build on `ghcr.io/huggingface/openenv-base` that installs your dependencies with `uv sync` and serves `server.app:app` on port 8000. Keep building from `openenv-base` so shared tooling stays available.
+The template's [`server/Dockerfile`](https://github.com/openenv/OpenEnv/blob/main/src/openenv/cli/templates/openenv_env/server/Dockerfile) is a multi-stage build on `ghcr.io/huggingface/openenv-base` that installs your dependencies with `uv sync` and serves `server.app:app` on port 8000. Keep building from `openenv-base` so shared tooling stays available.
 
 ## Build the image
 
@@ -40,7 +40,7 @@ openenv build
 openenv validate --level static --skip-build
 ```
 
-`openenv validate` reads the `validation:` contract in `openenv.yaml`, checks the normalized manifest against the selected severity policy and exits non-zero when a required check fails. The report's `levels_run` field records which levels ran. To validate a running server, use `openenv validate --url http://localhost:8000`.
+`openenv validate` reads the `validation:` contract in `openenv.yaml`, checks the normalized manifest against the selected severity policy and exits non-zero when a required check fails. The report's `levels_run` field records which levels ran. `openenv validate --level runtime` (needs Docker) builds the image, starts it and replays the actions in `validation/runtime.json`, the plan that `validation.execution` points to. `openenv init` generates both. To validate a running server, use `openenv validate --url http://localhost:8000`.
 
 ## Push to Hugging Face Spaces
 
@@ -90,7 +90,7 @@ variables:
   OPENSPIEL_GAME: catch
 ```
 
-CLI `-e` overrides matching keys. Put secrets (API keys, tokens) only on the CLI with `--secret KEY=VALUE`, never in the yaml.
+CLI `-e` overrides matching keys. Put secrets (API keys, tokens) only on the CLI with `--secret KEY=VALUE`, never in the yaml. Secrets are environment variables of the server, so code the model writes must not run in the server process or inherit its environment (see [Keep secrets away from model code](../guides/first-environment.md#keep-secrets-away-from-model-code)).
 
 To fork or update someone else's environment, see [Contributing Environments](contributing-envs.md).
 

@@ -18,6 +18,8 @@ A deterministic 5x5 grid world. The agent starts in the top-left corner and must
 
 *The `/web` playground after a few steps: the agent, the goal and one button per direction.*
 
+Try it on the [`openenv/grid_world_env`](https://huggingface.co/spaces/openenv/grid_world_env) Space, or connect a client to `https://openenv-grid-world-env.hf.space`.
+
 ## Quick Start
 
 Start the server from `envs/grid_world_env/`:

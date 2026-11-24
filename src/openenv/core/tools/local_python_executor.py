@@ -35,6 +35,12 @@ class PyExecutor:
     LocalPythonExecutor that can be used by the executed code to
     format exceptions and to safely stringify results for improved
     error reporting.
+
+    LocalPythonExecutor is an interpreter that restricts imports and
+    attributes, not a sandbox: the code runs in the current process and can
+    reach what that process holds. Run model code with it in a separate
+    process that has no secrets (environment variables, tokens in memory),
+    as `coding_env` does with one worker process per session.
     """
 
     def __init__(self, additional_imports: list[str] | None = None):

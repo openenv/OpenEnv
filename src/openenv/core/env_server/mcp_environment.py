@@ -86,17 +86,17 @@ VALID_MODES = {"production", "simulation"}
 
 def get_server_tools(mcp_server: Any) -> Dict[str, Any]:
     """
-    Get tools from a FastMCP server, compatible with both 2.x and 3.x.
+    Get tools from a FastMCP server.
 
     Returns:
         Dictionary mapping tool names to tool objects.
     """
-    # FastMCP 2.x: get_tools() returns dict {name: Tool}
+    # FastMCP server tools are exposed as a name-to-tool mapping.
     if hasattr(mcp_server, "get_tools"):
         result = run_async_safely(mcp_server.get_tools())
         if isinstance(result, dict):
             return result
-    # FastMCP 3.x: list_tools() returns list of Tool objects
+    # Some server adapters expose the tools as a list instead.
     if hasattr(mcp_server, "list_tools"):
         tools_list = run_async_safely(mcp_server.list_tools())
         return {t.name: t for t in tools_list}
@@ -108,7 +108,7 @@ def _tool_from_server_tool(tool: Any) -> Tool:
     return Tool(
         name=tool.name,
         description=tool.description or "",
-        input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
+        input_schema=tool.input_schema,
     )
 
 
@@ -187,7 +187,9 @@ class MCPEnvironment(Environment):
         self._validate_tool_names(mcp_server)
 
         self.mcp_server = mcp_server
-        self.mcp_client = Client(mcp_server)
+        # OpenEnv sessions keep MCP state across tool calls. FastMCP 4's default
+        # modern protocol is sessionless, so use its supported legacy handshake.
+        self.mcp_client = Client(mcp_server, mode="legacy")
 
         # Track mode-specific tools: {tool_name: {mode: func}}
         # mode can be "production", "simulation", or None (available in all modes)
@@ -195,6 +197,11 @@ class MCPEnvironment(Environment):
 
         # Track tool schemas for list_tools: {tool_name: {mode: schema}}
         self._mode_tool_schemas = defaultdict(dict)
+        self._mode: Optional[str] = None
+
+    def set_mode(self, mode: Optional[str]) -> None:
+        """Set the active mode ('production' or 'simulation') for mode-aware tools."""
+        self._mode = mode
 
     def _require_mcp_client(self) -> Any:
         """Return MCP client or raise if environment has been closed."""
@@ -249,7 +256,7 @@ class MCPEnvironment(Environment):
 
     def _get_server_tools(self, mcp_server: Any) -> Dict[str, Any]:
         """
-        Get tools from a FastMCP server, compatible with both 2.x and 3.x.
+        Get tools from a FastMCP server.
 
         Returns:
             Dictionary mapping tool names to tool objects.
@@ -496,7 +503,8 @@ class MCPEnvironment(Environment):
             tools_result = await self._async_list_tools()
             tools = []
             for tool in tools_result:
-                if tool.name not in self._mode_tool_schemas:
+                mode_schemas = self._mode_tool_schemas.get(tool.name, {})
+                if _schema_for_mode(mode_schemas, current_mode) is None:
                     tools.append(_tool_from_server_tool(tool))
             for mode_schemas in self._mode_tool_schemas.values():
                 schema = _schema_for_mode(mode_schemas, current_mode)
@@ -519,21 +527,12 @@ class MCPEnvironment(Environment):
         tool_name = action.tool_name
         current_mode = getattr(self, "_mode", None)
 
-        if tool_name in self._mode_tools:
-            mode_info = self._mode_tools[tool_name]
+        mode_info = self._mode_tools.get(tool_name, {})
+        if None in mode_info or current_mode in mode_info:
             if None in mode_info:
                 func = mode_info[None]
             elif current_mode in mode_info:
                 func = mode_info[current_mode]
-            else:
-                return CallToolObservation(
-                    tool_name=tool_name,
-                    result=None,
-                    error=ToolError(
-                        error_type=ToolErrorType.TOOL_NOT_FOUND,
-                        message=f"Tool '{tool_name}' not available in {current_mode} mode",
-                    ),
-                )
             try:
                 if inspect.iscoroutinefunction(func):
                     result = await func(**action.arguments)

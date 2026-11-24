@@ -78,6 +78,11 @@ class CodingToolsEnvironment(MCPEnvironment):
             """Perform exact string replacement in a file."""
             if not self._sandbox:
                 return "Error: environment not reset. Call reset() first."
+            # An empty old_string is in every string and would insert new_string
+            # at the start, or between every character with replace_all.
+            if not old_string:
+                self._record("edit", False, "", "old_string is empty", None)
+                return "ERROR: old_string must not be empty"
             read_result = self._sandbox.read_file(file_path=file_path)
             if not read_result.ok:
                 self._record("edit", False, "", read_result.error, None)
@@ -109,6 +114,15 @@ class CodingToolsEnvironment(MCPEnvironment):
             applied = 0
             for raw in edits:
                 spec = EditSpec.model_validate(raw)
+                if not spec.old_string:
+                    self._record(
+                        "multi_edit",
+                        False,
+                        "",
+                        "old_string is empty",
+                        {"applied": applied},
+                    )
+                    return "ERROR: old_string must not be empty"
                 if spec.old_string not in text:
                     self._record(
                         "multi_edit",
@@ -375,14 +389,17 @@ class CodingToolsEnvironment(MCPEnvironment):
     def _run_verify_commands(self) -> dict[str, Any]:
         if not self._sandbox:
             return {"passed": 0, "total": 0, "reward": None}
-        self._sandbox.run_shell("mkdir -p /home/user/logs/verifier")
+        # Verification runs as separate sandbox processes, not in the
+        # code-interpreter kernel, so nothing done to the kernel changes how
+        # verify commands run or what they report.
+        self._sandbox.run_command("mkdir -p /home/user/logs/verifier")
         # The override is documented as verify-written, so drop anything the
         # policy wrote there during the episode before verification starts.
-        cleared = self._sandbox.run_shell(_CLEAR_REWARD_FILE).ok
+        cleared = self._sandbox.run_command(_CLEAR_REWARD_FILE).ok
         self._state.verify_results = []
         passed = 0
         for command in self._state.verify_commands:
-            result = self._sandbox.run_shell(command, timeout_s=120)
+            result = self._sandbox.run_command(command, timeout_s=120)
             record = CommandResult(
                 tool="verify",
                 ok=result.ok,
@@ -416,10 +433,9 @@ def _read_reward_override(
 ) -> tuple[float | None, str | None]:
     if not cleared:
         return None, "reward file could not be removed before verification"
-    result = sandbox.read_file(REWARD_FILE)
-    if not result.ok:
-        return None, None
-    return _parse_reward_override(result.output or "")
+    result = sandbox.run_command(f"cat {REWARD_FILE} 2>/dev/null || true")
+    # stdout alone: `output` also carries stderr, such as a login profile's.
+    return _parse_reward_override(result.metadata.get("stdout", ""))
 
 
 def _parse_reward_override(raw: str) -> tuple[float | None, str | None]:

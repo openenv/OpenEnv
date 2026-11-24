@@ -1,6 +1,6 @@
 # MCP Environments
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huggingface/OpenEnv/blob/main/examples/mcp_environment.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/openenv/OpenEnv/blob/main/examples/mcp_environment.ipynb)
 
 Most agentic work ends up needing the same thing: a way for the model to **call tools** and receive structured feedback, whether that is during RL training or offline evaluation. OpenEnv standardises that surface with **[MCP](https://modelcontextprotocol.io)** (Model Context Protocol), so the same tool interface works during training, eval, inference, and external serving. This tutorial covers the four paths you will walk in practice — wiring an MCP-backed environment into a training loop, using the same env for offline eval, inspecting the API underneath both of those, and building your own MCP environment when no existing one fits.
 
@@ -26,7 +26,7 @@ Inside OpenEnv, MCP plays a specific role in a two-surface split:
 > In simulation mode, MCP tool calls flow **through** `step()`. The trainer stays in control of timing, rewards, and termination; the MCP action types are just a standardised action schema. [Simulation vs Production](../guides/simulation-vs-production) covers the split in depth.
 
 > [!NOTE]
-> **MCP adoption in OpenEnv is still in flight.** [RFC 003](https://github.com/huggingface/OpenEnv/blob/main/rfcs/003-mcp-support.md) proposes MCP as the standard interface for *all* agent-facing actions, but it is still **In Review**. Today only a handful of envs are MCP-backed: `echo_env` and `finqa_env` inherit from the canonical `openenv.core.env_server.mcp_environment.MCPEnvironment`; `calendar_env` uses a local wrapper with the same shape. The majority (`textarena_env` / Wordle, `openspiel_env`, `chess_env`, `browsergym_env`, and most others) still use custom action types that you pass through `env.step(CustomAction(...))` without MCP plumbing. Before using the patterns in this tutorial against a specific env, check whether it inherits from an `MCPEnvironment` base; if not, the env's own action schema applies instead.
+> **MCP adoption in OpenEnv is still in flight.** [RFC 003](https://github.com/openenv/OpenEnv/blob/main/rfcs/003-mcp-support.md) proposes MCP as the standard interface for *all* agent-facing actions, but it is still **In Review**. Today only a handful of envs are MCP-backed: `echo_env` and `finqa_env` inherit from the canonical `openenv.core.env_server.mcp_environment.MCPEnvironment`; `calendar_env` uses a local wrapper with the same shape. The majority (`textarena_env` / Wordle, `openspiel_env`, `chess_env`, `browsergym_env`, and most others) still use custom action types that you pass through `env.step(CustomAction(...))` without MCP plumbing. Before using the patterns in this tutorial against a specific env, check whether it inherits from an `MCPEnvironment` base; if not, the env's own action schema applies instead.
 
 ## Using MCP Tools in a Training Loop
 
@@ -182,7 +182,7 @@ Pair the loop with a scoring function of your choice — the [Rewards](../guides
 
 ## Building an MCP Environment
 
-Reach for this path when no existing environment covers the tools your agent needs — e.g. a new coding sandbox, a game, a proprietary API wrapper. The provider side is small: subclass `MCPEnvironment`, create a `FastMCP` server, register tools with the `@mcp.tool` decorator, and pass the server to `super().__init__`. Here is the echo environment, trimmed from [`envs/echo_env/server/echo_environment.py`](https://github.com/huggingface/OpenEnv/blob/main/envs/echo_env/server/echo_environment.py) down to the parts this tutorial covers:
+Reach for this path when no existing environment covers the tools your agent needs — e.g. a new coding sandbox, a game, a proprietary API wrapper. The provider side is small: subclass `MCPEnvironment`, create a `FastMCP` server, register tools with the `@mcp.tool` decorator, and pass the server to `super().__init__`. Here is the echo environment, trimmed from [`envs/echo_env/server/echo_environment.py`](https://github.com/openenv/OpenEnv/blob/main/envs/echo_env/server/echo_environment.py) down to the parts this tutorial covers:
 
 ```python
 from uuid import uuid4
@@ -253,7 +253,7 @@ A few things worth calling out:
 
 ## Running the Demo End-to-End
 
-The repo ships a self-contained walkthrough at [`examples/echo_mcp_demo.py`](https://github.com/huggingface/OpenEnv/blob/main/examples/echo_mcp_demo.py). Run it directly from the repo root:
+The repo ships a self-contained walkthrough at [`examples/echo_mcp_demo.py`](https://github.com/openenv/OpenEnv/blob/main/examples/echo_mcp_demo.py). Run it directly from the repo root:
 
 ```bash
 PYTHONPATH=src:envs uv run python examples/echo_mcp_demo.py
@@ -265,6 +265,6 @@ You will see the discovery call, two tool invocations, and an error case printed
 
 - **End-to-end training recipe** — the [Wordle GRPO tutorial](wordle-grpo.md) walks through a full GRPO training run with `environment_factory`. The wrapper-class shape is the same for an MCP-backed env; inside each tool method, build a `CallToolAction(tool_name=..., arguments={...})` instead of Wordle's single-field `TextArenaAction(message=guess)`.
 - **MCP in both modes**: [Simulation vs Production](../guides/simulation-vs-production) covers `step()` vs `step_async()`, the `call_tool()` convenience path, and common debugging questions.
-- **A richer MCP environment** — [`envs/finqa_env/`](https://github.com/huggingface/OpenEnv/tree/main/envs/finqa_env) shows tool calls participating in episode progression, rewards, and terminal submission — not just a stateless echo.
-- **Design rationale** — [RFC 003](https://github.com/huggingface/OpenEnv/blob/main/rfcs/003-mcp-support.md) explains why OpenEnv picked MCP as the agent boundary and how tool-calling and CodeAct styles share the same plumbing.
+- **A richer MCP environment** — [`envs/finqa_env/`](https://github.com/openenv/OpenEnv/tree/main/envs/finqa_env) shows tool calls participating in episode progression, rewards, and terminal submission — not just a stateless echo.
+- **Design rationale** — [RFC 003](https://github.com/openenv/OpenEnv/blob/main/rfcs/003-mcp-support.md) explains why OpenEnv picked MCP as the agent boundary and how tool-calling and CodeAct styles share the same plumbing.
 - **Serving tools to an external agent** — the `/mcp` JSON-RPC endpoint is available alongside `/ws` on any MCP environment server. Point an MCP-compatible client at it for production inference without going through the step loop. This direct path bypasses reward computation, step counts, and episode termination, and it exposes only registered MCP tools — not `reset`, `step`, or `state`.

@@ -63,7 +63,7 @@ does not make an otherwise useful metadata record undiscoverable.
 | Optional `TaskProvider` API | Tasks and splits within a known environment | Runtime-facing task introspection, not a cold global catalog |
 
 The data is uneven, not absent. At OpenEnv main commit
-[`b9d8c1f9`](https://github.com/huggingface/OpenEnv/commit/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f),
+[`b9d8c1f9`](https://github.com/openenv/OpenEnv/commit/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f),
 38 top-level environment manifests exist. Five have descriptions, while all 38
 corresponding `pyproject.toml` files have project descriptions. These are useful
 producer inputs, although a present description is not necessarily a good
@@ -253,14 +253,14 @@ An omitted optional tool descriptor means unknown, not "no tools."
 
 The following ARD entry contains the complete card in `data`. Its source is
 the public OpenEnv monorepo at commit
-[`b9d8c1f9`](https://github.com/huggingface/OpenEnv/tree/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f/envs/echo_env).
+[`b9d8c1f9`](https://github.com/openenv/OpenEnv/tree/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f/envs/echo_env).
 The environment path is part of the selection; cloning the repository is not
 the same as selecting its root package.
 
 The description and framework requirement come from Echo's
-[`pyproject.toml`](https://github.com/huggingface/OpenEnv/blob/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f/envs/echo_env/pyproject.toml).
+[`pyproject.toml`](https://github.com/openenv/OpenEnv/blob/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f/envs/echo_env/pyproject.toml).
 The `BSD-3-Clause` declaration is supported by the pinned
-[`LICENSE`](https://github.com/huggingface/OpenEnv/blob/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f/LICENSE)
+[`LICENSE`](https://github.com/openenv/OpenEnv/blob/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f/LICENSE)
 and Echo's source headers referring to that license. It describes this source,
 not a blanket assertion about every dependency or future dataset.
 
@@ -285,8 +285,8 @@ can substantiate.
     },
     "source": {
       "provider": "github",
-      "id": "huggingface/OpenEnv",
-      "uri": "https://github.com/huggingface/OpenEnv.git",
+      "id": "openenv/OpenEnv",
+      "uri": "https://github.com/openenv/OpenEnv.git",
       "path": "envs/echo_env",
       "revision": "b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f"
     },
@@ -294,13 +294,13 @@ can substantiate.
     "artifacts": [
       {
         "kind": "git",
-        "uri": "https://github.com/huggingface/OpenEnv.git",
+        "uri": "https://github.com/openenv/OpenEnv.git",
         "path": "envs/echo_env",
         "revision": "b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f"
       }
     ],
     "license": "BSD-3-Clause",
-    "license_url": "https://github.com/huggingface/OpenEnv/blob/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f/LICENSE",
+    "license_url": "https://github.com/openenv/OpenEnv/blob/b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f/LICENSE",
     "manifest_spec_version": 1,
     "framework_requirement": "openenv>=0.3.1",
     "interfaces": [
@@ -436,7 +436,7 @@ Illustrative output, not a command implemented by this RFC:
 $ openenv discover "client smoke test"
 
 Echo Environment
-source:      github / huggingface/OpenEnv
+source:      github / openenv/OpenEnv
 path:        envs/echo_env
 revision:    b9d8c1f953e0c3e0bbee2f3f6f6c73d8eae61f5f
 artifact:    resolvable source reference
@@ -485,11 +485,11 @@ quality policy.
 
 As of September 6, 2026, the RFC 008 document is on main with status In Review.
 Its initial implementation stack was merged and reverted by
-[huggingface/OpenEnv#1108](https://github.com/huggingface/OpenEnv/pull/1108) on
+[openenv/OpenEnv#1108](https://github.com/openenv/OpenEnv/pull/1108) on
 September 1. Restoration PRs
-[huggingface/OpenEnv#1110](https://github.com/huggingface/OpenEnv/pull/1110),
-[huggingface/OpenEnv#1111](https://github.com/huggingface/OpenEnv/pull/1111), and
-[huggingface/OpenEnv#1112](https://github.com/huggingface/OpenEnv/pull/1112)
+[openenv/OpenEnv#1110](https://github.com/openenv/OpenEnv/pull/1110),
+[openenv/OpenEnv#1111](https://github.com/openenv/OpenEnv/pull/1111), and
+[openenv/OpenEnv#1112](https://github.com/openenv/OpenEnv/pull/1112)
 remain open. The older `openenv validate` output is not automatically equivalent
 to the proposed RFC 008 evidence format.
 
@@ -696,10 +696,10 @@ Decisions before the stages they affect:
 - [ards-project/ard-spec#66: extension media-type guidance](https://github.com/ards-project/ard-spec/issues/66)
 - [ards-project/ard-spec#85: generic diagnostic adjustment](https://github.com/ards-project/ard-spec/pull/85)
 - [Hugging Face `hf-discover`](https://github.com/huggingface/hf-discover)
-- [huggingface/OpenEnv#1024: docs/catalog completeness](https://github.com/huggingface/OpenEnv/pull/1024)
-- [huggingface/OpenEnv#1094: Task API documentation](https://github.com/huggingface/OpenEnv/pull/1094)
-- [huggingface/OpenEnv#366: external environments](https://github.com/huggingface/OpenEnv/issues/366)
-- [huggingface/OpenEnv#795: dataset-bound environments](https://github.com/huggingface/OpenEnv/pull/795)
+- [openenv/OpenEnv#1024: docs/catalog completeness](https://github.com/openenv/OpenEnv/pull/1024)
+- [openenv/OpenEnv#1094: Task API documentation](https://github.com/openenv/OpenEnv/pull/1094)
+- [openenv/OpenEnv#366: external environments](https://github.com/openenv/OpenEnv/issues/366)
+- [openenv/OpenEnv#795: dataset-bound environments](https://github.com/openenv/OpenEnv/pull/795)
 - [RFC 002: framework specification](./002-env-spec.md)
 - [RFC 003: MCP support](./003-mcp-support.md)
 - [RFC 005: agentic harness integration](./005-agentic-harnesses.md)

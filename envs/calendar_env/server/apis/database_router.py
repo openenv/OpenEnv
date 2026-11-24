@@ -18,7 +18,7 @@ from data.multi_user_sample import get_multi_user_sql
 from database.base_manager import BaseManager
 from database.managers.calendar_manager import CalendarManager
 from database.seed_database import get_seed_session, init_seed_database, SeedData
-from database.session_manager import CalendarSessionManager
+from database.session_manager import CalendarSessionManager, connect_database
 from database.session_utils import _session_manager
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import FileResponse
@@ -68,7 +68,7 @@ async def seed_database(body: dict):
         db_path = calendar_session_manager.get_db_path(database_id)
 
         # Execute SQL content
-        conn = sqlite3.connect(db_path)
+        conn = connect_database(db_path)
         try:
             cursor = conn.cursor()
 
@@ -91,7 +91,7 @@ async def seed_database(body: dict):
             calendar_session_manager.init_database(database_id, create_tables=True)
 
             # Reconnect to database
-            conn = sqlite3.connect(db_path)
+            conn = connect_database(db_path)
             cursor = conn.cursor()
 
             # Execute custom SQL statements individually
@@ -291,7 +291,7 @@ async def get_database_state(x_database_id: str = Header(alias="x-database-id"))
             }
 
         # Connect to database
-        conn = sqlite3.connect(db_path)
+        conn = connect_database(db_path)
         conn.row_factory = sqlite3.Row
 
         try:
@@ -523,7 +523,7 @@ async def reset_database(body: dict):
         calendar_session_manager.init_database(database_id, create_tables=True)
 
         # Execute seed SQL in one go using executescript
-        conn = sqlite3.connect(db_path)
+        conn = connect_database(db_path)
         try:
             # executescript is much faster than executing statements one by one
             conn.executescript(sql_content)

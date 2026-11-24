@@ -15,7 +15,7 @@ The scope now spans the full agentic-RL loop, not environments alone (see below)
 
 ## Context
 
-OpenEnv launched in October 2025 as a joint project between Hugging Face and Meta (Meta-PyTorch), [introduced](https://www.youtube.com/watch?v=EflwqcbRYYs) at the PyTorch Conference as an open space for building, sharing, and running agentic environments, with an interface inspired by Gymnasium. In June 2026 the repository moved to huggingface/OpenEnv and stewardship broadened from the two founders to a multi-company Technical Committee: Meta-PyTorch, Reflection, Nvidia, Microsoft, Prime Intellect, Mercor, Fleet AI, Modal, Unsloth, BenchFlow, and Hugging Face.
+OpenEnv launched in October 2025 as a joint project between Hugging Face and Meta (Meta-PyTorch), [introduced](https://www.youtube.com/watch?v=EflwqcbRYYs) at the PyTorch Conference as an open space for building, sharing, and running agentic environments, with an interface inspired by Gymnasium. In June 2026 the repository moved to huggingface/OpenEnv and stewardship broadened from the two founders to a multi-company Technical Committee: Meta-PyTorch, Reflection, Nvidia, Microsoft, Prime Intellect, Mercor, Fleet AI, Modal, Unsloth, BenchFlow, and Hugging Face. In October 2026 it moved to its own GitHub organization, [openenv/OpenEnv](https://github.com/openenv/OpenEnv).
 
 ### Community and adoption
 
@@ -38,9 +38,9 @@ OpenEnv is in active development, and the scope is expanding from environments t
 | Dimension | Where it stands |
 | :---- | :---- |
 | **License** | BSD-3-Clause; contributions accepted under the same terms. |
-| **Repository** | Hosted at huggingface/OpenEnv, with 2,300+ GitHub stars |
+| **Repository** | Hosted at openenv/OpenEnv, with 2,300+ GitHub stars |
 | **Environments on the Hub** | 4,200+ environments published to the Hugging Face OpenEnv Hub, spanning coding REPLs, browser control, and games such as Wordle and Sudoku. |
-| **In flight** | [RFC 005](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md) (agentic harnesses)<br>[RFC 006](https://github.com/huggingface/OpenEnv/blob/main/rfcs/006-agentic-rl-harness-interception.md) (agentic RL through harness interception)<br>[RFC 007](https://github.com/huggingface/OpenEnv/pull/727) (environment datasets)<br>[RFC 008](https://github.com/huggingface/OpenEnv/issues/778) (environment auto-validation) |
+| **In flight** | [RFC 005](https://github.com/openenv/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md) (agentic harnesses)<br>[RFC 006](https://github.com/openenv/OpenEnv/blob/main/rfcs/006-agentic-rl-harness-interception.md) (agentic RL through harness interception)<br>[RFC 007](https://github.com/openenv/OpenEnv/pull/727) (environment datasets)<br>[RFC 008](https://github.com/openenv/OpenEnv/issues/778) (environment auto-validation) |
 
 The project is now pivoting from making environments easy to publish and share toward making them validated and trainable, which is what RFCs 005-008 addresses.
 
@@ -83,7 +83,7 @@ The committee gathers on a biweekly cadence to discuss project roadmap, technica
 
 Technical authority is earned by individuals on the merit of their PRs, commits, and reviews. In the early stages of the project, Ben Burtenshaw acts as the BDFL of the project in technical matters, ensuring that we move fast and don’t deviate from our collective vision.
 
-By default, everyone should be encouraged to work asynchronously on [GitHub](https://github.com/huggingface/OpenEnv) (issues, PRs, RFCs) and [Slack](https://app.slack.com/client/T06LG3JF5DL/C09FNMB4BK3), and only use the recurring meeting as a means to unblock work. If you don’t have access to Slack channel, request an invitation from [benjamin.burtenshaw@huggingface.co](mailto:benjamin.burtenshaw@huggingface.co).
+By default, everyone should be encouraged to work asynchronously on [GitHub](https://github.com/openenv/OpenEnv) (issues, PRs, RFCs) and [Slack](https://app.slack.com/client/T06LG3JF5DL/C09FNMB4BK3), and only use the recurring meeting as a means to unblock work. If you don’t have access to Slack channel, request an invitation from [benjamin.burtenshaw@huggingface.co](mailto:benjamin.burtenshaw@huggingface.co).
 
 ### The RFC process and the contribution ladder
 
@@ -97,14 +97,14 @@ The current RFC slate (numbers and owners evolve in the open):
 
 | RFC | Topic | Status |
 | :---- | :---- | :---- |
-| [001](https://github.com/huggingface/OpenEnv/blob/main/rfcs/001-abstractions.md) | Basic abstractions and boundaries | Shipped |
-| [002](https://github.com/huggingface/OpenEnv/blob/main/rfcs/002-env-spec.md) | Framework spec and environment-computed rewards | Shipped |
-| [003](https://github.com/huggingface/OpenEnv/blob/main/rfcs/003-mcp-support.md) | MCP support | Shipped |
-| [004](https://github.com/huggingface/OpenEnv/blob/main/rfcs/004-rubrics.md) | Rubric system (rewards stay in the environment) | Shipped |
-| [005](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md) | Agentic harness integration (OpenClaw first) | In PR |
-| [006](https://github.com/huggingface/OpenEnv/blob/main/rfcs/006-agentic-rl-harness-interception.md) | Agentic RL through harness interception: the token capture contract | In review |
-| [007](https://github.com/huggingface/OpenEnv/pull/727) | Environment datasets | In PR |
-| [008](https://github.com/huggingface/OpenEnv/issues/778) | Environment auto-validation and trainability bar | In review |
+| [001](https://github.com/openenv/OpenEnv/blob/main/rfcs/001-abstractions.md) | Basic abstractions and boundaries | Shipped |
+| [002](https://github.com/openenv/OpenEnv/blob/main/rfcs/002-env-spec.md) | Framework spec and environment-computed rewards | Shipped |
+| [003](https://github.com/openenv/OpenEnv/blob/main/rfcs/003-mcp-support.md) | MCP support | Shipped |
+| [004](https://github.com/openenv/OpenEnv/blob/main/rfcs/004-rubrics.md) | Rubric system (rewards stay in the environment) | Shipped |
+| [005](https://github.com/openenv/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md) | Agentic harness integration (OpenClaw first) | In PR |
+| [006](https://github.com/openenv/OpenEnv/blob/main/rfcs/006-agentic-rl-harness-interception.md) | Agentic RL through harness interception: the token capture contract | In review |
+| [007](https://github.com/openenv/OpenEnv/pull/727) | Environment datasets | In PR |
+| [008](https://github.com/openenv/OpenEnv/issues/778) | Environment auto-validation and trainability bar | In review |
 
 ### Terms and Conditions
 

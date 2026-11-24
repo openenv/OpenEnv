@@ -77,6 +77,30 @@ def _extractall(tar: tarfile.TarFile, dest: str) -> None:
         tar.extractall(dest)
 
 
+# The only server environment variables the agent's shell gets (plus LC_*, UV_*
+# and the toolkit's own runtime paths). Tokens and keys stay in the server.
+_SHELL_ENV_ALLOWLIST = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "TERM",
+    "TZ",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "PYTHONUNBUFFERED",
+)
+
+
+def set_non_dumpable() -> None:
+    """Linux: other processes of the same user can't read this one's /proc/<pid>/{environ,mem}."""
+    if sys.platform.startswith("linux"):
+        import ctypes
+
+        ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)  # PR_SET_DUMPABLE
+
+
 def _require_terminal_toolkit() -> Any:
     global _CAMEL_IMPORT_ERROR
     if _CAMEL_IMPORT_ERROR is not None:
@@ -92,7 +116,19 @@ def _require_terminal_toolkit() -> Any:
             "camel-ai (TerminalToolkit) is required for TB2. Install from PyPI or from the CAMEL repo."
         ) from exc
 
-    return TerminalToolkit
+    class _TerminalToolkit(TerminalToolkit):
+        """Runs the agent's and the verifier's commands without the server's secrets."""
+
+        def _get_env_vars(self) -> dict[str, str]:
+            return {
+                k: v
+                for k, v in super()._get_env_vars().items()
+                if k in _SHELL_ENV_ALLOWLIST
+                or k.startswith(("LC_", "UV_"))
+                or k in self._runtime_env_vars
+            }
+
+    return _TerminalToolkit
 
 
 def _download_tb2_repo(cache_dir: Path) -> Path:
@@ -217,7 +253,8 @@ def _parse_canonical_reward(output: str) -> float | None:
     """The verdict test.sh's verifier wrote to reward.txt, echoed on the
     marker line. None when no verdict can be recovered — no marker line, an
     empty value (reward.txt absent: test.sh crashed or was killed before its
-    verifier wrote one), or a non-numeric value. A missing verdict is a
+    verifier wrote one), or a value that is not a finite number (``float``
+    also reads "nan" and "inf"). A missing verdict is a
     scoring failure, not a task failure: callers raise so ``evaluate``
     reports an error (observation.error set, reward None) instead of a 0.0
     indistinguishable from tests genuinely failing — RL consumers must be
@@ -229,9 +266,10 @@ def _parse_canonical_reward(output: str) -> float | None:
             if not raw:
                 return None
             try:
-                return float(raw)
+                value = float(raw)
             except ValueError:
                 return None
+            return value if math.isfinite(value) else None
     return None
 
 
@@ -239,8 +277,8 @@ def _require_canonical_verdict(reward: float | None, output: str) -> float:
     """Raise when the canonical harness produced no verdict (see above)."""
     if reward is None:
         raise RuntimeError(
-            "canonical harness produced no verdict (reward.txt missing after "
-            f"tests/test.sh ran); test.sh log tail: {output[-800:]!r}"
+            "canonical harness produced no verdict (reward.txt missing or not a "
+            f"finite number after tests/test.sh ran); test.sh log tail: {output[-800:]!r}"
         )
     return reward
 
@@ -275,7 +313,9 @@ def _parse_exit_code_marker(output: str) -> int:
 class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2State]):
     """OpenEnv wrapper around Terminal-Bench 2 tasks (local execution)."""
 
-    SUPPORTS_CONCURRENT_SESSIONS: bool = True
+    # Sessions share the host, the task folders and the verifier's fixed paths
+    # (/tests, /logs/verifier), so they can't run side by side.
+    SUPPORTS_CONCURRENT_SESSIONS: bool = False
 
     def __init__(
         self,

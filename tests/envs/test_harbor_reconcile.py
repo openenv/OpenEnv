@@ -173,6 +173,59 @@ def test_stop_allowance_is_bounded_by_responses_actually_emitted():
     assert not reconcile(doc, native).ok
 
 
+def pi_session(tmp_path, replies):
+    """A pi session log with one assistant record per `(text, output_tokens)` reply."""
+    import json
+
+    sessions = tmp_path / "agent" / "pi" / "sessions"
+    sessions.mkdir(parents=True)
+    records = []
+    for i, (text, output) in enumerate(replies):
+        content = (
+            [{"type": "text", "text": text}]
+            if text
+            else [
+                {"type": "toolCall", "id": f"call_{i}", "name": "ls", "arguments": {}}
+            ]
+        )
+        records.append(
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                    "usage": {"output": output},
+                },
+            }
+        )
+        records.append(
+            {"type": "message", "message": {"role": "toolResult", "content": "ok"}}
+        )
+    (sessions / "s.jsonl").write_text("\n".join(json.dumps(r) for r in records))
+    trace, source = atif.load_trace(tmp_path)
+    assert source == "pi_session"
+    return trace
+
+
+def test_pi_rollout_ended_by_the_proxy_budget_stop_reconciles(tmp_path):
+    """pi logs the proxy's stop reply as an assistant message; it is not a model call."""
+    doc = document([10, 20])
+    doc["budget_stop_count"] = 1
+    native = pi_session(
+        tmp_path, [(None, 10), (None, 20), (atif.BUDGET_STOP_MESSAGE, 0)]
+    )
+    report = reconcile(doc, native)
+    assert report.ok, report.findings
+    assert "proxy_budget_stops" in codes(report)
+
+
+def test_pi_zero_token_reply_that_is_not_a_budget_stop_still_fails(tmp_path):
+    doc = document([10, 20])
+    doc["budget_stop_count"] = 1
+    native = pi_session(tmp_path, [(None, 10), (None, 20), ("Done.", 0)])
+    assert not reconcile(doc, native).ok
+
+
 def test_extra_captured_calls_embed_as_auxiliary_when_coverage_is_high():
     """Seeing MORE than the harness logged is benign and explainable: a next-speaker check, a title
     generator. The asymmetry is deliberate — missing calls mean we lost something, extra ones do not."""
@@ -226,21 +279,42 @@ def test_calls_captured_but_none_labelled_agent_is_fatal():
     assert "no_agent_sequence" in fatal_codes(report)
 
 
-def test_subagent_trajectories_are_refused_not_merely_noted():
+@pytest.mark.parametrize(
+    "captured,reported,diagnostic",
+    [
+        ([10, 20], [10, 20], "turns_match"),
+        ([10, 20], [0, 0], "atif_no_token_counts"),
+        ([10, 20], [], "atif_no_token_counts"),
+        ([10, 20, 30], [10, 20], "atif_aux_calls"),
+    ],
+)
+def test_subagent_trajectories_are_refused_not_merely_noted(
+    captured, reported, diagnostic
+):
     """The warning used to say subagent turns must not carry the parent's reward and then did nothing
     to stop it: no node ids collected, no role changed. ATIF does not say which captured calls belong
     to the subagent, so the rollout cannot be attributed and is refused."""
     report = reconcile(
-        document([10, 20]),
-        trace([10, 20], subagent_trajectories=[{"agent": {"name": "sub"}}]),
+        document(captured),
+        trace(reported, subagent_trajectories=[{"agent": {"name": "sub"}}]),
     )
     assert not report.ok
     assert "atif_subagents" in fatal_codes(report)
+    assert diagnostic in codes(report)
 
 
 # --- the eval path ----------------------------------------------------------
 def test_eval_rollouts_compare_call_counts_since_token_counts_do_not_exist():
     report = reconcile(document([0, 0, 0], rollout_type="eval"), trace([10, 20, 30]))
+    assert report.ok
+    assert "eval_reconcile_counts_only" in codes(report)
+
+
+def test_eval_subagents_do_not_require_training_attribution():
+    report = reconcile(
+        document([0, 0], rollout_type="eval"),
+        trace([10, 20], subagent_trajectories=[{"agent": {"name": "sub"}}]),
+    )
     assert report.ok
     assert "eval_reconcile_counts_only" in codes(report)
 
@@ -269,6 +343,14 @@ def test_partial_usage_requires_exact_ordered_call_identity():
     assert "atif_partial_usage" in codes(report)
     assert "turns_match" not in codes(report)
     assert not report.aux_node_ids
+
+
+def test_partial_usage_cannot_bypass_subagent_attribution():
+    doc, native = _partial_usage_pair()
+    native["subagent_trajectories"] = [{"agent": {"name": "sub"}}]
+    report = reconcile(doc, native)
+    assert "atif_subagents" in fatal_codes(report)
+    assert "atif_partial_usage" in codes(report)
 
 
 @pytest.mark.parametrize(

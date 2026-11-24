@@ -3,3 +3,20 @@ version: "0.1.0"
 description: "Coding environment for OpenEnv"
 action: CodeAction
 observation: CodeObservation
+validation:
+  # CodeSafetyTransform sets -1.0 on a dangerous pattern, CodeQualityTransform
+  # adds +0.1 for code of at most 100 chars and -0.2 for a syntax error.
+  reward:
+    range: [-1.2, 0.1]
+    oracle_tolerance: 0.0
+    floor_margin: 0.1
+  resources:
+    cpu: 1.0
+    memory_mb: 1024
+    disk_mb: 1024
+    episode_timeout_s: 300.0
+  capabilities:
+    verifier:
+      kind: reward_channel
+  types:
+    tags: [code, python]

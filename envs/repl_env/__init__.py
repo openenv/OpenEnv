@@ -42,6 +42,7 @@ References:
 
 from .client import REPLEnv
 from .local import LocalREPLEnv
+from .managed_children import ChildCleanupError, ManagedChildConfig
 from .models import CodeBlockResult, REPLAction, REPLObservation, REPLState
 from .prompts import (
     build_rlm_system_prompt,
@@ -75,6 +76,8 @@ __all__ = [
     "LocalREPLEnv",
     "LocalRLMRunner",
     "RLMRunResult",
+    "ManagedChildConfig",
+    "ChildCleanupError",
     # System prompts
     "RLM_SYSTEM_PROMPT",
     "RLM_SYSTEM_PROMPT_QWEN",

@@ -98,21 +98,7 @@ class AtariEnvironment(Environment):
         self.ale.setLoggerMode(LoggerMode.Error)  # Error mode only
         self.ale.setFloat("repeat_action_probability", repeat_action_probability)
 
-        # Load ROM
-        try:
-            rom_path = roms.get_rom_path(game_name)
-            self.ale.loadROM(rom_path)
-        except Exception as e:
-            raise ValueError(
-                f"Failed to load Atari game '{game_name}': {e}\n"
-                f"Available games can be found via: ale_py.roms.list_roms()"
-            ) from e
-
-        # Set mode and difficulty if specified
-        if mode is not None:
-            self.ale.setMode(mode)
-        if difficulty is not None:
-            self.ale.setDifficulty(difficulty)
+        self._load_game()
 
         # Get action set
         if full_action_space:
@@ -142,18 +128,59 @@ class AtariEnvironment(Environment):
             frameskip=frameskip,
         )
 
-    def reset(self) -> Observation:
+    def _load_game(self) -> None:
+        """Load the ROM, then apply the mode and difficulty, if specified."""
+        try:
+            rom_path = roms.get_rom_path(self.game_name)
+            self.ale.loadROM(rom_path)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load Atari game '{self.game_name}': {e}\n"
+                f"Available games can be found via: ale_py.roms.list_roms()"
+            ) from e
+
+        # Loading the ROM clears the mode and difficulty, so set them every time
+        if self.mode is not None:
+            self.ale.setMode(self.mode)
+        if self.difficulty is not None:
+            self.ale.setDifficulty(self.difficulty)
+
+    def reset(
+        self,
+        seed: int | None = None,
+        episode_id: str | None = None,
+        **kwargs: Any,
+    ) -> Observation:
         """
         Reset the environment and return initial observation.
+
+        Args:
+            seed (`int`, *optional*):
+                Seeds ALE's random number generator, which drives sticky actions
+                (`repeat_action_probability` > 0). The same seed always yields the
+                same observations for the same actions. With the default
+                `repeat_action_probability` of 0.0, ALE is deterministic and the
+                seed has no visible effect.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
 
         Returns:
             Initial observation for the agent.
         """
+        if seed is not None:
+            # ALE reads "random_seed" only when a ROM is loaded, as gymnasium's
+            # AtariEnv.seed_game/load_game do.
+            ale_seed = int(np.random.SeedSequence(seed).generate_state(1)[0] >> 1)
+            self.ale.setInt("random_seed", ale_seed)
+            self._load_game()
+
         # Reset ALE
         self.ale.reset_game()
 
         # Reset state tracking
-        self._state.episode_id = str(uuid.uuid4())
+        self._state.episode_id = (
+            episode_id if episode_id is not None else str(uuid.uuid4())
+        )
         self._state.step_count = 0
 
         # Get initial observation

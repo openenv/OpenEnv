@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from .managed_children import ManagedChildBackend, ManagedChildConfig, ManagedChildren
 from .prompts import RLM_SYSTEM_PROMPT
 from .recursive_backends import BackendLimits, DirectLMBackend, LocalChildRLMBackend
 
@@ -33,8 +34,15 @@ class RecursiveController:
     rlm_batch_fn: Callable[[list[str], str | None], list[str]] | None
     backend: object
 
+    @property
+    def children(self):
+        if isinstance(self.backend, ManagedChildBackend):
+            return self.backend.children
+        return None
+
     def close(self) -> None:
-        pass
+        if self.children is not None:
+            self.children.close()
 
 
 def create_server_recursive_controller(
@@ -49,6 +57,9 @@ def create_server_recursive_controller(
     result_truncation_limit: int | None = None,
     per_child_timeout_s: float | None = None,
     env_max_iterations_multiplier: int = 5,
+    managed_children: ManagedChildConfig | None = None,
+    on_subcall_start: Callable[[int, str, str], None] | None = None,
+    on_subcall_complete: Callable[[int, str, float, str | None], None] | None = None,
 ) -> RecursiveController:
     limits = BackendLimits(
         max_depth=max_depth,
@@ -58,7 +69,18 @@ def create_server_recursive_controller(
         result_truncation_limit=result_truncation_limit,
         per_child_timeout_s=per_child_timeout_s,
     )
-    if max_depth > 1:
+    if managed_children is not None:
+        children = ManagedChildren(
+            managed_children,
+            limits,
+            on_subcall_start=on_subcall_start,
+            on_subcall_complete=on_subcall_complete,
+            system_prompt=system_prompt,
+            max_iterations=max_iterations,
+            env_max_iterations_multiplier=env_max_iterations_multiplier,
+        )
+        backend = ManagedChildBackend(chat_fn, children=children, limits=limits)
+    elif max_depth > 1:
         from .runner import LocalRLMRunner
 
         backend = LocalChildRLMBackend(
@@ -69,20 +91,17 @@ def create_server_recursive_controller(
             env_max_iterations_multiplier=env_max_iterations_multiplier,
             depth=0,
             limits=limits,
+            on_subcall_start=on_subcall_start,
+            on_subcall_complete=on_subcall_complete,
         )
-        return RecursiveController(
-            llm_query_fn=backend.query,
-            llm_batch_fn=backend.query_batched,
-            rlm_query_fn=backend.recursive_query,
-            rlm_batch_fn=backend.recursive_query_batched,
-            backend=backend,
-        )
+    else:
+        backend = DirectLMBackend(chat_fn, depth=0, limits=limits)
 
-    backend = DirectLMBackend(chat_fn, depth=0, limits=limits)
+    supports_recursion = managed_children is not None or max_depth > 1
     return RecursiveController(
         llm_query_fn=backend.query,
         llm_batch_fn=backend.query_batched,
-        rlm_query_fn=None,
-        rlm_batch_fn=None,
+        rlm_query_fn=backend.recursive_query if supports_recursion else None,
+        rlm_batch_fn=backend.recursive_query_batched if supports_recursion else None,
         backend=backend,
     )

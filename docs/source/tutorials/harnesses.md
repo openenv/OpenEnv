@@ -1,6 +1,6 @@
 # Harnesses in OpenEnv
 
-A harness is the loop around a model: it sends the conversation to the model, runs the tools the model calls, and decides when the episode ends. There are three ways to put a harness and an OpenEnv environment together. They differ in who owns the loop, what the environment provides and who is on the other side, and that decides what each one is for. "Black-box" is the term [RFC 006](https://github.com/huggingface/OpenEnv/blob/main/rfcs/006-agentic-rl-harness-interception.md) uses, and "white-box" the one `openenv.core.harness` uses.
+A harness is the loop around a model: it sends the conversation to the model, runs the tools the model calls, and decides when the episode ends. There are three ways to put a harness and an OpenEnv environment together. They differ in who owns the loop, what the environment provides and who is on the other side, and that decides what each one is for. "Black-box" is the term [RFC 006](https://github.com/openenv/OpenEnv/blob/main/rfcs/006-agentic-rl-harness-interception.md) uses, and "white-box" the one `openenv.core.harness` uses.
 
 | | White-box | Black-box | Agent inside the environment |
 |---|---|---|---|
@@ -16,7 +16,7 @@ A harness is the loop around a model: it sends the conversation to the model, ru
 
 - **You want to train a model on your environment and the loop can be simple.** Use the white-box path. The trainer runs the tool loop, so token ids and logprobs come for free, and the environment only supplies tools and a reward. The BrowserGym tutorial does it with TRL's `GRPOTrainer`, and [Training with OpenEnv](../guides/training) lists the other frameworks that train on OpenEnv environments.
 - **The job is a task that an agent does on its own, and a verifier checks the result.** Use Harbor, to train the model behind the agent or to evaluate it. The agent keeps its own planner, tools and context management in a sandbox, and a proxy records every model call it makes. The resulting `TrainingTrace` is plain data that doesn't depend on a trainer, and TRL's `AsyncGRPOTrainer` has a worked example.
-- **The job is a conversation, and the agent has to use your environment's tools.** Use `HarnessEnvironment` from [RFC 005](https://github.com/huggingface/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md), to evaluate the agent against a simulated user or to serve it to real ones. The environment injects its tools, answers between turns and scores the conversation with a rubric.
+- **The job is a conversation, and the agent has to use your environment's tools.** Use `HarnessEnvironment` from [RFC 005](https://github.com/openenv/OpenEnv/blob/main/rfcs/005-agentic-harnesses.md), to evaluate the agent against a simulated user or to serve it to real ones. The environment injects its tools, answers between turns and scores the conversation with a rubric.
 
 ### Harbor or `HarnessEnvironment`?
 

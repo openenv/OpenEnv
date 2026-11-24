@@ -59,6 +59,7 @@ DEFAULT_EVALUATOR_PROMPT = (
 logger = logging.getLogger(__name__)
 
 DatasetSource = str | dict[str, Any] | list[str | dict[str, Any]] | None
+_PROBLEM_ID_KEYS = ("problem_id", "id")
 
 
 def _default_verifier_workers() -> int:
@@ -386,7 +387,7 @@ def _normalize_problem(
     )
     problem_id = _first_present_value(
         raw_problem,
-        ("problem_id", "id"),
+        _PROBLEM_ID_KEYS,
         f"problem_{index:06d}",
     )
     resolved_dataset_source = _first_present_value(
@@ -444,7 +445,7 @@ def _normalize_problem(
 def _load_problems_from_spec(
     spec: str | dict[str, Any],
     start_index: int,
-) -> list[dict[str, Any]]:
+) -> list[tuple[dict[str, Any], bool]]:
     if isinstance(spec, dict):
         if "path" in spec:
             path = Path(spec["path"])
@@ -473,18 +474,19 @@ def _load_problems_from_spec(
                 "Dataset source must be a local .json/.jsonl path or a Hugging Face dataset id like 'owner/name'."
             )
 
-    problems: list[dict[str, Any]] = []
+    problems: list[tuple[dict[str, Any], bool]] = []
     for offset, row in enumerate(rows, start=1):
         try:
-            problems.append(
-                _normalize_problem(row, start_index + offset, dataset_source)
-            )
+            problem = _normalize_problem(row, start_index + offset, dataset_source)
         except ValueError:
             logger.warning(
                 "Skipping invalid QED math dataset row from %s at offset %d",
                 dataset_source,
                 offset,
             )
+            continue
+        generated = _first_present_value(row, _PROBLEM_ID_KEYS) is None
+        problems.append((problem, generated))
 
     return problems
 
@@ -504,13 +506,40 @@ def load_problems(dataset_path: DatasetSource) -> list[dict]:
         return _bootstrap_problems()
 
     problems: list[dict[str, Any]] = []
+    generated_problems: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for spec in dataset_specs:
-        problems.extend(_load_problems_from_spec(spec, start_index=len(problems)))
+        for problem, generated in _load_problems_from_spec(spec, len(problems)):
+            problems.append(problem)
+            if generated:
+                generated_problems.append(problem)
+            else:
+                # Answer cache keys strip whitespace from caller-supplied IDs.
+                seen_ids.add(problem["problem_id"].strip())
 
     if not problems:
         raise ValueError(
             "No valid QED math problems were loaded from the configured dataset source."
         )
+
+    # The fallback index counts accepted rows between sources, but includes
+    # skipped rows within a source. Preserve explicit IDs and the first
+    # occurrence of each otherwise unclaimed generated ID before replacing
+    # collisions. Fresh allocations must also avoid later existing IDs.
+    if len(dataset_specs) > 1:
+        reserved_ids = seen_ids.union(
+            problem["problem_id"] for problem in generated_problems
+        )
+        next_index = len(problems) + 1
+        for problem in generated_problems:
+            problem_id = problem["problem_id"]
+            if problem_id in seen_ids:
+                while f"problem_{next_index:06d}" in reserved_ids:
+                    next_index += 1
+                problem["problem_id"] = f"problem_{next_index:06d}"
+                next_index += 1
+            else:
+                seen_ids.add(problem_id)
 
     return problems
 
@@ -520,8 +549,8 @@ class QEDMathEnvironment(MCPEnvironment):
     Math proof environment with MCP tools and rubric-based grading.
 
     This environment provides MCP tools for:
-    - get_problem(): Return current problem statement, reference solution,
-      and grading guidelines.
+    - get_problem(): Return current problem statement and grading guidelines.
+      The reference solution stays server-side and is only used for grading.
     - submit_proof(proof): Grade a proof via MathProofRubric and return
       score (0-7) and normalized reward.
     - get_grading_guidelines(): Return the rubric for the current problem.
@@ -728,7 +757,7 @@ class QEDMathEnvironment(MCPEnvironment):
         **kwargs: Any,
     ) -> Any:
         """Async step override — fixes the run_async_safely event-loop deadlock
-        described in https://github.com/huggingface/OpenEnv/issues/455.
+        described in https://github.com/openenv/OpenEnv/issues/455.
 
         The WebSocket server detects this override and calls it directly on the
         outer event loop instead of dispatching step() into a thread executor,
@@ -758,7 +787,10 @@ class QEDMathEnvironment(MCPEnvironment):
                     Tool(
                         name=t.name,
                         description=t.description or "",
-                        input_schema=t.inputSchema if hasattr(t, "inputSchema") else {},
+                        # mcp 2 (FastMCP 4) renamed the attribute to input_schema.
+                        input_schema=getattr(t, "input_schema", None)
+                        or getattr(t, "inputSchema", None)
+                        or {},
                     )
                     for t in tools_result
                 ]
@@ -829,8 +861,9 @@ class QEDMathEnvironment(MCPEnvironment):
             ProblemObservation with problem details.
 
         Loads a problem from the dataset and returns a ProblemObservation
-        with problem, reference_solution, grading_guidelines, problem_id,
-        and dataset_source.
+        with problem, grading_guidelines, problem_id, and dataset_source.
+        reference_solution is left empty: the reference stays server-side
+        and is only used for grading.
         """
         selected_problem_id = kwargs.pop("problem_id", None)
         self._refresh_gold_cache_if_needed()
@@ -887,11 +920,9 @@ class QEDMathEnvironment(MCPEnvironment):
 
         return ProblemObservation(
             problem=self._current_problem.get("problem", ""),
-            reference_solution=(
-                self._current_problem.get("reference_solution", "")
-                if self._current_problem.get("evaluation_mode", "proof") == "answer"
-                else ""
-            ),
+            # The reference solution is the grading key in both modes, so it is
+            # never sent to the agent. Grading reads it from the server-side problem.
+            reference_solution="",
             grading_guidelines=parse_schema(
                 self._current_problem.get("grading_guidelines", "") or ""
             ),
@@ -1084,15 +1115,10 @@ class QEDMathEnvironment(MCPEnvironment):
             }
 
         problem_type = self._current_problem.get("problem_type", "proof")
-        evaluation_mode = self._current_problem.get("evaluation_mode")
-        if isinstance(evaluation_mode, str):
-            evaluation_mode = evaluation_mode.strip().lower()
-        else:
-            evaluation_mode = "answer" if problem_type == "answer" else "proof"
-        if evaluation_mode not in {"proof", "answer"}:
-            evaluation_mode = "proof"
 
-        payload = {
+        # The reference solution is the grading key in both modes, so it is
+        # not part of the payload the agent sees.
+        return {
             "problem": self._current_problem.get("problem", ""),
             "grading_guidelines": self._current_grading_guidelines_text(),
             "problem_id": self._current_problem.get("problem_id", ""),
@@ -1103,15 +1129,6 @@ class QEDMathEnvironment(MCPEnvironment):
             "done": False,
             "reward": 0.0,
         }
-
-        # Keep answer-mode parity with QED-Nano while preventing proof-mode
-        # agents from seeing the grading key via MCP.
-        if evaluation_mode == "answer":
-            payload["reference_solution"] = self._current_problem.get(
-                "reference_solution", ""
-            )
-
-        return payload
 
     @staticmethod
     def _verify_math(

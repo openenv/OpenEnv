@@ -109,6 +109,10 @@ def _pi(base_url: str, session: str, model: str) -> dict[str, Any]:
 
 logger = logging.getLogger(__name__)
 
+# Harnesses already warned about an inexpressible step limit, in this process. The warning is a fact
+# about the harness, not the rollout: repeating it for every rollout of a training run buries it.
+_STEP_LIMIT_WARNED: set[str] = set()
+
 
 @dataclass(frozen=True)
 class Seam:
@@ -153,6 +157,9 @@ class Seam:
     # the loss step while every log line looks healthy. Harbor itself has no step cap — only a
     # timeout — and an earlier Qwen3-4B run micro-stepped to 451 turns and 10.1M prompt tokens.
     step_limit: Callable[[int], dict[str, Any]] | None = None
+    # The agent runs in OUR process (terminus-2, computer-1, a host-side agent of your own) and makes
+    # its model calls from here, so the proxy's loopback address reaches it: no public forward needed.
+    host_side: bool = False
     status: str = "untested"
     notes: str = ""
 
@@ -183,11 +190,14 @@ class Seam:
             extra = _deep_merge(extra, self.training_kwargs)
         if step_limit:
             if self.step_limit is None:
-                logger.warning(
-                    "%s has no native step-limit setting; the capture proxy enforces the "
-                    "model-call budget and the agent timeout still applies",
-                    self.name,
-                )
+                if self.name not in _STEP_LIMIT_WARNED:
+                    _STEP_LIMIT_WARNED.add(self.name)
+                    logger.warning(
+                        "%s has no native step-limit setting; the capture proxy enforces the "
+                        "model-call budget and the agent timeout still applies (said once per "
+                        "harness)",
+                        self.name,
+                    )
             else:
                 extra = _deep_merge(extra, self.step_limit(step_limit))
         return self.model_fmt.format(model=model), extra, agent_env, proc_env
@@ -430,6 +440,7 @@ SEAMS: dict[str, Seam] = {
     # --- second wave --------------------------------------------------------
     "terminus-2": Seam(
         name="terminus-2",
+        host_side=True,
         status="validated",
         dialect="openai_chat",
         model_fmt="hosted_vllm/{model}",
@@ -690,6 +701,7 @@ SEAMS: dict[str, Seam] = {
     # reason is RECORDED rather than assumed.
     "computer-1": Seam(
         name="computer-1",
+        host_side=True,
         dialect="openai_chat",
         model_fmt="hosted_vllm/{model}",
         # Host-side like terminus-2: drives litellm from our process with an `api_base` kwarg, so
@@ -930,7 +942,103 @@ PRIORITY = [
 ]
 
 
+def _custom_kwargs(base_url: str, session: str, model: str) -> dict[str, Any]:
+    """A host-side agent of your own reaches the proxy through two constructor kwargs.
+
+    The names are terminus-2's (`api_base`) and the OpenAI SDK's (`api_key`): an agent declares both
+    in its options and hands them to whatever client it uses.
+    """
+    return {"api_base": f"{base_url}/v1", "api_key": session}
+
+
+def custom(import_path: str) -> Seam:
+    """The seam for `--harness module:Class`, an agent Harbor builds from its import path.
+
+    Harbor already constructs agents from an import path. What it cannot know is how to point one
+    at the capture proxy, and that depends only on what the class is:
+
+      * a subclass of an agent with a seam (its `name()` is in `SEAMS`, e.g. your own opencode
+        subclass) is wired exactly like that agent. Where the seam's wiring lives in an OpenEnv
+        subclass (pi's `InterceptPi` writes models.json), yours must subclass that class;
+      * a host-side agent (a plain `BaseAgent`, like terminus-2) makes its model calls from THIS
+        process, so it gets `api_base` (the proxy's `/v1` URL) and `api_key` (the capture session
+        id) as constructor kwargs. Nothing reaches the sandbox or the verifier;
+      * any other agent installed into the sandbox is refused: there is no way to tell which env
+        var or config file it reads, and guessed wiring fails as a rollout with no model calls.
+
+    The status is "untested" in every case: OpenEnv has no evidence about an agent it has not run.
+    """
+    import importlib
+    import inspect
+    from dataclasses import replace
+
+    from harbor.agents.base import BaseAgent
+    from harbor.agents.installed.base import BaseInstalledAgent
+
+    module, _, attr = import_path.partition(":")
+    try:
+        cls = getattr(importlib.import_module(module), attr)
+        if not isinstance(cls, type):
+            raise TypeError(f"{attr} is not a class")
+        if not issubclass(cls, BaseAgent):
+            raise TypeError(f"{import_path} must subclass harbor.agents.base.BaseAgent")
+    except Exception as exc:  # noqa: BLE001 - surface why, whatever the import raised
+        raise KeyError(
+            f"cannot import harness {import_path!r}: {type(exc).__name__}: {exc}"
+        ) from exc
+    try:
+        parent = cls.name()
+    except Exception:  # noqa: BLE001 - a name() that needs an instance is not a known agent
+        parent = None
+    if parent in SEAMS:
+        wired_by = SEAMS[parent].import_path
+        if wired_by:
+            wired_module, _, wired_attr = wired_by.partition(":")
+            if not issubclass(
+                cls, getattr(importlib.import_module(wired_module), wired_attr)
+            ):
+                raise ValueError(
+                    f"{import_path} subclasses {parent}, which OpenEnv points at the capture "
+                    f"proxy through {wired_by}. Subclass {wired_by} instead."
+                )
+        return replace(
+            SEAMS[parent],
+            name=import_path,
+            import_path=import_path,
+            status="untested",
+            notes=f"{import_path} is a {parent} subclass, wired like {parent}.",
+        )
+    if issubclass(cls, BaseInstalledAgent):
+        raise ValueError(
+            f"{import_path} is installed into the sandbox, and OpenEnv cannot tell how to point it "
+            "at the capture proxy. Subclass an agent that has a seam, or add a Seam for it to "
+            f"openenv.harbor.seams.SEAMS. Known: {sorted(SEAMS)}"
+        )
+    accepted = set(inspect.signature(cls.__init__).parameters)
+    # Harbor 0.22 predates options models; constructor parameters still work.
+    options_model = getattr(cls, "options_model", None)
+    if options_model is not None:
+        accepted.update(options_model.model_fields)
+    missing = {"api_base", "api_key"} - accepted
+    if missing:
+        raise ValueError(
+            f"{import_path} must declare {', '.join(sorted(missing))} as constructor "
+            "parameters or options fields; Harbor can silently ignore these kwargs."
+        )
+    return Seam(
+        name=import_path,
+        dialect="openai_chat",
+        import_path=import_path,
+        kwargs=_custom_kwargs,
+        host_side=True,
+        status="untested",
+        notes="Host-side agent of your own: gets the proxy as api_base/api_key kwargs.",
+    )
+
+
 def get(name: str, *, profile: str | None = None) -> Seam:
+    if name not in SEAMS and ":" in name and profile is None:
+        return custom(name)
     if name not in SEAMS:
         raise KeyError(f"no seam for {name!r}. Known: {sorted(SEAMS)}")
     if profile is None:

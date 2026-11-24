@@ -92,6 +92,11 @@ class TestLatexPercentages:
         """Test LaTeX format with dollar sign wrappers."""
         assert compute_reward("57.73", r"$\boxed{57.730}$") == 1.0
 
+    def test_latex_text_inside_boxed(self):
+        r"""Test \text{} annotations inside \boxed{}."""
+        assert compute_reward(r"\boxed{6.118\text{ million}}", r"\boxed{6.118}") == 1.0
+        assert compute_reward(r"\boxed{7.118\text{ million}}", r"\boxed{6.118}") == 0.0
+
 
 class TestDecimalPrecisionMatching:
     """Test decimal precision matching within tolerance for percentages."""
@@ -440,6 +445,18 @@ class TestPercentagePointsNotation:
         """Test negative percentage points."""
         assert compute_reward("-2.5%", r"\boxed{-2.5}") == 1.0
 
+    def test_percentage_points_multiple_boxed(self):
+        r"""Percentage points in an answer with one \boxed{} per value."""
+        gt = r"\boxed{4.5} \boxed{6.0}"
+        assert compute_reward("4.5%, 6.0%", gt) == 1.0
+        assert compute_reward("4.5%, 7.0%", gt) == 0.0
+
+    def test_percentage_points_multiple_boxed_with_labels(self):
+        r"""A year label does not stop the percentage points fallback."""
+        gt = r"\boxed{4.5} \boxed{6.0}"
+        assert compute_reward("2023: 4.5%, 2024: 6.0%", gt) == 1.0
+        assert compute_reward("2023: 4.5%, 2024: 7.0%", gt) == 0.0
+
     def test_multi_value_in_single_boxed(self):
         """Test comma-separated values inside single \\boxed{} with tolerance."""
         assert (
@@ -492,6 +509,47 @@ class TestMultiValueYearKeyMatching:
             )
             == 1.0
         )
+
+
+class TestMultiValueThousandsSeparators:
+    r"""Thousands separators in answers with one \boxed{} per value."""
+
+    def test_separators_with_labels(self):
+        """A comma inside "-3,514" is part of the number, not a value separator."""
+        gt = r"2022: \boxed{-3514}, 2023: \boxed{1424}, 2024: \boxed{7425}"
+        assert compute_reward("2022: -3,514, 2023: 1,424, 2024: 7,425", gt) == 1.0
+        assert compute_reward("2022: -3,514; 2023: 1,424; 2024: 7,425", gt) == 1.0
+
+    def test_separators_without_labels(self):
+        gt = r"2022: \boxed{-3514}, 2023: \boxed{1424}, 2024: \boxed{7425}"
+        assert compute_reward("-3,514, 1,424, 7,425", gt) == 1.0
+        assert compute_reward("-3,514; 1,424; 7,425", gt) == 1.0
+
+    def test_boxed_values_with_separators(self):
+        gt = r"2022: \boxed{-3514}, 2023: \boxed{1424}, 2024: \boxed{7425}"
+        assert (
+            compute_reward(r"\boxed{-3,514}, \boxed{1,424}, \boxed{7,425}", gt) == 1.0
+        )
+        assert (
+            compute_reward(
+                r"2022: \boxed{-3,514}, 2023: \boxed{1,424}, 2024: \boxed{7,425}", gt
+            )
+            == 1.0
+        )
+
+    def test_wrong_values_with_separators_fail(self):
+        gt = r"2022: \boxed{-3514}, 2023: \boxed{1424}, 2024: \boxed{7425}"
+        assert compute_reward("2022: -3,514, 2023: 1,424, 2024: 8,425", gt) == 0.0
+        assert (
+            compute_reward(r"\boxed{-3,514}, \boxed{1,424}, \boxed{8,425}", gt) == 0.0
+        )
+        assert compute_reward("-3,514, 1,424", gt) == 0.0
+
+    def test_bare_comma_list_still_splits(self):
+        """Without spaces, "250,300,410" is still read as three values."""
+        gt = r"\boxed{250} \boxed{300} \boxed{410}"
+        assert compute_reward("250,300,410", gt) == 1.0
+        assert compute_reward("250,300,450", gt) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -651,6 +709,144 @@ class TestResetSeed:
         assert self._questions_after_seed(env, seed=1) != self._questions_after_seed(
             env, seed=2
         )
+
+
+class TestEpisodeEnd:
+    """Nothing is scored after the episode ends (answer submitted or max steps).
+
+    Self-contained (synthetic data, no downloaded dataset needed) so it runs in CI.
+    """
+
+    @pytest.fixture
+    def data_path(self, tmp_path):
+        pytest.importorskip("pandas")
+        questions = tmp_path / "benchmark_questions"
+        questions.mkdir()
+        rows = ["id,user_query,company,question,answer"]
+        rows += [f"{i},query {i},acme,question {i},\\boxed{{{i}}}" for i in range(5)]
+        (questions / "finqa.csv").write_text("\n".join(rows) + "\n")
+        (tmp_path / "input_companies").mkdir()
+        return str(tmp_path)
+
+    @staticmethod
+    def _make_env(data_path, max_steps=10):
+        from envs.finqa_env.server.finqa_environment import FinQAEnvironment
+
+        env = FinQAEnvironment(data_path=data_path, max_steps=max_steps)
+        env.reset(seed=1)
+        return env
+
+    @staticmethod
+    def _submit(answer):
+        from openenv.core.env_server.mcp_types import CallToolAction
+
+        return CallToolAction(tool_name="submit_answer", arguments={"answer": answer})
+
+    @staticmethod
+    def _tool():
+        from openenv.core.env_server.mcp_types import CallToolAction
+
+        return CallToolAction(
+            tool_name="get_descriptions", arguments={"company_name": "acme"}
+        )
+
+    def test_submit_after_submit_is_not_scored(self, data_path):
+        env = self._make_env(data_path)
+        gold = env.state.ground_truth
+
+        first = env.step(self._submit("-1"))
+        assert first.done is True
+        assert first.reward == 0.0
+
+        second = env.step(self._submit(gold))
+        assert second.done is True
+        assert second.reward == 0.0
+        assert second.metadata == first.metadata
+
+    def test_submit_after_max_steps_is_not_scored(self, data_path):
+        env = self._make_env(data_path, max_steps=2)
+        gold = env.state.ground_truth
+
+        assert env.step(self._tool()).done is False
+        last = env.step(self._tool())
+        assert last.done is True
+        assert last.reward == 0.0
+
+        late = env.step(self._submit(gold))
+        assert late.done is True
+        assert late.reward == 0.0
+        assert env.state.step_count == 2
+
+    def test_submit_on_last_step_is_scored(self, data_path):
+        env = self._make_env(data_path, max_steps=2)
+        gold = env.state.ground_truth
+
+        assert env.step(self._tool()).done is False
+        obs = env.step(self._submit(gold))
+        assert obs.done is True
+        assert obs.reward == 1.0
+
+    def test_any_step_after_done_keeps_the_final_reward(self, data_path):
+        from openenv.core.env_server.mcp_types import ListToolsAction
+
+        env = self._make_env(data_path, max_steps=2)
+        assert env.step(self._tool()).done is False
+        assert env.step(self._submit(env.state.ground_truth)).reward == 1.0
+
+        obs = env.step(ListToolsAction())
+        assert obs.done is True
+        assert obs.reward == 1.0
+        assert env.state.step_count == 2
+
+    def test_reset_starts_a_new_episode(self, data_path):
+        env = self._make_env(data_path)
+        env.step(self._submit("-1"))
+
+        env.reset()
+        obs = env.step(self._submit(env.state.ground_truth))
+        assert obs.done is True
+        assert obs.reward == 1.0
+
+    @pytest.mark.asyncio
+    async def test_step_async_submit_after_submit_is_not_scored(self, data_path):
+        env = self._make_env(data_path)
+        gold = env.state.ground_truth
+
+        first = await env.step_async(self._submit("-1"))
+        assert first.done is True
+        assert first.reward == 0.0
+
+        second = await env.step_async(self._submit(gold))
+        assert second.done is True
+        assert second.reward == 0.0
+
+    @pytest.mark.asyncio
+    async def test_step_async_submit_after_max_steps_is_not_scored(self, data_path):
+        env = self._make_env(data_path, max_steps=1)
+        gold = env.state.ground_truth
+
+        last = await env.step_async(self._tool())
+        assert last.done is True
+
+        late = await env.step_async(self._submit(gold))
+        assert late.done is True
+        assert late.reward == 0.0
+
+    @pytest.mark.asyncio
+    async def test_step_async_any_step_after_done_keeps_the_final_reward(
+        self, data_path
+    ):
+        from openenv.core.env_server.mcp_types import ListToolsAction
+
+        env = self._make_env(data_path, max_steps=1)
+        assert (
+            await env.step_async(self._submit(env.state.ground_truth))
+        ).reward == 1.0
+
+        obs = await env.step_async(ListToolsAction())
+        assert obs.done is True
+        assert obs.reward == 1.0
+        assert env.state.step_count == 1
 
 
 @pytest.mark.skipif(_integration_skip, reason=_integration_reason)

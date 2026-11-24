@@ -17,13 +17,41 @@ Key improvements:
   result object, tolerant to different versions of smolagents.
 - Detailed stderr on unexpected exceptions including full traceback.
 - Structured logging for operational visibility.
+
+`PyExecutor` interprets code inside the current process. smolagents is an
+AST interpreter, not a sandbox: imported classes and module state are shared
+by every executor in a process. `IsolatedPyExecutor` therefore runs one
+`PyExecutor` per session in its own worker process, so sessions and
+episodes never share interpreter state. Workers are forked from a zygote, a
+template process started once per server with a minimal environment (no
+server secrets) and with smolagents already imported. Each worker drops to
+an unprivileged user right after the fork when the server is root, installs
+a seccomp filter that refuses to create sockets or to reach into other
+processes (Linux, no capability needed), and is killed on timeout. Server
+and workers exchange bounded JSON only, never pickle, because workers run
+untrusted code.
 """
 
 from __future__ import annotations
 
+import collections
+import contextlib
+import gc
+import importlib
 import json
 import logging
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
 import traceback
+import weakref
+from multiprocessing.connection import Connection
+from multiprocessing.reduction import recv_handle, send_handle
 
 from openenv.core.env_server.types import CodeExecResult
 from smolagents import LocalPythonExecutor
@@ -32,6 +60,56 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 DEFAULT_SAFE_IMPORTS = ["json"]
+
+DEFAULT_EXEC_TIMEOUT_S = 30.0  # same as smolagents' MAX_EXECUTION_TIME_SECONDS
+ZYGOTE_STARTUP_TIMEOUT_S = 60.0  # one-time import of smolagents and openenv
+ZYGOTE_REPLY_TIMEOUT_S = 10.0
+# A spawn that brings new authorized modules imports them in the zygote first
+# (numpy, pandas, torch...), so it gets the startup budget.
+ZYGOTE_PRELOAD_TIMEOUT_S = ZYGOTE_STARTUP_TIMEOUT_S
+MAX_OUTPUT_CHARS = 1_000_000  # per stream and call, cut in the worker
+MAX_REPLY_BYTES = 16 * 1024 * 1024
+UNPRIVILEGED_UID = 65534  # nobody
+# The only server environment variables a worker inherits. Anything else
+# (tokens, API keys, credentials) stays in the server process.
+WORKER_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
+PR_SET_PDEATHSIG = 1
+PR_SET_DUMPABLE = 4
+PR_SET_SECCOMP = 22
+PR_SET_NO_NEW_PRIVS = 38
+SECCOMP_MODE_FILTER = 2
+# Per architecture: (AUDIT_ARCH_*, syscalls the workers' seccomp filter denies). socket(2) for
+# every address family; io_uring_setup/enter/register(2), which could open sockets without
+# socket(2); and ptrace(2), process_vm_readv/writev(2) and pidfd_getfd(2), which could take
+# a socket or memory from another process of the same uid (a non-root server's workers share
+# its uid).
+_SECCOMP_DENIED = {
+    "x86_64": (0xC000003E, (41, 425, 426, 427, 101, 310, 311, 438)),
+    "aarch64": (0xC00000B7, (198, 425, 426, 427, 117, 270, 271, 438)),
+}
+# The zygote turns non-dumpable before importing anything, so a same-uid
+# process can't read its memory while it loads. Workers inherit the flag.
+_ZYGOTE_BOOT = (
+    "import sys\n"
+    "if sys.platform.startswith('linux'):\n"
+    "    import ctypes\n"
+    f"    ctypes.CDLL(None).prctl({PR_SET_DUMPABLE}, 0, 0, 0, 0)\n"
+    f"from {__name__} import _zygote_main\n"
+    "_zygote_main(int(sys.argv[1]))\n"
+)
+
+TIMEOUT_MESSAGE = (
+    "TimeoutError: code execution exceeded the maximum execution time of "
+    "{seconds:g} seconds. The Python session was restarted, so variables "
+    "defined in earlier steps are gone."
+)
+CRASH_MESSAGE = (
+    "RuntimeError: the Python session stopped unexpectedly and was restarted, "
+    "so variables defined in earlier steps are gone."
+)
+START_FAILED_MESSAGE = (
+    "RuntimeError: the Python session could not start. Try again later."
+)
 
 
 class PyExecutor:
@@ -43,12 +121,17 @@ class PyExecutor:
     error reporting.
     """
 
-    def __init__(self, additional_imports: list[str] | None = None):
+    def __init__(
+        self,
+        additional_imports: list[str] | None = None,
+        timeout_seconds: int | None = 30,
+    ):
         if additional_imports is None:
             additional_imports = DEFAULT_SAFE_IMPORTS.copy()
 
         self._executor = LocalPythonExecutor(
-            additional_authorized_imports=additional_imports
+            additional_authorized_imports=additional_imports,
+            timeout_seconds=timeout_seconds,
         )
 
         # Register helpful utilities exposed to the execution environment.
@@ -157,3 +240,470 @@ class PyExecutor:
             tb = traceback.format_exc()
             logger.exception("LocalPythonExecutor raised an exception during run")
             return CodeExecResult(stdout="", stderr=tb, exit_code=1)
+
+
+def _prctl(option: int, value: int) -> None:
+    if sys.platform.startswith("linux"):
+        import ctypes
+
+        ctypes.CDLL(None, use_errno=True).prctl(option, value, 0, 0, 0)
+
+
+def set_non_dumpable() -> None:
+    """Linux: no ptrace and no /proc/<pid>/{mem,environ} for same-uid processes."""
+    _prctl(PR_SET_DUMPABLE, 0)
+
+
+def _socket_filter(arch: int, denied: tuple[int, ...]) -> bytes:
+    """A seccomp BPF program: EPERM for `denied` syscalls and for any other ABI, allow the rest."""
+    import struct
+
+    ld, jeq, jge, ret = (
+        0x20,
+        0x15,
+        0x35,
+        0x06,
+    )  # BPF_LD|W|ABS, BPF_JMP|JEQ|K, JGE|K, RET|K
+    allow, deny = (
+        0x7FFF0000,
+        0x00050000 | 1,
+    )  # SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO | EPERM
+    prog = [(ld, 0, 0, 4), (jeq, 1, 0, arch), (ret, 0, 0, deny), (ld, 0, 0, 0)]
+    checks = [(jge, 0x40000000)] + [(jeq, nr) for nr in denied]  # x32 syscalls too
+    for i, (op, k) in enumerate(checks):
+        prog.append((op, len(checks) - i, 0, k))  # to the final deny
+    prog += [(ret, 0, 0, allow), (ret, 0, 0, deny)]
+    return b"".join(struct.pack("=HBBI", *ins) for ins in prog)
+
+
+def _socket_filter_unavailable() -> str:
+    """Why this platform has no socket filter, or "" if it has one."""
+    import platform
+
+    if not sys.platform.startswith("linux"):
+        return f"seccomp needs Linux (this is {sys.platform})"
+    if platform.machine() not in _SECCOMP_DENIED:
+        return f"no seccomp socket filter for {platform.machine()}"
+    return ""
+
+
+def block_sockets() -> None:
+    """Linux: install a seccomp filter so this process and its children can't create sockets
+    or reach into other processes (see `_SECCOMP_DENIED`).
+
+    It needs no capability (no_new_privs is set first) and can't be undone from
+    inside the process. Raises OSError if not possible.
+    """
+    import platform
+
+    reason = _socket_filter_unavailable()
+    if reason:
+        raise OSError(reason)
+    import ctypes
+
+    arch, denied = _SECCOMP_DENIED[platform.machine()]
+    code = _socket_filter(arch, denied)
+    buf = ctypes.create_string_buffer(code, len(code))
+
+    class _Prog(ctypes.Structure):
+        _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
+
+    prog = _Prog(len(code) // 8, ctypes.addressof(buf))
+    libc = ctypes.CDLL(None, use_errno=True)
+    prctl = libc.prctl
+    prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
+    prctl.argtypes += [ctypes.c_ulong, ctypes.c_ulong]  # unused arguments must be 0
+    prctl.restype = ctypes.c_int
+    if prctl(PR_SET_NO_NEW_PRIVS, 1, None, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_NO_NEW_PRIVS) failed")
+    if prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog), 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_SECCOMP) failed")
+
+
+def _check_socket_filter() -> str:
+    """Install the socket filter in a throwaway child: "" if that works, else why not."""
+    if _socket_filter_unavailable():
+        return ""  # the server warns that model code has network access
+    pid = os.fork()
+    if pid == 0:
+        try:
+            block_sockets()
+            os._exit(0)
+        except OSError as e:
+            os._exit(e.errno or 255)
+        finally:
+            os._exit(255)
+    code = os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1])
+    return "" if code == 0 else f"prctl failed: {os.strerror(code)}"
+
+
+def _worker_env(home: str) -> dict[str, str]:
+    env = {k: os.environ[k] for k in WORKER_ENV_ALLOWLIST if k in os.environ}
+    # The zygote imports this module the way the server did.
+    env["PYTHONPATH"] = os.pathsep.join(
+        os.path.abspath(p) for p in sys.path if p and os.path.isdir(p)
+    )
+    # Some imports (fastmcp through openenv) need a home directory.
+    env.update(HOME=home, TMPDIR=home, TMP=home, TEMP=home)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
+def _kill(proc: subprocess.Popen) -> None:
+    proc.kill()
+    proc.wait()
+
+
+class _Zygote:
+    """Template process that forks one worker per session.
+
+    It starts from `sys.executable` with a minimal environment and the
+    server's uid, becomes non-dumpable before its imports and then imports
+    smolagents, this module and the sessions' authorized modules once.
+    Workers are forked from it, so they start in milliseconds and share its
+    memory pages. The threaded server itself is never forked. The zygote also
+    kills and reaps its workers, so a worker's pid can't be reused while the
+    server still refers to it.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._live: set[int] = set()
+        self._dead: collections.deque[int] = collections.deque()
+        self._preloaded: set[str] = set()  # mirrors the zygote's `preloaded`
+        cleanup = contextlib.ExitStack()
+        self._finalizer = weakref.finalize(self, cleanup.close)
+        try:
+            home = tempfile.mkdtemp(prefix="coding_env_")
+            cleanup.callback(shutil.rmtree, home, ignore_errors=True)
+            parent_sock, child_sock = socket.socketpair()
+            self._conn = Connection(parent_sock.detach())
+            cleanup.callback(self._conn.close)
+            with child_sock:
+                self._proc = subprocess.Popen(
+                    [sys.executable, "-c", _ZYGOTE_BOOT, str(child_sock.fileno())],
+                    pass_fds=(child_sock.fileno(),),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    env=_worker_env(home),
+                    cwd=home,
+                )
+            cleanup.callback(_kill, self._proc)
+            reply = self._receive(ZYGOTE_STARTUP_TIMEOUT_S)
+            if "error" in reply:
+                raise RuntimeError(
+                    "coding_env: can't install the seccomp filter that keeps model "
+                    f"code off the network ({reply['error']})"
+                )
+            if reply != {"ready": True}:
+                raise ValueError("bad zygote handshake")
+            if reason := _socket_filter_unavailable():
+                logger.warning("coding_env: model code has network access, %s", reason)
+        except BaseException:
+            self.close()
+            raise
+
+    @property
+    def alive(self) -> bool:
+        return self._finalizer.alive and self._proc.poll() is None
+
+    def spawn(self, fd: int, config: dict) -> int:
+        """Fork a worker that serves `fd` and return its pid."""
+        with self._lock:
+            new = _module_names(config["imports"] or []) - self._preloaded
+            timeout = ZYGOTE_PRELOAD_TIMEOUT_S if new else ZYGOTE_REPLY_TIMEOUT_S
+            pid = self._request(config, fd, timeout).get("pid")
+            self._preloaded |= new
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("bad zygote reply")
+        self._live.add(pid)
+        return pid
+
+    def kill(self, pid: int, wait: bool = True) -> None:
+        """Kill a worker now and have the zygote reap it. Safe to call more
+        than once.
+
+        The worker is signalled directly, so it stops even while another
+        session holds the lock (a spawn that imports new modules can take up
+        to `ZYGOTE_PRELOAD_TIMEOUT_S`). Its pid stays reserved until the zygote
+        reaps it, which only happens on a request from this side. The reap
+        goes out now if the lock frees up within `ZYGOTE_REPLY_TIMEOUT_S` (or
+        is free, without `wait`, e.g. during garbage collection), else with the
+        next spawn or close of any session.
+        """
+        try:
+            self._live.remove(pid)
+        except KeyError:
+            return
+        self._dead.append(pid)
+        if self.alive:  # a live zygote has not reaped `pid`, so it is ours
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                # Already exited. The reap below still collects it.
+                logger.debug("coding_env worker %d already gone", pid)
+        if wait:
+            acquired = self._lock.acquire(timeout=ZYGOTE_REPLY_TIMEOUT_S)
+        else:
+            acquired = self._lock.acquire(blocking=False)
+        if not acquired:
+            return
+        try:
+            self._request(None)
+        except Exception:
+            # The zygote is gone, and its workers with it (PR_SET_PDEATHSIG).
+            logger.debug("could not reach the coding_env zygote", exc_info=True)
+        finally:
+            self._lock.release()
+
+    def close(self) -> None:
+        self._finalizer()
+
+    def _request(
+        self,
+        spawn: dict | None,
+        fd: int | None = None,
+        timeout: float | None = None,
+    ) -> dict:
+        """Send the pending kills and an optional spawn. Caller holds the lock."""
+        kills = []
+        while self._dead:
+            kills.append(self._dead.popleft())
+        try:
+            self._conn.send_bytes(json.dumps({"kill": kills, "spawn": spawn}).encode())
+            if fd is not None:
+                send_handle(self._conn, fd, self._proc.pid)
+            return self._receive(ZYGOTE_REPLY_TIMEOUT_S if timeout is None else timeout)
+        except BaseException:
+            self.close()
+            raise
+
+    def _receive(self, timeout: float) -> dict:
+        if not self._conn.poll(timeout):
+            raise TimeoutError("the coding_env zygote did not reply")
+        return json.loads(self._conn.recv_bytes(1024))
+
+
+_zygote: _Zygote | None = None
+_zygote_lock = threading.Lock()
+
+
+def _get_zygote() -> _Zygote:
+    """This server's zygote, started on first use and restarted if it died."""
+    global _zygote
+    with _zygote_lock:
+        if _zygote is None or not _zygote.alive:
+            _zygote = _Zygote()
+        return _zygote
+
+
+class IsolatedPyExecutor:
+    """One Python session in its own worker process.
+
+    Same `run(code) -> CodeExecResult` contract as `PyExecutor`, which runs
+    inside the worker. The worker is forked by `start()` (or the first
+    `run()`) and killed by `close()`, or when the executor is garbage
+    collected. A call that exceeds `timeout_s` kills the worker, and the next
+    call starts a fresh one.
+    """
+
+    def __init__(
+        self,
+        additional_imports: list[str] | None = None,
+        timeout_s: float | None = None,
+    ):
+        if timeout_s is None:
+            timeout_s = float(
+                os.environ.get("CODING_ENV_EXEC_TIMEOUT_S", DEFAULT_EXEC_TIMEOUT_S)
+            )
+        self._additional_imports = additional_imports
+        self._timeout_s = timeout_s
+        self._zygote: _Zygote | None = None
+        self._pid: int | None = None
+        self._conn: Connection | None = None
+        self._home: str | None = None
+        self._finalizer: weakref.finalize | None = None
+
+    @property
+    def pid(self) -> int | None:
+        return self._pid
+
+    def start(self) -> bool:
+        """Fork the worker if it is not running. False if it could not start."""
+        if self._conn is not None:
+            return True
+        # Everything acquired below is released by close(), on failure, or
+        # when this executor is garbage collected.
+        cleanup = contextlib.ExitStack()
+        self._finalizer = weakref.finalize(self, cleanup.close)
+        try:
+            self._zygote = zygote = _get_zygote()
+            self._home = tempfile.mkdtemp(prefix="coding_env_")
+            cleanup.callback(shutil.rmtree, self._home, ignore_errors=True)
+            # A root server runs model code as nobody.
+            uid = UNPRIVILEGED_UID if os.geteuid() == 0 else None
+            if uid is not None:
+                os.chown(self._home, uid, uid)
+            parent_sock, child_sock = socket.socketpair()
+            conn = Connection(parent_sock.detach())
+            cleanup.callback(conn.close)
+            config = {
+                "home": self._home,
+                "imports": self._additional_imports,
+                "uid": uid,
+            }
+            with child_sock:
+                self._pid = zygote.spawn(child_sock.fileno(), config)
+            cleanup.callback(zygote.kill, self._pid, False)
+            self._conn = conn
+        except Exception:
+            logger.exception("could not start the coding_env worker process")
+            self.close()
+            return False
+        return True
+
+    def run(self, code: str) -> CodeExecResult:
+        if not self.start():
+            return CodeExecResult(stdout="", stderr=START_FAILED_MESSAGE, exit_code=1)
+        try:
+            self._conn.send_bytes(json.dumps({"code": code}).encode())
+            if not self._conn.poll(self._timeout_s):
+                self.close()
+                return CodeExecResult(
+                    stdout="",
+                    stderr=TIMEOUT_MESSAGE.format(seconds=self._timeout_s),
+                    exit_code=1,
+                )
+            # Bounded JSON with typed fields only: the worker is not trusted.
+            reply = json.loads(self._conn.recv_bytes(MAX_REPLY_BYTES))
+            stdout, stderr = reply["stdout"], reply["stderr"]
+            exit_code = reply["exit_code"]
+            if not (
+                isinstance(stdout, str)
+                and isinstance(stderr, str)
+                and type(exit_code) is int
+            ):
+                raise ValueError("malformed worker reply")
+            return CodeExecResult(stdout=stdout, stderr=stderr, exit_code=exit_code)
+        except (EOFError, OSError, ValueError, KeyError, TypeError):
+            logger.warning("coding_env worker process failed, restarting it")
+            self.close()
+            return CodeExecResult(stdout="", stderr=CRASH_MESSAGE, exit_code=1)
+
+    def close(self) -> None:
+        """Kill the worker and remove its home. Safe to call more than once."""
+        if self._pid is not None:
+            self._zygote.kill(self._pid)
+        if self._finalizer is not None:
+            self._finalizer()
+        self._zygote = self._pid = self._conn = self._home = self._finalizer = None
+
+
+def _cap(text: str) -> str:
+    if len(text) <= MAX_OUTPUT_CHARS:
+        return text
+    return text[:MAX_OUTPUT_CHARS] + "\n... (output truncated)"
+
+
+def _module_names(names: list[str]) -> set[str]:
+    """Modules a session's authorized imports name, as the zygote imports them."""
+    return {name.removesuffix(".*") for name in names} - {"*"}
+
+
+def _preload(names: list[str], tried: set[str]) -> None:
+    """Import a session's authorized modules in the zygote, with the server's
+    uid, so a worker that runs as nobody gets them even from a virtual
+    environment nobody can read. A module that fails here fails again, as a
+    normal ImportError, in that session."""
+    new = _module_names(names) - tried
+    for name in sorted(new):
+        tried.add(name)
+        try:
+            importlib.import_module(name)
+        except Exception:
+            traceback.print_exc()
+    if new:
+        gc.freeze()
+
+
+def _zygote_main(fd: int) -> None:
+    """Zygote process: fork workers, and kill and reap them, on request."""
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    conn = Connection(fd)
+    children: set[int] = set()
+    preloaded: set[str] = set()
+    # Keep the imported objects out of the workers' garbage collections, so
+    # those don't write to (and copy) the memory pages they share.
+    gc.freeze()
+    if error := _check_socket_filter():
+        conn.send_bytes(json.dumps({"error": error}).encode())
+        return
+    conn.send_bytes(b'{"ready":true}')
+    while True:
+        try:
+            request = json.loads(conn.recv_bytes())
+        except (EOFError, OSError):
+            return  # the server is gone, PR_SET_PDEATHSIG stops the workers
+        for pid in request["kill"]:
+            if pid in children:
+                children.remove(pid)
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+        reply = {}
+        if request["spawn"] is not None:
+            worker_fd = recv_handle(conn)
+            _preload(request["spawn"]["imports"] or [], preloaded)
+            pid = os.fork()
+            if pid == 0:
+                try:
+                    conn.close()
+                    _worker_main(worker_fd, request["spawn"])
+                except Exception:
+                    traceback.print_exc()
+                finally:
+                    os._exit(0)  # never return into the zygote's loop
+            os.close(worker_fd)
+            children.add(pid)
+            reply["pid"] = pid
+        conn.send_bytes(json.dumps(reply).encode())
+
+
+def _worker_main(fd: int, config: dict) -> None:
+    """Forked worker: run one session's code, one call at a time."""
+    if config["uid"] is not None:
+        os.setgroups([])
+        os.setgid(config["uid"])
+        os.setuid(config["uid"])
+        # Changing the uid resets the dumpable flag and the parent-death signal.
+        set_non_dumpable()
+    _prctl(PR_SET_PDEATHSIG, signal.SIGKILL)  # die with the zygote
+    if not _socket_filter_unavailable():
+        block_sockets()  # no socket from here on; if it fails, the worker stops
+    home = config["home"]
+    os.chdir(home)
+    os.environ.update(HOME=home, TMPDIR=home, TMP=home, TEMP=home)
+    tempfile.tempdir = None  # the zygote may have cached its own
+    conn = Connection(fd)
+    # Model code may patch json's classes in this process (it only hurts its
+    # own session). Explicit separators make the replies immune to the
+    # common case of patched class-level separators.
+    encode = json.JSONEncoder(separators=(",", ":")).encode
+    decode = json.JSONDecoder().decode
+    # The server enforces the timeout by killing this process, so the
+    # smolagents thread timeout (which leaves runaway threads) is off.
+    executor = PyExecutor(additional_imports=config["imports"], timeout_seconds=None)
+    while True:
+        try:
+            request = decode(conn.recv_bytes().decode())
+        except EOFError:
+            return
+        result = executor.run(request["code"])
+        reply = {
+            "stdout": _cap(result.stdout),
+            "stderr": _cap(result.stderr),
+            "exit_code": int(result.exit_code),
+        }
+        conn.send_bytes(encode(reply).encode())

@@ -80,7 +80,7 @@ Each step returns a shaped reward:
 | `ListToolsAction` | +0.1 |
 | Tool call with a 2xx status | +1.0 |
 | Tool call that succeeds without a status code | +0.5 |
-| Tool result with an `error` key or a 4xx/5xx status | -0.5 |
+| Tool result with an `error` key, `isError: true`, or a 4xx/5xx status | -0.5 |
 | Unknown tool | -0.5 |
 | Missing `tool_name`, invalid access token or tool execution failure | -1.0 |
 
@@ -103,4 +103,4 @@ The results (tool calls, verifier outcomes) go to `response_output/`. The main f
 - `verifiers`: checks run after the agent finishes. `database_state` compares a SQL query result with an expected value (`equals`, `greater_than`, `less_than`, `contains`), `response_check` asks an LLM to judge a SQL result, and `tool_execution` checks that the expected tools were called.
 - `expected_tools`: tools the agent should use
 
-For interactive evaluation, see the [notebook](https://github.com/huggingface/OpenEnv/blob/main/envs/calendar_env/client_notebooks/OpenEnv_and_mcp_Single_Gym_Client_Meta_Turing.ipynb).
+For interactive evaluation, see the [notebook](https://github.com/openenv/OpenEnv/blob/main/envs/calendar_env/client_notebooks/OpenEnv_and_mcp_Single_Gym_Client_Meta_Turing.ipynb).

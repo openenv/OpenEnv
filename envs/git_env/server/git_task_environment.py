@@ -11,6 +11,7 @@ This module provides an optimized Git environment for scenarios where:
 """
 
 import uuid
+from typing import Any
 
 from openenv.core.env_server import Action, Environment, Observation
 
@@ -107,7 +108,13 @@ class GitTaskEnvironment(Environment):
             print("Warning: Gitea server not ready")
             self._state.gitea_ready = False
 
-    def reset(self, task_id: str | None = None) -> Observation:
+    def reset(
+        self,
+        task_id: str | None = None,
+        seed: int | None = None,
+        episode_id: str | None = None,
+        **kwargs: Any,
+    ) -> Observation:
         """
         Reset environment to clean state.
 
@@ -117,14 +124,20 @@ class GitTaskEnvironment(Environment):
         - Otherwise: clone from Gitea (slower, ~5-10s)
 
         Args:
-            task_id: Optional task identifier for task-specific base states
+            task_id (`str`, *optional*):
+                Task identifier for task-specific base states.
+            seed (`int`, *optional*):
+                Accepted for API compatibility. Resetting to a base state has no
+                randomness, so it has no effect.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
 
         Returns:
             Initial observation indicating environment is ready
         """
         # Initialize fresh state
         self._state = GitState(
-            episode_id=str(uuid.uuid4()),
+            episode_id=episode_id if episode_id is not None else str(uuid.uuid4()),
             step_count=0,
             gitea_ready=self._git_client.is_ready,
             workspace_path=self.workspace_dir,

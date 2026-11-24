@@ -19,7 +19,7 @@ FROM python:3.11-slim
 # Set metadata
 LABEL maintainer="OpenEnv Team"
 LABEL description="OpenApp Environment with BrowserGym for UI agent training"
-LABEL org.opencontainers.image.source="https://github.com/huggingface/OpenEnv"
+LABEL org.opencontainers.image.source="https://github.com/openenv/OpenEnv"
 
 # Set working directory
 WORKDIR /app/env

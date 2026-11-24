@@ -14,9 +14,10 @@ import inspect
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AsyncExitStack
 from typing import (
     Any,
@@ -56,11 +57,23 @@ from .mcp_types import (
     ListToolsAction,
     ListToolsObservation,
     McpMethod,
+    ToolErrorType,
     WSMCPMessage,
     WSMCPResponse,
 )
 from .route_config import GetEndpointConfig, register_get_endpoints
 from .serialization import deserialize_action, serialize_observation
+from .session_telemetry import (
+    rubric_counts,
+    rubric_snapshot,
+    SeedAcceptance,
+    SessionTelemetry,
+    ValidationOpenedData,
+    ValidationOpenedResponse,
+    ValidationOpenMessage,
+    ValidationReadMessage,
+    ValidationResponse,
+)
 from .types import (
     Action,
     ConcurrencyConfig,
@@ -181,6 +194,7 @@ class HTTPEnvServer:
         state_cls: Type[State] = State,
         *,
         reset_observation_cls: Optional[Type[Observation]] = None,
+        reset_cls: Type[ResetRequest] = ResetRequest,
     ):
         """
         Initialize HTTP server wrapper.
@@ -208,6 +222,10 @@ class HTTPEnvServer:
                 The `State` subclass this environment reports. Used for the `/state`
                 response model and the `state` entry of `/schema`, so that fields
                 declared by the subclass are published and serialized.
+            reset_cls (`Type[ResetRequest]`, *optional*, defaults to `ResetRequest`):
+                The `ResetRequest` subclass describing this environment's reset parameters.
+                Published as the `reset` entry of `/schema`. It is not used to validate
+                reset requests.
 
         Raises:
             `ValueError`: If both `max_concurrent_envs` and `concurrency_config` are provided.
@@ -253,6 +271,7 @@ class HTTPEnvServer:
         self.observation_cls = observation_cls
         self.reset_observation_cls = reset_observation_cls or observation_cls
         self.state_cls = state_cls
+        self.reset_cls = reset_cls
         self.env_name = env_name or self._default_env_name()
 
         # Session management for WebSocket connections
@@ -260,8 +279,12 @@ class HTTPEnvServer:
         self._session_executors: Dict[str, ThreadPoolExecutor] = {}
         self._session_stacks: Dict[str, AsyncExitStack] = {}
         self._session_info: Dict[str, SessionInfo] = {}
+        self._session_modes: Dict[str, Optional[str]] = {}
         self._session_websocket_attachments: set[str] = set()
         self._session_pending_closes: set[str] = set()
+        # WebSocket messages being handled, per session; such sessions are never
+        # idle-reaped. A count, since an attached socket can share the session.
+        self._session_operations_in_flight: Dict[str, int] = {}
         self._session_lock = asyncio.Lock()
 
         # Create thread pool for running sync code in async context
@@ -270,8 +293,10 @@ class HTTPEnvServer:
 
         self._requires_single_thread_executor = self._detect_single_thread_requirement()
         self._shared_session_executor: Optional[ThreadPoolExecutor] = None
+        self._shared_session_creation_lock: Optional[asyncio.Lock] = None
         if self._requires_single_thread_executor:
             self._shared_session_executor = ThreadPoolExecutor(max_workers=1)
+            self._shared_session_creation_lock = asyncio.Lock()
 
         # Idle session reaper configuration.
         # Timeout is taken from ConcurrencyConfig.session_timeout;
@@ -280,6 +305,7 @@ class HTTPEnvServer:
             self._concurrency_config.session_timeout
         )
         self._reaper_task: Optional[asyncio.Task[None]] = None
+        self._reaper_stop_event = asyncio.Event()
 
     def _default_env_name(self) -> str:
         factory = self._env_factory
@@ -370,7 +396,9 @@ class HTTPEnvServer:
 
         return valid_kwargs
 
-    async def _create_session(self) -> tuple[str, Environment]:
+    async def _create_session(
+        self, mode: Optional[str | ServerMode] = None
+    ) -> tuple[str, Environment]:
         """
         Create a new WebSocket session with its own environment instance.
 
@@ -400,57 +428,219 @@ class HTTPEnvServer:
             self._session_executors[session_id] = executor
             self._sessions[session_id] = None  # placeholder until env is ready
 
-        try:
-            # Create environment in the executor thread (outside lock)
-            loop = asyncio.get_event_loop()
-            env = await loop.run_in_executor(executor, self._env_factory)
-        except Exception as e:
-            async with self._session_lock:
-                if executor is not self._shared_session_executor:
-                    executor.shutdown(wait=False)
-                self._session_executors.pop(session_id, None)
-                self._sessions.pop(session_id, None)
-            factory_name = getattr(
-                self._env_factory, "__name__", str(self._env_factory)
-            )
-            raise EnvironmentFactoryError(factory_name) from e
+        # Every await from here to registration runs with the slot reserved, so
+        # cancellation has to release it. CancelledError is not an Exception, so
+        # the handlers below never see it, and a surviving reservation is
+        # permanent: capacity counts _sessions, while the idle reaper only scans
+        # sessions that reached _session_info.
+        env: Optional[Environment] = None
+        stack: Optional[AsyncExitStack] = None
+        factory_future: Optional[Future[Environment]] = None
+        mcp_entry_task: Optional[asyncio.Task[Any]] = None
+        cleanup_task: Optional[asyncio.Task[None]] = None
+        creation_lock_acquired = False
 
-        # Hold the MCP session open for the lifetime of this session,
-        # matching the WebSocket path's AsyncExitStack pattern.  This
-        # prevents per-request MCP transport teardown/reconnection and
-        # preserves FastMCP session state (ctx.set_state / ctx.get_state)
-        # across HTTP calls within the same OpenEnv session.
-        stack = AsyncExitStack()
+        def start_cleanup() -> asyncio.Task[None]:
+            # Startup failure and cancellation share one cleanup owner. Whoever
+            # gets here first starts the task; a later caller joins the same one
+            # instead of submitting a second env.close().
+            nonlocal cleanup_task
+            if cleanup_task is None:
+                cleanup_task = asyncio.create_task(
+                    self._discard_reserved_session(
+                        session_id,
+                        executor,
+                        env,
+                        stack,
+                        factory_future,
+                        mcp_entry_task,
+                    )
+                )
+            return cleanup_task
+
+        async def drain_cleanup(task: asyncio.Task[None]) -> None:
+            # ASGI cancel scopes may cancel a request repeatedly. Keep awaiting
+            # the shielded cleanup task until it reaches a terminal state so
+            # cancellation cannot escape while the reservation still exists.
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        pass
+                task.result()
+                raise
+
         try:
-            mcp_session_factory = getattr(env, "mcp_session", None)
-            if callable(mcp_session_factory):
-                mcp_session_cm = cast(AsyncContextManager[Any], mcp_session_factory())
-                await stack.enter_async_context(mcp_session_cm)
-        except Exception:
-            # MCP transport failed to start — clean up the reserved slot,
-            # the env, and the executor so they don't leak permanently
-            # against _max_concurrent_envs.
-            await stack.aclose()  # best-effort
+            if self._shared_session_creation_lock is not None:
+                await self._shared_session_creation_lock.acquire()
+                creation_lock_acquired = True
+
+            try:
+                # Create environment in the executor thread (outside lock).
+                # submit() plus wrap_future() is what run_in_executor() does
+                # internally; spelling it out keeps the thread's future, which is
+                # the only handle on an environment still being built when the
+                # await is cancelled.
+                loop = asyncio.get_event_loop()
+                factory_future = executor.submit(self._env_factory)
+                env = await asyncio.wrap_future(factory_future, loop=loop)
+                mode_val = (
+                    mode.value
+                    if isinstance(mode, ServerMode)
+                    else (str(mode) if mode is not None else None)
+                )
+                if mode_val is not None and hasattr(env, "set_mode"):
+                    env.set_mode(mode_val)
+            except Exception as e:
+                async with self._session_lock:
+                    if executor is not self._shared_session_executor:
+                        executor.shutdown(wait=False)
+                    self._session_executors.pop(session_id, None)
+                    self._sessions.pop(session_id, None)
+                factory_name = getattr(
+                    self._env_factory, "__name__", str(self._env_factory)
+                )
+                raise EnvironmentFactoryError(factory_name) from e
+
+            # The factory result is delivered, so the shared executor thread is
+            # free. Release the creation lock before MCP startup: it exists to
+            # order factory calls (and disposal of a factory cancelled
+            # mid-flight) on that one thread, and holding it through an MCP
+            # handshake lets a single stalled connection starve every later
+            # session's constructor. Cancellation during construction keeps the
+            # lock instead, so late-factory disposal still precedes the next
+            # constructor.
+            if creation_lock_acquired:
+                assert self._shared_session_creation_lock is not None
+                self._shared_session_creation_lock.release()
+                creation_lock_acquired = False
+
+            # Hold the MCP session open for the lifetime of this session,
+            # matching the WebSocket path's AsyncExitStack pattern.  This
+            # prevents per-request MCP transport teardown/reconnection and
+            # preserves FastMCP session state (ctx.set_state / ctx.get_state)
+            # across HTTP calls within the same OpenEnv session.
+            stack = AsyncExitStack()
+            try:
+                mcp_session_factory = getattr(env, "mcp_session", None)
+                if callable(mcp_session_factory):
+                    mcp_session_cm = cast(
+                        AsyncContextManager[Any], mcp_session_factory()
+                    )
+                    # Enter in its own task and await it shielded. An entry that
+                    # blocks before yielding may release resources in its own
+                    # finally, and the stack cannot replay that cleanup: it
+                    # registers the exit callback only once __aenter__ returns.
+                    # Shielding keeps repeated cancellation off the entry, so
+                    # the cleanup owner can cancel it exactly once and drain the
+                    # unwind instead of aborting it part-way.
+                    mcp_entry_task = asyncio.create_task(
+                        stack.enter_async_context(mcp_session_cm)
+                    )
+                    await asyncio.shield(mcp_entry_task)
+            except Exception:
+                # MCP transport failed to start — clean up the reserved slot,
+                # the env, and the executor so they don't leak permanently
+                # against _max_concurrent_envs. Cancellation arriving mid-close
+                # joins this same task rather than closing the env twice.
+                await drain_cleanup(start_cleanup())
+                raise
+
             async with self._session_lock:
-                self._sessions.pop(session_id, None)
-                self._session_executors.pop(session_id, None)
-                self._session_info.pop(session_id, None)
-            await self._cleanup_session_resources(env, executor)
+                self._sessions[session_id] = env
+                self._session_stacks[session_id] = stack
+                if mode is not None:
+                    self._session_modes[session_id] = mode_val
+                now = time.time()
+                self._session_info[session_id] = SessionInfo(
+                    session_id=session_id,
+                    created_at=current_time,
+                    last_activity_at=now,
+                    step_count=0,
+                    environment_type=type(env).__name__,
+                )
+        except asyncio.CancelledError:
+            # Joins the cleanup already under way if startup failure began one,
+            # so the environment is closed by a single owner.
+            try:
+                await drain_cleanup(start_cleanup())
+            except asyncio.CancelledError:
+                pass
             raise
-
-        async with self._session_lock:
-            self._sessions[session_id] = env
-            self._session_stacks[session_id] = stack
-            now = time.time()
-            self._session_info[session_id] = SessionInfo(
-                session_id=session_id,
-                created_at=current_time,
-                last_activity_at=now,
-                step_count=0,
-                environment_type=type(env).__name__,
-            )
+        finally:
+            if creation_lock_acquired:
+                assert self._shared_session_creation_lock is not None
+                self._shared_session_creation_lock.release()
 
         return session_id, env
+
+    async def _discard_reserved_session(
+        self,
+        session_id: str,
+        executor: ThreadPoolExecutor,
+        env: Optional[Environment] = None,
+        stack: Optional[AsyncExitStack] = None,
+        factory_future: Optional[Future[Environment]] = None,
+        mcp_entry_task: Optional[asyncio.Task[Any]] = None,
+    ) -> None:
+        """
+        Release a session slot reserved by `_create_session` that never opened.
+
+        Drops every mapping the slot may have reached and closes whatever the
+        interrupted creation built, so the slot stops counting against
+        `max_concurrent_envs` and no environment outlives it.
+
+        Args:
+            session_id (`str`):
+                The reserved session ID to release.
+            executor (`ThreadPoolExecutor`):
+                The executor reserved alongside the slot.
+            env (`Environment`, *optional*):
+                The environment, if the factory already returned one.
+            stack (`AsyncExitStack`, *optional*):
+                The MCP session stack, if one was already entered.
+            factory_future (`Future`, *optional*):
+                The factory's thread future, if the factory call was reached.
+                Used to close an environment the thread is still building.
+            mcp_entry_task (`asyncio.Task`, *optional*):
+                The in-flight MCP session entry, if MCP startup was reached.
+                Cancelled and drained here so an entry interrupted before it
+                yielded can finish releasing what it had already acquired.
+        """
+        if mcp_entry_task is not None:
+            # Cancel at most once: a second cancellation would abort the entry's
+            # own unwind, and the stack holds no exit callback to replay it.
+            if not mcp_entry_task.done():
+                mcp_entry_task.cancel()
+            try:
+                await mcp_entry_task
+            except (asyncio.CancelledError, Exception):
+                # A cancelled or failed entry has unwound itself. If it did
+                # finish, `stack` owns the context and closes it below.
+                pass
+
+        if env is None and factory_future is not None:
+            # Cancelling the await can cancel a queued future, but cannot stop a
+            # factory whose executor thread is already running. In that case,
+            # keep the capacity reservation until its result can be disposed of.
+            if not factory_future.cancel():
+                try:
+                    env = await asyncio.wrap_future(factory_future)
+                except (asyncio.CancelledError, Exception):
+                    # A cancelled or failed factory produced no environment to
+                    # close. Its capacity reservation still has to be released.
+                    env = None
+
+        await self._cleanup_session_resources(env, executor, stack)
+        async with self._session_lock:
+            self._sessions.pop(session_id, None)
+            self._session_executors.pop(session_id, None)
+            self._session_stacks.pop(session_id, None)
+            self._session_info.pop(session_id, None)
+            self._session_modes.pop(session_id, None)
 
     async def _destroy_session(self, session_id: str) -> None:
         """
@@ -465,6 +655,7 @@ class HTTPEnvServer:
             executor = self._session_executors.pop(session_id, None)
             stack = self._session_stacks.pop(session_id, None)
             self._session_info.pop(session_id, None)
+            self._session_modes.pop(session_id, None)
             self._session_websocket_attachments.discard(session_id)
             self._session_pending_closes.discard(session_id)
 
@@ -533,17 +724,26 @@ class HTTPEnvServer:
         interval = max(timeout / 4, 5.0)  # check frequently enough
         while True:
             try:
-                await asyncio.sleep(interval)
+                try:
+                    await asyncio.wait_for(
+                        self._reaper_stop_event.wait(), timeout=interval
+                    )
+                    return
+                except asyncio.TimeoutError:
+                    pass
                 now = time.time()
                 stale_ids: list[str] = []
                 async with self._session_lock:
                     for sid, info in self._session_info.items():
                         if (
                             sid not in self._session_websocket_attachments
+                            and sid not in self._session_operations_in_flight
                             and now - info.last_activity_at > timeout
                         ):
                             stale_ids.append(sid)
                 for sid in stale_ids:
+                    if self._reaper_stop_event.is_set():
+                        return
                     # Re-check under lock: activity may have arrived since
                     # the snapshot was taken, making this session active again.
                     # Refresh `now` so slow _destroy_session calls don't cause
@@ -554,6 +754,7 @@ class HTTPEnvServer:
                         if (
                             info is None
                             or sid in self._session_websocket_attachments
+                            or sid in self._session_operations_in_flight
                             or (now - info.last_activity_at) <= timeout
                         ):
                             continue
@@ -569,12 +770,14 @@ class HTTPEnvServer:
     def _start_reaper(self) -> None:
         """Start the idle-session reaper if a timeout is configured."""
         if self._session_idle_timeout_s is not None and self._reaper_task is None:
+            self._reaper_stop_event.clear()
             self._reaper_task = asyncio.create_task(self._reap_idle_sessions())
 
-    def _stop_reaper(self) -> None:
-        """Cancel the reaper background task."""
+    async def _stop_reaper(self) -> None:
+        """Stop the reaper after any in-progress session cleanup finishes."""
         if self._reaper_task is not None:
-            self._reaper_task.cancel()
+            self._reaper_stop_event.set()
+            await self._reaper_task
             self._reaper_task = None
 
     def get_session_info(self, session_id: str) -> Optional[SessionInfo]:
@@ -879,20 +1082,30 @@ class HTTPEnvServer:
                     f"Invalid mode: '{mode}'. Must be one of: {valid_modes}"
                 )
 
-        # Wire up idle-session reaper lifecycle via app events
+        # Only explicitly provisioned simulation servers accept validation controls.
+        validation_token = os.environ.get("OPENENV_VALIDATION_TOKEN", "")
+        validation_enabled = (
+            mode == ServerMode.SIMULATION and 32 <= len(validation_token) <= 256
+        )
+
+        # Wire up session lifecycle via app events
         server_ref = self
 
         async def _start_session_reaper() -> None:
             server_ref._start_reaper()
 
-        async def _stop_session_reaper() -> None:
-            server_ref._stop_reaper()
+        async def _shutdown_sessions() -> None:
+            await server_ref._stop_reaper()
+            async with server_ref._session_lock:
+                session_ids = list(server_ref._sessions)
+            for session_id in session_ids:
+                await server_ref._destroy_session(session_id)
             if server_ref._shared_session_executor is not None:
                 server_ref._shared_session_executor.shutdown(wait=True)
 
         if not getattr(app.router, "_openenv_reaper_registered", False):
             app.router.on_startup.append(_start_session_reaper)
-            app.router.on_shutdown.append(_stop_session_reaper)
+            app.router.on_shutdown.append(_shutdown_sessions)
             app.router._openenv_reaper_registered = True  # type: ignore[attr-defined]
 
         # Helper function to handle reset endpoint
@@ -993,7 +1206,7 @@ class HTTPEnvServer:
                         request_id=request_id,
                     )
                 try:
-                    created_session_id, _ = await self._create_session()
+                    created_session_id, _ = await self._create_session(mode=mode)
                 except SessionCapacityError as e:
                     return JsonRpcResponse.error_response(
                         JsonRpcErrorCode.SERVER_ERROR,
@@ -1033,6 +1246,21 @@ class HTTPEnvServer:
                     )
 
                 async with self._session_lock:
+                    session_mode = self._session_modes.get(target_session_id)
+                    if (
+                        (
+                            target_session_id in self._sessions
+                            or target_session_id in self._session_websocket_attachments
+                        )
+                        and session_mode is not None
+                        and session_mode != mode.value
+                    ):
+                        return JsonRpcResponse.error_response(
+                            JsonRpcErrorCode.INVALID_PARAMS,
+                            f"Session '{target_session_id}' belongs to mode '{session_mode}', not '{mode.value}'",
+                            request_id=request_id,
+                        )
+
                     if target_session_id in self._session_websocket_attachments:
                         env = _MISSING
                         attached = True
@@ -1046,6 +1274,7 @@ class HTTPEnvServer:
                         executor = self._session_executors.pop(target_session_id, None)
                         stack = self._session_stacks.pop(target_session_id, None)
                         self._session_info.pop(target_session_id, None)
+                        self._session_modes.pop(target_session_id, None)
                     elif not attached:
                         executor = None
                         stack = None
@@ -1099,11 +1328,19 @@ class HTTPEnvServer:
             elif requested_session_id:
                 async with self._session_lock:
                     _env = self._sessions.get(requested_session_id, _MISSING)
+                    session_mode = self._session_modes.get(requested_session_id)
 
                 if _env is _MISSING:
                     return JsonRpcResponse.error_response(
                         JsonRpcErrorCode.INVALID_PARAMS,
                         f"Unknown session_id: {requested_session_id}",
+                        request_id=request_id,
+                    )
+
+                if session_mode is not None and session_mode != mode.value:
+                    return JsonRpcResponse.error_response(
+                        JsonRpcErrorCode.INVALID_PARAMS,
+                        f"Session '{requested_session_id}' belongs to mode '{session_mode}', not '{mode.value}'",
                         request_id=request_id,
                     )
 
@@ -1118,6 +1355,8 @@ class HTTPEnvServer:
                 managed_session_id = requested_session_id
             else:
                 _env = self._env_factory()
+                if hasattr(_env, "set_mode"):
+                    _env.set_mode(mode.value)
                 should_close = True
             try:
                 mcp_client = getattr(_env, "mcp_client", None)
@@ -1142,6 +1381,27 @@ class HTTPEnvServer:
                 }
 
                 if method == McpMethod.TOOLS_LIST:
+                    if hasattr(_env, "_async_handle_list_tools"):
+                        obs = await _env._async_handle_list_tools()
+                        if obs.metadata and "error" in obs.metadata:
+                            return JsonRpcResponse.error_response(
+                                JsonRpcErrorCode.INTERNAL_ERROR,
+                                obs.metadata["error"],
+                                request_id=request_id,
+                            )
+                        tools = [
+                            {
+                                "name": t.name,
+                                "description": t.description or "",
+                                "inputSchema": t.input_schema,
+                            }
+                            for t in obs.tools
+                        ]
+                        return JsonRpcResponse.success(
+                            result={"tools": tools},
+                            request_id=request_id,
+                        )
+
                     # Check if environment is MCP-enabled
                     if mcp_client is None and mcp_server is None:
                         if supports_mcp_style_actions:
@@ -1164,7 +1424,7 @@ class HTTPEnvServer:
                                 request_id=request_id,
                             )
                         return JsonRpcResponse.error_response(
-                            JsonRpcErrorCode.INTERNAL_ERROR,
+                            JsonRpcErrorCode.METHOD_NOT_FOUND,
                             "Environment does not support MCP",
                             request_id=request_id,
                         )
@@ -1180,7 +1440,7 @@ class HTTPEnvServer:
                         return JsonRpcResponse.success(
                             result={
                                 "tools": [
-                                    t.model_dump()
+                                    t.model_dump(by_alias=True)
                                     if hasattr(t, "model_dump")
                                     else dict(t)
                                     for t in tools
@@ -1221,6 +1481,32 @@ class HTTPEnvServer:
                             request_id=request_id,
                         )
 
+                    if hasattr(_env, "_mode_tools") and any(
+                        m is not None for m in _env._mode_tools.get(tool_name, {})
+                    ):
+                        obs = await _env._async_handle_call_tool(
+                            CallToolAction(tool_name=tool_name, arguments=arguments)
+                        )
+                        if obs.error:
+                            err_code = (
+                                JsonRpcErrorCode.INVALID_PARAMS
+                                if obs.error.error_type
+                                in (
+                                    ToolErrorType.INVALID_ARGS,
+                                    ToolErrorType.TOOL_NOT_FOUND,
+                                )
+                                else JsonRpcErrorCode.INTERNAL_ERROR
+                            )
+                            return JsonRpcResponse.error_response(
+                                err_code,
+                                obs.error.message,
+                                request_id=request_id,
+                            )
+                        return JsonRpcResponse.success(
+                            result=_make_json_serializable(obs.result),
+                            request_id=request_id,
+                        )
+
                     if mcp_client is None and mcp_server is None:
                         if supports_mcp_style_actions:
                             observation = await call_mcp_style_step(
@@ -1242,7 +1528,7 @@ class HTTPEnvServer:
                                 request_id=request_id,
                             )
                         return JsonRpcResponse.error_response(
-                            JsonRpcErrorCode.INTERNAL_ERROR,
+                            JsonRpcErrorCode.METHOD_NOT_FOUND,
                             "Environment does not support MCP",
                             request_id=request_id,
                         )
@@ -1414,7 +1700,7 @@ class HTTPEnvServer:
 
             try:
                 # Create session with dedicated environment
-                session_id, session_env = await self._create_session()
+                session_id, session_env = await self._create_session(mode=mode)
                 if session_env is None:
                     raise RuntimeError(
                         "Session environment not initialized for MCP websocket"
@@ -1661,13 +1947,14 @@ The structure of the state object is defined by the environment's State model.
             tags=["Schema"],
             summary="Get all JSON schemas",
             description="""
-Get JSON schemas for actions, observations, and state in a single response.
+Get JSON schemas for actions, observations, state, and reset parameters in a single response.
 
 Returns a combined schema object containing:
 - **action**: JSON schema for actions accepted by this environment
 - **observation**: JSON schema for observations returned by step
 - **reset_observation**: JSON schema for observations returned by reset
 - **state**: JSON schema for environment state objects
+- **reset**: JSON schema for reset parameters accepted by this environment
 
 This is more efficient than calling individual schema endpoints and provides
 all schema information needed to interact with the environment.
@@ -1690,6 +1977,10 @@ all schema information needed to interact with the environment.
                                     "type": "object",
                                     "properties": {"step_count": {"type": "integer"}},
                                 },
+                                "reset": {
+                                    "type": "object",
+                                    "properties": {"seed": {"type": "integer"}},
+                                },
                             }
                         }
                     },
@@ -1703,6 +1994,7 @@ all schema information needed to interact with the environment.
                 observation=self.observation_cls.model_json_schema(),
                 reset_observation=self.reset_observation_cls.model_json_schema(),
                 state=self.state_cls.model_json_schema(),
+                reset=self.reset_cls.model_json_schema(),
             )
 
         # Register MCP endpoint for production mode (direct MCP access)
@@ -1753,6 +2045,8 @@ all schema information needed to interact with the environment.
             session_env = None
             owns_session = False
             attached_session = False
+            telemetry = None
+            operations_started = False
 
             try:
                 requested_session_id = websocket.query_params.get("session_id")
@@ -1761,9 +2055,14 @@ all schema information needed to interact with the environment.
                         attached_env = self._sessions.get(
                             requested_session_id, _MISSING
                         )
+                        session_mode = self._session_modes.get(requested_session_id)
                         if attached_env is _MISSING:
                             raise RuntimeError(
                                 f"Unknown session_id: {requested_session_id}"
+                            )
+                        if session_mode is not None and session_mode != mode.value:
+                            raise RuntimeError(
+                                f"Session '{requested_session_id}' belongs to mode '{session_mode}', not '{mode.value}'"
                             )
                         if attached_env is None:
                             raise RuntimeError(
@@ -1780,7 +2079,7 @@ all schema information needed to interact with the environment.
                         attached_session = True
                     self._update_session_activity(session_id)
                 else:
-                    session_id, session_env = await self._create_session()
+                    session_id, session_env = await self._create_session(mode=mode)
                     owns_session = True
 
                 if session_env is None:
@@ -1803,6 +2102,19 @@ all schema information needed to interact with the environment.
                         # Receive message from client
                         raw_message = await websocket.receive_text()
 
+                        # The reaper or shutdown may have destroyed this
+                        # session (closing its env and freeing its slot).
+                        if session_id not in self._sessions:
+                            error_resp = WSErrorResponse(
+                                data={
+                                    "message": "Session expired or was closed; "
+                                    "open a new connection",
+                                    "code": WSErrorCode.SESSION_ERROR,
+                                }
+                            )
+                            await websocket.send_text(error_resp.model_dump_json())
+                            break
+
                         try:
                             message_dict = json.loads(raw_message)
                         except json.JSONDecodeError as e:
@@ -1817,6 +2129,67 @@ all schema information needed to interact with the environment.
 
                         msg_type = message_dict.get("type", "")
 
+                        if msg_type in {"validation_open", "validation_read"}:
+                            # Do not return Pydantic input/error details: these messages
+                            # contain credentials and must never echo or log them.
+                            try:
+                                if not validation_enabled or not owns_session:
+                                    raise ValueError("Validation unavailable")
+                                if msg_type == "validation_open":
+                                    auth = ValidationOpenMessage.model_validate(
+                                        message_dict
+                                    )
+                                    if telemetry is not None or operations_started:
+                                        raise ValueError("Validation already started")
+                                    if not secrets.compare_digest(
+                                        validation_token.encode(),
+                                        auth.data.token.get_secret_value().encode(),
+                                    ):
+                                        raise ValueError("Unauthorized")
+                                    telemetry = SessionTelemetry()
+                                    response = ValidationOpenedResponse(
+                                        data=ValidationOpenedData(
+                                            capability=telemetry.capability
+                                        )
+                                    )
+                                else:
+                                    auth = ValidationReadMessage.model_validate(
+                                        message_dict
+                                    )
+                                    if telemetry is None or not telemetry.authorized(
+                                        auth.data.capability.get_secret_value()
+                                    ):
+                                        raise ValueError("Unauthorized")
+                                    response = ValidationResponse(
+                                        data=telemetry.snapshot
+                                    )
+                            except Exception:
+                                response = WSErrorResponse(
+                                    data={
+                                        "message": "Validation unavailable or unauthorized",
+                                        "code": WSErrorCode.VALIDATION_ERROR,
+                                    }
+                                )
+                            await websocket.send_text(response.model_dump_json())
+                            continue
+
+                        seed_acceptance = None
+                        before_scores = None
+                        if msg_type in {"reset", "step", "state"}:
+                            operations_started = True
+                        if telemetry is not None and msg_type == "step":
+                            try:
+                                before_scores = rubric_counts(
+                                    getattr(session_env, "rubric", None)
+                                )
+                            except Exception:
+                                telemetry.snapshot.rubric_error = (
+                                    "Rubric introspection unavailable"
+                                )
+
+                        in_flight = self._session_operations_in_flight
+                        in_flight[session_id] = in_flight.get(session_id, 0) + 1
+                        self._update_session_activity(session_id)
                         try:
                             match msg_type:
                                 case "reset":
@@ -1848,7 +2221,12 @@ all schema information needed to interact with the environment.
                                             )
                                         )
 
-                                    self._update_session_activity(session_id)
+                                    if telemetry is not None:
+                                        seed_acceptance = SeedAcceptance(
+                                            requested="seed" in msg.data,
+                                            value=msg.data.get("seed"),
+                                            accepted="seed" in valid_kwargs,
+                                        )
 
                                     response = WSObservationResponse(
                                         data=serialize_observation(observation),
@@ -1925,9 +2303,39 @@ all schema information needed to interact with the environment.
                                         }
                                     )
 
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                nodes = None
+                                try:
+                                    if msg_type in {"reset", "step"}:
+                                        nodes = rubric_snapshot(
+                                            getattr(session_env, "rubric", None),
+                                            before_scores,
+                                        )
+                                except Exception:
+                                    nodes = []
+                                    telemetry.snapshot.rubric_error = (
+                                        "Rubric introspection unavailable"
+                                    )
+                                telemetry.append(
+                                    msg_type,
+                                    message_dict,
+                                    response.model_dump(mode="json"),
+                                    seed=seed_acceptance,
+                                    rubric=nodes,
+                                )
                             await websocket.send_text(response.model_dump_json())
 
                         except ValidationError as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": "Invalid message",
@@ -1937,6 +2345,12 @@ all schema information needed to interact with the environment.
                             )
                             await websocket.send_text(error_resp.model_dump_json())
                         except Exception as e:
+                            if telemetry is not None and msg_type in {
+                                "reset",
+                                "step",
+                                "state",
+                            }:
+                                telemetry.incomplete("Session operation failed")
                             error_resp = WSErrorResponse(
                                 data={
                                     "message": str(e),
@@ -1944,6 +2358,11 @@ all schema information needed to interact with the environment.
                                 }
                             )
                             await websocket.send_text(error_resp.model_dump_json())
+                        finally:
+                            in_flight[session_id] -= 1
+                            if in_flight[session_id] == 0:
+                                del in_flight[session_id]
+                            self._update_session_activity(session_id)
 
             except WebSocketDisconnect:
                 pass
@@ -2003,6 +2422,7 @@ def create_app(
     *,
     mode: Optional[ServerMode | str] = None,
     reset_observation_cls: Optional[Type[Observation]] = None,
+    reset_cls: Type[ResetRequest] = ResetRequest,
 ) -> FastAPI:
     """
     Create a FastAPI application with or without web interface.
@@ -2047,6 +2467,9 @@ def create_app(
         state_cls (`Type[State]`, *optional*, defaults to `State`):
             The `State` subclass this environment reports, used for the `/state`
             response model and the `state` entry of `/schema`.
+        reset_cls (`Type[ResetRequest]`, *optional*, defaults to `ResetRequest`):
+            The `ResetRequest` subclass describing this environment's reset parameters,
+            published as the `reset` entry of `/schema`. Not used for validation.
         mode (`ServerMode` or `str`, *optional*):
             Server mode. When `None`, resolved from the `OPENENV_MODE`
             environment variable, defaulting to simulation.
@@ -2074,6 +2497,7 @@ def create_app(
             max_concurrent_envs,
             concurrency_config,
             state_cls=state_cls,
+            reset_cls=reset_cls,
             reset_observation_cls=reset_observation_cls,
             gradio_builder=gradio_builder,
             custom_tab_name=custom_tab_name,
@@ -2092,6 +2516,7 @@ def create_app(
             concurrency_config,
             env_name=env_name,
             state_cls=state_cls,
+            reset_cls=reset_cls,
             reset_observation_cls=reset_observation_cls,
             mode=mode,
         )
@@ -2108,6 +2533,7 @@ def create_fastapi_app(
     *,
     mode: Optional[ServerMode | str] = None,
     reset_observation_cls: Optional[Type[Observation]] = None,
+    reset_cls: Type[ResetRequest] = ResetRequest,
 ) -> FastAPI:
     """
     Create a FastAPI application with comprehensive documentation.
@@ -2133,6 +2559,9 @@ def create_fastapi_app(
         state_cls (`Type[State]`, *optional*, defaults to `State`):
             The `State` subclass this environment reports, used for the `/state`
             response model and the `state` entry of `/schema`.
+        reset_cls (`Type[ResetRequest]`, *optional*, defaults to `ResetRequest`):
+            The `ResetRequest` subclass describing this environment's reset parameters,
+            published as the `reset` entry of `/schema`. Not used for validation.
         mode (`ServerMode` or `str`, *optional*):
             Server mode. When `None`, resolved from the `OPENENV_MODE`
             environment variable, defaulting to simulation.
@@ -2160,7 +2589,7 @@ HTTP API for interacting with OpenEnv environments through a standardized interf
 * **Environment Reset**: Initialize or restart episodes
 * **Action Execution**: Send actions and receive observations
 * **State Inspection**: Query current environment state
-* **Schema Access**: Retrieve JSON schemas for actions and observations
+* **Schema Access**: Retrieve JSON schemas for actions, observations, state, and reset parameters
 
 ## Workflow
 
@@ -2190,7 +2619,7 @@ HTTP API for interacting with OpenEnv environments through a standardized interf
             },
             {
                 "name": "Schema",
-                "description": "JSON Schema endpoints for actions, observations, and state",
+                "description": "JSON Schema endpoints for actions, observations, state, and reset parameters",
             },
             {"name": "Health", "description": "Service health and status checks"},
         ],
@@ -2199,11 +2628,11 @@ HTTP API for interacting with OpenEnv environments through a standardized interf
         openapi_url="/openapi.json",
         contact={
             "name": "OpenEnv Team",
-            "url": "https://github.com/huggingface/OpenEnv",
+            "url": "https://github.com/openenv/OpenEnv",
         },
         license_info={
             "name": "BSD-3-Clause",
-            "url": "https://github.com/huggingface/OpenEnv/blob/main/LICENSE",
+            "url": "https://github.com/openenv/OpenEnv/blob/main/LICENSE",
         },
     )
 
@@ -2215,9 +2644,14 @@ HTTP API for interacting with OpenEnv environments through a standardized interf
         concurrency_config=concurrency_config,
         env_name=env_name,
         state_cls=state_cls,
+        reset_cls=reset_cls,
         reset_observation_cls=reset_observation_cls,
     )
     if mode is None:
         mode = os.environ.get("OPENENV_MODE", ServerMode.SIMULATION.value)
     server.register_routes(app, mode=mode)
+
+    from .security import attach_guard
+
+    attach_guard(app)
     return app

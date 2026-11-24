@@ -8,6 +8,8 @@ OpenEnv wrapper for [Terminal-Bench 2](https://github.com/laude-institute/termin
 | **Local** | Runs commands in the server process (no Docker) | Hugging Face Spaces, environments without Docker access |
 | **Docker** | Runs each task in its own container | Full TB2.0 fidelity with custom task images |
 
+Try it on the [`openenv/tbench2`](https://huggingface.co/spaces/openenv/tbench2) Space, or connect a client to `https://openenv-tbench2.hf.space`.
+
 ## Quick Start
 
 ```python
@@ -89,7 +91,7 @@ docker build -t tbench2-env:latest -f envs/tbench2_env/server/Dockerfile .
 
 ### Local Mode (Default)
 
-Commands execute directly in the server process. Ideal for HF Spaces where Docker-in-Docker is unavailable.
+Commands execute on the server's host, as the server's user, with network access. Sessions share the host, the task folders and the verifier's fixed paths, so local mode serves one session at a time (use Docker mode for concurrent sessions). Ideal for HF Spaces where Docker-in-Docker is unavailable. The agent's shell gets only an allowlist of the server's environment variables (no tokens or keys), and on Linux the server is non-dumpable, so that shell can't read the server's environment through `/proc`. Keep secrets out of files that user can read.
 
 ```bash
 # Default - local mode

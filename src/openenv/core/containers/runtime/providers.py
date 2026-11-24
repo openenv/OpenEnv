@@ -9,10 +9,65 @@ This module provides a pluggable architecture for different container providers
 
 from __future__ import annotations
 
+import os
+import tempfile
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Sequence, TypeVar
+from contextlib import contextmanager
+from typing import (
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+)
 
 _ContainerProviderT = TypeVar("_ContainerProviderT", bound="ContainerProvider")
+
+
+@contextmanager
+def _env_file_args(
+    env_vars: Optional[Mapping[str, str]],
+) -> Iterator[Tuple[List[str], Optional[str]]]:
+    """
+    Yield `--env-file` arguments for the container's environment variables,
+    and the text to send to docker's stdin.
+
+    The values (often tokens) stay out of the command line, which other
+    processes can read and errors include, and out of the docker CLI's own
+    environment, where names like `DOCKER_HOST` or `PATH` would change how
+    the CLI runs. Docker reads them from its stdin (`/dev/stdin`), so no file
+    is written and a CLI with a private `/tmp` (snap) still gets them. Windows
+    has no `/dev/stdin`: there they go in a temporary file only this user can
+    read, removed once docker returns.
+    """
+    if not env_vars:
+        yield [], None
+        return
+    lines = []
+    for key, value in env_vars.items():
+        key, value = str(key), str(value)
+        if not key or key.startswith("#") or any(c in key for c in "= \t\r\n\0"):
+            raise ValueError(f"Invalid environment variable name: {key!r}")
+        if any(c in value for c in "\r\n\0"):
+            raise ValueError(
+                f"Environment variable {key!r}: values can't contain line breaks "
+                "or NUL characters"
+            )
+        lines.append(f"{key}={value}\n")
+    if os.name != "nt":
+        yield ["--env-file", "/dev/stdin"], "".join(lines)
+        return
+    fd, path = tempfile.mkstemp(prefix="openenv-env-")
+    try:
+        with os.fdopen(fd, "w") as env_file:
+            env_file.writelines(lines)
+        yield ["--env-file", path], None
+    finally:
+        os.unlink(path)
 
 
 class ContainerProvider(ABC):
@@ -21,7 +76,9 @@ class ContainerProvider(ABC):
 
     Providers implement this interface to support different container platforms:
     - LocalDockerProvider: Runs containers on local Docker daemon
-    - KubernetesProvider: Runs containers in Kubernetes cluster
+    - DockerSwarmProvider: Runs containers as a Docker Swarm service
+    - KubernetesProvider: optional ``openenv[kubernetes]`` extra
+      (``kubernetes_provider.py``)
     - FargateProvider: Runs containers on AWS Fargate
     - CloudRunProvider: Runs containers on Google Cloud Run
 
@@ -175,14 +232,18 @@ class LocalDockerProvider(ContainerProvider):
                 Port to expose. If `None`, finds an available port.
             env_vars (`dict`, *optional*):
                 Environment variables for the container.
-            **kwargs:
-                Additional Docker run options.
+            volumes (`dict`, *optional*):
+                Mapping of host paths or volume names to mount configuration.
+                Each configuration must contain a `bind` container path and may
+                contain a `mode` such as `"ro"` or `"rw"`.
 
         Returns:
             `str`: Base URL to connect to the container.
         """
         import subprocess
         import time
+
+        volumes: Optional[Mapping[str, Mapping[str, str]]] = kwargs.get("volumes")
 
         # Find available port if not specified
         if port is None:
@@ -202,17 +263,33 @@ class LocalDockerProvider(ContainerProvider):
             f"{port}:8000",  # Map port
         ]
 
-        # Add environment variables
-        if env_vars:
-            for key, value in env_vars.items():
-                cmd.extend(["-e", f"{key}={value}"])
+        # Add volume mounts before the image name.
+        if volumes:
+            for source, config in volumes.items():
+                bind = config.get("bind")
+                if not bind:
+                    raise ValueError(
+                        f"Volume config for {source!r} must include a non-empty 'bind'"
+                    )
+                mode = config.get("mode")
+                volume_spec = f"{source}:{bind}"
+                if mode:
+                    volume_spec = f"{volume_spec}:{mode}"
+                cmd.extend(["--volume", volume_spec])
 
         # Add image
         cmd.append(image)
 
         # Run container
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            with _env_file_args(env_vars) as (env_args, env_input):
+                result = subprocess.run(
+                    cmd[:2] + env_args + cmd[2:],
+                    input=env_input,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
             self._container_id = result.stdout.strip()
         except subprocess.CalledProcessError as e:
             error_msg = f"Failed to start Docker container.\nCommand: {' '.join(cmd)}\nExit code: {e.returncode}\nStderr: {e.stderr}\nStdout: {e.stdout}"
@@ -441,10 +518,6 @@ class DockerSwarmProvider(ContainerProvider):
         if self._overlay_network:
             cmd.extend(["--network", self._overlay_network])
 
-        if env_vars:
-            for key, value in env_vars.items():
-                cmd.extend(["--env", f"{key}={value}"])
-
         if cpu_limit is not None:
             cmd.extend(["--limit-cpu", str(cpu_limit)])
 
@@ -468,12 +541,14 @@ class DockerSwarmProvider(ContainerProvider):
                 cmd.extend(command_override)
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
+            with _env_file_args(env_vars) as (env_args, env_input):
+                result = subprocess.run(
+                    cmd[:3] + env_args + cmd[3:],
+                    input=env_input,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
             self._service_id = result.stdout.strip()
         except subprocess.CalledProcessError as e:
             error_msg = (
@@ -642,19 +717,6 @@ class DockerSwarmProvider(ContainerProvider):
         clean_image = image.split("/")[-1].split(":")[0]
         timestamp = int(time.time() * 1000)
         return f"{clean_image}-swarm-{timestamp}"
-
-
-class KubernetesProvider(ContainerProvider):
-    """
-    Planned container provider for Kubernetes clusters.
-
-    Not yet implemented: this is a placeholder for the planned Kubernetes
-    backend and does not implement the abstract `ContainerProvider` methods, so
-    it cannot be instantiated. Use `LocalDockerProvider`, `DockerSwarmProvider`,
-    `DaytonaProvider`, or `ACASandboxProvider` instead.
-    """
-
-    pass
 
 
 class RuntimeProvider(ABC):

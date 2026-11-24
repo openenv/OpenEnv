@@ -25,6 +25,8 @@ from typing import Any
 
 from openenv.core.harness.capture import CaptureServer
 
+from .supervisor import get_supervisor
+
 # Where the capture app is mounted when the env server hosts it directly.
 CAPTURE_MOUNT = "/capture"
 
@@ -138,6 +140,12 @@ class HarborService:
             self.capture.stop()
             raise
         return self.public_url
+
+    @property
+    def local_url(self) -> str:
+        """The proxy's loopback URL, for agents running in this process. Empty when it is mounted on a
+        Space's app, whose port this service does not own."""
+        return "" if self.mounted else f"http://127.0.0.1:{self.capture.port}"
 
     def stop(self) -> None:
         """Tear both halves down, even if the first half refuses to go.
@@ -332,6 +340,10 @@ def build_app(
     # their browser start rollouts on this server's endpoint, or reach a server on their own machine
     # that the page itself cannot. Nothing a real visitor does is cross-site.
     app.add_middleware(SameOrigin)
+    # The UI runs each rollout under `asyncio.run` in a worker thread, where a sandbox start cannot
+    # install signal handlers. Startup runs on the main thread inside uvicorn's own signal capture,
+    # so the supervisor wraps uvicorn's handlers and a signal stops those sandboxes on their loops.
+    app.router.on_startup.append(lambda: get_supervisor().install_signal_handlers())
     return app
 
 

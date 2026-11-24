@@ -133,6 +133,14 @@ def iter_python_files(source: Path) -> list[Path]:
     ]
 
 
+def iter_directories(source: Path, name: str) -> list[Path]:
+    return [
+        path
+        for path in sorted(source.rglob(name))
+        if path.is_dir() and not _is_excluded(path.relative_to(source))
+    ]
+
+
 def module_path(source: Path, file_path: Path) -> str:
     rel = file_path.relative_to(source).with_suffix("")
     parts = list(rel.parts)
@@ -196,6 +204,7 @@ def append_dependency_files(
     env_dir: Path,
     env_name: str,
     dependencies: list[str],
+    requires_python: str | None = None,
 ) -> None:
     requirements = env_dir / "server" / "requirements.txt"
     if requirements.exists():
@@ -231,6 +240,8 @@ def append_dependency_files(
             project_dependencies.append(dependency)
             existing.add(_dependency_name(dependency))
     project["dependencies"] = project_dependencies
+    if requires_python:
+        project["requires-python"] = requires_python
 
     tool = data.setdefault("tool", {})
     setuptools = tool.setdefault("setuptools", {})
@@ -266,7 +277,7 @@ class ImportPackageContext:
 
 
 def prepare_import_package(
-    source: Path, destination: Path, env_name: str
+    source: Path, destination: Path, env_name: str, vendor_dir: str | None = None
 ) -> ImportPackageContext:
     from openenv.cli.commands.init import (
         _copy_template_directory,
@@ -282,7 +293,7 @@ def prepare_import_package(
         env_name,
     )
 
-    vendor_dir = safe_vendor_dir_name(source)
+    vendor_dir = vendor_dir or safe_vendor_dir_name(source)
     vendor_path = destination / "vendor" / vendor_dir
     copy_source_tree(source, vendor_path)
     ensure_vendor_package(vendor_path)

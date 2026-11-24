@@ -165,14 +165,14 @@ provider.wait_for_ready(base_url)
 provider.stop_container()
 ```
 
-### Kubernetes Provider (Coming Soon)
+### Kubernetes Provider
 
 ```python
-from openenv.core.containers.runtime import KubernetesProvider
+from openenv.core.containers.runtime.kubernetes_provider import KubernetesProvider
 
 provider = KubernetesProvider(namespace="envs")
 base_url = provider.start_container("my-env:latest")
-# Use environment...
+provider.wait_for_ready(base_url)
 provider.stop_container()
 ```
 
@@ -232,6 +232,6 @@ Contributions are welcome! Please see the main OpenEnv repository for contributi
 
 ## Links
 
-- **Homepage**: https://github.com/huggingface/OpenEnv
-- **Documentation**: https://github.com/huggingface/OpenEnv/blob/main/README.md
-- **Bug Tracker**: https://github.com/huggingface/OpenEnv/issues
+- **Homepage**: https://github.com/openenv/OpenEnv
+- **Documentation**: https://github.com/openenv/OpenEnv/blob/main/README.md
+- **Bug Tracker**: https://github.com/openenv/OpenEnv/issues
