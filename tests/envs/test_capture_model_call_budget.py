@@ -200,6 +200,37 @@ def test_completion_that_reaches_max_tokens_is_forwarded(app_and_engine):
 
 
 @pytest.mark.parametrize(
+    "limits, context_stop",
+    [
+        # The engine applies max_completion_tokens (4096): `length` at 4096 is its output cap
+        ({"max_tokens": 8192, "max_completion_tokens": 4096}, False),
+        # The engine applies max_completion_tokens (8192): `length` at 4096 is the context window
+        ({"max_tokens": 4096, "max_completion_tokens": 8192}, True),
+    ],
+)
+def test_max_completion_tokens_wins_over_max_tokens_as_in_vllm(
+    app_and_engine, limits, context_stop
+):
+    app, engine = app_and_engine
+    session = app.state.registry.create(max_model_calls=17)
+    with TestClient(app) as client:
+        engine.completion = _cut_at(4096)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {session.session_id}"},
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hi"}],
+                **limits,
+            },
+        )
+    assert session.budget_stop_count == int(context_stop)
+    assert response.json()["choices"][0]["finish_reason"] == (
+        "stop" if context_stop else "length"
+    )
+
+
+@pytest.mark.parametrize(
     "upstream_status, expected_status", [(400, 400), (413, 413), (422, 422), (500, 502)]
 )
 def test_other_upstream_errors_are_not_converted_to_budget_stops(

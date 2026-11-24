@@ -279,10 +279,13 @@ def context_window_ran_out(
     tie to the rest of the rollout: every such rollout fails validation with `turn_mismatch`. It is the
     same event as the 400, so it ends the rollout the same way.
     """
+    # The limit the engine applies, in its order: vLLM (like OpenAI) takes `max_completion_tokens` and
+    # falls back to `max_tokens`. A harness that sends both with different values would otherwise turn
+    # an output-cap stop into a context stop, or hide a real one.
     requested = next(
         (
             chat_request[key]
-            for key in _MAX_TOKENS_KEYS
+            for key in ("max_completion_tokens", "max_tokens")
             if isinstance(chat_request.get(key), int)
         ),
         None,
