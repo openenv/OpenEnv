@@ -147,6 +147,7 @@ class ORToolsEnvironment(MCPEnvironment):
         super().__init__(mcp)
         self._state = ORToolsState(episode_id=str(uuid4()), step_count=0)
         self._workdir = None
+        self._uid = None
         self._tool_timeout_s = None
 
     def reset(
@@ -243,6 +244,8 @@ class ORToolsEnvironment(MCPEnvironment):
         if self._workdir is not None:
             shutil.rmtree(self._workdir, ignore_errors=True)
         self._workdir = tempfile.mkdtemp(prefix="ortools_env_")
+        sandbox.release_uid(self._uid)
+        self._uid = sandbox.new_uid()
 
         self._state = ORToolsState(
             episode_id=episode_id or str(uuid4()),
@@ -319,6 +322,7 @@ class ORToolsEnvironment(MCPEnvironment):
             self._workdir,
             timeout_s=min(self._state.python_timeout_s, remaining),
             allow_ortools=self._state.allow_ortools,
+            uid=self._uid,
         )
         self._state.python_calls += 1
         self._state.compute_used_s += result["elapsed_s"]
@@ -486,4 +490,6 @@ class ORToolsEnvironment(MCPEnvironment):
         if self._workdir is not None:
             shutil.rmtree(self._workdir, ignore_errors=True)
             self._workdir = None
+        sandbox.release_uid(self._uid)
+        self._uid = None
         super().close()

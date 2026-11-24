@@ -29,4 +29,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Run the server
 # Use shell form to allow PORT variable expansion for Hugging Face Spaces
-CMD python -m uvicorn wildfire_env.server.app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips '*'
+CMD exec python -m uvicorn wildfire_env.server.app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips '*'

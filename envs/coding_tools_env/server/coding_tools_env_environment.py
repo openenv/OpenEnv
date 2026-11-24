@@ -78,6 +78,11 @@ class CodingToolsEnvironment(MCPEnvironment):
             """Perform exact string replacement in a file."""
             if not self._sandbox:
                 return "Error: environment not reset. Call reset() first."
+            # An empty old_string is in every string and would insert new_string
+            # at the start, or between every character with replace_all.
+            if not old_string:
+                self._record("edit", False, "", "old_string is empty", None)
+                return "ERROR: old_string must not be empty"
             read_result = self._sandbox.read_file(file_path=file_path)
             if not read_result.ok:
                 self._record("edit", False, "", read_result.error, None)
@@ -109,6 +114,15 @@ class CodingToolsEnvironment(MCPEnvironment):
             applied = 0
             for raw in edits:
                 spec = EditSpec.model_validate(raw)
+                if not spec.old_string:
+                    self._record(
+                        "multi_edit",
+                        False,
+                        "",
+                        "old_string is empty",
+                        {"applied": applied},
+                    )
+                    return "ERROR: old_string must not be empty"
                 if spec.old_string not in text:
                     self._record(
                         "multi_edit",
