@@ -1219,7 +1219,7 @@ dependencies = [
 requires-dist = [
     { name = "azure-containerapps-sandbox", marker = "extra == 'aca'", specifier = ">=0.1.0b2,<0.2.0" },
     { name = "azure-identity", marker = "extra == 'aca'", specifier = ">=1.23.0" },
-    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.136.0,<1" },
+    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.136.0,<3" },
     { name = "fastapi", specifier = ">=0.133.0" },
     { name = "fastapi-guard", marker = "extra == 'security'", specifier = ">=8.0.3,<9.0.0" },
     { name = "fastmcp", specifier = ">=4.0.10,<5.0.0" },
