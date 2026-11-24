@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import socket
@@ -13,6 +14,8 @@ from typing import Dict, Optional
 import requests
 
 from ...utils import _SECRET_ENV_NAME
+
+logger = logging.getLogger(__name__)
 from .providers import RuntimeProvider
 
 GIT_URL_PREFIX = "git+"
@@ -246,6 +249,14 @@ class UVProvider(RuntimeProvider):
             env.update(self.env_vars)
         if env_vars:
             env.update(env_vars)
+
+        dropped = sorted(k for k in os.environ if k not in env)
+        if dropped:
+            logger.warning(
+                "Not passing %s to the environment server. Pass the ones it "
+                "needs with env_vars.",
+                ", ".join(dropped),
+            )
 
         try:
             self._process = subprocess.Popen(command, env=env)

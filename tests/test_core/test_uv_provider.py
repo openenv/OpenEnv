@@ -253,3 +253,20 @@ def test_server_does_not_inherit_credentials(monkeypatch):
     assert env["TOKENIZERS_PARALLELISM"] == "false"
     assert env["CUDA_VISIBLE_DEVICES"] == "0"
     assert "PATH" in env
+
+
+def test_dropped_credential_names_are_logged_without_values(monkeypatch, caplog):
+    """Users can tell which inherited credentials the server didn't get."""
+    monkeypatch.setenv("HF_TOKEN", "fake-hf-token")
+    monkeypatch.setenv("GITEA_PASSWORD", "fake-password")
+    with patch.object(uv_provider, "_check_uv_installed"):
+        provider = UVProvider(project_path="/tmp/some-env")
+
+    with patch.object(uv_provider.subprocess, "Popen") as mock_popen:
+        mock_popen.return_value = MagicMock(poll=lambda: None)
+        with caplog.at_level("WARNING", logger=uv_provider.__name__):
+            provider.start(port=12345, env_vars={"HF_TOKEN": "fake-passed-token"})
+
+    assert "GITEA_PASSWORD" in caplog.text
+    assert "HF_TOKEN" not in caplog.text
+    assert "fake-" not in caplog.text

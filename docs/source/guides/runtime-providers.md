@@ -344,3 +344,8 @@ provider = UVProvider(
     env_vars={"OPENAI_API_KEY": os.environ["OPENAI_API_KEY"]},
 )
 ```
+
+`start()` logs a warning naming the variables it didn't pass. The same
+environment is used by `uv` to install the environment's dependencies, so a
+private package index password (`UV_INDEX_<NAME>_PASSWORD`) also has to go in
+`env_vars`.
