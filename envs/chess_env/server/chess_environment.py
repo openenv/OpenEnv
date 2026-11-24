@@ -125,8 +125,9 @@ class ChessEnvironment(Environment):
         )
         self._agent_move_count = 0
 
-        # If agent plays Black and opponent is configured, opponent moves first
-        if self._opponent is not None and self._agent_color == chess.BLACK:
+        # The opponent moves first when it is not the agent's turn: Black on the
+        # standard board, or the side to move in a custom FEN.
+        if self._opponent is not None and self._board.turn != self._agent_color:
             self._make_opponent_move()
 
         # Check if starting position is already terminal (e.g., custom FEN with checkmate/stalemate)
