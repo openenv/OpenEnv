@@ -78,9 +78,17 @@ def start_env(disable_judge: bool) -> tuple[str, UVProvider]:
     if disable_judge:
         env_vars = {"PELICAN_SVG_DISABLE_JUDGE": "1"}
     else:
-        # The server doesn't inherit credentials: the judge gets the token
-        # only because it is passed here.
-        env_vars = {"HF_TOKEN": token} if (token := os.environ.get("HF_TOKEN")) else {}
+        # The server doesn't inherit credentials: the judge gets them only
+        # because they are passed here.
+        env_vars = {
+            name: os.environ[name]
+            for name in (
+                "HF_TOKEN",
+                "HUGGING_FACE_HUB_TOKEN",
+                "PELICAN_SVG_JUDGE_API_KEY",
+            )
+            if name in os.environ
+        }
     provider = UVProvider(
         project_path=f"git+https://huggingface.co/spaces/{SPACE_REPO_ID}",
         app=APP,
