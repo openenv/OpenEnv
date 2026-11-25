@@ -1,3 +1,4 @@
+import re
 import subprocess
 import time
 from types import SimpleNamespace
@@ -138,6 +139,28 @@ def test_env_values_reach_only_the_container(monkeypatch, provider_cls):
     assert "fake-token-value" not in str(error.value)
     # The docker CLI keeps its own environment: DOCKER_HOST is the container's.
     assert seen["env"] is None
+
+
+@pytest.mark.parametrize(
+    "provider_cls, name_method",
+    [
+        (LocalDockerProvider, "_generate_container_name"),
+        (DockerSwarmProvider, "_generate_service_name"),
+    ],
+)
+@pytest.mark.parametrize(
+    "image",
+    [
+        "ghcr.io/openenv/echo-env@sha256:" + "a" * 64,
+        "ghcr.io/openenv/echo-env:1.0@sha256:" + "b" * 64,
+    ],
+)
+def test_generated_name_drops_image_digest(provider_cls, name_method, image):
+    provider = provider_cls.__new__(provider_cls)
+
+    name = getattr(provider, name_method)(image)
+
+    assert re.fullmatch(r"echo-env-(swarm-)?\d+", name)
 
 
 @pytest.mark.parametrize(
