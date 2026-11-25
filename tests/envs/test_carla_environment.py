@@ -44,6 +44,17 @@ class TestCarlaEnvironmentMock:
         assert isinstance(obs, CarlaObservation)
         assert obs.scenario_name == "trolley_saves"
 
+    def test_reset_scenario_config_applies_to_one_episode(self):
+        """Overrides given to reset() do not leak into later resets."""
+        env = CarlaEnvironment(scenario_name="trolley_saves", mode="mock")
+        default = env.scenario.config.max_steps
+
+        env.reset(scenario_config={"max_steps": default + 5})
+        assert env.scenario.config.max_steps == default + 5
+
+        env.reset()
+        assert env.scenario.config.max_steps == default
+
     def test_step_observe(self):
         """Test step with observe action."""
         env = CarlaEnvironment(scenario_name="trolley_saves", mode="mock")

@@ -14,6 +14,7 @@ Supports two modes:
 The environment wraps CARLA scenarios and provides OpenEnv-compatible API.
 """
 
+import copy
 import html
 import math
 import re
@@ -265,7 +266,8 @@ class CarlaEnvironment(Environment):
         super().__init__()
 
         # Load scenario
-        self.scenario: BaseScenario = get_scenario(scenario_name, scenario_config)
+        self._base_scenario: BaseScenario = get_scenario(scenario_name, scenario_config)
+        self.scenario: BaseScenario = self._base_scenario
 
         # Set rubric based on scenario type
         self.rubric = _rubric_for_scenario(self.scenario)
@@ -312,21 +314,22 @@ class CarlaEnvironment(Environment):
 
         Args:
             scenario_name: Optional scenario name to switch to. If None, uses current scenario.
-            scenario_config: Optional dict of config field overrides (e.g. weather, max_steps).
-                Keys must match fields on the scenario's config dataclass.
+            scenario_config: Optional dict of config field overrides (e.g. weather, max_steps)
+                for this episode only. Keys must match fields on the scenario's config dataclass.
 
         Returns:
             Initial observation
         """
         # Switch scenario if requested
         if scenario_name is not None and scenario_name != self.scenario.config.name:
-            self.scenario = get_scenario(scenario_name, scenario_config)
-            self.rubric = _rubric_for_scenario(self.scenario)
-        elif scenario_config:
-            # Same scenario, apply config overrides in-place
-            for key, value in scenario_config.items():
-                if hasattr(self.scenario.config, key):
-                    setattr(self.scenario.config, key, value)
+            self._base_scenario = get_scenario(scenario_name)
+            self.rubric = _rubric_for_scenario(self._base_scenario)
+
+        # Overrides apply to a copy, so they last for this episode only
+        self.scenario = copy.deepcopy(self._base_scenario)
+        for key, value in (scenario_config or {}).items():
+            if hasattr(self.scenario.config, key):
+                setattr(self.scenario.config, key, value)
 
         # Reset rubric state for new episode
         self._reset_rubric()
