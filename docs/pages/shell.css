@@ -3,6 +3,56 @@
    (build_css.mjs), adjusted below. The look follows the OpenEnv logo, a
    wireframe cube: monochrome, hairline borders and nearly square corners. */
 
+/* Lato is the typeface of the OpenEnv wordmark. Fonts are served from the site
+   (Latin subset, see fonts/LICENSE-*.txt) instead of a third-party font service. */
+@font-face {
+	font-family: "Lato";
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url("fonts/lato-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+	font-family: "Lato";
+	font-style: italic;
+	font-weight: 400;
+	font-display: swap;
+	src: url("fonts/lato-latin-400-italic.woff2") format("woff2");
+}
+
+@font-face {
+	font-family: "Lato";
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url("fonts/lato-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+	font-family: "Lato";
+	font-style: italic;
+	font-weight: 700;
+	font-display: swap;
+	src: url("fonts/lato-latin-700-italic.woff2") format("woff2");
+}
+
+@font-face {
+	font-family: "IBM Plex Mono";
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url("fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+	font-family: "IBM Plex Mono";
+	font-style: normal;
+	font-weight: 600;
+	font-display: swap;
+	src: url("fonts/ibm-plex-mono-latin-600-normal.woff2") format("woff2");
+}
+
 :root {
 	--shell-bg: #ffffff;
 	--shell-fg: #0a0a0a;
@@ -57,7 +107,7 @@ body {
 	margin: 0;
 	background: var(--shell-bg);
 	color: var(--shell-fg);
-	font-family: "Source Sans 3", "Source Sans Pro", system-ui, sans-serif;
+	font-family: "Lato", system-ui, sans-serif;
 }
 
 /* Header */
@@ -418,11 +468,11 @@ html.dark .prose.prose-doc .docstring .text-gray-800 {
 	min-height: 150px;
 	padding-right: 170px;
 	background: no-repeat right center / 140px
-		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='%230a0a0a' stroke-linejoin='round'%3E%3Cpath stroke-width='1.5' opacity='.35' d='M66.5 84.3V204.3M97 100.7V220.7M36 108L127.5 157M36 148L127.5 197M158 100.7V220.7M188.5 84.3V204.3M127.5 157L219 108M127.5 197L219 148M66.5 51.7L158 100.7M97 35.3L188.5 84.3M66.5 84.3L158 35.3M97 100.7L188.5 51.7'/%3E%3Cpath stroke-width='4' d='M127.5 19L219 68V188L127.5 237L36 188V68ZM36 68L127.5 117L219 68M127.5 117V237'/%3E%3C/svg%3E");
+		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='%230a0a0a' stroke-linejoin='round'%3E%3Cpath stroke-width='1.5' opacity='.2' d='M66.5 84.3V204.3M97 100.7V220.7M36 108L127.5 157M36 148L127.5 197M158 100.7V220.7M188.5 84.3V204.3M127.5 157L219 108M127.5 197L219 148M66.5 51.7L158 100.7M97 35.3L188.5 84.3M66.5 84.3L158 35.3M97 100.7L188.5 51.7'/%3E%3Cpath stroke-width='2' opacity='.45' d='M127.5 19V139M36 188L127.5 139L219 188'/%3E%3Cpath stroke-width='4' d='M127.5 19L219 68V188L127.5 237L36 188V68ZM36 68L127.5 117L219 68M127.5 117V237'/%3E%3C/svg%3E");
 }
 
 html.dark .prose.prose-doc .hero {
-	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='%23f2f2f2' stroke-linejoin='round'%3E%3Cpath stroke-width='1.5' opacity='.35' d='M66.5 84.3V204.3M97 100.7V220.7M36 108L127.5 157M36 148L127.5 197M158 100.7V220.7M188.5 84.3V204.3M127.5 157L219 108M127.5 197L219 148M66.5 51.7L158 100.7M97 35.3L188.5 84.3M66.5 84.3L158 35.3M97 100.7L188.5 51.7'/%3E%3Cpath stroke-width='4' d='M127.5 19L219 68V188L127.5 237L36 188V68ZM36 68L127.5 117L219 68M127.5 117V237'/%3E%3C/svg%3E");
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='%23f2f2f2' stroke-linejoin='round'%3E%3Cpath stroke-width='1.5' opacity='.2' d='M66.5 84.3V204.3M97 100.7V220.7M36 108L127.5 157M36 148L127.5 197M158 100.7V220.7M188.5 84.3V204.3M127.5 157L219 108M127.5 197L219 148M66.5 51.7L158 100.7M97 35.3L188.5 84.3M66.5 84.3L158 35.3M97 100.7L188.5 51.7'/%3E%3Cpath stroke-width='2' opacity='.45' d='M127.5 19V139M36 188L127.5 139L219 188'/%3E%3Cpath stroke-width='4' d='M127.5 19L219 68V188L127.5 237L36 188V68ZM36 68L127.5 117L219 68M127.5 117V237'/%3E%3C/svg%3E");
 }
 
 .prose.prose-doc .hero__subtitle {
