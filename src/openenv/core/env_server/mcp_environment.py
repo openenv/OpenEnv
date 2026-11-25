@@ -535,9 +535,10 @@ class MCPEnvironment(Environment):
                 func = mode_info[current_mode]
             try:
                 if inspect.iscoroutinefunction(func):
-                    result = await func(**action.arguments)
+                    call = func(**action.arguments)
                 else:
-                    result = func(**action.arguments)
+                    call = asyncio.to_thread(func, **action.arguments)
+                result = await asyncio.wait_for(call, timeout=timeout)
                 return CallToolObservation(
                     tool_name=tool_name,
                     result=CallToolResult(
@@ -546,6 +547,15 @@ class MCPEnvironment(Environment):
                         meta=None,
                         data=result,
                         is_error=False,
+                    ),
+                )
+            except asyncio.TimeoutError:
+                return CallToolObservation(
+                    tool_name=tool_name,
+                    result=None,
+                    error=ToolError(
+                        error_type=ToolErrorType.TIMEOUT,
+                        message=f"Tool '{tool_name}' timed out after {timeout} seconds",
                     ),
                 )
             except Exception as e:
