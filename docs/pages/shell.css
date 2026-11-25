@@ -1,0 +1,519 @@
+/* Shell around the doc-builder pages: header, sidebar, "On this page" list,
+   footer and code colors. The page content itself is styled by docs.css
+   (build_css.mjs), adjusted below. The look follows the OpenEnv logo, a
+   wireframe cube: monochrome, hairline borders and nearly square corners. */
+
+:root {
+	--shell-bg: #ffffff;
+	--shell-fg: #0a0a0a;
+	--shell-text: #3f3f3f;
+	--shell-muted: #6b6b6b;
+	--shell-border: #e6e6e6;
+	--shell-code-border: #d4d4d4;
+	--shell-hover: #f5f5f5;
+	--hl-keyword: #cf222e;
+	--hl-string: #0a3069;
+	--hl-number: #0550ae;
+	--hl-comment: #6e7781;
+	--hl-title: #8250df;
+	--hl-builtin: #953800;
+	/* doc-builder's grays are slightly blue, use neutral ones. */
+	--color-gray-50: oklch(98.5% 0 0);
+	--color-gray-100: oklch(97% 0 0);
+	--color-gray-200: oklch(92.2% 0 0);
+	--color-gray-300: oklch(87% 0 0);
+	--color-gray-400: oklch(70.8% 0 0);
+	--color-gray-500: oklch(55.6% 0 0);
+	--color-gray-600: oklch(43.9% 0 0);
+	--color-gray-700: oklch(37.1% 0 0);
+	--color-gray-800: oklch(26.9% 0 0);
+	--color-gray-900: oklch(20.5% 0 0);
+	--color-gray-950: oklch(14.5% 0 0);
+}
+
+html.dark {
+	--shell-bg: #000000;
+	--shell-fg: #f2f2f2;
+	--shell-text: #b8b8b8;
+	--shell-muted: #8f8f8f;
+	--shell-border: #242424;
+	--shell-code-border: #333333;
+	--shell-hover: #0d0d0d;
+	--hl-keyword: #ff7b72;
+	--hl-string: #a5d6ff;
+	--hl-number: #79c0ff;
+	--hl-comment: #8b949e;
+	--hl-title: #d2a8ff;
+	--hl-builtin: #ffa657;
+}
+
+/* Keep anchor targets below the sticky header. */
+html {
+	scroll-padding-top: 4rem;
+}
+
+html,
+body {
+	margin: 0;
+	background: var(--shell-bg);
+	color: var(--shell-fg);
+	font-family: "Source Sans 3", "Source Sans Pro", system-ui, sans-serif;
+}
+
+/* Header */
+
+.site-header {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+	height: 3.5rem;
+	padding: 0 1rem;
+	background: var(--shell-bg);
+	border-bottom: 1px solid var(--shell-border);
+}
+
+.site-header a {
+	color: var(--shell-fg);
+	text-decoration: none;
+}
+
+/* Regular weight, like the wordmark in the logo. */
+.site-title {
+	display: flex;
+	align-items: center;
+	gap: 0.55rem;
+	font-size: 1.2rem;
+	font-weight: 400;
+}
+
+.site-title svg {
+	width: 1.5rem;
+	height: 1.5rem;
+}
+
+.version-select,
+.version-badge {
+	border: 1px solid var(--shell-border);
+	border-radius: 2px;
+	background: var(--shell-bg);
+	color: var(--shell-muted);
+	padding: 0.1rem 0.5rem;
+	font-size: 0.85rem;
+}
+
+.version-select {
+	width: auto;
+	padding-right: 2rem;
+}
+
+.site-header .spacer {
+	flex: 1;
+}
+
+.site-header button {
+	border: 1px solid var(--shell-border);
+	border-radius: 2px;
+	background: none;
+	color: var(--shell-fg);
+	padding: 0.15rem 0.5rem;
+	font-size: 1rem;
+}
+
+.menu-button {
+	display: none;
+}
+
+/* Layout */
+
+.site-layout {
+	display: flex;
+	align-items: flex-start;
+}
+
+.site-nav,
+.page-toc {
+	position: sticky;
+	top: 3.5rem;
+	flex-shrink: 0;
+	max-height: calc(100vh - 3.5rem);
+	overflow-y: auto;
+	box-sizing: border-box;
+	font-size: 0.94rem;
+}
+
+.site-main {
+	flex: 1;
+	min-width: 0;
+	padding: 1.5rem 1.5rem 4rem;
+}
+
+/* About 85 characters per line. */
+.site-main .prose.prose-doc {
+	max-width: 46rem;
+	color: var(--shell-text);
+}
+
+/* Sidebar */
+
+.site-nav {
+	width: 270px;
+	padding: 1rem 0.75rem 2rem;
+	border-right: 1px solid var(--shell-border);
+}
+
+.site-nav ul,
+.page-toc ul {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.site-nav ul ul {
+	padding-left: 0.75rem;
+}
+
+.site-nav summary {
+	cursor: pointer;
+	list-style: none;
+	padding: 0.3rem 0.5rem;
+}
+
+.site-nav summary::-webkit-details-marker {
+	display: none;
+}
+
+.site-nav summary::after {
+	content: "+";
+	float: right;
+	color: var(--shell-muted);
+	font-weight: 400;
+}
+
+.site-nav details[open] > summary::after {
+	content: "\2212";
+}
+
+/* Sections: small capitals. Groups inside them: like a page, one step quieter. */
+.site-nav > ul > li > details > summary {
+	margin-top: 0.75rem;
+	color: var(--shell-fg);
+	font-size: 0.72rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+
+.site-nav details details > summary {
+	color: var(--shell-muted);
+	font-weight: 500;
+}
+
+/* Pages hang from a thin line, like the edge of the cube. */
+.site-nav a {
+	display: block;
+	padding: 0.25rem 0.75rem;
+	border-left: 1px solid var(--shell-border);
+	color: var(--shell-muted);
+	text-decoration: none;
+}
+
+.site-nav a:hover {
+	color: var(--shell-fg);
+	border-left-color: var(--shell-muted);
+}
+
+.site-nav a[aria-current="page"] {
+	border-left: 2px solid var(--shell-fg);
+	padding-left: calc(0.75rem - 1px);
+	color: var(--shell-fg);
+	font-weight: 600;
+}
+
+/* On this page */
+
+.page-toc {
+	width: 250px;
+	padding: 1.5rem 1rem;
+}
+
+.page-toc p {
+	margin: 0 0 0.5rem;
+	font-weight: 600;
+}
+
+.page-toc > ul {
+	border-left: 1px solid var(--shell-border);
+	padding-left: 0.75rem;
+}
+
+.page-toc ul ul {
+	padding-left: 0.75rem;
+}
+
+.page-toc a {
+	display: block;
+	padding: 0.15rem 0;
+	color: var(--shell-muted);
+	text-decoration: none;
+}
+
+.page-toc a:hover {
+	color: var(--shell-fg);
+}
+
+/* Footer */
+
+.site-footer {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1.5rem;
+	max-width: 46rem;
+	margin: 4rem auto 0;
+	padding-top: 1rem;
+	border-top: 1px solid var(--shell-border);
+	color: var(--shell-muted);
+	font-size: 0.85rem;
+}
+
+.site-footer a {
+	color: var(--shell-muted);
+}
+
+.site-footer a:hover {
+	color: var(--shell-fg);
+}
+
+/* Content: headings */
+
+.prose.prose-doc :is(h1, h2, h3, h4, h5, th, strong) {
+	color: var(--shell-fg);
+}
+
+.prose.prose-doc h1 {
+	font-size: 2rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	line-height: 1.2;
+}
+
+/* Each section starts on a hairline, like an edge of the cube. */
+.prose.prose-doc h2 {
+	margin-top: 2.75rem;
+	padding-top: 1.25rem;
+	border-top: 1px solid var(--shell-border);
+	font-size: 1.375rem;
+	letter-spacing: -0.01em;
+}
+
+.prose.prose-doc h3 {
+	font-size: 1.125rem;
+}
+
+.prose.prose-doc > p > em {
+	color: var(--shell-muted);
+}
+
+/* Content: links and code */
+
+/* Links in the text color, with a thin underline that thickens on hover. */
+.prose.prose-doc a:not(.header-link) {
+	color: var(--shell-fg);
+	text-decoration-thickness: 1px;
+	text-underline-offset: 3px;
+}
+
+.prose.prose-doc a:not(.header-link):hover {
+	text-decoration-thickness: 2px;
+}
+
+/* Inline code outlined instead of filled. */
+.prose.prose-doc :not(pre) > code {
+	border: 1px solid var(--shell-code-border);
+	border-radius: 2px;
+	padding: 0.05em 0.3em;
+	background: none;
+	color: var(--shell-fg);
+}
+
+.prose.prose-doc pre,
+.prose.prose-doc .code-block pre {
+	border: 1px solid var(--shell-border);
+	border-radius: 2px;
+}
+
+html.dark .prose.prose-doc pre {
+	background: #0a0a0a;
+}
+
+/* Content: tables, cards and buttons with hairlines and nearly square corners */
+
+.prose.prose-doc table {
+	display: table;
+	width: auto;
+	border-collapse: collapse;
+	border: 1px solid var(--shell-border);
+}
+
+.prose.prose-doc :is(th, td) {
+	border-bottom: 1px solid var(--shell-border);
+	padding: 0.5rem 0.75rem;
+}
+
+.prose.prose-doc :is(.rounded, .rounded-md, .rounded-lg, .rounded-xl) {
+	border-radius: 2px;
+}
+
+.prose.prose-doc .shadow {
+	box-shadow: none;
+}
+
+.prose.prose-doc :is(div, a).border {
+	border-color: var(--shell-border);
+}
+
+.prose.prose-doc div.border:hover {
+	border-color: var(--shell-fg);
+}
+
+/* Notes, tips and important notes in monochrome, warnings keep their color.
+   doc-builder sets these colors with !important. */
+.prose.prose-doc :is(.note, .tip, .important) {
+	border-left: 2px solid var(--shell-fg) !important;
+	border-radius: 0;
+	background: var(--shell-hover) !important;
+	color: var(--shell-fg) !important;
+}
+
+.prose.prose-doc :is(.note, .tip, .important) a {
+	color: var(--shell-fg) !important;
+}
+
+/* Content: API reference, square boxes without color gradients */
+
+.prose.prose-doc .docstring {
+	border-width: 1px 0 0 1px;
+	border-color: var(--shell-border);
+	border-top-left-radius: 0;
+}
+
+.prose.prose-doc .docstring .rounded-xl {
+	background-image: none;
+	color: var(--shell-fg);
+}
+
+.prose.prose-doc .docstring .md\:text-lg.rounded-xl {
+	border: 1px solid var(--shell-border);
+}
+
+/* "Parameters" and "Returns" labels use a dark gray meant for light mode. */
+html.dark .prose.prose-doc .docstring .text-gray-800 {
+	color: var(--shell-muted);
+}
+
+/* Home page: the cube next to the introduction, drawn like the logo. */
+.prose.prose-doc .hero {
+	min-height: 150px;
+	padding-right: 170px;
+	background: no-repeat right center / 140px
+		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='%230a0a0a' stroke-linejoin='round'%3E%3Cpath stroke-width='1.5' opacity='.35' d='M66.5 84.3V204.3M97 100.7V220.7M36 108L127.5 157M36 148L127.5 197M158 100.7V220.7M188.5 84.3V204.3M127.5 157L219 108M127.5 197L219 148M66.5 51.7L158 100.7M97 35.3L188.5 84.3M66.5 84.3L158 35.3M97 100.7L188.5 51.7'/%3E%3Cpath stroke-width='4' d='M127.5 19L219 68V188L127.5 237L36 188V68ZM36 68L127.5 117L219 68M127.5 117V237'/%3E%3C/svg%3E");
+}
+
+html.dark .prose.prose-doc .hero {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='none' stroke='%23f2f2f2' stroke-linejoin='round'%3E%3Cpath stroke-width='1.5' opacity='.35' d='M66.5 84.3V204.3M97 100.7V220.7M36 108L127.5 157M36 148L127.5 197M158 100.7V220.7M188.5 84.3V204.3M127.5 157L219 108M127.5 197L219 148M66.5 51.7L158 100.7M97 35.3L188.5 84.3M66.5 84.3L158 35.3M97 100.7L188.5 51.7'/%3E%3Cpath stroke-width='4' d='M127.5 19L219 68V188L127.5 237L36 188V68ZM36 68L127.5 117L219 68M127.5 117V237'/%3E%3C/svg%3E");
+}
+
+.prose.prose-doc .hero__subtitle {
+	font-size: 1.2rem;
+	color: var(--shell-fg);
+}
+
+/* doc-builder's "Connect to MCP Client" entry points to the huggingface.co docs server,
+   which does not serve these docs. */
+a[href="https://huggingface.co/mcp"] {
+	display: none;
+}
+
+/* Code highlighting */
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-meta .hljs-keyword {
+	color: var(--hl-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-attr {
+	color: var(--hl-string);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-params {
+	color: var(--hl-number);
+}
+
+.hljs-comment,
+.hljs-quote {
+	color: var(--hl-comment);
+	font-style: italic;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name {
+	color: var(--hl-title);
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-symbol {
+	color: var(--hl-builtin);
+}
+
+@media (max-width: 1200px) {
+	.page-toc {
+		display: none;
+	}
+}
+
+@media (max-width: 768px) {
+	.menu-button {
+		display: inline-block;
+	}
+
+	.site-nav {
+		display: none;
+		position: fixed;
+		top: 3.5rem;
+		left: 0;
+		bottom: 0;
+		z-index: 10;
+		width: 100%;
+		max-height: none;
+		background: var(--shell-bg);
+	}
+
+	body.nav-open .site-nav {
+		display: block;
+	}
+
+	.site-main {
+		padding: 1rem 1rem 3rem;
+	}
+
+	/* Code blocks line up with the text instead of bleeding into the margin. */
+	.prose.prose-doc .code-block {
+		margin-inline: 0;
+	}
+
+	.prose.prose-doc .hero {
+		padding-right: 0;
+		background-image: none !important;
+		min-height: 0;
+	}
+}
