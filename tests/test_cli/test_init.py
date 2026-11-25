@@ -11,6 +11,9 @@ from pathlib import Path
 
 from openenv.cli.__main__ import app
 from openenv.cli.commands.init import _resolve_template_path
+from openenv.validation.manifest import NormalizedManifestV2
+from openenv.validation.parsers.openenv_yaml import OpenEnvYamlParser
+from openenv.validation.runtime.contracts import load_runtime_plan
 from typer.testing import CliRunner
 
 
@@ -136,6 +139,33 @@ def test_init_generates_openenv_yaml(tmp_path: Path) -> None:
 
     environment_file = env_dir / "server" / f"{env_name}_environment.py"
     assert "min(length * 0.1, 1.0)" in environment_file.read_text()
+
+
+def test_init_declares_runtime_validation_plan(tmp_path: Path) -> None:
+    """The scaffold declares how to run it, so runtime validation does not skip."""
+    env_name = "replay_env"
+    result = runner.invoke(
+        app, ["init", env_name, "--output-dir", str(tmp_path)], input="\n"
+    )
+    assert result.exit_code == 0
+
+    env_dir = tmp_path / env_name
+    manifest = OpenEnvYamlParser().parse(env_dir)
+    assert isinstance(manifest, NormalizedManifestV2)
+    assert (env_dir / manifest.execution.dockerfile).is_file()
+
+    plan = load_runtime_plan(env_dir, manifest.execution)
+    assert plan.reset.episode_id == f"{env_name}-smoke"
+
+    # Every replayed action must be a valid action for the generated environment.
+    spec = importlib.util.spec_from_file_location(
+        f"{env_name}_models", env_dir / "models.py"
+    )
+    assert spec is not None and spec.loader is not None
+    models = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(models)
+    for action in plan.actions:
+        models.ReplayAction.model_validate(action)
 
 
 def test_init_readme_has_hf_frontmatter(tmp_path: Path) -> None:

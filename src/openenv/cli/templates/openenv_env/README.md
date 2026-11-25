@@ -253,6 +253,8 @@ __ENV_NAME__/
 ├── uv.lock                # Locked dependencies (generated)
 ├── client.py              # __ENV_CLASS_NAME__Env client
 ├── models.py              # Action and Observation models
+├── validation/
+│   └── runtime.json       # Replay plan for `openenv validate --level runtime`
 └── server/
     ├── __init__.py        # Server module exports
     ├── __ENV_NAME___environment.py  # Core environment logic

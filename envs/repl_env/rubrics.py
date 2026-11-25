@@ -62,8 +62,9 @@ class FuzzyMatchRubric(Rubric):
     """Outcome rubric: partial credit based on string containment.
 
     Returns 1.0 for exact match, 0.5 if expected is contained in the answer
-    (or vice versa), 0.0 otherwise. Useful for tasks where partial matches
-    are acceptable.
+    (or vice versa), 0.0 otherwise. An empty answer only matches an empty
+    expected answer: it is contained in every string, so it gets no partial
+    credit. Useful for tasks where partial matches are acceptable.
     """
 
     def __init__(self) -> None:
@@ -85,6 +86,8 @@ class FuzzyMatchRubric(Rubric):
         expected_norm = str(self._expected).strip().lower()
         if final_norm == expected_norm:
             return 1.0
+        if not final_norm or not expected_norm:
+            return 0.0
         if expected_norm in final_norm or final_norm in expected_norm:
             return 0.5
         return 0.0

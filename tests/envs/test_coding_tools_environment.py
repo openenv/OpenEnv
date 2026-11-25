@@ -197,6 +197,46 @@ def test_write_read_edit_and_submit(monkeypatch):
     assert "test -f answer.txt" not in fake.shell_commands
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("edit", {"old_string": "", "new_string": "X"}),
+        ("edit", {"old_string": "", "new_string": "X", "replace_all": True}),
+        ("multi_edit", {"edits": [{"old_string": "", "new_string": "X"}]}),
+        (
+            "multi_edit",
+            {
+                "edits": [
+                    {"old_string": "a", "new_string": "A"},
+                    {"old_string": "", "new_string": "X", "replace_all": True},
+                ]
+            },
+        ),
+    ],
+    ids=["edit", "edit-replace-all", "multi-edit", "multi-edit-second"],
+)
+def test_edit_rejects_an_empty_old_string(monkeypatch, tool_name, arguments):
+    monkeypatch.setenv("E2B_API_KEY", "fake")
+    fake = FakeSandbox()
+    monkeypatch.setattr(
+        "coding_tools_env.server.coding_tools_env_environment.E2BSandbox",
+        lambda api_key: fake,
+    )
+    env = CodingToolsEnvironment()
+    env.reset()
+    fake.files["/home/user/work/a.txt"] = "abc"
+
+    obs = env.step(
+        CallToolAction(
+            tool_name=tool_name,
+            arguments={"file_path": "/home/user/work/a.txt", **arguments},
+        )
+    )
+
+    assert _extract_text(obs.result) == "ERROR: old_string must not be empty"
+    assert fake.files["/home/user/work/a.txt"] == "abc"
+
+
 def test_todo_write_rejects_multiple_in_progress(monkeypatch):
     monkeypatch.setenv("E2B_API_KEY", "fake")
     monkeypatch.setattr(

@@ -1,0 +1,14 @@
+{
+  "description": "Answer questions about real CSV, TSV and JSON data files from a live, sandboxed Python session with pandas. Each episode is a SmolDataEnvs task, graded by the dataset's deterministic grader.",
+  "tags": ["openenv", "rl-environment", "data-analysis", "pandas", "python", "code-execution", "tool-use"],
+  "representative_queries": [
+    "find an environment for training a data analysis agent with pandas",
+    "answer questions about CSV files with Python tool calls and a verifiable reward",
+    "find a multi-turn code execution environment over real Kaggle-style tables"
+  ],
+  "agent_tools": {
+    "protocol": "mcp",
+    "names": ["run_python", "submit_answer"],
+    "source": "envs/data_analysis_env/server/data_analysis_environment.py"
+  }
+}

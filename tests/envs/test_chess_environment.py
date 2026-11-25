@@ -182,6 +182,29 @@ class TestChessEnvironmentWithOpponent:
         assert obs.reward == -1.0
         assert obs.result == "0-1"
 
+    # 1.f3 e5 2.g4, black to move: Qh4 mates.
+    BLACK_TO_MOVE = "rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2"
+
+    @pytest.mark.parametrize("agent_color", ["white", "black"])
+    @pytest.mark.parametrize(
+        "fen", [None, BLACK_TO_MOVE], ids=["start", "black-to-move"]
+    )
+    def test_agent_moves_for_its_own_color_after_reset(self, agent_color, fen):
+        env = ChessEnvironment(opponent="random", agent_color=agent_color)
+        obs = env.reset(fen=fen, seed=0)
+        side_to_move = obs.fen.split()[1]
+        assert side_to_move == agent_color[0]
+
+    def test_agent_mate_from_a_black_to_move_fen_is_a_win(self):
+        env = ChessEnvironment(opponent="random", agent_color="black")
+        env.reset(fen=self.BLACK_TO_MOVE, seed=0)
+
+        obs = env.step(ChessAction(move="d8h4"))
+
+        assert obs.done is True
+        assert obs.reward == 1.0
+        assert obs.result == "0-1"
+
 
 class TestResetSeed:
     """reset(seed=...) makes the agent's color and the random opponent reproducible."""
