@@ -66,6 +66,12 @@ def _as_dict(action) -> dict:
     return action if isinstance(action, dict) else {}
 
 
+def _count(action, key: str) -> int:
+    """Items in a list field of the action; anything else counts as 0."""
+    value = _as_dict(action).get(key)
+    return len(value) if isinstance(value, list) else 0
+
+
 class CornerShopEnvironment(
     Environment[CornerShopAction, CornerShopObservation, CornerShopState]
 ):
@@ -159,8 +165,8 @@ class CornerShopEnvironment(
                 else extract_action(action.message)
             )
             if env.sim.week >= weeks - WIND_DOWN_WEEKS:
-                self._late_orders += len(_as_dict(act).get("orders") or [])
-                self._late_payments += len(_as_dict(act).get("pay") or [])
+                self._late_orders += _count(act, "orders")
+                self._late_payments += _count(act, "pay")
             _, done, step_info = env.step(act)
             self._bad_actions += bool(step_info.get("errors"))
         if action.end_episode or done:

@@ -75,6 +75,18 @@ def test_unparseable_reply_is_reported_and_the_week_passes():
     assert not observation.done
 
 
+def test_malformed_list_fields_in_the_last_weeks_do_not_abort_the_episode():
+    env = CornerShopEnvironment()
+    observation = env.reset(firm=1)
+    while not observation.done:
+        observation = env.step(
+            CornerShopAction(message='{"orders": 5, "pay": "INV-1"}')
+        )
+    assert observation.week == observation.weeks_total
+    assert observation.metrics["orders_last_3_weeks"] == 0
+    assert observation.metrics["payments_last_3_weeks"] == 0
+
+
 def test_end_episode_runs_remaining_weeks_unattended_and_scores():
     env = CornerShopEnvironment()
     env.reset(firm=1)
