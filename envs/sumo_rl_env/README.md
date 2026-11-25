@@ -334,7 +334,7 @@ export SUMO_HOME=/usr/share/sumo
 - [SUMO Documentation](https://sumo.dlr.de/docs/)
 - [SUMO-RL GitHub](https://github.com/LucasAlegre/sumo-rl)
 - [SUMO-RL Paper](https://peerj.com/articles/cs-575/)
-- [RESCO Benchmarks](https://github.com/jault/RESCO)
+- [RESCO Benchmarks](https://github.com/Pi-Star-Lab/RESCO)
 
 ## Citation
 

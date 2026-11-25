@@ -239,7 +239,7 @@ Enterprise software automation tasks:
 - Business workflows
 
 **Full task lists:**
-- [MiniWoB++ tasks](https://github.com/Farama-Foundation/miniwob-plusplus/tree/master/miniwob/environment)
+- [MiniWoB++ tasks](https://github.com/Farama-Foundation/MiniWoB-plusplus/tree/main/miniwob/html/miniwob)
 - [WebArena tasks](https://github.com/web-arena-x/webarena/blob/main/config_files/)
 - [BrowserGym documentation](https://github.com/ServiceNow/BrowserGym)
 
