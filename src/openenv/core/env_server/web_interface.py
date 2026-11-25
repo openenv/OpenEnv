@@ -169,7 +169,7 @@ def get_quick_start_markdown(
         lines += ["", after]
     lines += [
         "",
-        "More in the [OpenEnv documentation](https://huggingface.co/docs/openenv).",
+        "More in the [OpenEnv documentation](https://openenv.github.io/OpenEnv/).",
     ]
     return "\n".join(lines)
 

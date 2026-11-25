@@ -106,7 +106,7 @@ with LocalREPLEnv() as env:
 
 Customize `LocalREPLEnv(rubric=...)` with the match, partial-credit, custom-metric,
 or execution rubrics in [`rubrics.py`](https://github.com/openenv/OpenEnv/blob/main/envs/repl_env/rubrics.py). See the
-[rubric guide](https://huggingface.co/docs/openenv/guides/rewards) for composition.
+[rubric guide](https://openenv.github.io/OpenEnv/main/guides/rewards) for composition.
 
 ## Running an RLM Locally
 

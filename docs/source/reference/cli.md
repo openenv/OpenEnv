@@ -359,7 +359,7 @@ coverage inventory, provider settings, cleanup outcome and checksums. Treat thes
 as author-validation evidence; this command does not issue certification.
 
 For a pinned, installed-wheel reproduction of the shared fixture and its fault
-cases, follow [the runtime lab](../../../tests/validation_runtime/README.md).
+cases, follow [the runtime lab](https://github.com/openenv/OpenEnv/blob/main/tests/validation_runtime/README.md).
 The implementation and remaining check inventory are tracked in
 [the Level 2 umbrella](https://github.com/openenv/OpenEnv/issues/1177).
 
