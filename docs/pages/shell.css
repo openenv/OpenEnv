@@ -1,0 +1,274 @@
+/* Shell around the doc-builder pages: header, sidebar, "On this page" list and
+   code colors. The page content itself is styled by docs.css (build_css.mjs). */
+
+:root {
+	--shell-bg: #ffffff;
+	--shell-fg: #1f2937;
+	--shell-muted: #6b7280;
+	--shell-border: #e5e7eb;
+	--shell-hover: #f3f4f6;
+	--shell-accent: #2563eb;
+	--hl-keyword: #cf222e;
+	--hl-string: #0a3069;
+	--hl-number: #0550ae;
+	--hl-comment: #6e7781;
+	--hl-title: #8250df;
+	--hl-builtin: #953800;
+}
+
+html.dark {
+	--shell-bg: #0b0f19;
+	--shell-fg: #e5e7eb;
+	--shell-muted: #9ca3af;
+	--shell-border: #1f2937;
+	--shell-hover: #141c2e;
+	--shell-accent: #60a5fa;
+	--hl-keyword: #ff7b72;
+	--hl-string: #a5d6ff;
+	--hl-number: #79c0ff;
+	--hl-comment: #8b949e;
+	--hl-title: #d2a8ff;
+	--hl-builtin: #ffa657;
+}
+
+html,
+body {
+	margin: 0;
+	background: var(--shell-bg);
+	color: var(--shell-fg);
+	font-family: "Source Sans 3", "Source Sans Pro", system-ui, sans-serif;
+}
+
+.site-header {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+	height: 3.5rem;
+	padding: 0 1rem;
+	background: var(--shell-bg);
+	border-bottom: 1px solid var(--shell-border);
+}
+
+.site-header a {
+	color: var(--shell-fg);
+	text-decoration: none;
+}
+
+.site-title {
+	font-size: 1.15rem;
+	font-weight: 700;
+}
+
+.version-select,
+.version-badge {
+	border: 1px solid var(--shell-border);
+	border-radius: 0.375rem;
+	background: var(--shell-bg);
+	color: var(--shell-muted);
+	padding: 0.1rem 0.5rem;
+	font-size: 0.85rem;
+}
+
+.version-select {
+	width: auto;
+	padding-right: 2rem;
+}
+
+.site-header .spacer {
+	flex: 1;
+}
+
+.site-header button {
+	border: 1px solid var(--shell-border);
+	border-radius: 0.375rem;
+	background: none;
+	color: var(--shell-fg);
+	padding: 0.15rem 0.5rem;
+	font-size: 1rem;
+}
+
+.menu-button {
+	display: none;
+}
+
+.site-layout {
+	display: flex;
+	align-items: flex-start;
+}
+
+.site-nav,
+.page-toc {
+	position: sticky;
+	top: 3.5rem;
+	flex-shrink: 0;
+	max-height: calc(100vh - 3.5rem);
+	overflow-y: auto;
+	box-sizing: border-box;
+	font-size: 0.94rem;
+}
+
+.site-nav {
+	width: 270px;
+	padding: 1rem 0.75rem 2rem;
+	border-right: 1px solid var(--shell-border);
+}
+
+.site-nav ul,
+.page-toc ul {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.site-nav ul ul {
+	padding-left: 0.75rem;
+}
+
+.site-nav summary {
+	cursor: pointer;
+	padding: 0.3rem 0.5rem;
+	font-weight: 600;
+}
+
+.site-nav > ul > li > details > summary {
+	margin-top: 0.5rem;
+	color: var(--shell-muted);
+	font-size: 0.8rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.site-nav a {
+	display: block;
+	padding: 0.25rem 0.5rem;
+	border-radius: 0.375rem;
+	color: var(--shell-muted);
+	text-decoration: none;
+}
+
+.site-nav a:hover {
+	background: var(--shell-hover);
+	color: var(--shell-fg);
+}
+
+.site-nav a[aria-current="page"] {
+	background: var(--shell-hover);
+	color: var(--shell-fg);
+	font-weight: 600;
+}
+
+.site-main {
+	flex: 1;
+	min-width: 0;
+	padding: 1.5rem 1.5rem 4rem;
+}
+
+.page-toc {
+	width: 250px;
+	padding: 1.5rem 1rem;
+}
+
+.page-toc p {
+	margin: 0 0 0.5rem;
+	font-weight: 600;
+}
+
+.page-toc ul ul {
+	padding-left: 0.75rem;
+}
+
+.page-toc a {
+	display: block;
+	padding: 0.15rem 0;
+	color: var(--shell-muted);
+	text-decoration: none;
+}
+
+.page-toc a:hover {
+	color: var(--shell-accent);
+}
+
+/* docs.css hardcodes light text colors that huggingface.co overrides in dark mode. */
+html.dark .prose.prose-doc :is(h1, h2, h3, h4, h5, th, code, strong) {
+	color: #e5e7eb;
+}
+
+html.dark .prose.prose-doc > p > em {
+	color: var(--shell-muted);
+}
+
+html.dark .prose.prose-doc .code-block pre {
+	border-color: var(--shell-border);
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-meta .hljs-keyword {
+	color: var(--hl-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-attr {
+	color: var(--hl-string);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-params {
+	color: var(--hl-number);
+}
+
+.hljs-comment,
+.hljs-quote {
+	color: var(--hl-comment);
+	font-style: italic;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name {
+	color: var(--hl-title);
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-symbol {
+	color: var(--hl-builtin);
+}
+
+@media (max-width: 1200px) {
+	.page-toc {
+		display: none;
+	}
+}
+
+@media (max-width: 768px) {
+	.menu-button {
+		display: inline-block;
+	}
+
+	.site-nav {
+		display: none;
+		position: fixed;
+		top: 3.5rem;
+		left: 0;
+		bottom: 0;
+		z-index: 10;
+		width: 100%;
+		max-height: none;
+		background: var(--shell-bg);
+	}
+
+	body.nav-open .site-nav {
+		display: block;
+	}
+
+	.site-main {
+		padding: 1rem 1rem 3rem;
+	}
+}
