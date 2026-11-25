@@ -27,3 +27,25 @@ def test_dm_control_web_playground():
     jpeg = base64.b64decode(frame.split("base64,")[1].split('"')[0])
     assert jpeg.startswith(b"\xff\xd8")
     assert env.render_web({}) is None
+
+
+def test_steps_after_the_episode_ends_return_the_final_observation():
+    env = DMControlEnvironment()
+    action = DMControlAction(values=[0.0])
+    try:
+        env.reset()
+        obs = env.step(action)
+        while not obs.done:
+            obs = env.step(action)
+        episode_id, step_count = env.state.episode_id, env.state.step_count
+        time = env._env.physics.data.time
+
+        assert env.step(action) == obs
+        assert env.state.step_count == step_count
+        assert env.state.episode_id == episode_id
+        assert env._env.physics.data.time == time
+
+        env.reset()
+        assert not env.step(action).done
+    finally:
+        env.close()

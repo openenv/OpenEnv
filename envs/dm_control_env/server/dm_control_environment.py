@@ -127,6 +127,7 @@ class DMControlEnvironment(Environment):
             else int(os.environ.get("DMCONTROL_RENDER_WIDTH", "640"))
         )
         self._include_pixels = False
+        self._final_observation: Optional[DMControlObservation] = None
 
         self._state = DMControlState(
             episode_id=str(uuid4()),
@@ -280,6 +281,7 @@ class DMControlEnvironment(Environment):
             DMControlObservation with initial state.
         """
         self._include_pixels = render
+        self._final_observation = None
 
         target_domain = domain_name or self._domain_name
         target_task = task_name or self._task_name
@@ -328,6 +330,11 @@ class DMControlEnvironment(Environment):
         if self._env is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
 
+        # dm_control restarts the episode on the step after the last one. Return
+        # the final observation instead, until reset().
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
+
         action_array = np.array(action.values, dtype=np.float64)
 
         action_spec = self._env.action_spec()
@@ -346,9 +353,12 @@ class DMControlEnvironment(Environment):
         time_step = self._env.step(action_array)
         self._state.step_count += 1
 
-        return self._get_observation(
+        obs = self._get_observation(
             time_step, include_pixels=render or self._include_pixels
         )
+        if obs.done:
+            self._final_observation = obs.model_copy(deep=True)
+        return obs
 
     def render_web(self, observation: Dict[str, Any]) -> Optional[str]:
         """Draw the physics scene from the first camera (rendering does not step the simulation)."""
