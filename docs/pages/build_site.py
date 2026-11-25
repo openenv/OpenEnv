@@ -47,14 +47,22 @@ def page_url(base: str, local: str) -> str:
     return f"{base}/" if local == "index" else f"{base}/{local}"
 
 
-def render_sidebar(sections: list, base: str, current: str) -> tuple[str, bool]:
-    """Returns the sidebar HTML for `sections` and whether it contains `current`."""
+def render_sidebar(
+    sections: list, base: str, current: str, nested: bool = False
+) -> tuple[str, bool]:
+    """Returns the sidebar HTML for `sections` and whether it contains `current`.
+
+    Top-level sections follow `isExpanded`, groups inside them open only around the
+    current page.
+    """
     items, has_current = [], False
     for section in sections:
         if "sections" in section:
-            inner, inner_current = render_sidebar(section["sections"], base, current)
+            inner, inner_current = render_sidebar(
+                section["sections"], base, current, nested=True
+            )
             has_current |= inner_current
-            is_open = inner_current or section.get("isExpanded", True)
+            is_open = inner_current or (not nested and section.get("isExpanded", True))
             items.append(
                 f"<li><details{' open' if is_open else ''}>"
                 f"<summary>{html.escape(section['title'])}</summary>{inner}</details></li>"
@@ -79,6 +87,9 @@ def render_toc(sections: list) -> str:
         )
     return f"<ul>{''.join(items)}</ul>" if items else ""
 
+
+# The OpenEnv cube, drawn like favicon.svg.
+LOGO = """<svg viewBox="0 0 256 256" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="14" stroke-linejoin="round" d="M127.5 19 L219 68 L219 188 L127.5 237 L36 188 L36 68 Z M36 68 L127.5 117 L219 68 M127.5 117 L127.5 237"/></svg>"""
 
 # doc-builder's "Copy page" menu links to the page URL + ".md" and fetches the page URL
 # with "Accept: text/plain", which huggingface.co answers with markdown. GitHub Pages
@@ -187,7 +198,7 @@ def render_page(fragment: str, local: str, site: Site) -> str:
 <body data-sveltekit-reload>
 <header class="site-header">
   <button class="menu-button" aria-label="Toggle navigation" onclick="document.body.classList.toggle('nav-open')">&#9776;</button>
-  <a class="site-title" href="{base}/">OpenEnv</a>
+  <a class="site-title" href="{base}/">{LOGO}<span>OpenEnv</span></a>
   {render_version(site.version, site.versions_url, local)}
   <span class="spacer"></span>
   <a href="{REPO_URL}">GitHub</a>
@@ -199,6 +210,11 @@ def render_page(fragment: str, local: str, site: Site) -> str:
 <div class="prose prose-doc dark:prose-light max-w-4xl mx-auto break-words relative">
 {fragment}
 </div>
+<footer class="site-footer">
+  <a href="{REPO_URL}">GitHub</a>
+  <a href="{REPO_URL}/blob/main/LICENSE">BSD-3-Clause license</a>
+  <span>Built with <a href="https://github.com/huggingface/doc-builder">doc-builder</a></span>
+</footer>
 </main>
 {toc_block}
 </div>
