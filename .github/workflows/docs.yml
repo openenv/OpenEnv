@@ -19,6 +19,8 @@ on:
     paths:
       - "docs/**"
       - "src/openenv/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
@@ -124,7 +126,7 @@ jobs:
           cd doc-builder
           doc-builder build openenv ../OpenEnv/docs/source \
             --build_dir ../build --html --clean --version "$VERSION" \
-            --repo_owner openenv --repo_name OpenEnv --version_tag_suffix ""
+            --repo_owner openenv --repo_name OpenEnv
 
       - name: Add the site layout
         env:

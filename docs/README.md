@@ -38,7 +38,7 @@ The docs are built with doc-builder in GitHub Actions and published to GitHub Pa
 
 The site root redirects to `main`, and the version picker in the header lists `main` and every published release. To publish an older release, run the **Docs** workflow from `main` with its tag as `version`.
 
-Pull requests from outside contributors build without write access and get a preview only after a maintainer adds the `docs-preview` label and re-runs the PR's **Docs** check, since previews are served from the docs domain.
+Pull requests from outside contributors build without write access and get a preview only after a maintainer adds the `docs-preview` label and re-runs the PR's **Docs** check, since previews are served from the docs domain. The label is removed once the preview is published, so each new commit needs a new review.
 
 How it fits together:
 

@@ -8,6 +8,7 @@ name: Docs PR preview
 # only copies the static files the build uploaded. Previews are served from the
 # docs domain, so pull requests from outside contributors are published only
 # after a maintainer adds the docs-preview label and re-runs their Docs check.
+# The label is removed once used, so each new commit needs a new review.
 
 on:
   workflow_run:
@@ -17,6 +18,13 @@ on:
     types: [closed]
 
 permissions: {}
+
+# Publishing and removing the preview of the same pull request run one at a time,
+# so a preview published while its pull request closes is still removed.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ github.event.workflow_run.head_repository.full_name || github.event.pull_request.head.repo.full_name }}:${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -48,11 +56,11 @@ jobs:
             exit 0
           fi
           echo "number=$(jq -r .number <<<"$pr")" >> "$GITHUB_OUTPUT"
-          jq -r --arg repo "$REPO" '"trusted=" + (
-            .head.repo.full_name == $repo
-            or (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))
-            or any(.labels[]; .name == "docs-preview")
-          | tostring)' <<<"$pr" >> "$GITHUB_OUTPUT"
+          jq -r --arg repo "$REPO" '
+            (.head.repo.full_name == $repo or (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))) as $member
+            | any(.labels[]; .name == "docs-preview") as $label
+            | "trusted=\($member or $label)\nlabel_only=\(($member | not) and $label)"
+          ' <<<"$pr" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.pr.outputs.trusted == 'true'
@@ -71,6 +79,13 @@ jobs:
           NUMBER: ${{ steps.pr.outputs.number }}
         run: docs/pages/publish.sh "pr-preview/pr-$NUMBER" site
 
+      # The label approves one commit: later pushes need a maintainer to add it again.
+      - name: Remove the docs-preview label
+        if: steps.pr.outputs.label_only == 'true'
+        env:
+          NUMBER: ${{ steps.pr.outputs.number }}
+        run: gh api -X DELETE "repos/$REPO/issues/$NUMBER/labels/docs-preview" >/dev/null
+
       - name: Comment on the pull request
         if: steps.pr.outputs.number != ''
         env:
@@ -84,7 +99,7 @@ jobs:
           The docs for this pull request are available at $ROOT_URL/pr-preview/pr-$NUMBER/ (commit ${HEAD_SHA:0:7}). The preview may take a minute to update and is removed when the pull request closes."
           else
             body="$marker
-          The docs for this pull request built successfully. A maintainer can publish a preview by adding the \`docs-preview\` label and re-running the Docs check."
+          The docs for this pull request built successfully. A maintainer can publish a preview of this commit by adding the \`docs-preview\` label and re-running the Docs check."
           fi
           id=$(gh api --paginate "repos/$REPO/issues/$NUMBER/comments" \
             --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n 1)
