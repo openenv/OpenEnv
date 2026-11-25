@@ -266,6 +266,41 @@ def clamp_output_tokens(chat_request: dict[str, Any], cap: int | None) -> int | 
     return replaced
 
 
+def context_window_ran_out(
+    chat_request: dict[str, Any], response: dict[str, Any]
+) -> bool:
+    """Whether the engine cut the completion short because the context window was full.
+
+    Older vLLM rejects a request whose prompt plus `max_tokens` exceeds the context window with a 400
+    ("maximum context length"), which the proxy turns into a budget stop. Newer vLLM (seen with 0.34)
+    serves it and stops generating when the window is full instead: the completion ends with
+    `finish_reason="length"` before reaching `max_tokens`. Forwarded as is, that truncated turn reaches
+    the harness, and pi answers it by compacting its context, in a summarisation call capture cannot
+    tie to the rest of the rollout: every such rollout fails validation with `turn_mismatch`. It is the
+    same event as the 400, so it ends the rollout the same way.
+    """
+    # The limit the engine applies, in its order: vLLM (like OpenAI) takes `max_completion_tokens` and
+    # falls back to `max_tokens`. A harness that sends both with different values would otherwise turn
+    # an output-cap stop into a context stop, or hide a real one.
+    requested = next(
+        (
+            chat_request[key]
+            for key in ("max_completion_tokens", "max_tokens")
+            if isinstance(chat_request.get(key), int)
+        ),
+        None,
+    )
+    choices = response.get("choices") or []
+    completion_tokens = (response.get("usage") or {}).get("completion_tokens")
+    return (
+        requested is not None
+        and isinstance(completion_tokens, int)
+        and bool(choices)
+        and choices[0].get("finish_reason") == "length"
+        and completion_tokens < requested
+    )
+
+
 def normalise_for_capture(chat_request: dict[str, Any]) -> None:
     """Force the upstream call into the one shape that yields complete, capturable responses.
 
@@ -1199,6 +1234,23 @@ def create_app(
                 for key in SAMPLING_KEYS:
                     chat_request.pop(key, None)
                 chat_request.update(effective_sampling)
+            if context_window_ran_out(chat_request, response):
+                # Like the 400 above: a stop the harness ends on, and the truncated turn is never ingested
+                session.findings.append(
+                    "[WARN] context_budget_exhausted: the engine stopped at the context window, "
+                    "before max_tokens"
+                )
+                session.budget_stop_count += 1
+                stop = _budget_stop_response(_model_of(session) or app.state.model)
+                if client_wants_stream:
+                    return StreamingResponse(
+                        sse.replay(api_type, transformer, stop, original_request),
+                        media_type="text/event-stream",
+                        headers=sse.SSE_HEADERS,
+                    )
+                payload = transformer.transform_response(stop, original_request)
+                normalise_client_payload(payload, api_type)
+                return JSONResponse(payload)
             normalise_response(response)
             _ingest(
                 session,
