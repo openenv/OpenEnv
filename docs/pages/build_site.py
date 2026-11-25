@@ -29,7 +29,8 @@ SHELL_DIR = Path(__file__).parent
 METADATA_RE = re.compile(r'<meta name="hf:doc:metadata" content="([^"]*)"\s*/?>')
 CSS_PRELOAD_RE = re.compile(r'<link href="[^"]*\.css" rel="modulepreload">\n?')
 PARAGRAPH_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.S)
-# Icons, social card and the OpenEnv logo, copied to the site root.
+# Icons and social card, copied to the site root. The pages do not use logo.svg and
+# logo-white.svg: they are published so READMEs, slides and posts can link the logo.
 ASSETS = [
     "favicon.svg",
     "favicon.png",
