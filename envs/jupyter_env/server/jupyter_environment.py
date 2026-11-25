@@ -109,10 +109,11 @@ class JupyterEnvironment(MCPEnvironment):
             if not self._sandbox:
                 return "Error: environment not reset. Call reset() first."
             result = self._sandbox.run_code(code)
-            cell = self._tracker.update_last_code_cell(code, result)
-            if self._state.cells:
-                self._state.cells.pop()
-            self._state.cells.append(self._NotebookCell(**_cell_to_model_kwargs(cell)))
+            self._tracker.update_last_code_cell(code, result)
+            self._state.cells = [
+                self._NotebookCell(**_cell_to_model_kwargs(cell))
+                for cell in self._tracker.cells
+            ]
             self._state.last_cell_success = result.success
             return _format_for_llm(result)
 

@@ -17,7 +17,7 @@ class NotebookTracker:
     In-memory cell history for one episode.
 
     Cells are appended on every ``add_*_cell`` call. ``update_last_code_cell``
-    replaces the most recent cell, implementing the edit-and-re-execute pattern
+    replaces the most recent code cell, implementing the edit-and-re-execute pattern
     used by agents to fix errors without cluttering the notebook with failed
     attempts.
     """
@@ -39,15 +39,19 @@ class NotebookTracker:
 
     def update_last_code_cell(self, code: str, result: CellResult) -> Dict[str, Any]:
         """
-        Replace the last cell with a new code + result pair.
+        Replace the last code cell with a new code + result pair.
 
         This implements the ``edit_and_execute_current_cell`` semantics —
-        the agent fixes the last cell rather than adding a new failed one.
+        the agent fixes the last code cell rather than adding a new failed one.
+        Shell cells are left alone. Without a code cell, a new one is added.
         """
-        if self.cells:
-            self.cells.pop()
-            # Reuse the same exec count (it's a replacement, not a new cell)
-            self._exec_count = max(0, self._exec_count - 1)
+        for i in reversed(range(len(self.cells))):
+            if self.cells[i]["cell_type"] == "code":
+                cell = self._make_cell("code", code, result)
+                # A replacement keeps the cell's place and execution count
+                cell["execution_count"] = self.cells[i]["execution_count"]
+                self.cells[i] = cell
+                return cell
         return self.add_code_cell(code, result)
 
     def add_shell_cell(self, command: str, result: CellResult) -> Dict[str, Any]:

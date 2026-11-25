@@ -153,6 +153,25 @@ def test_shell_tool_updates_notebook_state():
     assert env.state.cells[0].cell_type == "shell"
 
 
+def test_edit_replaces_the_last_code_cell_not_a_shell_cell():
+    env = JupyterEnvironment()
+    env._sandbox = FakeSandbox()
+    env._state = JupyterState(episode_id="episode-1", sandbox_id="fake-sandbox")
+
+    def call(tool_name, **arguments):
+        env.step(CallToolAction(tool_name=tool_name, arguments=arguments))
+
+    call("add_and_execute_code_cell", code="x = 1")
+    call("execute_shell_command", command="pwd")
+    call("edit_and_execute_current_cell", code="x = 2")
+
+    assert [(c.cell_type, c.code) for c in env.state.cells] == [
+        ("code", "x = 2"),
+        ("shell", "$ pwd"),
+    ]
+    assert [c["code"] for c in env._tracker.cells] == ["x = 2", "$ pwd"]
+
+
 def test_reset_runs_setup_and_stores_verify_commands(monkeypatch):
     monkeypatch.setenv("E2B_API_KEY", "fake-key")
     env = JupyterEnvironment()
