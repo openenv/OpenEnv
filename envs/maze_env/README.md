@@ -121,7 +121,7 @@ docker run -p 8000:8000 maze_env-env:latest
 The reward follows the underlying maze rules:
 - Small penalty for a move (`-0.05`)
 - Penalty for revisiting a cell (`-0.25`)
-- Penalty for invalid move (`-0.75`)
+- Penalty for invalid move (`-0.75`), including an action other than `0`–`3`
 - Reward for reaching the exit (`+10.0`)
 
 The episode ends with `lose` when the accumulated reward drops below `-0.5 * maze.size` (`-32` for the default maze). Further `step()` calls before the next `reset()` return the final observation again (`done=True`, same reward): the agent does not move, and reaching the exit pays only once.

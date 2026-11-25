@@ -222,8 +222,8 @@ class TextArenaEnvironment(Environment):
         self._state.turn = 0
         self._state.last_reward = 0.0
         self._state.last_info = {}
-        self._state.raw_state = self._snapshot_state()
         self._last_reward_signals = {}
+        self._state.raw_state = self._snapshot_state()
 
         observation = self._build_observation()
         observation.reward = 0.0

@@ -117,8 +117,10 @@ The environment supports these configuration options:
 | `opponent` | "moonfish" | Opponent type: "moonfish", "random", or None |
 | `opponent_depth` | 2 | Search depth for moonfish opponent |
 | `max_moves` | 500 | Maximum half-moves before draw |
-| `agent_color` | None | Agent color: "white", "black", or None (alternate each episode) |
+| `agent_color` | None | Agent color: "white", "black", or None (chosen at random each episode; `reset(seed=...)` makes it reproducible) |
 | `gamma` | 0.99 | Discount factor for temporal credit assignment |
+
+With an opponent configured, the opponent moves first whenever the agent is not the side to move: on the standard board when the agent plays Black, and in a `reset(fen=...)` position where the other side is to move.
 
 ## Temporal Discounting
 

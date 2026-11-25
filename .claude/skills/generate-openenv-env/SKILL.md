@@ -85,6 +85,8 @@ envs/<name>_env/
 ├── models.py
 ├── openenv.yaml
 ├── pyproject.toml
+├── validation/
+│   └── runtime.json
 └── server/
     ├── __init__.py
     ├── app.py
@@ -103,7 +105,8 @@ Implement these files in order:
 3. `server/app.py`
 4. `client.py`
 5. `openenv.yaml`
-6. `README.md`
+6. `validation/runtime.json`: one reset and a few valid actions for this environment, replayed by `openenv validate --level runtime`
+7. `README.md`
 
 Use these standards:
 - Use typed models (Action/Observation/State).
@@ -134,6 +137,7 @@ PYTHONPATH=src:envs uv run python -c "from envs.<name>_env.server.<name>_environ
 cd envs/<name>_env
 openenv build
 openenv validate --level static --skip-build
+openenv validate --level runtime  # needs Docker, replays validation/runtime.json
 PYTHONPATH=src:envs uv run pytest envs/<name>_env -q
 ```
 

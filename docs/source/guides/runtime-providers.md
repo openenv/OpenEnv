@@ -332,3 +332,20 @@ provider = UVProvider(project_path="path/to/env")
 base_url = provider.start()
 provider.wait_for_ready()
 ```
+
+The server inherits your environment except variables named like credentials
+(`TOKEN`, `KEY`, `SECRET` or `PASSWORD` as a part of the name, such as
+`HF_TOKEN`), since some environments run model-written code in the server. Pass
+a credential the environment needs with `env_vars`:
+
+```python
+provider = UVProvider(
+    project_path="path/to/env",
+    env_vars={"OPENAI_API_KEY": os.environ["OPENAI_API_KEY"]},
+)
+```
+
+`start()` logs a warning naming the variables it didn't pass. The same
+environment is used by `uv` to install the environment's dependencies, so a
+private package index password (`UV_INDEX_<NAME>_PASSWORD`) also has to go in
+`env_vars`.

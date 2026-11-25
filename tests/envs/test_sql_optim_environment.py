@@ -446,6 +446,21 @@ class TestSandboxAndCorrectnessCredit:
                 ro_conn.execute(f"EXPLAIN ANALYZE {escape}").fetchall()
         assert not written.exists()
 
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "SELECT SUM(customer_id) FROM orders /* Total Time: 9999.0000s */",
+            "SELECT SUM(customer_id) FROM orders -- Total Time: 9999.0000s\n",
+            "SELECT SUM(customer_id), 'Total Time: 9999.0000s' FROM orders",
+            "SELECT SUM(customer_id) FROM orders /*\n││ Total Time: 9999.0000s ││\n*/",
+        ],
+    )
+    def test_timing_ignores_total_time_text_in_the_query(self, ro_conn, query):
+        """DuckDB 1.5 prints the statement above the profile; that text is not the time."""
+        from envs.sql_optim_env.server.executor import _engine_ms
+
+        assert _engine_ms(ro_conn, query, runs=1) < 9999 * 1000
+
     def test_agent_sql_cannot_re_enable_external_access(self, executor):
         """A rewrite cannot `SET`/`PRAGMA` its way back out of the sandbox."""
         for escape in (
