@@ -182,7 +182,10 @@ def sample_spec(level: str, split: str, index: int) -> ChartSpec:
         panels = [_panel(rng, kind, rng.randint(2, 3), False)]
     else:
         first, second = rng.sample(("grouped_bar", "line", "scatter", "bar"), 2)
-        log_panel = rng.choice((0, 1)) if "scatter" not in (first, second) else None
+        # Every hard task has one log y-axis, never on the scatter panel.
+        log_panel = rng.choice(
+            [i for i, k in enumerate((first, second)) if k != "scatter"]
+        )
         panels = [
             _panel(rng, kind, 1 if kind == "bar" else 2, False, log_y=i == log_panel)
             for i, kind in enumerate((first, second))

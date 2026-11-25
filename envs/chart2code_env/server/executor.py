@@ -23,12 +23,6 @@ WORKER_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
 MEMORY_LIMIT_BYTES = 2 * 1024**3
 
 
-def _limit_memory() -> None:
-    import resource
-
-    resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT_BYTES, MEMORY_LIMIT_BYTES))
-
-
 def run_code(code: str, dpi: int, png: bool, timeout_s: float) -> dict[str, Any]:
     """Run `code` and summarize the figure it leaves open.
 
@@ -51,7 +45,15 @@ def run_code(code: str, dpi: int, png: bool, timeout_s: float) -> dict[str, Any]
             - `png` (`str` or `None`): The drawing, when `png` was asked for.
     """
     nonce = secrets.token_hex(16)
-    request = json.dumps({"code": code, "dpi": dpi, "png": png, "nonce": nonce})
+    request = json.dumps(
+        {
+            "code": code,
+            "dpi": dpi,
+            "png": png,
+            "nonce": nonce,
+            "memory_limit": MEMORY_LIMIT_BYTES,
+        }
+    )
     with tempfile.TemporaryDirectory(prefix="chart2code-") as workdir:
         env = {k: os.environ[k] for k in WORKER_ENV_ALLOWLIST if k in os.environ}
         env.update(HOME=workdir, MPLCONFIGDIR=workdir, MPLBACKEND="Agg")
@@ -64,7 +66,6 @@ def run_code(code: str, dpi: int, png: bool, timeout_s: float) -> dict[str, Any]
                 cwd=workdir,
                 env=env,
                 timeout=timeout_s,
-                preexec_fn=_limit_memory if os.name == "posix" else None,
             )
         except subprocess.TimeoutExpired:
             return {

@@ -3,6 +3,7 @@
 """Tests for the chart-to-code environment."""
 
 import asyncio
+import sys
 
 import pytest
 
@@ -12,6 +13,7 @@ from chart2code_env.models import Chart2CodeAction  # noqa: E402
 from chart2code_env.server.chart2code_environment import (  # noqa: E402
     Chart2CodeEnvironment,
 )
+from chart2code_env.server.executor import run_code  # noqa: E402
 from chart2code_env.server.specs import (  # noqa: E402
     reference_code,
     sample_spec,
@@ -200,3 +202,27 @@ def test_the_code_runs_without_the_servers_environment(monkeypatch):
         env
     )
     assert submit(env, code).reward == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("index", range(40))
+def test_every_hard_task_has_one_log_axis_off_the_scatter_panel(index):
+    panels = sample_spec("hard", "train", index).panels
+    assert [panel.log_y for panel in panels].count(True) == 1
+    assert all(not (panel.log_y and panel.kind == "scatter") for panel in panels)
+
+
+def test_numeric_legend_entries_count_as_text():
+    code = BAR_CODE.replace(", color=", ", label='2024', color=") + "ax.legend()\n"
+    figure = run_code(code, dpi=50, png=False, timeout_s=30)["figure"]
+    text = figure["axes"][0]["text"]
+    # The "2024" series name counts; the numeric y ticks do not.
+    assert "2024" in text and "t" in text
+    assert not any(t.replace(".", "").isdigit() and t != "2024" for t in text)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="RLIMIT_AS is enforced on Linux")
+def test_the_code_runs_under_a_memory_limit():
+    env = Chart2CodeEnvironment()
+    env.reset(seed=0)
+    result = submit(env, "x = bytearray(3 * 1024**3)\n" + reference(env))
+    assert result.reward == 0.0 and "MemoryError" in result.error

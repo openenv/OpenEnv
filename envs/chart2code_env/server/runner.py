@@ -13,6 +13,7 @@ import base64
 import contextlib
 import io
 import json
+import os
 import sys
 import traceback
 
@@ -45,8 +46,12 @@ def is_number(text):
     return True
 
 
-def words(texts):
-    return [t.strip() for t in texts if t.strip() and not is_number(t.strip())]
+def words(texts, keep_numbers=False):
+    return [
+        t.strip()
+        for t in texts
+        if t.strip() and (keep_numbers or not is_number(t.strip()))
+    ]
 
 
 def summarize_axes(ax):
@@ -123,10 +128,15 @@ def summarize_axes(ax):
         "yscale": ax.get_yscale(),
         "xlim": [float(v) for v in ax.get_xlim()],
         "ylim": [float(v) for v in ax.get_ylim()],
+        # Titles, axis labels and legend entries count even when numeric (a "2024"
+        # series); numeric ticks and value labels are data, scored as such.
         "text": words(
             [ax.get_title(), ax.get_xlabel(), ax.get_ylabel()]
-            + [t.get_text() for t in ax.get_xticklabels() + ax.get_yticklabels()]
-            + [t.get_text() for t in (legend.get_texts() if legend else [])]
+            + [t.get_text() for t in (legend.get_texts() if legend else [])],
+            keep_numbers=True,
+        )
+        + words(
+            [t.get_text() for t in ax.get_xticklabels() + ax.get_yticklabels()]
             + [t.get_text() for t in ax.texts]
         ),
     }
@@ -134,6 +144,13 @@ def summarize_axes(ax):
 
 def main():
     request = json.loads(sys.stdin.read())
+    if request["memory_limit"] and os.name == "posix":
+        # Set here, in the child, rather than with preexec_fn, which is unsafe in a
+        # server that runs other threads.
+        import resource
+
+        limit = request["memory_limit"]
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     nonce = request["nonce"]
     result = {"error": "", "figure": None, "png": None}
     namespace = {"__name__": "__main__"}
