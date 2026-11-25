@@ -64,7 +64,7 @@ docker build -t reasoning_gym-env:latest -f server/Dockerfile .
 
 ## Deploying to Hugging Face Spaces
 
-From `envs/reasoning_gym_env/`, run `openenv push` (or `openenv push --repo-id my-org/reasoning-gym-env`). See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs`, a health check at `/health` and the WebSocket session endpoint at `/ws`.
+From `envs/reasoning_gym_env/`, run `openenv push` (or `openenv push --repo-id my-org/reasoning-gym-env`). See the [`openenv push` reference](https://openenv.github.io/OpenEnv/main/reference/cli#openenv.cli.commands.push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs`, a health check at `/health` and the WebSocket session endpoint at `/ws`.
 
 ## Environment Details
 

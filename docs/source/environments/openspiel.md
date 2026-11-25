@@ -112,7 +112,7 @@ From `envs/openspiel_env/`:
 openenv push --repo-id my-org/openspiel-env -e OPENSPIEL_GAME=tic_tac_toe
 ```
 
-`-e` sets the variables above on the Space. See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs` and a health check at `/health`. The default Dockerfile uses the pre-built OpenSpiel base image, so it runs on standard CPU hardware.
+`-e` sets the variables above on the Space. See the [`openenv push` reference](https://openenv.github.io/OpenEnv/main/reference/cli#openenv.cli.commands.push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs` and a health check at `/health`. The default Dockerfile uses the pre-built OpenSpiel base image, so it runs on standard CPU hardware.
 
 ## Environment Details
 
