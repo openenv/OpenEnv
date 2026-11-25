@@ -2955,6 +2955,38 @@ class TestMCPErrorResponses:
             assert "error" in data
             assert data["error"]["code"] == -32700  # Parse error
 
+    @pytest.mark.parametrize("payload", ["[1, 2]", '"hi"', "123", "null"])
+    def test_ws_non_object_json_keeps_session_alive(self, app, payload):
+        """Test a non-object JSON message on /ws gets an error, not a disconnect."""
+        from starlette.testclient import TestClient
+
+        client = TestClient(app)
+
+        with client.websocket_connect("/ws") as websocket:
+            websocket.send_text(payload)
+            error = json.loads(websocket.receive_text())
+            assert error["type"] == "error"
+            assert error["data"]["code"] == "VALIDATION_ERROR"
+
+            websocket.send_text(json.dumps({"type": "state"}))
+            assert json.loads(websocket.receive_text())["type"] == "state"
+
+    @pytest.mark.parametrize("payload", ["[1, 2]", '"hi"', "123", "null"])
+    def test_mcp_ws_non_object_json_returns_invalid_request(self, app, payload):
+        """Test a non-object JSON message on /mcp gets an error, not a disconnect."""
+        from starlette.testclient import TestClient
+
+        client = TestClient(app)
+
+        with client.websocket_connect("/mcp") as websocket:
+            websocket.send_text(payload)
+            assert json.loads(websocket.receive_text())["error"]["code"] == -32600
+
+            websocket.send_text(
+                json.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+            )
+            assert "result" in json.loads(websocket.receive_text())
+
     def test_missing_params_returns_invalid_params(self, app):
         """Test missing required params returns invalid params error."""
         from starlette.testclient import TestClient
