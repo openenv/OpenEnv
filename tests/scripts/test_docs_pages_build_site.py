@@ -55,4 +55,6 @@ def test_rewrites_doc_builder_paths_for_every_version(tmp_path, monkeypatch, ver
     )
     assert f'<meta property="og:image" content="{site_url}/og-image.png">' in page
     assert 'name="robots"' not in page
+    # Copy page / View as Markdown use the .md files, not huggingface.co's Accept header.
+    assert 'input = page + ".md"' in page
     assert (out / "favicon.svg").exists() and (out / "og-image.png").exists()

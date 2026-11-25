@@ -80,6 +80,24 @@ def render_toc(sections: list) -> str:
     return f"<ul>{''.join(items)}</ul>" if items else ""
 
 
+# doc-builder's "Copy page" menu links to the page URL + ".md" and fetches the page URL
+# with "Accept: text/plain", which huggingface.co answers with markdown. GitHub Pages
+# serves files, so give the index page its /index URL (doc-builder's route for it) and
+# send that fetch to the page's .md file. Runs before the page hydrates.
+MARKDOWN_SCRIPT = """<script>
+  if (location.pathname.endsWith("/")) {
+    history.replaceState(null, "", location.pathname + "index" + location.search + location.hash);
+  }
+  const pageFetch = window.fetch;
+  window.fetch = (input, init) => {
+    const page = location.href.replace(/#.*$/, "");
+    if (input === page && new Headers(init?.headers).get("Accept") === "text/plain") {
+      input = page + ".md";
+    }
+    return pageFetch(input, init);
+  };
+</script>"""
+
 VERSION_SCRIPT = """<script>
   const select = document.querySelector(".version-select");
   fetch(select.dataset.versionsUrl)
@@ -156,6 +174,7 @@ def render_page(fragment: str, local: str, site: Site) -> str:
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="{base}/docs.css">
 <link rel="stylesheet" href="{base}/shell.css">
+{MARKDOWN_SCRIPT}
 <script>
   try {{
     const theme = localStorage.getItem("theme");
