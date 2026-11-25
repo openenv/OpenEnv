@@ -1,0 +1,106 @@
+{
+  "credit": {
+    "apr": 0.14,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.21,
+    "limit": 2100000,
+    "penalty_apr": 0.06,
+    "start_drawn": 450700,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Elm & Co",
+  "rent": 227500,
+  "seed": 3000065,
+  "skus": [
+    {
+      "base_demand": 274.5,
+      "elasticity": 2.49,
+      "holding_cost": 11,
+      "id": "A",
+      "liquidation_frac": 0.42,
+      "name": "Coffee beans 1kg",
+      "ref_price": 1429,
+      "season_amp": 0.166,
+      "season_phase": 35,
+      "shrink_rate": 0.0289,
+      "start_on_hand": 577,
+      "start_price": 1429,
+      "start_unit_cost": 644
+    },
+    {
+      "base_demand": 326.9,
+      "elasticity": 1.42,
+      "holding_cost": 9,
+      "id": "B",
+      "liquidation_frac": 0.38,
+      "name": "Olive oil",
+      "ref_price": 1004,
+      "season_amp": 0.006,
+      "season_phase": 33,
+      "shrink_rate": 0.0153,
+      "start_on_hand": 810,
+      "start_price": 1004,
+      "start_unit_cost": 570
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 517,
+    "hire_cost": 32400,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 32400
+  },
+  "start_cash": 1393700,
+  "start_invoices": [],
+  "start_week_of_year": 45,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 1120000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 220,
+      "name": "Valley Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 644
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 1230000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 300,
+      "name": "Acme Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 570
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

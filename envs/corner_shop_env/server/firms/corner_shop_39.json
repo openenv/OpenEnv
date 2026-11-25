@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.084,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.2,
+    "limit": 1600000,
+    "penalty_apr": 0.044,
+    "start_drawn": 253000,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Bluebird Grocers",
+  "rent": 112000,
+  "seed": 3000039,
+  "skus": [
+    {
+      "base_demand": 283.1,
+      "elasticity": 2.45,
+      "holding_cost": 3,
+      "id": "A",
+      "liquidation_frac": 0.48,
+      "name": "Hot sauce",
+      "ref_price": 509,
+      "season_amp": 0.21,
+      "season_phase": 10,
+      "shrink_rate": 0.0192,
+      "start_on_hand": 710,
+      "start_price": 509,
+      "start_unit_cost": 246
+    },
+    {
+      "base_demand": 299.3,
+      "elasticity": 2.12,
+      "holding_cost": 8,
+      "id": "B",
+      "liquidation_frac": 0.42,
+      "name": "Coffee beans 1kg",
+      "ref_price": 1049,
+      "season_amp": 0.176,
+      "season_phase": 16,
+      "shrink_rate": 0.0074,
+      "start_on_hand": 674,
+      "start_price": 1049,
+      "start_unit_cost": 588
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 570,
+    "hire_cost": 29100,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 29100
+  },
+  "start_cash": 587900,
+  "start_invoices": [
+    {
+      "amount": 121500,
+      "due_in_weeks": 1,
+      "supplier": "S1"
+    }
+  ],
+  "start_week_of_year": 12,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 370000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 170,
+      "name": "Metro Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 4,
+      "unit_cost": 246
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 900000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 260,
+      "name": "Keystone Trade",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 588
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

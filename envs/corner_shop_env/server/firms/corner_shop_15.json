@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.093,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.23,
+    "limit": 1500000,
+    "penalty_apr": 0.042,
+    "start_drawn": 314600,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Corner Shop",
+  "rent": 143000,
+  "seed": 3000015,
+  "skus": [
+    {
+      "base_demand": 422.6,
+      "elasticity": 2.27,
+      "holding_cost": 1,
+      "id": "A",
+      "liquidation_frac": 0.43,
+      "name": "Pasta 500g",
+      "ref_price": 199,
+      "season_amp": 0.056,
+      "season_phase": 37,
+      "shrink_rate": 0.0198,
+      "start_on_hand": 1163,
+      "start_price": 199,
+      "start_unit_cost": 99
+    },
+    {
+      "base_demand": 340.2,
+      "elasticity": 1.57,
+      "holding_cost": 8,
+      "id": "B",
+      "liquidation_frac": 0.46,
+      "name": "Olive oil",
+      "ref_price": 1089,
+      "season_amp": 0.249,
+      "season_phase": 2,
+      "shrink_rate": 0.0131,
+      "start_on_hand": 1260,
+      "start_price": 1089,
+      "start_unit_cost": 473
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 643,
+    "hire_cost": 32800,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 32800
+  },
+  "start_cash": 979000,
+  "start_invoices": [
+    {
+      "amount": 110700,
+      "due_in_weeks": 1,
+      "supplier": "S1"
+    },
+    {
+      "amount": 65600,
+      "due_in_weeks": 1,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 4,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 190000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 240,
+      "name": "Union Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 99
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 970000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 230,
+      "name": "Metro Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 473
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

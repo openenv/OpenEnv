@@ -355,6 +355,14 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
         <a href="environments/sql_optim" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
       </div>
     </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Corner Shop</div>
+      <p class="text-sm">Run a small retail shop for 13 simulated weeks across 100 firms. The going-concern reward keeps running the firm past the end of the episode, so running the business down for last-day cash scores below zero on average.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/corner_shop" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+        <a href="https://github.com/kayamlabs/corner-shop" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">💻 Code</a>
+      </div>
+    </div>
   </div>
 </div>
 

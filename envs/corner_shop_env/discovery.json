@@ -1,0 +1,8 @@
+{
+  "tags": ["openenv", "long-horizon", "multi-turn", "business", "reward-hacking", "simulation"],
+  "representative_queries": [
+    "find a long-horizon business simulation for training LLM agents",
+    "find an environment whose reward resists end-of-episode reward hacking",
+    "run a small shop for several weeks with prices, orders and supplier payments"
+  ]
+}

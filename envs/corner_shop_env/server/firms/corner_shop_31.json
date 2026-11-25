@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.097,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.19,
+    "limit": 1500000,
+    "penalty_apr": 0.052,
+    "start_drawn": 208700,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Oak Lane Store",
+  "rent": 180500,
+  "seed": 3000031,
+  "skus": [
+    {
+      "base_demand": 384.1,
+      "elasticity": 1.37,
+      "holding_cost": 5,
+      "id": "A",
+      "liquidation_frac": 0.4,
+      "name": "Candles",
+      "ref_price": 794,
+      "season_amp": 0.046,
+      "season_phase": 37,
+      "shrink_rate": 0.0276,
+      "start_on_hand": 832,
+      "start_price": 794,
+      "start_unit_cost": 411
+    },
+    {
+      "base_demand": 225.7,
+      "elasticity": 1.39,
+      "holding_cost": 11,
+      "id": "B",
+      "liquidation_frac": 0.35,
+      "name": "Olive oil",
+      "ref_price": 1299,
+      "season_amp": 0.142,
+      "season_phase": 15,
+      "shrink_rate": 0.0143,
+      "start_on_hand": 575,
+      "start_price": 1299,
+      "start_unit_cost": 601
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 568,
+    "hire_cost": 31300,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 31300
+  },
+  "start_cash": 786300,
+  "start_invoices": [
+    {
+      "amount": 171900,
+      "due_in_weeks": 0,
+      "supplier": "S1"
+    }
+  ],
+  "start_week_of_year": 51,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 760000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 340,
+      "name": "Acme Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 4,
+      "unit_cost": 411
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 940000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 220,
+      "name": "Summit Goods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 601
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

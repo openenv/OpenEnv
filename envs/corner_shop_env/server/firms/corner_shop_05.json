@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.134,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.21,
+    "limit": 1000000,
+    "penalty_apr": 0.056,
+    "start_drawn": 312200,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Corner Shop",
+  "rent": 89500,
+  "seed": 3000005,
+  "skus": [
+    {
+      "base_demand": 432.1,
+      "elasticity": 2.45,
+      "holding_cost": 3,
+      "id": "A",
+      "liquidation_frac": 0.42,
+      "name": "AA batteries 4pk",
+      "ref_price": 584,
+      "season_amp": 0.156,
+      "season_phase": 36,
+      "shrink_rate": 0.0101,
+      "start_on_hand": 1060,
+      "start_price": 584,
+      "start_unit_cost": 313
+    },
+    {
+      "base_demand": 432.6,
+      "elasticity": 1.73,
+      "holding_cost": 2,
+      "id": "B",
+      "liquidation_frac": 0.46,
+      "name": "Oat milk",
+      "ref_price": 339,
+      "season_amp": 0.063,
+      "season_phase": 44,
+      "shrink_rate": 0.0206,
+      "start_on_hand": 1316,
+      "start_price": 339,
+      "start_unit_cost": 160
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 581,
+    "hire_cost": 34200,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 34200
+  },
+  "start_cash": 787200,
+  "start_invoices": [
+    {
+      "amount": 78200,
+      "due_in_weeks": 1,
+      "supplier": "S1"
+    },
+    {
+      "amount": 81700,
+      "due_in_weeks": 0,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 28,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 580000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 340,
+      "name": "Ridge Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 313
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 470000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 300,
+      "name": "Valley Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 160
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

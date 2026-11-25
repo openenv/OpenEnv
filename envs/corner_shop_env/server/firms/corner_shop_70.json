@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.09,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.15,
+    "limit": 800000,
+    "penalty_apr": 0.052,
+    "start_drawn": 205100,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Corner Shop",
+  "rent": 52500,
+  "seed": 3000070,
+  "skus": [
+    {
+      "base_demand": 272.2,
+      "elasticity": 2.31,
+      "holding_cost": 4,
+      "id": "A",
+      "liquidation_frac": 0.33,
+      "name": "Tea 40 bags",
+      "ref_price": 409,
+      "season_amp": 0.095,
+      "season_phase": 34,
+      "shrink_rate": 0.0113,
+      "start_on_hand": 558,
+      "start_price": 409,
+      "start_unit_cost": 191
+    },
+    {
+      "base_demand": 282.7,
+      "elasticity": 2.32,
+      "holding_cost": 3,
+      "id": "B",
+      "liquidation_frac": 0.4,
+      "name": "Hot sauce",
+      "ref_price": 389,
+      "season_amp": 0.229,
+      "season_phase": 44,
+      "shrink_rate": 0.0117,
+      "start_on_hand": 671,
+      "start_price": 389,
+      "start_unit_cost": 215
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 640,
+    "hire_cost": 37000,
+    "max_headcount": 4,
+    "severance_weeks": 2.0,
+    "start_headcount": 1,
+    "wage": 37000
+  },
+  "start_cash": 291600,
+  "start_invoices": [
+    {
+      "amount": 29400,
+      "due_in_weeks": 2,
+      "supplier": "S1"
+    },
+    {
+      "amount": 44200,
+      "due_in_weeks": 0,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 45,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 240000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 200,
+      "name": "Ridge Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 4,
+      "unit_cost": 191
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 310000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 220,
+      "name": "Valley Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 2,
+      "unit_cost": 215
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

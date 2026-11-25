@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.129,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.19,
+    "limit": 1200000,
+    "penalty_apr": 0.05,
+    "start_drawn": 387900,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Bluebird Grocers",
+  "rent": 178000,
+  "seed": 3000101,
+  "skus": [
+    {
+      "base_demand": 332.1,
+      "elasticity": 1.43,
+      "holding_cost": 5,
+      "id": "A",
+      "liquidation_frac": 0.46,
+      "name": "Hand cream",
+      "ref_price": 689,
+      "season_amp": 0.188,
+      "season_phase": 8,
+      "shrink_rate": 0.0202,
+      "start_on_hand": 958,
+      "start_price": 689,
+      "start_unit_cost": 290
+    },
+    {
+      "base_demand": 262.7,
+      "elasticity": 1.73,
+      "holding_cost": 8,
+      "id": "B",
+      "liquidation_frac": 0.31,
+      "name": "Olive oil",
+      "ref_price": 1299,
+      "season_amp": 0.084,
+      "season_phase": 36,
+      "shrink_rate": 0.0216,
+      "start_on_hand": 683,
+      "start_price": 1299,
+      "start_unit_cost": 628
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 573,
+    "hire_cost": 32100,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 32100
+  },
+  "start_cash": 931100,
+  "start_invoices": [
+    {
+      "amount": 73200,
+      "due_in_weeks": 0,
+      "supplier": "S1"
+    }
+  ],
+  "start_week_of_year": 2,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 420000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 240,
+      "name": "Metro Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 290
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 750000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 140,
+      "name": "Keystone Trade",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 2,
+      "unit_cost": 628
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

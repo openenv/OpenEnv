@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.094,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.2,
+    "limit": 2600000,
+    "penalty_apr": 0.041,
+    "start_drawn": 267500,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Northside Goods",
+  "rent": 254000,
+  "seed": 3000090,
+  "skus": [
+    {
+      "base_demand": 352.6,
+      "elasticity": 2.49,
+      "holding_cost": 3,
+      "id": "A",
+      "liquidation_frac": 0.45,
+      "name": "Dish soap",
+      "ref_price": 284,
+      "season_amp": 0.203,
+      "season_phase": 18,
+      "shrink_rate": 0.0064,
+      "start_on_hand": 1373,
+      "start_price": 284,
+      "start_unit_cost": 148
+    },
+    {
+      "base_demand": 447.8,
+      "elasticity": 2.49,
+      "holding_cost": 13,
+      "id": "B",
+      "liquidation_frac": 0.44,
+      "name": "Coffee beans 1kg",
+      "ref_price": 1429,
+      "season_amp": 0.033,
+      "season_phase": 38,
+      "shrink_rate": 0.0247,
+      "start_on_hand": 760,
+      "start_price": 1429,
+      "start_unit_cost": 684
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 628,
+    "hire_cost": 28800,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 28800
+  },
+  "start_cash": 1441200,
+  "start_invoices": [
+    {
+      "amount": 152900,
+      "due_in_weeks": 2,
+      "supplier": "S1"
+    },
+    {
+      "amount": 190300,
+      "due_in_weeks": 1,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 32,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 320000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 310,
+      "name": "Keystone Trade",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 148
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 1440000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 420,
+      "name": "Prime Foods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 684
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

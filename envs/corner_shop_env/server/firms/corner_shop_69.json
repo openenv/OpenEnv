@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.082,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.25,
+    "limit": 900000,
+    "penalty_apr": 0.045,
+    "start_drawn": 93300,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Northside Goods",
+  "rent": 28500,
+  "seed": 3000069,
+  "skus": [
+    {
+      "base_demand": 252.1,
+      "elasticity": 2.26,
+      "holding_cost": 4,
+      "id": "A",
+      "liquidation_frac": 0.32,
+      "name": "Sparkling water 6pk",
+      "ref_price": 399,
+      "season_amp": 0.185,
+      "season_phase": 19,
+      "shrink_rate": 0.0255,
+      "start_on_hand": 656,
+      "start_price": 399,
+      "start_unit_cost": 198
+    },
+    {
+      "base_demand": 516.3,
+      "elasticity": 1.73,
+      "holding_cost": 2,
+      "id": "B",
+      "liquidation_frac": 0.31,
+      "name": "Dish soap",
+      "ref_price": 284,
+      "season_amp": 0.18,
+      "season_phase": 29,
+      "shrink_rate": 0.0201,
+      "start_on_hand": 1504,
+      "start_price": 284,
+      "start_unit_cost": 141
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 520,
+    "hire_cost": 33000,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 33000
+  },
+  "start_cash": 417100,
+  "start_invoices": [
+    {
+      "amount": 59900,
+      "due_in_weeks": 2,
+      "supplier": "S1"
+    }
+  ],
+  "start_week_of_year": 17,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 180000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 150,
+      "name": "Union Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 198
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 360000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 310,
+      "name": "Acme Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 141
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

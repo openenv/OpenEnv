@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.093,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.24,
+    "limit": 1300000,
+    "penalty_apr": 0.04,
+    "start_drawn": 166400,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Riverside Mart",
+  "rent": 93500,
+  "seed": 3000025,
+  "skus": [
+    {
+      "base_demand": 436.2,
+      "elasticity": 1.32,
+      "holding_cost": 4,
+      "id": "A",
+      "liquidation_frac": 0.48,
+      "name": "Hot sauce",
+      "ref_price": 509,
+      "season_amp": 0.194,
+      "season_phase": 49,
+      "shrink_rate": 0.0101,
+      "start_on_hand": 1544,
+      "start_price": 509,
+      "start_unit_cost": 235
+    },
+    {
+      "base_demand": 304.3,
+      "elasticity": 2.26,
+      "holding_cost": 4,
+      "id": "B",
+      "liquidation_frac": 0.33,
+      "name": "Sourdough loaf",
+      "ref_price": 489,
+      "season_amp": 0.151,
+      "season_phase": 47,
+      "shrink_rate": 0.0095,
+      "start_on_hand": 637,
+      "start_price": 489,
+      "start_unit_cost": 220
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 617,
+    "hire_cost": 37500,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 37500
+  },
+  "start_cash": 571600,
+  "start_invoices": [
+    {
+      "amount": 69600,
+      "due_in_weeks": 0,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 30,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 490000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 270,
+      "name": "Summit Goods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 235
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 270000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 240,
+      "name": "Metro Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 220
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

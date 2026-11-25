@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.127,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.15,
+    "limit": 1400000,
+    "penalty_apr": 0.048,
+    "start_drawn": 374700,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Northside Goods",
+  "rent": 156000,
+  "seed": 3000018,
+  "skus": [
+    {
+      "base_demand": 323.3,
+      "elasticity": 1.94,
+      "holding_cost": 15,
+      "id": "A",
+      "liquidation_frac": 0.43,
+      "name": "Dog food 2kg",
+      "ref_price": 1309,
+      "season_amp": 0.059,
+      "season_phase": 46,
+      "shrink_rate": 0.0185,
+      "start_on_hand": 573,
+      "start_price": 1309,
+      "start_unit_cost": 765
+    },
+    {
+      "base_demand": 171.9,
+      "elasticity": 2.27,
+      "holding_cost": 6,
+      "id": "B",
+      "liquidation_frac": 0.43,
+      "name": "Phone charger",
+      "ref_price": 899,
+      "season_amp": 0.148,
+      "season_phase": 44,
+      "shrink_rate": 0.0166,
+      "start_on_hand": 278,
+      "start_price": 899,
+      "start_unit_cost": 450
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 616,
+    "hire_cost": 36700,
+    "max_headcount": 4,
+    "severance_weeks": 2.0,
+    "start_headcount": 1,
+    "wage": 36700
+  },
+  "start_cash": 599000,
+  "start_invoices": [
+    {
+      "amount": 174100,
+      "due_in_weeks": 0,
+      "supplier": "S1"
+    },
+    {
+      "amount": 137000,
+      "due_in_weeks": 2,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 4,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 1640000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 210,
+      "name": "Metro Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 765
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 430000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 140,
+      "name": "Coastal Trading",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 2,
+      "unit_cost": 450
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

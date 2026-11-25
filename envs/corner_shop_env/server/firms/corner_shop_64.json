@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.127,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.22,
+    "limit": 1100000,
+    "penalty_apr": 0.055,
+    "start_drawn": 359400,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Corner Shop",
+  "rent": 78500,
+  "seed": 3000064,
+  "skus": [
+    {
+      "base_demand": 264.9,
+      "elasticity": 2.31,
+      "holding_cost": 3,
+      "id": "A",
+      "liquidation_frac": 0.4,
+      "name": "Hand cream",
+      "ref_price": 514,
+      "season_amp": 0.058,
+      "season_phase": 34,
+      "shrink_rate": 0.0277,
+      "start_on_hand": 609,
+      "start_price": 514,
+      "start_unit_cost": 281
+    },
+    {
+      "base_demand": 282.4,
+      "elasticity": 1.41,
+      "holding_cost": 6,
+      "id": "B",
+      "liquidation_frac": 0.37,
+      "name": "Granola",
+      "ref_price": 769,
+      "season_amp": 0.024,
+      "season_phase": 21,
+      "shrink_rate": 0.0239,
+      "start_on_hand": 561,
+      "start_price": 769,
+      "start_unit_cost": 346
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 582,
+    "hire_cost": 38000,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 38000
+  },
+  "start_cash": 488600,
+  "start_invoices": [
+    {
+      "amount": 101800,
+      "due_in_weeks": 0,
+      "supplier": "S1"
+    },
+    {
+      "amount": 62300,
+      "due_in_weeks": 0,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 46,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 400000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 250,
+      "name": "Summit Goods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 281
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 480000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 220,
+      "name": "Lakeside Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 2,
+      "unit_cost": 346
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

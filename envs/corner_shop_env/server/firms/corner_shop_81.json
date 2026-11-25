@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.105,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.15,
+    "limit": 2100000,
+    "penalty_apr": 0.055,
+    "start_drawn": 420000,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Northside Goods",
+  "rent": 156500,
+  "seed": 3000081,
+  "skus": [
+    {
+      "base_demand": 448.5,
+      "elasticity": 1.3,
+      "holding_cost": 6,
+      "id": "A",
+      "liquidation_frac": 0.46,
+      "name": "Phone charger",
+      "ref_price": 824,
+      "season_amp": 0.204,
+      "season_phase": 47,
+      "shrink_rate": 0.0287,
+      "start_on_hand": 1323,
+      "start_price": 824,
+      "start_unit_cost": 425
+    },
+    {
+      "base_demand": 390.8,
+      "elasticity": 1.99,
+      "holding_cost": 4,
+      "id": "B",
+      "liquidation_frac": 0.4,
+      "name": "Candles",
+      "ref_price": 634,
+      "season_amp": 0.098,
+      "season_phase": 15,
+      "shrink_rate": 0.0071,
+      "start_on_hand": 1068,
+      "start_price": 634,
+      "start_unit_cost": 323
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 452,
+    "hire_cost": 31200,
+    "max_headcount": 8,
+    "severance_weeks": 2.0,
+    "start_headcount": 3,
+    "wage": 31200
+  },
+  "start_cash": 837200,
+  "start_invoices": [
+    {
+      "amount": 157600,
+      "due_in_weeks": 2,
+      "supplier": "S1"
+    },
+    {
+      "amount": 102200,
+      "due_in_weeks": 2,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 27,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 1060000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 400,
+      "name": "Prime Foods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 425
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 570000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 200,
+      "name": "Ridge Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 2,
+      "unit_cost": 323
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

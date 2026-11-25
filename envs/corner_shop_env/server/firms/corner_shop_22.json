@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.102,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.15,
+    "limit": 500000,
+    "penalty_apr": 0.05,
+    "start_drawn": 189300,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Riverside Mart",
+  "rent": 36500,
+  "seed": 3000022,
+  "skus": [
+    {
+      "base_demand": 164.1,
+      "elasticity": 1.37,
+      "holding_cost": 2,
+      "id": "A",
+      "liquidation_frac": 0.38,
+      "name": "Notebook",
+      "ref_price": 249,
+      "season_amp": 0.157,
+      "season_phase": 50,
+      "shrink_rate": 0.0093,
+      "start_on_hand": 386,
+      "start_price": 249,
+      "start_unit_cost": 115
+    },
+    {
+      "base_demand": 299.1,
+      "elasticity": 2.14,
+      "holding_cost": 5,
+      "id": "B",
+      "liquidation_frac": 0.47,
+      "name": "AA batteries 4pk",
+      "ref_price": 604,
+      "season_amp": 0.164,
+      "season_phase": 48,
+      "shrink_rate": 0.0072,
+      "start_on_hand": 676,
+      "start_price": 604,
+      "start_unit_cost": 294
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 468,
+    "hire_cost": 28200,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 28200
+  },
+  "start_cash": 420300,
+  "start_invoices": [
+    {
+      "amount": 56600,
+      "due_in_weeks": 1,
+      "supplier": "S1"
+    },
+    {
+      "amount": 43500,
+      "due_in_weeks": 2,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 47,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 120000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 130,
+      "name": "Lakeside Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 115
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 490000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 250,
+      "name": "Union Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 2,
+      "unit_cost": 294
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}
