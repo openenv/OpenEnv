@@ -10,6 +10,7 @@ One base-model GRPO run, 50 final optimizer steps and 1,600 episodes; matched gr
 - `provenance.json`: model/dataset revisions, runtime versions, checkpoint continuation, and behavioral limitations.
 - `compute.json`: measured phase times and runtime-based compute estimates, excluding storage and subscription fees.
 - `async-api-check.json`: a manual root using the real frozen GPU child through the nonblocking API. This is not a model-generated root trajectory or a speedup benchmark.
+- [`validation.md`](validation.md): committed regression-test coverage, reproduction commands, completed checks and their limits.
 
 The trained model started zero recursive child runs in scored evaluation and also skipped delegation in the guided
 checks. These results demonstrate improved REPL question answering on this slice; they do not demonstrate learned
