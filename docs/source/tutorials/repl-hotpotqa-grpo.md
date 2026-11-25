@@ -29,6 +29,8 @@ order, using greedy decoding and identical initial prompts and budgets:
 The paired improvement is **50 percentage points** (95% paired bootstrap interval: 40–60 points; 10,000 resamples,
 seed 2026). The trained model retained all six base successes and answered 50 additional questions correctly.
 It submitted an answer on 92 questions versus 37 for the base, with 429 parsed tool calls versus 1,038.
+The committed `evaluation.csv` records submission flags separately from correctness, and `results.json` includes
+the submission totals. A wrong submitted answer and an episode without a submission can both have reward 0.0.
 This is one training run on a fixed 100-question slice, not the full validation set or a multi-seed benchmark.
 The intervals describe question-sampling uncertainty for that run; they do not measure training-seed variation.
 
@@ -99,15 +101,23 @@ answer.
 From `examples/grpo_repl_hotpotqa`, with the child server running (step 2 below), you can play one question by hand:
 
 ```python
-from grpo import HotpotQAReplEnv, load_questions
+from grpo import HotpotQAReplEnv
 
 env = HotpotQAReplEnv()
-question = load_questions("validation")[0]
-print(env.reset(**question))
-print(env.execute_code("print(context[:400])"))
-print(env.execute_code("print(FINAL('Paris'))"))
-print(env.get_reward())
-env._close()
+try:
+    print(
+        env.reset(
+            id="capital-demo",
+            question="What is the capital of France?",
+            answer="Paris",
+            context={"title": ["France"], "sentences": [["Paris is the capital of France."]]},
+        )
+    )
+    print(env.execute_code("print(context)"))
+    print(env.execute_code("print(FINAL('Paris'))"))
+    print(env.get_reward())  # 1.0 for this synthetic example
+finally:
+    env._close()
 ```
 
 The system prompt tells the root how to work: search `context` with string operations, use `llm_query(question)` for a
@@ -194,7 +204,15 @@ and the full `conversation`. It also writes a summary JSON file. Exact-match acc
 answers; mean reward is separate because iteration-limit failures receive -0.1. Questions run in batches of four
 with cleanup after each batch, including on errors. Run it on the base
 model first, then on the trained model after merging the last LoRA checkpoint into the base model (vLLM serves merged
-weights, not an adapter directory). The default is 100 questions:
+weights, not an adapter directory).
+
+Episodes that stop without `FINAL(...)`, including on completion-token or context-limit exhaustion, record
+`submitted: null` and `exact_match: false` and remain in the accuracy denominator. Their reward is 0.0 unless the
+REPL iteration limit has already produced -0.1. The JSONL does not record a separate termination reason; reward
+0.0 therefore does not distinguish a wrong submitted answer from an unfinished episode. The analysis CSV records
+submission flags separately, with 1 for any submitted answer (correct or wrong) and 0 for no submission.
+
+The default is 100 questions:
 
 ```bash
 uv run evaluate.py --model Qwen/Qwen3.5-4B --output base.jsonl

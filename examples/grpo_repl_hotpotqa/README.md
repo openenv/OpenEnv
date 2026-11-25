@@ -120,9 +120,10 @@ output folders. These are timeout caps,
 not measured runtimes. Check [current pricing](https://huggingface.co/docs/hub/jobs-pricing), including the child,
 exposed-port surcharge, and bucket storage, before starting jobs.
 
-The optimized GPU check completed two real Qwen3.5-4B training steps using `kernels==0.18.2` with
-`use_kernels=True`: 211 seconds for the first step and 107 seconds for the second on an RTX PRO 6000 96GB.
-These two steps provide a throughput estimate; generated trajectory lengths and child calls can change runtime.
+The recorded 50-step Qwen3.5-4B run used `kernels==0.18.2` with `use_kernels=True` on an RTX PRO 6000 96GB.
+Its first two steps took **192.9 seconds** and **114.0 seconds**, as recorded in
+[`results/training.csv`](results/training.csv). These are measurements from the recorded run, separate from the
+earlier two-step throughput check. Generated trajectory lengths and child calls can change runtime.
 The kernel loader version is constrained by Transformers 5.24.1. FLA and causal-convolution kernels are loaded
 from the Hub; unavailable optional normalization kernels retain the reference implementation.
 
@@ -139,6 +140,11 @@ recursive child-run counts (`delegations`, excluding direct `llm_query` calls), 
 `<output>.summary.json`. Exact-match accuracy is the fraction of correctly submitted answers; mean reward is
 reported separately because iteration-limit failures receive -0.1. Use the summaries and question IDs to compare
 base and trained runs.
+
+An episode that stops without `FINAL(...)`, including when it exhausts the 4096-token completion budget or
+6144-token context limit, has `submitted: null` and `exact_match: false`. It remains in the accuracy denominator.
+Its reward is 0.0 unless it has reached the REPL iteration limit and received -0.1. The JSONL does not record a
+separate termination reason, so reward 0.0 alone cannot distinguish a wrong submitted answer from no submission.
 
 ## Guided asynchronous demonstration and figures
 
@@ -159,7 +165,9 @@ The analysis checks question IDs and initial prompts match, plots the actual tra
 95% accuracy intervals plus a paired bootstrap interval for the change. Those intervals describe question sampling
 for one training run; they do not measure variation across training seeds.
 It also writes `training.csv`, a paired `evaluation.csv` keyed by question ID, and `results.json` with the input-file
-SHA-256 hashes, so the plotted values can be inspected without loading the full conversations.
+SHA-256 hashes, so the plotted values can be inspected without loading the full conversations. The CSV's
+`base_submitted` and `grpo_submitted` flags are 1 when the JSONL's submitted answer is not null, including wrong
+answers, and 0 otherwise. `results.json` reports the corresponding `submitted_answers` totals.
 
 ## Optional publication after evaluation
 

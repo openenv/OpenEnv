@@ -5,8 +5,8 @@ One base-model GRPO run, 50 final optimizer steps and 1,600 episodes; matched gr
 
 - `results.png` and `results.svg`: actual reward history, exact-match counts with Wilson intervals, and recursive child counts.
 - `training.csv`: 50 recorded optimizer-step metrics.
-- `evaluation.csv`: 100 matched question IDs with correctness, reward, and recursive child counts for each model.
-- `results.json`: aggregate metrics, paired bootstrap interval, and SHA-256 hashes of the original analysis inputs.
+- `evaluation.csv`: 100 matched question IDs with correctness, submission flags, reward, and recursive child counts for each model. `base_submitted` and `grpo_submitted` are 1 for any submitted answer (including wrong answers), 0 for no submission; totals are 37 and 92 respectively.
+- `results.json`: aggregate metrics, submitted-answer totals, paired bootstrap interval, and SHA-256 hashes of the original analysis inputs.
 - `provenance.json`: model/dataset revisions, runtime versions, checkpoint continuation, and behavioral limitations.
 - `compute.json`: measured phase times and runtime-based compute estimates, excluding storage and subscription fees.
 - `async-api-check.json`: a manual root using the real frozen GPU child through the nonblocking API. This is not a model-generated root trajectory or a speedup benchmark.

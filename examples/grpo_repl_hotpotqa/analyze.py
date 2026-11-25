@@ -71,6 +71,7 @@ def main():
         correct = sum(bool(row["exact_match"]) for row in records)
         summary["models"][name] = {
             "correct": correct,
+            "submitted_answers": sum(row["submitted"] is not None for row in records),
             "exact_match": correct / total,
             "exact_match_wilson_95_interval": wilson_interval(correct, total),
             "mean_reward": float(np.mean([row["reward"] for row in records])),
@@ -117,6 +118,8 @@ def main():
             "question_id",
             "base_correct",
             "grpo_correct",
+            "base_submitted",
+            "grpo_submitted",
             "base_reward",
             "grpo_reward",
             "base_recursive_child_runs",
@@ -130,6 +133,8 @@ def main():
                     "question_id": before["id"],
                     "base_correct": int(before["exact_match"]),
                     "grpo_correct": int(after["exact_match"]),
+                    "base_submitted": int(before["submitted"] is not None),
+                    "grpo_submitted": int(after["submitted"] is not None),
                     "base_reward": before["reward"],
                     "grpo_reward": after["reward"],
                     "base_recursive_child_runs": before["delegations"],

@@ -91,6 +91,23 @@ tiny reload test and the full 4B export above validate that correction.
 
 ## Interpretation and review points
 
+### Review corrections
+
+The analysis now exports `base_submitted` and `grpo_submitted` per question and `submitted_answers` totals.
+Regeneration from the original, hash-matched JSONL verified every flag for all 100 paired questions: 37 base
+submissions and 92 trained submissions. Existing CSV columns, accuracy/uncertainty metrics, source hashes,
+training CSV and both figures were unchanged. No training or evaluation rerun was needed.
+
+The README's first-two-step timings now refer explicitly to the recorded 50-step run (192.9 and 114.0 seconds).
+The tutorial's introductory example uses matching synthetic evidence/question/answer and was executed with a
+real REPL worker, producing reward 1.0. README/tutorial now explain that episodes without `FINAL(...)`, including
+token-budget exhaustion, remain in the accuracy denominator and that the JSONL lacks a separate termination
+reason. After these corrections, the 18 focused tests passed again, repository/example lint passed, and the
+93-page documentation build and internal-link resolution passed. The analysis generator was exercised on the
+actual saved artifacts; no additional paid compute was started.
+
+### Experiment limits
+
 The results support improved REPL question answering on this slice, **not learned recursive or parallel reasoning**.
 The async walkthrough validates the API mechanism separately. The paired accuracy increase is 50 percentage
 points, with a 95% paired-bootstrap interval of 40–60 points; this does not remove the one-run/fixed-slice limit.

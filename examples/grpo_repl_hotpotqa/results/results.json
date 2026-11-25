@@ -4,6 +4,7 @@
   "models": {
     "Base": {
       "correct": 6,
+      "submitted_answers": 37,
       "exact_match": 0.06,
       "exact_match_wilson_95_interval": [
         0.027786123963188192,
@@ -16,6 +17,7 @@
     },
     "GRPO": {
       "correct": 56,
+      "submitted_answers": 92,
       "exact_match": 0.56,
       "exact_match_wilson_95_interval": [
         0.4622810465167699,
