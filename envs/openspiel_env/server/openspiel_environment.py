@@ -208,7 +208,7 @@ class OpenSpielEnvironment(Environment):
                 raise NotImplementedError(
                     "Simultaneous-move games only support agent_player=0"
                 )
-            # Get opponent actions
+            time_step = self._ospiel_env.get_time_step()
             opponent_actions = []
             for player_id in range(self.num_players):
                 if player_id == self.agent_player:
@@ -245,8 +245,8 @@ class OpenSpielEnvironment(Environment):
         Returns:
             Updated TimeStep after opponent moves.
         """
-        # Single-player games: nothing to do
-        if self.num_players == 1:
+        # Single-player and simultaneous-move games have no opponent turns
+        if self.num_players == 1 or not self.is_turn_based:
             return time_step
 
         # Multi-player games: play opponent turns
