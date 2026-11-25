@@ -22,8 +22,6 @@ from urllib.parse import urlparse
 
 import yaml
 
-DOC_BUILDER_BASE = "/docs/openenv/main/en"
-HUB_DOCS_URL = "https://huggingface.co/docs/openenv/main"
 REPO_URL = "https://github.com/openenv/OpenEnv"
 SHELL_DIR = Path(__file__).parent
 
@@ -187,6 +185,11 @@ def main() -> None:
     args = parser.parse_args()
     site_url = args.site_url.rstrip("/")
     base = urlparse(site_url).path
+    # doc-builder writes to <build>/openenv/<version>/en and links pages under the
+    # same path on huggingface.co.
+    version = args.build_dir.resolve().parent.name
+    doc_builder_base = f"/docs/openenv/{version}/en"
+    hub_docs_url = f"https://huggingface.co/docs/openenv/{version}"
 
     shutil.rmtree(args.output_dir, ignore_errors=True)
     shutil.copytree(args.build_dir, args.output_dir)
@@ -196,13 +199,13 @@ def main() -> None:
     for path in out.rglob("*"):
         if path.suffix in {".md", ".txt"}:
             text = path.read_text(encoding="utf-8")
-            text = text.replace(HUB_DOCS_URL, site_url).replace(
-                DOC_BUILDER_BASE, site_url
+            text = text.replace(hub_docs_url, site_url).replace(
+                doc_builder_base, site_url
             )
             path.write_text(text, encoding="utf-8")
         if path.suffix not in {".html", ".js"}:
             continue
-        text = path.read_text(encoding="utf-8").replace(DOC_BUILDER_BASE, base)
+        text = path.read_text(encoding="utf-8").replace(doc_builder_base, base)
         if path.suffix == ".html":
             local = path.relative_to(out).with_suffix("").as_posix()
             text = render_page(
