@@ -88,6 +88,8 @@ finite number is ignored, the pass rate is used, and the reason is recorded in
 
 Files persist between steps, but each command starts a new shell process: `cd` and exported variables do not carry to the next call. Reset kills the previous sandbox and creates a fresh one. Use `step(CallToolAction(...))` for `done`/reward postprocessing; direct `call_tool()` only invokes the MCP tool.
 
+Once the answer is scored, further `step()` calls (the WebSocket session) run no tool and score nothing. They return the final observation again (`done=True`, same reward) until the next `reset()`.
+
 The SDK's default sandbox timeout is 300 seconds. The orchestrator must budget for batch startup and model generation, manage known sandbox IDs through the E2B control API when a longer lifetime is needed, and treat expiry as an infrastructure failure. Local request cancellation does not prove remote work stopped.
 
 A failed deletion raises to the direct caller and retains ownership for retry. The OpenEnv server may still suppress teardown errors; closing a network client alone is not confirmation of deletion. Reconcile known owned IDs through E2B and report unresolved cleanup. Do not replay uncertain stateful steps or replace an episode silently.

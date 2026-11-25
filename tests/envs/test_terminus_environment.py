@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from openenv.core.env_server.mcp_types import CallToolAction, ListToolsAction
 from terminus_env.models import TerminusState
@@ -148,6 +150,70 @@ def test_terminal_final_answer_runs_verify_commands():
     ]
 
 
+def _answered_env(sandbox):
+    env = TerminusEnvironment()
+    env._sandbox = sandbox
+    env._state = TerminusState(
+        episode_id="episode-1",
+        sandbox_id="fake-sandbox",
+        verify_commands=["true", "exit 1"],
+    )
+    final = env.step(
+        CallToolAction(tool_name="terminal", arguments={"final_answer": "done"})
+    )
+    return env, final
+
+
+def test_steps_after_the_answer_return_the_final_observation():
+    sandbox = FakeSandbox()
+    env, final = _answered_env(sandbox)
+    assert final.done and final.reward == 0.5
+    commands = list(sandbox.shell_commands)
+
+    for action in (
+        CallToolAction(tool_name="terminal", arguments={"command": "echo hi"}),
+        CallToolAction(tool_name="terminal", arguments={"final_answer": "other"}),
+        ListToolsAction(),
+    ):
+        assert env.step(action) == final
+
+    assert sandbox.shell_commands == commands
+    assert env.state.step_count == 1
+    assert env.state.submitted_answer == "done"
+
+
+def test_async_steps_after_the_answer_return_the_final_observation():
+    sandbox = FakeSandbox()
+    env, final = _answered_env(sandbox)
+    commands = list(sandbox.shell_commands)
+
+    obs = asyncio.run(
+        env.step_async(
+            CallToolAction(tool_name="terminal", arguments={"command": "echo hi"})
+        )
+    )
+
+    assert obs == final
+    assert sandbox.shell_commands == commands
+
+
+def test_reset_starts_a_new_episode_after_the_answer(monkeypatch):
+    monkeypatch.setenv("E2B_API_KEY", "fake-key")
+    monkeypatch.setattr(
+        "terminus_env.server.terminus_env_environment.E2BSandbox",
+        lambda api_key: FakeSandbox(),
+    )
+    env, _ = _answered_env(FakeSandbox())
+
+    env.reset()
+    obs = env.step(
+        CallToolAction(tool_name="terminal", arguments={"command": "echo hi"})
+    )
+
+    assert not obs.done
+    assert "shell: echo hi" in _extract_text(obs.result)
+
+
 REWARD_FILE = "/home/user/logs/verifier/reward.txt"
 
 
@@ -206,27 +272,6 @@ def test_reward_file_written_by_the_agent_is_ignored():
 
     assert state.last_reward == 0.5
     assert state.reward_override_ignored is None
-
-
-def test_reward_file_is_cleared_again_before_a_second_submission():
-    env = TerminusEnvironment()
-    env._sandbox = RewardFileSandbox()
-    env._state = TerminusState(
-        episode_id="episode-1",
-        sandbox_id="fake-sandbox",
-        verify_commands=["true", "exit 1"],
-    )
-
-    env.step(CallToolAction(tool_name="terminal", arguments={"final_answer": "a"}))
-    env.step(
-        CallToolAction(
-            tool_name="terminal",
-            arguments={"command": f"echo 1.0 > {REWARD_FILE}"},
-        )
-    )
-    env.step(CallToolAction(tool_name="terminal", arguments={"final_answer": "b"}))
-
-    assert env.state.last_reward == 0.5
 
 
 def test_reward_file_written_by_a_verify_command_overrides_the_pass_rate():

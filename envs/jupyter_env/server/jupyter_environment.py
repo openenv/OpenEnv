@@ -65,6 +65,7 @@ class JupyterEnvironment(MCPEnvironment):
         self._NotebookCell = NotebookCell
         self._state = JupyterState(episode_id=str(uuid4()))
         self._submitted_answer = None
+        self._final_observation: Optional[Observation] = None
 
         # ── Register MCP tools ──────────────────────────────────────────────
         mcp = FastMCP("jupyter_env")
@@ -206,6 +207,7 @@ class JupyterEnvironment(MCPEnvironment):
         self._tracker.reset()
         self._submitted_answer = None
 
+        self._final_observation = None
         api_key = os.environ.get("E2B_API_KEY")
         if not api_key:
             self._state = self._JupyterState(
@@ -367,6 +369,10 @@ class JupyterEnvironment(MCPEnvironment):
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> Observation:
+        # Once the answer is scored, later steps run no tool and score nothing:
+        # they return the final observation until reset().
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
         self._state.step_count += 1
         obs = super().step(action, timeout_s=timeout_s, **kwargs)
         if (
@@ -375,6 +381,7 @@ class JupyterEnvironment(MCPEnvironment):
         ):
             obs.done = True
             obs.reward = self._state.last_reward
+            self._final_observation = obs.model_copy(deep=True)
         return obs
 
     async def step_async(
@@ -383,6 +390,10 @@ class JupyterEnvironment(MCPEnvironment):
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> Observation:
+        # Once the answer is scored, later steps run no tool and score nothing:
+        # they return the final observation until reset().
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
         self._state.step_count += 1
         obs = await super().step_async(action, timeout_s=timeout_s, **kwargs)
         if (
@@ -391,6 +402,7 @@ class JupyterEnvironment(MCPEnvironment):
         ):
             obs.done = True
             obs.reward = self._state.last_reward
+            self._final_observation = obs.model_copy(deep=True)
         return obs
 
     @property
