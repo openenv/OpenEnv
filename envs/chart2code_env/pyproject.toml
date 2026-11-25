@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-chart2code-env"
+version = "0.1.0"
+description = "Chart-to-code Environment for OpenEnv"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.2.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn[standard]>=0.24.0",
+    # Targets and submissions are drawn and read with the same pinned version,
+    # so the reference code of every task always scores 1.0.
+    "matplotlib==3.10.7",
+    "numpy>=1.24.0",
+    # Available to the agent's code: pandas and seaborn plots draw through
+    # matplotlib artists, so they score like the same chart drawn directly.
+    "pandas>=2.0.0",
+    "seaborn>=0.13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "chart2code_env.server.app:main"
+
+[tool.setuptools]
+packages = ["chart2code_env", "chart2code_env.server"]
+package-dir = { "chart2code_env" = ".", "chart2code_env.server" = "server" }
