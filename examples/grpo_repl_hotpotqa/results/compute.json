@@ -1,0 +1,34 @@
+{
+  "price_source": "https://huggingface.co/docs/hub/jobs-pricing",
+  "estimate_not_invoice": true,
+  "minute_rounding": true,
+  "storage_and_subscription_excluded": true,
+  "recipe_phases": {
+    "training": {
+      "root_seconds": 7260.360000000001,
+      "child_seconds": 7262.118203,
+      "compute_usd_estimate": 7.645333333333334
+    },
+    "eval-base": {
+      "root_seconds": 2009.648,
+      "child_seconds": 1686.030571,
+      "compute_usd_estimate": 2.0464983333333335
+    },
+    "merge": {
+      "root_seconds": 792.245,
+      "child_seconds": 0,
+      "compute_usd_estimate": 0.007
+    },
+    "eval-trained": {
+      "root_seconds": 769.642,
+      "child_seconds": 678.428899,
+      "compute_usd_estimate": 0.797833
+    }
+  },
+  "recipe_total_usd": 10.49666466666667,
+  "method": "Provider start/finish times, or recorded terminal observation upper bounds for canceled children, rounded upward to job minutes. Phase costs include root and child hardware plus exposed-port charges. Recipe total includes the two training segments and both merge exports; earlier development and CPU checks are reported separately.",
+  "training_note": "Two segments including a diagnostic process crash and continuation from checkpoint10; one discarded step and both startups are included.",
+  "merge_note": "Includes original mounted export and one CPU-only check of corrected direct SDK export. The model weights are content-identical.",
+  "all_development_and_validation_compute_usd": 17.063035333333335,
+  "other_development_and_cpu_validation_compute_usd": 6.566370666666666
+}

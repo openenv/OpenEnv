@@ -263,12 +263,18 @@ docs/
     ├── tutorials/            # Additional tutorials
     │   ├── openenv-tutorial.md
     │   ├── wordle-grpo.md
+    │   ├── repl-hotpotqa-grpo.md
     │   └── rl-training-2048.md
     │
     └── _static/              # Static assets (versions.json, etc.)
 ```
 
 ThinkingBox examples: `example_usage.py` is a public-client smoke test, while `eval_testlist.py` invokes the packaged evaluator.
+
+`examples/grpo_repl_hotpotqa/` contains standalone GRPO training, adapter merging,
+evaluation, and analysis scripts for HotpotQA with `LocalREPLEnv` and managed child
+queries. Its `results/` directory holds numerical experiment artifacts and provenance.
+The corresponding walkthrough is `docs/source/tutorials/repl-hotpotqa-grpo.md`.
 
 ## Key Files to Know
 
