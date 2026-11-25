@@ -6,7 +6,9 @@
 
 """Tests for ORS-compatible task and split endpoints."""
 
+import enum
 import functools
+from dataclasses import dataclass
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -58,6 +60,21 @@ class TaskEnvironment(Environment):
         start = 0 if start is None else start
         stop = 2 if stop is None else stop
         return [{"id": f"{split}-{i}", "index": i} for i in range(start, stop)]
+
+
+class Level(enum.Enum):
+    EASY = "easy"
+
+
+@dataclass
+class EnumTask:
+    id: str
+    level: Level
+
+
+class EnumTaskEnvironment(TaskEnvironment):
+    def get_task(self, split: str, index: int) -> EnumTask:
+        return EnumTask(id=f"{split}-{index}", level=Level.EASY)
 
 
 class UnsupportedTaskEnvironment(Environment):
@@ -154,6 +171,23 @@ def test_task_routes_expose_ors_compatible_shapes() -> None:
     ).json() == {
         "tasks": [{"id": "train-0", "index": 0}, {"id": "train-1", "index": 1}]
     }
+
+
+def test_task_route_serializes_enum_fields() -> None:
+    app = FastAPI()
+    server = HTTPEnvServer(
+        env=EnumTaskEnvironment,
+        action_cls=TaskAction,
+        observation_cls=TaskObservation,
+        env_name="task_env",
+    )
+    server.register_routes(app)
+    client = TestClient(app)
+
+    response = client.post("/task_env/task", json={"split": "train", "index": 0})
+
+    assert response.status_code == 200
+    assert response.json() == {"task": {"id": "train-0", "level": "easy"}}
 
 
 def test_task_routes_reject_unknown_environment_name() -> None:
