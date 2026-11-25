@@ -40,7 +40,7 @@ openenv build
 openenv validate --level static --skip-build
 ```
 
-`openenv validate` reads the `validation:` contract in `openenv.yaml`, checks the normalized manifest against the selected severity policy and exits non-zero when a required check fails. The report's `levels_run` field records which levels ran. To validate a running server, use `openenv validate --url http://localhost:8000`.
+`openenv validate` reads the `validation:` contract in `openenv.yaml`, checks the normalized manifest against the selected severity policy and exits non-zero when a required check fails. The report's `levels_run` field records which levels ran. `openenv validate --level runtime` (needs Docker) builds the image, starts it and replays the actions in `validation/runtime.json`, the plan that `validation.execution` points to. `openenv init` generates both. To validate a running server, use `openenv validate --url http://localhost:8000`.
 
 ## Push to Hugging Face Spaces
 

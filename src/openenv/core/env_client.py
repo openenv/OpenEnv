@@ -950,6 +950,8 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
                 `start_container` (docker) or to the `UVProvider` constructor/start (uv).
                 When `use_docker=False`, the `project_path` argument can be used to override
                 the default git URL (`git+https://huggingface.co/spaces/{repo_id}`).
+                With `use_docker=False` the server doesn't inherit variables named like
+                credentials (such as `HF_TOKEN`): pass the ones it needs in `env_vars`.
 
         Returns:
             `_BootstrapResult`: `await` for a connected async client, or call
