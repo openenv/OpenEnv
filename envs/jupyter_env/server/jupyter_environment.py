@@ -172,6 +172,7 @@ class JupyterEnvironment(MCPEnvironment):
             self._submitted_answer = answer
             self._state.submitted_answer = answer
             if not self._state.verify_commands:
+                self._state.last_reward = 0.0
                 return f"Answer submitted: {answer}"
             summary = self._run_verify_commands()
             return (
