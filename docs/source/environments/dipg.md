@@ -59,7 +59,7 @@ The recommended way to run the server is with `gunicorn` for better performance 
 pip install gunicorn
 
 # Set the dataset path environment variable
-export DIPG_DATASET_PATH=/path/to/your/harmonic_reasoner_dataset_structured.jsonl
+export DIPG_DATASET_PATH=/path/to/your/dataset.jsonl
 
 # Run the server with the V3 "format-first" reward configuration
 export EXACT_FORMAT_REWARD=10.0
