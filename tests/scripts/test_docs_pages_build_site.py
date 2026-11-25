@@ -24,6 +24,7 @@ def test_rewrites_doc_builder_paths_for_every_version(tmp_path, monkeypatch, ver
     (build / "_redirects.yml").write_text("old-page: index\n")
     (build / "index.html").write_text(
         '<meta name="hf:doc:metadata" content="{&quot;title&quot;:&quot;Overview&quot;}"/>'
+        "<p>OpenEnv runs <b>agentic</b> environments.</p>"
         f'<a href="{hub_base}/reference/core#x">core</a>'
         f'<script>import("{hub_base}/_app/start.js")</script>'
     )
@@ -40,7 +41,7 @@ def test_rewrites_doc_builder_paths_for_every_version(tmp_path, monkeypatch, ver
     build_site.main()
 
     for path in out.rglob("*"):
-        if path.is_file():
+        if path.suffix in {".html", ".js", ".md", ".txt"}:
             assert "/docs/openenv/" not in path.read_text(), path
     page = (out / "index.html").read_text()
     assert f'href="/OpenEnv/{version}/reference/core#x"' in page
@@ -49,3 +50,9 @@ def test_rewrites_doc_builder_paths_for_every_version(tmp_path, monkeypatch, ver
     assert f'"/OpenEnv/{version}"' in (out / "_app" / "start.js").read_text()
     assert f"{site_url}/index.md" in (out / "llms.txt").read_text()
     assert f"url=/OpenEnv/{version}/" in (out / "old-page.html").read_text()
+    assert (
+        '<meta name="description" content="OpenEnv runs agentic environments.">' in page
+    )
+    assert f'<meta property="og:image" content="{site_url}/og-image.png">' in page
+    assert 'name="robots"' not in page
+    assert (out / "favicon.svg").exists() and (out / "og-image.png").exists()

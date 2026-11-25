@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import dataclasses
 import html
 import json
 import re
@@ -27,6 +28,19 @@ SHELL_DIR = Path(__file__).parent
 
 METADATA_RE = re.compile(r'<meta name="hf:doc:metadata" content="([^"]*)"\s*/?>')
 CSS_PRELOAD_RE = re.compile(r'<link href="[^"]*\.css" rel="modulepreload">\n?')
+PARAGRAPH_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.S)
+# Icons and social card, copied to the site root.
+ASSETS = ["favicon.svg", "favicon.png", "apple-touch-icon.png", "og-image.png"]
+
+
+@dataclasses.dataclass
+class Site:
+    url: str  # e.g. https://openenv.github.io/OpenEnv/main
+    base: str  # URL path of the site, e.g. /OpenEnv/main
+    toctree: list
+    version: str
+    versions_url: str | None
+    noindex: bool
 
 
 def page_url(base: str, local: str) -> str:
@@ -94,18 +108,25 @@ def render_version(version: str, versions_url: str | None, local: str) -> str:
     )
 
 
-def render_page(
-    fragment: str,
-    toctree: list,
-    base: str,
-    local: str,
-    version: str,
-    versions_url: str | None,
-) -> str:
+def page_description(fragment: str) -> str:
+    """First paragraph of the page as plain text, for search and link previews."""
+    for paragraph in PARAGRAPH_RE.findall(fragment):
+        text = " ".join(html.unescape(re.sub(r"<[^>]+>", "", paragraph)).split())
+        if text:
+            return text if len(text) <= 200 else text[:197].rsplit(" ", 1)[0] + "..."
+    return ""
+
+
+def render_page(fragment: str, local: str, site: Site) -> str:
     match = METADATA_RE.search(fragment)
     metadata = json.loads(html.unescape(match.group(1))) if match else {}
     title = metadata.get("title", "OpenEnv")
-    sidebar, _ = render_sidebar(toctree, base, local)
+    if "OpenEnv" not in title:
+        title = f"{title} | OpenEnv"
+    title = html.escape(title)
+    description = html.escape(page_description(fragment))
+    base = site.base
+    sidebar, _ = render_sidebar(site.toctree, base, local)
     toc = render_toc(metadata.get("sections", []))
     toc_block = (
         f'<aside class="page-toc"><p>On this page</p>{toc}</aside>' if toc else ""
@@ -117,8 +138,19 @@ def render_page(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} | OpenEnv</title>
-<link rel="icon" href="{base}/favicon.png">
+<title>{title}</title>
+<meta name="description" content="{description}">
+{'<meta name="robots" content="noindex">' if site.noindex else ""}
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="OpenEnv">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="{description}">
+<meta property="og:url" content="{page_url(site.url, local)}">
+<meta property="og:image" content="{site.url}/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="{base}/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="{base}/favicon.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="{base}/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
@@ -137,7 +169,7 @@ def render_page(
 <header class="site-header">
   <button class="menu-button" aria-label="Toggle navigation" onclick="document.body.classList.toggle('nav-open')">&#9776;</button>
   <a class="site-title" href="{base}/">OpenEnv</a>
-  {render_version(version, versions_url, local)}
+  {render_version(site.version, site.versions_url, local)}
   <span class="spacer"></span>
   <a href="{REPO_URL}">GitHub</a>
   <button class="theme-button" aria-label="Toggle dark mode" onclick="const dark = document.documentElement.classList.toggle('dark'); try {{ localStorage.setItem('theme', dark ? 'dark' : 'light'); }} catch {{}}">&#9680;</button>
@@ -151,7 +183,7 @@ def render_page(
 </main>
 {toc_block}
 </div>
-{VERSION_SCRIPT if versions_url else ""}
+{VERSION_SCRIPT if site.versions_url else ""}
 </body>
 </html>
 """
@@ -182,6 +214,9 @@ def main() -> None:
     parser.add_argument(
         "--versions-url", help="versions.json listing the published versions"
     )
+    parser.add_argument(
+        "--noindex", action="store_true", help="keep search engines out (PR previews)"
+    )
     args = parser.parse_args()
     site_url = args.site_url.rstrip("/")
     base = urlparse(site_url).path
@@ -194,7 +229,14 @@ def main() -> None:
     shutil.rmtree(args.output_dir, ignore_errors=True)
     shutil.copytree(args.build_dir, args.output_dir)
     out = args.output_dir
-    toctree = yaml.safe_load((out / "_toctree.yml").read_text())
+    site = Site(
+        url=site_url,
+        base=base,
+        toctree=yaml.safe_load((out / "_toctree.yml").read_text()),
+        version=args.version_label,
+        versions_url=args.versions_url,
+        noindex=args.noindex,
+    )
 
     for path in out.rglob("*"):
         if path.suffix in {".md", ".txt"}:
@@ -208,9 +250,7 @@ def main() -> None:
         text = path.read_text(encoding="utf-8").replace(doc_builder_base, base)
         if path.suffix == ".html":
             local = path.relative_to(out).with_suffix("").as_posix()
-            text = render_page(
-                text, toctree, base, local, args.version_label, args.versions_url
-            )
+            text = render_page(text, local, site)
         path.write_text(text, encoding="utf-8")
 
     redirects = yaml.safe_load((out / "_redirects.yml").read_text()) or {}
@@ -224,15 +264,13 @@ def main() -> None:
         render_page(
             "<h1>Page not found</h1><p>This page does not exist. "
             f'Go back to the <a href="{base}/">OpenEnv docs</a>.</p>',
-            toctree,
-            base,
             "404",
-            args.version_label,
-            args.versions_url,
+            site,
         ),
         encoding="utf-8",
     )
-    shutil.copy(SHELL_DIR / "shell.css", out / "shell.css")
+    for name in ["shell.css", *ASSETS]:
+        shutil.copy(SHELL_DIR / name, out / name)
     (out / ".nojekyll").touch()
     print(f"site written to {out}")
 

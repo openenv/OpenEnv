@@ -204,6 +204,12 @@ html.dark .prose.prose-doc .code-block pre {
 	border-color: var(--shell-border);
 }
 
+/* doc-builder's "Connect to MCP Client" entry points to the huggingface.co docs server,
+   which does not serve these docs. */
+a[href="https://huggingface.co/mcp"] {
+	display: none;
+}
+
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-meta .hljs-keyword {

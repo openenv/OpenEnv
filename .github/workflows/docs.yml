@@ -59,7 +59,7 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ "$EVENT" = pull_request ]; then
-            version=main dest="pr-preview/pr-$PR_NUMBER" label="PR #$PR_NUMBER" ref="$GITHUB_SHA" publish=false
+            version=main dest="pr-preview/pr-$PR_NUMBER" label="PR #$PR_NUMBER" ref="$GITHUB_SHA" publish=false noindex=true
           elif [ -n "$INPUT_VERSION" ]; then
             version="$INPUT_VERSION" dest="$INPUT_VERSION" label="$INPUT_VERSION" ref="refs/tags/$INPUT_VERSION"
           elif [ "$GITHUB_REF_TYPE" = tag ]; then
@@ -83,6 +83,7 @@ jobs:
             echo "ref=$ref"
             echo "publish=$publish"
             echo "versions_url=${versions_url:-}"
+            echo "noindex=${noindex:-}"
           } >> "$GITHUB_OUTPUT"
 
       # doc-builder derives the "Update on GitHub" links from this folder name.
@@ -134,11 +135,12 @@ jobs:
           DEST: ${{ steps.target.outputs.dest }}
           LABEL: ${{ steps.target.outputs.label }}
           VERSIONS_URL: ${{ steps.target.outputs.versions_url }}
+          NOINDEX: ${{ steps.target.outputs.noindex }}
         run: |
           source .venv/bin/activate
           python tools/docs/pages/build_site.py "build/openenv/$VERSION/en" site \
             --site-url "$ROOT_URL/$DEST" --version-label "$LABEL" \
-            ${VERSIONS_URL:+--versions-url "$VERSIONS_URL"}
+            ${VERSIONS_URL:+--versions-url "$VERSIONS_URL"} ${NOINDEX:+--noindex}
 
       - name: Compile the stylesheet
         run: |
