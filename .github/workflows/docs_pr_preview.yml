@@ -7,7 +7,7 @@ name: Docs PR preview
 # workflow runs from main with write access and never runs pull request code: it
 # only copies the static files the build uploaded. Previews are served from the
 # docs domain, so pull requests from outside contributors are published only
-# after a maintainer adds the docs-preview label.
+# after a maintainer adds the docs-preview label and re-runs their Docs check.
 
 on:
   workflow_run:
@@ -40,13 +40,7 @@ jobs:
           HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          # Runs triggered by other labels skip the build and upload nothing.
-          if ! gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[].name' | grep -qx docs-site; then
-            echo "This run did not build the docs."
-            exit 0
-          fi
           pr=$(gh api -X GET "repos/$REPO/pulls" -f state=open -f head="$HEAD_OWNER:$HEAD_BRANCH" \
             | jq --arg sha "$HEAD_SHA" 'map(select(.head.sha == $sha)) | first // empty')
           if [ -z "$pr" ]; then
@@ -90,7 +84,7 @@ jobs:
           The docs for this pull request are available at $ROOT_URL/pr-preview/pr-$NUMBER/ (commit ${HEAD_SHA:0:7}). The preview may take a minute to update and is removed when the pull request closes."
           else
             body="$marker
-          The docs for this pull request built successfully. A maintainer can add the \`docs-preview\` label to publish a preview."
+          The docs for this pull request built successfully. A maintainer can publish a preview by adding the \`docs-preview\` label and re-running the Docs check."
           fi
           id=$(gh api --paginate "repos/$REPO/issues/$NUMBER/comments" \
             --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n 1)

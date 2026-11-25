@@ -16,7 +16,6 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
     paths:
       - "docs/**"
       - "src/openenv/**"
@@ -43,8 +42,6 @@ env:
 
 jobs:
   build:
-    # Labeling a PR only rebuilds it for the docs-preview label (see docs_pr_preview.yml).
-    if: github.event.action != 'labeled' || github.event.label.name == 'docs-preview'
     runs-on: ubuntu-latest
     permissions:
       contents: read
