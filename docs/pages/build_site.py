@@ -29,8 +29,15 @@ SHELL_DIR = Path(__file__).parent
 METADATA_RE = re.compile(r'<meta name="hf:doc:metadata" content="([^"]*)"\s*/?>')
 CSS_PRELOAD_RE = re.compile(r'<link href="[^"]*\.css" rel="modulepreload">\n?')
 PARAGRAPH_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.S)
-# Icons and social card, copied to the site root.
-ASSETS = ["favicon.svg", "favicon.png", "apple-touch-icon.png", "og-image.png"]
+# Icons, social card and the OpenEnv logo, copied to the site root.
+ASSETS = [
+    "favicon.svg",
+    "favicon.png",
+    "apple-touch-icon.png",
+    "og-image.png",
+    "logo.svg",
+    "logo-white.svg",
+]
 
 
 @dataclasses.dataclass
@@ -180,9 +187,7 @@ def render_page(fragment: str, local: str, site: Site) -> str:
 <link rel="icon" href="{base}/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="{base}/favicon.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="{base}/apple-touch-icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="preload" href="{base}/fonts/lato-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{base}/docs.css">
 <link rel="stylesheet" href="{base}/shell.css">
 {MARKDOWN_SCRIPT}
@@ -306,6 +311,7 @@ def main() -> None:
     )
     for name in ["shell.css", *ASSETS]:
         shutil.copy(SHELL_DIR / name, out / name)
+    shutil.copytree(SHELL_DIR / "fonts", out / "fonts")
     (out / ".nojekyll").touch()
     print(f"site written to {out}")
 
