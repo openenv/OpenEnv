@@ -147,11 +147,13 @@ class WebSearchTool:
                 snippet = item.get("snippet", "")
 
                 # Extract relevant context from the full page
-                context = (
+                expanded = (
                     self.expand_search_snippet(snippet, raw_contents[i])
                     if i < len(raw_contents) and raw_contents[i]
-                    else snippet
+                    else ""
                 )
+                # Keep the snippet when the page does not contain it
+                context = expanded or snippet
 
                 if title or context:
                     title = title or "No title."
