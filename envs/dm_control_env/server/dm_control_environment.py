@@ -264,6 +264,7 @@ class DMControlEnvironment(Environment):
         task_name: Optional[str] = None,
         seed: Optional[int] = None,
         render: bool = False,
+        episode_id: Optional[str] = None,
         **kwargs,
     ) -> DMControlObservation:
         """
@@ -274,6 +275,7 @@ class DMControlEnvironment(Environment):
             task_name: Optionally switch to a different task.
             seed: Random seed for reproducibility.
             render: If True, include pixel observations.
+            episode_id: Optional episode identifier.
             **kwargs: Additional arguments (ignored).
 
         Returns:
@@ -292,12 +294,13 @@ class DMControlEnvironment(Environment):
             self._load_environment(target_domain, target_task)
 
         if seed is not None:
-            np.random.seed(seed)
+            # The task draws its initial state from its own generator, not np.random.
+            self._env.task.random.seed(seed)
 
         time_step = self._env.reset()
 
         self._state = DMControlState(
-            episode_id=str(uuid4()),
+            episode_id=episode_id if episode_id is not None else str(uuid4()),
             step_count=0,
             domain_name=self._domain_name,
             task_name=self._task_name,
@@ -375,6 +378,7 @@ class DMControlEnvironment(Environment):
         task_name: Optional[str] = None,
         seed: Optional[int] = None,
         render: bool = False,
+        episode_id: Optional[str] = None,
         **kwargs,
     ) -> DMControlObservation:
         """Async version of reset.
@@ -390,6 +394,7 @@ class DMControlEnvironment(Environment):
                 task_name=task_name,
                 seed=seed,
                 render=render,
+                episode_id=episode_id,
                 **kwargs,
             )
         else:
@@ -401,6 +406,7 @@ class DMControlEnvironment(Environment):
                 task_name=task_name,
                 seed=seed,
                 render=render,
+                episode_id=episode_id,
                 **kwargs,
             )
 
