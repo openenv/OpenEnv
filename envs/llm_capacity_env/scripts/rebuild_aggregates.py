@@ -36,7 +36,7 @@ def main():
                 key = (day, hour, row["Model"])
                 totals[key] = totals.get(key, 0) + int(row["Total tokens"])
     with args.output.open("w", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["log_day", "hour", "model", "total_tokens"])
         for day in sorted(days):
             for hour in range(24):

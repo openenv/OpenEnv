@@ -23,7 +23,7 @@
   ],
   "days": 231,
   "rows": 11088,
-  "sha256": "de9db57e9dd8aa1c96f33789e45eaf5fe0b09726160e9554645d2cb8ca58c130",
+  "sha256": "503ba7712c204aea5295427d6cef49fd0f662338fb62598453dfbe2b35877f77",
   "cost_model": {
     "description": "Fixed modeling assumptions for the capacity-reservation task; not infrastructure costs measured by BurstGPT.",
     "unit_cost_per_1000_tokens": {

@@ -126,7 +126,7 @@ sha256sum rebuilt-hourly.csv
 ```
 
 Expected SHA-256:
-`de9db57e9dd8aa1c96f33789e45eaf5fe0b09726160e9554645d2cb8ca58c130`.
+`503ba7712c204aea5295427d6cef49fd0f662338fb62598453dfbe2b35877f77`.
 The reconstruction script aggregates all three original release assets using the
 selection and zero-filling rules above.
 

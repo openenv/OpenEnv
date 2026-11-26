@@ -61,18 +61,6 @@ def has_crlf_line_endings(file_path: Path) -> bool:
         return False
 
 
-def preserves_original_line_endings(file_path: Path) -> bool:
-    """Honor explicit Git attributes for byte-preserved source data."""
-    result = subprocess.run(
-        ["git", "check-attr", "text", "--", str(file_path)],
-        capture_output=True,
-        text=True,
-        check=True,
-        cwd=file_path.parent,
-    )
-    return result.stdout.rstrip().endswith(": text: unset")
-
-
 class TestLineEndings:
     """Tests for consistent LF line endings."""
 
@@ -87,8 +75,6 @@ class TestLineEndings:
             if is_binary_file(file_path):
                 continue
             if has_crlf_line_endings(file_path):
-                if preserves_original_line_endings(file_path):
-                    continue
                 crlf_files.append(file_path)
 
         assert not crlf_files, (
@@ -215,30 +201,3 @@ class TestLineEndingCheckScript:
             "check-line-endings.sh should return zero exit code "
             f"when all files have LF endings. Got: {result.stderr}"
         )
-
-
-@pytest.mark.parametrize("preserve_bytes", [False, True])
-def test_line_ending_checks_honor_explicit_source_byte_preservation(
-    tmp_path, preserve_bytes
-):
-    repository = tmp_path / "repository"
-    repository.mkdir()
-    subprocess.run(["git", "init", "-q", str(repository)], check=True)
-    attributes = "source.csv -text\n" if preserve_bytes else "* text=auto eol=lf\n"
-    (repository / ".gitattributes").write_text(attributes)
-    source = repository / "source.csv"
-    source.write_bytes(b"day,tokens\r\n0,123\r\n")
-    subprocess.run(
-        ["git", "-C", str(repository), "add", ".gitattributes", "source.csv"],
-        check=True,
-        capture_output=True,
-    )
-    assert has_crlf_line_endings(source)
-    assert preserves_original_line_endings(source) == preserve_bytes
-    # The source remains a text diff even when its bytes are preserved.
-    assert not is_binary_file(source)
-    script = get_repo_root() / ".claude/hooks/check-line-endings.sh"
-    result = subprocess.run(
-        ["bash", str(script)], cwd=repository, capture_output=True, text=True
-    )
-    assert (result.returncode == 0) == preserve_bytes
