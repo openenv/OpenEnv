@@ -532,6 +532,13 @@ def classify_dockerfile(text: str) -> ParsedDockerfile:
                 if len(items) < 2:
                     raise HarborImageError(f"Malformed COPY instruction: {line!r}")
 
+            if any(
+                "**" in PurePosixPath(source.lstrip("/")).parts for source in items[:-1]
+            ):
+                is_copy_only = False
+                unsupported_flag = True
+                reasons.append("recursive '**' COPY glob")
+
             if not unsupported_flag:
                 copy_ops.append(
                     CopyOp(

@@ -381,6 +381,10 @@ def test_classify_dockerfile_copy_only_vs_run():
     )
     assert non_numeric_chown.is_copy_only is False
 
+    recursive_glob = classify_dockerfile("FROM python:3.12-slim\nCOPY **/*.py /app/\n")
+    assert recursive_glob.is_copy_only is False
+    assert "recursive '**' COPY glob" in recursive_glob.reason
+
 
 def test_audit_environment_blocks_leaks_symlinks_and_secrets(tmp_path: Path):
     clean = _write_task(
