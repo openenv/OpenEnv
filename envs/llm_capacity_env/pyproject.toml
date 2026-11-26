@@ -14,7 +14,7 @@ authors = [{name = "Huaiming Li", email = "lihuaiming01@baidu.com"}]
 dependencies = ["openenv>=0.11.0"]
 
 [project.optional-dependencies]
-dev = ["pytest==8.4.2", "ruff==0.14.13"]
+dev = ["pytest==9.0.3", "ruff==0.14.13"]
 
 [project.scripts]
 server = "llm_capacity_env.server.app:main"
