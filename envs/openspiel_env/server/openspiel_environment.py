@@ -219,6 +219,7 @@ class OpenSpielEnvironment(Environment):
                         legal_actions, time_step.observations
                     )
                     opponent_actions.append(opp_action)
+                    self._last_opponent_action = opp_action
             time_step = self._ospiel_env.step(opponent_actions)
 
         self._state.step_count += 1

@@ -116,3 +116,9 @@ class TestSimultaneousGames:
         obs = env.step(OpenSpielAction(action_id=0))
         assert obs.done and obs.game_phase == "terminal"
         assert env.state.step_count == 1
+
+    def test_step_reports_the_opponent_action(self):
+        env = OpenSpielEnvironment("matrix_rps", opponent_policy="last")
+        env.reset()
+        obs = env.step(OpenSpielAction(action_id=0))
+        assert obs.opponent_last_action == 2
