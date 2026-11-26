@@ -4,6 +4,24 @@ from llm_capacity_env.server.engine import EPISODE_DAYS, modeled_cost, MODELS
 from openenv.core.env_server.mcp_types import CallToolAction
 
 
+@pytest.mark.parametrize("value", [True, "1"])
+def test_mcp_does_not_coerce_reservations(value):
+    env = CapacityEnvironment()
+    try:
+        env.reset(seed=11)
+        plan = {model: [0] * 24 for model in MODELS}
+        plan["ChatGPT"][0] = value
+        result = env.step(
+            CallToolAction(
+                tool_name="reserve_capacity", arguments={"reservations": plan}
+            )
+        )
+        assert result.error is not None and result.reward == 0
+        assert env.state.step_count == 0
+    finally:
+        env.close()
+
+
 def test_mcp_reward_emitted_once_and_state_is_copied():
     env = CapacityEnvironment()
     try:

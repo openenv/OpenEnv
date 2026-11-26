@@ -6,6 +6,7 @@ from uuid import uuid4
 from fastmcp import FastMCP
 from openenv.core.env_server.mcp_environment import MCPEnvironment
 from openenv.core.env_server.types import Observation, State
+from pydantic import StrictFloat
 
 from .engine import Replay
 from .trajectory import TrajectoryRecorder
@@ -28,7 +29,7 @@ class CapacityEnvironment(MCPEnvironment):
             return self.replay.observe()
 
         @mcp.tool
-        def reserve_capacity(reservations: dict[str, list[float]]) -> dict:
+        def reserve_capacity(reservations: dict[str, list[StrictFloat]]) -> dict:
             """Commit next day's hourly token reservations: ChatGPT and GPT-4, each 24 values in [0,1000000].
 
             Advances exactly one day and reveals that day's outcome. Decisions cannot be undone.
