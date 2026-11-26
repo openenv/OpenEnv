@@ -4,6 +4,7 @@ Harbor owns what it is good at — task datasets, sandbox backends, coding agent
 concurrency, pass@k. This package adds the OpenEnv side and nothing more:
 
     tasks.py          dataset discovery over the Task API (HF repo | local dir | Harbor registry)
+    images.py         audit, build/append, push and verify OCI images for Harbor task.toml pins
     seams.py          how each agent is pointed at the capture proxy — the only per-agent knowledge
     install_fixes.py  subclasses for agents whose Harbor wrapper cannot be configured as shipped
     atif.py           cross-check captured tokens against Harbor's own ATIF trajectory
