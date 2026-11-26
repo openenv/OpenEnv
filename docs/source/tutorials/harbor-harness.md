@@ -33,7 +33,7 @@ remain untested. See [Your own agent](../environments/harbor#your-own-agent) for
 
 ## Train on the Captures
 
-Each rollout comes back as a `TrainingTrace`: the token ids, logprobs and loss masks of every model call, plus the task's reward. It doesn't depend on a trainer, so any framework can train on it. TRL has a worked example: `AsyncGRPOTrainer` with a `HarnessRolloutWorker` runs each task to completion, reads back the trace, and syncs the new weights into the same vLLM server.
+Each rollout comes back as a `TrainingTrace`: the token ids, logprobs and loss masks of every model call, plus the task's reward. It doesn't depend on a trainer, so any framework can train on it. TRL has a worked example: `HarnessAsyncGRPOTrainer`, an `AsyncGRPOTrainer` whose rollouts are harness sessions, runs each task to completion, reads back the trace, and syncs the new weights into the same vLLM server.
 
 - [TRL's guide to training on harnesses](https://huggingface.co/docs/trl/main/en/openenv#training-on-harnesses-training-real-coding-agents-harbor) explains how it works and how to wire it.
 - [`examples/async_grpo_harbor`](https://github.com/huggingface/trl/tree/main/examples/async_grpo_harbor) is the complete script, with a Hugging Face Jobs launcher.

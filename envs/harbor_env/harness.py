@@ -12,7 +12,7 @@
     trace = session.fetch_proxy_trace()   # per-turn records for a trainer
     reward = session.verify(transcript)   # the task's own verifier, forwarded
 
-This is the shape TRL's `HarnessRolloutWorker` consumes in loop-owning mode, so the training script
+This is the shape TRL's `HarnessAsyncGRPOTrainer` consumes in loop-owning mode, so the training script
 is the stock one and nothing has to be added to TRL. The work happens on a server that owns the
 sandbox, the agent and the capture proxy. The trainer needs no sandbox credentials, no harness
 installed, and no capture plumbing of its own.
