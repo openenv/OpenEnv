@@ -271,7 +271,7 @@ def main():
     print("\nFor more information, see:")
     print("- README.md in this directory")
     print("- OpenApps docs: https://facebookresearch.github.io/OpenApps/")
-    print("- OpenEnv docs: https://huggingface.co/docs/openenv")
+    print("- OpenEnv docs: https://openenv.github.io/OpenEnv/")
     print("=" * 60)
 
 

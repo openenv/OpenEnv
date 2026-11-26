@@ -66,7 +66,7 @@ env.close()
 
 ## Training with TRL
 
-To train a model on BrowserGym, pass a small environment class to TRL's `GRPOTrainer` through `environment_factory`. Its methods (`click`, `fill`, `send_keys`, `scroll`, `noop`) become the model's tools, and TRL runs the multi-turn loop. The [BrowserGym tutorial](https://huggingface.co/docs/openenv/tutorials/browsergym-harness) walks through it, and TRL's [`examples/grpo_browsergym`](https://github.com/huggingface/trl/tree/main/examples/grpo_browsergym) is the full script, with screenshots for vision-language models.
+To train a model on BrowserGym, pass a small environment class to TRL's `GRPOTrainer` through `environment_factory`. Its methods (`click`, `fill`, `send_keys`, `scroll`, `noop`) become the model's tools, and TRL runs the multi-turn loop. The [BrowserGym tutorial](https://openenv.github.io/OpenEnv/main/tutorials/browsergym-harness) walks through it, and TRL's [`examples/grpo_browsergym`](https://github.com/huggingface/trl/tree/main/examples/grpo_browsergym) is the full script, with screenshots for vision-language models.
 
 `browsergym_env.harness.BrowserGymSessionFactory` exposes the same tools to OpenEnv's session runtime, which [`examples/browsergym_harness_eval.py`](https://github.com/openenv/OpenEnv/blob/main/examples/browsergym_harness_eval.py) uses to evaluate a chat model on BrowserGym.
 
@@ -224,7 +224,7 @@ Enterprise software automation tasks:
 - Business workflows
 
 **Full task lists:**
-- [MiniWoB++ tasks](https://github.com/Farama-Foundation/miniwob-plusplus/tree/master/miniwob/environment)
+- [MiniWoB++ tasks](https://github.com/Farama-Foundation/MiniWoB-plusplus/tree/main/miniwob/html/miniwob)
 - [WebArena tasks](https://github.com/web-arena-x/webarena/blob/main/config_files/)
 - [BrowserGym documentation](https://github.com/ServiceNow/BrowserGym)
 

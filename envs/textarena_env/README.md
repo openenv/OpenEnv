@@ -23,7 +23,7 @@ An OpenEnv wrapper for [TextArena](https://github.com/textarena/textarena) game 
 > Generic wrapper for any [TextArena](https://www.textarena.ai/docs/overview) game inside OpenEnv. This module exposes the TextArena `Env` interface through the standard HTTP server/client APIs used by other OpenEnv environments, enabling quick experimentation with the full suite of word, reasoning, and multi-agent games.
 
 Try Wordle on the [`openenv/wordle`](https://huggingface.co/spaces/openenv/wordle) Space, or connect a client to `https://openenv-wordle.hf.space`.
-To train a model on it, follow the [Wordle tutorial](https://huggingface.co/docs/openenv/tutorials/wordle-grpo): an SFT warmup, then GRPO with TRL.
+To train a model on it, follow the [Wordle tutorial](https://openenv.github.io/OpenEnv/main/tutorials/wordle-grpo): an SFT warmup, then GRPO with TRL.
 
 ## Quick Start
 
@@ -79,7 +79,7 @@ docker build -t textarena-env:latest -f server/Dockerfile .
 
 ## Testing the Gradio UI locally
 
-With the web interface enabled, the server serves a **Gradio UI** at `/web`. If your `openenv` supports `gradio_builder`, you get two tabs (see [Customizing the Web UI](https://huggingface.co/docs/openenv/guides/customizing-web-ui)):
+With the web interface enabled, the server serves a **Gradio UI** at `/web`. If your `openenv` supports `gradio_builder`, you get two tabs (see [Customizing the Web UI](https://openenv.github.io/OpenEnv/main/guides/customizing-web-ui)):
 
 - **Playground** – default OpenEnv UI (Reset, Step, Episode, Quick Start, README).
 - **Custom** – Wordle-style HTML block (see `server/gradio_ui.py`; uses [Gradio 6 `gr.HTML`](https://gradio.app/docs/gradio/html) to render the block).
@@ -116,7 +116,7 @@ From `envs/textarena_env/`:
 openenv push --repo-id my-org/textarena-env -e TEXTARENA_ENV_ID=Wordle-v0
 ```
 
-`-e` sets the [configuration variables](#environment-configuration) on the Space. See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs` and a health check at `/health`.
+`-e` sets the [configuration variables](#environment-configuration) on the Space. See the [`openenv push` reference](https://openenv.github.io/OpenEnv/main/reference/cli#openenv.cli.commands.push) for all options. The Space serves the web UI at `/web`, the API docs at `/docs` and a health check at `/health`.
 
 ## Environment Details
 

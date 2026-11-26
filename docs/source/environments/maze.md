@@ -68,7 +68,7 @@ docker build -t maze_env-env:latest -f server/Dockerfile .
 
 ## Deploying to Hugging Face Spaces
 
-From `envs/maze_env/`, run `openenv push` (or `openenv push --repo-id my-org/maze-env`). See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options.
+From `envs/maze_env/`, run `openenv push` (or `openenv push --repo-id my-org/maze-env`). See the [`openenv push` reference](https://openenv.github.io/OpenEnv/main/reference/cli#openenv.cli.commands.push) for all options.
 
 ## Running the Default Maze
 
