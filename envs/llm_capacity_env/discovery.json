@@ -1,0 +1,13 @@
+{
+  "license": "BSD-3-Clause AND CC-BY-4.0",
+  "tags": ["openenv", "resource-allocation", "llm-serving", "trace-replay"],
+  "representative_queries": [
+    "reserve LLM serving capacity using historical token demand",
+    "forecast hourly demand and minimize reservation and overflow costs"
+  ],
+  "agent_tools": {
+    "protocol": "mcp",
+    "names": ["observe_demand_history", "reserve_capacity"],
+    "source": "envs/llm_capacity_env/server/capacity_environment.py"
+  }
+}

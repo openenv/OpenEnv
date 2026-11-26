@@ -15,7 +15,9 @@ DATA_COMMIT = "fcaba4c1a9debec42fda7f15bf29fe6d6b46c431"
 DATA_BUNDLE_SHA256 = "16803d95d161ca06309d95f0dbbcbbb7b3fdf8a61e2b4eacfe920781b12f18ff"
 DATA_MANIFEST_PATH = "releases/thinkingbox_bench_v1/testlist_thinkingbox_bench_v1.yaml"
 DATA_ARCHIVE_URL = (
-    f"https://codeload.github.com/microsoft/thinkingbox-data/tar.gz/{DATA_COMMIT}"
+    # microsoft/thinkingbox-data is not public. This is the copy Microsoft's
+    # ThinkingBox post links, DATA_BUNDLE_SHA256 checks it is the pinned release.
+    f"https://codeload.github.com/MrSergSanch/thinkingbox-data/tar.gz/{DATA_COMMIT}"
 )
 
 

@@ -128,7 +128,7 @@ def granted(token: str) -> str | None:
 
 # ── header ───────────────────────────────────────────────────────────────────────────────────────
 
-DOCS_URL = "https://huggingface.co/docs/openenv/environments/harbor"
+DOCS_URL = "https://openenv.github.io/OpenEnv/main/environments/harbor"
 
 
 def header_html(

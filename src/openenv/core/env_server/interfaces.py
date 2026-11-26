@@ -105,7 +105,7 @@ class TaskProvider(Protocol):
 
     Selecting a task is not part of this protocol — pass the chosen split and
     index to `reset()` instead. See the
-    [Task API guide](https://huggingface.co/docs/openenv/guides/task-api).
+    [Task API guide](https://openenv.github.io/OpenEnv/main/guides/task-api).
 
     Examples:
 

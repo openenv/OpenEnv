@@ -97,11 +97,14 @@ because tasks are selected deterministically by UID. Concurrent sessions are
 stacked independent environment instances, one trajectory per instance; they
 are not multiplexed trajectories.
 
-Executable assets come from the pinned `thinkingbox-bench-v1.0` release in
-[`microsoft/thinkingbox-data`](https://github.com/microsoft/thinkingbox-data).
-The [Hugging Face `microsoft/ThinkingBox-Bench`
-dataset](https://huggingface.co/datasets/microsoft/ThinkingBox-Bench) is a
-viewer-friendly representation, while GitHub remains the executable source.
+Executable assets come from the pinned `thinkingbox-bench-v1.0` release,
+downloaded from
+[`MrSergSanch/thinkingbox-data`](https://github.com/MrSergSanch/thinkingbox-data),
+the copy linked from Microsoft's
+[ThinkingBox post](https://huggingface.co/blog/microsoft/thinkingbox). The
+environment checks the bundle against its pinned SHA-256, so it only accepts
+that release. `microsoft/thinkingbox-data` and the Hugging Face
+`microsoft/ThinkingBox-Bench` viewer dataset are not public at the moment.
 
 ## Configuration
 
@@ -142,9 +145,9 @@ Please cite the paper if ThinkingBox is useful in your experiments.
   for Agents in Stateful Business Workflows](https://arxiv.org/abs/2608.19741)
 - Framework: [`microsoft/thinkingbox`](https://github.com/microsoft/thinkingbox)
 - Executable benchmark:
-  [`microsoft/thinkingbox-data`](https://github.com/microsoft/thinkingbox-data)
-- Viewer dataset:
-  [`microsoft/ThinkingBox-Bench`](https://huggingface.co/datasets/microsoft/ThinkingBox-Bench)
+  [`MrSergSanch/thinkingbox-data`](https://github.com/MrSergSanch/thinkingbox-data)
+  (`microsoft/thinkingbox-data` is not public at the moment)
+- Blog post: [ThinkingBox on Hugging Face](https://huggingface.co/blog/microsoft/thinkingbox)
 
 ```bibtex
 @misc{li2026successisntreliabilitythinkingbox,

@@ -75,4 +75,4 @@ There is no step limit: the episode only ends at the goal.
 - `server/app.py`: the server, built with `create_app`
 - `client.py`: `GridWorldEnv`, with a `step_move(MoveAction.UP)` helper
 
-To build your own environment, see [Your First Environment](https://huggingface.co/docs/openenv/guides/first-environment).
+To build your own environment, see [Your First Environment](https://openenv.github.io/OpenEnv/main/guides/first-environment).

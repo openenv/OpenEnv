@@ -50,7 +50,7 @@ The `DIPGSafetyEnv` follows a standard client-server model.
 
 ### 1. Running the Server
 
-The server requires the custom synthetic dataset (`harmonic_reasoner_dataset_structured.jsonl`). You can download it from [here](https://huggingface.co/datasets/dvitel/Harmonic-Reasoner/resolve/main/harmonic_reasoner_dataset_structured.jsonl).
+By default the server loads the sample dataset bundled with the environment (`data/sample_dataset.jsonl`). To use a full dataset in the same JSONL format, set `DIPG_DATASET_PATH` (see below). The original `harmonic_reasoner_dataset_structured.jsonl` is no longer published on the Hugging Face Hub.
 
 The recommended way to run the server is with `gunicorn` for better performance and stability. The server is highly configurable via environment variables to support different reward schemes.
 
@@ -59,7 +59,7 @@ The recommended way to run the server is with `gunicorn` for better performance 
 pip install gunicorn
 
 # Set the dataset path environment variable
-export DIPG_DATASET_PATH=/path/to/your/harmonic_reasoner_dataset_structured.jsonl
+export DIPG_DATASET_PATH=/path/to/your/dataset.jsonl
 
 # Run the server with the V3 "format-first" reward configuration
 export EXACT_FORMAT_REWARD=10.0

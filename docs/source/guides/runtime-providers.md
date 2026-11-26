@@ -73,7 +73,7 @@ from openenv.core.containers.runtime import LocalDockerProvider  # core
 from openenv.core.containers.runtime.daytona_provider import DaytonaProvider  # cloud
 ```
 
-See the [Core API reference](../reference/core.md#container-providers) for each
+See the [Core API reference](../reference/core#openenv.core.containers.runtime.ContainerProvider) for each
 provider's full API.
 
 ### Lifecycle

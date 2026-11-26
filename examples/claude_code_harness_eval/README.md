@@ -2,9 +2,9 @@
 
 This recipe runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) *inside* an OpenEnv environment with [`HarnessEnvironment`](../../src/openenv/core/harness/environment.py), the agentic harness wrapper from [RFC 005](../../rfcs/005-agentic-harnesses.md), and evaluates it on [τ²-bench](https://github.com/sierra-research/tau2-bench) through [`tau2_env`](../../envs/tau2_env/README.md). Claude Code is the customer service agent: it gets the domain's tools and policy over MCP, τ²-bench's simulated customer talks to it over several turns, and τ²-bench scores the conversation.
 
-The walkthrough is in the docs: [Evaluate Claude Code in an Environment](https://huggingface.co/docs/openenv/tutorials/claude-code-harness).
+The walkthrough is in the docs: [Evaluate Claude Code in an Environment](https://openenv.github.io/OpenEnv/main/tutorials/claude-code-harness).
 
-It is an evaluation recipe. RFC 005 does not capture token ids, so this is not a training path. To train a harness's policy on task-and-verifier episodes, use [Harbor](https://huggingface.co/docs/openenv/environments/harbor).
+It is an evaluation recipe. RFC 005 does not capture token ids, so this is not a training path. To train a harness's policy on task-and-verifier episodes, use [Harbor](https://openenv.github.io/OpenEnv/main/environments/harbor).
 
 | File | |
 |---|---|

@@ -17,7 +17,7 @@ tags:
 
 A financial question-answering environment for RL training. Evaluates LLMs on their ability to answer complex financial questions using tool calls on SEC 10-K filing data.
 
-Based on [FinQABenchmark](https://github.com/snorkel-ai/FinQABenchmark) from Snorkel AI.
+Based on Snorkel AI's FinQA benchmark ([`snorkelai/finqa-data`](https://huggingface.co/datasets/snorkelai/finqa-data)).
 
 ## Overview
 

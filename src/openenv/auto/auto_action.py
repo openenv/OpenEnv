@@ -89,9 +89,9 @@ class AutoAction:
         Args:
             name: Environment name or HuggingFace Hub repo ID
                   Examples:
-                  - "coding" / "coding-env" / "coding_env"
-                  - "openenv/coding_env" (Hub repo ID)
-                  - "https://huggingface.co/openenv/coding_env" (Hub URL)
+                  - `"coding"` / `"coding-env"` / `"coding_env"`
+                  - `"openenv/coding_env"` (Hub repo ID)
+                  - `"https://huggingface.co/openenv/coding_env"` (Hub URL)
             skip_install: If True, skip package installation and return
                 GenericAction class instead. Use this when working with
                 GenericEnvClient to avoid installing remote packages.
