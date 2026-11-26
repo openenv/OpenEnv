@@ -334,7 +334,8 @@ def jupyter_ui_builder(
             }
             await web_manager.step_environment(action)
             cells = _cells_from_state()
-            ok = cells[-1]["success"] if cells else True
+            # The edited code cell can sit before trailing shell cells.
+            ok = web_manager.get_state().get("last_cell_success", True)
             status = (
                 "✓ Last cell replaced and re-executed."
                 if ok
