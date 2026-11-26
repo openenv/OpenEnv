@@ -7,10 +7,5 @@
   Changes: conversation-service selection, hourly aggregation, zero-filled hours,
   and chronological episode partitions. Full data license and exact provenance:
   `server/data/`.
-- OpenEnv runtime 0.11.0: BSD-3-Clause, Meta Platforms, Inc. and affiliates and
-  respective contributors. https://github.com/openenv/OpenEnv. Environment
-  wiring follows its documented MCPEnvironment/create_app API patterns.
-  The runtime is an installed dependency; no modified OpenEnv runtime is vendored
-  in the submission.
-- Other pinned dependencies retain their individual licenses. The code license
-  on this Space does not replace the CC-BY-4.0 data license or dependency licenses.
+- Pinned dependencies retain their individual licenses. The code license does
+  not replace the CC-BY-4.0 data license or dependency licenses.

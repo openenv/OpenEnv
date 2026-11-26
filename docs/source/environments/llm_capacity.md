@@ -13,7 +13,9 @@ shortfall cost model.
 
 One episode contains 14 decision days. The observation provides the previous 14
 realized days, the next relative log day, cost-model coefficients, and the most
-recent outcome. Only completed 14-decision episodes are comparable; an unfinished prefix is not a successful zero-cost episode. The evaluation harness must require completion.
+recent outcome. Compare `cumulative_modeled_cost` only across completed episodes
+on the same start. Summed reward treats a day that is never committed as zero
+savings.
 
 Each action is a dictionary with exactly `ChatGPT` and `GPT-4`,
 each containing 24 finite nonnegative hourly token reservations in `[0, 1000000]`.
@@ -73,7 +75,7 @@ We use hourly sums of `Total tokens` from `Conversation log` records, for the
 225–334. Days 121–224 are absent in the upstream release. Episodes never cross
 this gap. Missing hours within a logged day have zero demand.
 Day 77 has zero ChatGPT demand in every hour; test days 101–106 have
-12–20 zero-demand hours per deployment. These may reflect upstream logging gaps
+7–20 zero-demand hours per deployment. These may reflect upstream logging gaps
 rather than absent traffic. They remain scored as zero demand, so costs partly
 reflect forecasting these gaps; the trace does not establish real service outages.
 
@@ -83,6 +85,8 @@ No request text, completions, or user identifiers are distributed.
 
 - Train decision-day segments: 14–89 and 239–304.
 - Test decision-day segments: 90–120 and 305–334.
+- The split is chronological within each recorded segment, not across segments:
+  the second train segment comes after the first test segment.
 - Start points require 14 preceding observed days and 14 consecutive target days.
 - There are 116 train starts and 35 test starts. Adjacent episodes overlap; they
   must not be treated as independent experimental replicates.

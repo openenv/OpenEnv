@@ -13,10 +13,7 @@ from server.capacity_environment import CapacityEnvironment
 
 def unwrap(observation):
     assert observation.error is None, observation.error
-    result = observation.result
-    if hasattr(result, "data"):
-        return result.data
-    return result["data"]
+    return observation.result.data
 
 
 def record(out, policy, seed=23):

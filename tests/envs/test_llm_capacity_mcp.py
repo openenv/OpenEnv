@@ -68,6 +68,14 @@ def test_useful_causal_policy_outscores_not_committing_and_zero_reservations():
                 == 0
             )
         assert result.done and env.state.step_count == EPISODE_DAYS
+        late = env.step(
+            CallToolAction(
+                tool_name="reserve_capacity",
+                arguments={"reservations": view["history"][-1]["tokens"]},
+            )
+        )
+        assert late.reward == 0 and late.done and late.error is not None
+        assert env.state.step_count == EPISODE_DAYS
         assert total_reward > waiting_reward
         assert total_reward == pytest.approx(
             (unreserved_cost - env.replay.total_cost) / 1000
