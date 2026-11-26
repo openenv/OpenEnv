@@ -162,6 +162,9 @@ def custom_agents(monkeypatch):
         def name() -> str:
             return "my-installed-agent"
 
+    class MixedAgent(UnknownInstalledAgent, OpenCode):
+        pass
+
     class MyPi(Pi):
         pass
 
@@ -174,6 +177,7 @@ def custom_agents(monkeypatch):
         MyOpenCode,
         RenamedOpenCode,
         UnknownInstalledAgent,
+        MixedAgent,
         MyPi,
         MyInterceptPi,
     ):
@@ -228,6 +232,13 @@ def test_a_subclass_that_renames_itself_is_still_wired_like_its_parent(custom_ag
 def test_an_unknown_installed_agent_is_refused_rather_than_guessed(custom_agents):
     with pytest.raises(ValueError, match="installed into the sandbox"):
         seams.get(f"{custom_agents}:UnknownInstalledAgent")
+
+
+def test_an_unknown_agent_mixed_with_a_known_one_is_still_refused(custom_agents):
+    """The unknown agent comes first in the MRO, so its install and run win: wiring it like
+    OpenCode would produce a rollout with no model calls."""
+    with pytest.raises(ValueError, match="installed into the sandbox"):
+        seams.get(f"{custom_agents}:MixedAgent")
 
 
 def test_a_subclass_must_keep_the_openenv_class_that_wires_its_agent(custom_agents):

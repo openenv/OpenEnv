@@ -959,8 +959,8 @@ def custom(import_path: str) -> Seam:
 
       * a subclass of an agent with a seam (the nearest class in its MRO whose `name()` is in
         `SEAMS`, e.g. your own opencode subclass, even one that renames itself) is wired exactly
-        like that agent. Where the seam's wiring lives in an OpenEnv
-        subclass (pi's `InterceptPi` writes models.json), yours must subclass that class;
+        like that agent. Where the seam's wiring lives in an OpenEnv subclass (pi's `InterceptPi`
+        writes models.json), yours must subclass that class;
       * a host-side agent (a plain `BaseAgent`, like terminus-2) makes its model calls from THIS
         process, so it gets `api_base` (the proxy's `/v1` URL) and `api_key` (the capture session
         id) as constructor kwargs. Nothing reaches the sandbox or the verifier;
@@ -988,18 +988,24 @@ def custom(import_path: str) -> Seam:
             f"cannot import harness {import_path!r}: {type(exc).__name__}: {exc}"
         ) from exc
     # The nearest class in the MRO that names a known agent: a subclass that renames itself (MiMo's
-    # `MimoOpenCode` is `mimo-opencode`) still installs and talks to the model like its parent.
+    # `MimoOpenCode` is `mimo-opencode`) still installs and talks to the model like its parent. Every
+    # renaming class before it must derive from it, so mixing in an unrelated agent (whose install
+    # and run would win) is still refused rather than wired like the known one.
     parent = None
+    renamed: list[type] = []
     for base in cls.__mro__:
         if "name" not in vars(base):
             continue
         try:
             named = base.name()
         except Exception:  # noqa: BLE001 - a name() that needs an instance is not a known agent
-            continue
+            named = None
         if named in SEAMS:
-            parent = named
+            if all(issubclass(r, base) for r in renamed):
+                parent = named
             break
+        if named is not None:
+            renamed.append(base)
     if parent in SEAMS:
         wired_by = SEAMS[parent].import_path
         if wired_by:
