@@ -505,8 +505,8 @@ def build_images(
     `[environment].docker_image = "<repo>@sha256:<digest>"` in `task.toml`.
     """
     from openenv.harbor.images import (
-        HarborImageError,
         build_harbor_images,
+        HarborImageError,
         plan_harbor_images,
         verify_harbor_images,
     )

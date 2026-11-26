@@ -16,14 +16,14 @@ import httpx
 import pytest
 from openenv.cli.commands.harbor import app
 from openenv.harbor.images import (
-    DockerBuildxBuilder,
-    HarborImageError,
-    KanikoHFJobsBuilder,
-    OCIRegistryClient,
     audit_environment,
     build_copy_layer_tar,
     build_harbor_images,
     classify_dockerfile,
+    DockerBuildxBuilder,
+    HarborImageError,
+    KanikoHFJobsBuilder,
+    OCIRegistryClient,
     parse_image_ref,
     parse_kaniko_digest,
     sanitize_tag,
