@@ -55,10 +55,13 @@ class ChessEnvironment(Environment):
             opponent: Opponent type - "moonfish", "random", or None (self-play)
             opponent_depth: Search depth when using moonfish as opponent
             max_moves: Maximum half-moves before draw
-            agent_color: Which color the agent plays - "white", "black", or None (alternate each episode)
+            agent_color: Which color the agent plays - "white", "black", or None (random each episode)
             gamma: Discount factor for temporal credit assignment (0-1)
         """
         super().__init__(rubric=ChessWinLossRubric(gamma=gamma))
+        # The env owns its RNG so that reset(seed=...) makes the agent's color
+        # and the random opponent's moves reproducible.
+        self._rng = random.Random()
         self._opponent = opponent
         self._opponent_depth = opponent_depth
         self._max_moves = max_moves
@@ -70,16 +73,27 @@ class ChessEnvironment(Environment):
         self._agent_move_count = 0  # Track agent moves for discounting
         self.reset()
 
-    def reset(self, fen: str = None):
+    def reset(
+        self,
+        fen: str = None,
+        seed: int | None = None,
+        episode_id: str | None = None,
+    ):
         """
         Initialize a new chess game episode.
 
         Args:
             fen: Optional starting position in FEN notation.
+            seed: If given, reseed the agent's color choice and the random
+                opponent. The same seed always yields the same game for the
+                same agent moves.
+            episode_id: Optional episode identifier (generated if omitted)
 
         Returns:
             Initial observation of the board state.
         """
+        if seed is not None:
+            self._rng = random.Random(seed)
         self._reset_rubric()
         # moonfish's module-level evaluation cache is never trimmed.
         with _MOONFISH_LOCK:
@@ -90,8 +104,7 @@ class ChessEnvironment(Environment):
         else:
             self._board = chess.Board()
 
-        # Generate episode ID once
-        episode_id = str(uuid.uuid4())
+        episode_id = episode_id or str(uuid.uuid4())
 
         # Determine agent color
         if self._agent_color_setting == "white":
@@ -99,10 +112,7 @@ class ChessEnvironment(Environment):
         elif self._agent_color_setting == "black":
             self._agent_color = chess.BLACK
         elif self._agent_color_setting is None:
-            # Alternate each episode based on episode_id hash
-            self._agent_color = (
-                chess.WHITE if hash(episode_id) % 2 == 0 else chess.BLACK
-            )
+            self._agent_color = self._rng.choice([chess.WHITE, chess.BLACK])
         else:
             self._agent_color = chess.WHITE
 
@@ -115,8 +125,9 @@ class ChessEnvironment(Environment):
         )
         self._agent_move_count = 0
 
-        # If agent plays Black and opponent is configured, opponent moves first
-        if self._opponent is not None and self._agent_color == chess.BLACK:
+        # The opponent moves first when it is not the agent's turn: Black on the
+        # standard board, or the side to move in a custom FEN.
+        if self._opponent is not None and self._board.turn != self._agent_color:
             self._make_opponent_move()
 
         # Check if starting position is already terminal (e.g., custom FEN with checkmate/stalemate)
@@ -274,7 +285,7 @@ class ChessEnvironment(Environment):
             with _MOONFISH_LOCK:
                 move = search_move(self._board, depth=self._opponent_depth)
         elif self._opponent == "random":
-            move = random.choice(list(self._board.legal_moves))
+            move = self._rng.choice(list(self._board.legal_moves))
         else:
             return
 

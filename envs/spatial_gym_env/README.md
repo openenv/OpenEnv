@@ -98,7 +98,7 @@ with SpatialGymEnv(base_url="http://localhost:8000").sync() as env:
 
 ## Run it yourself
 
-From `envs/spatial_gym_env/`, start the server with `uv run --project . server` (port 8000; set `ENABLE_WEB_INTERFACE=true` for the playground at `/web`). Build the image with `openenv build`, and deploy a Space with `openenv push` (or `openenv push --repo-id my-org/spatial-gym-env`). See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options.
+From `envs/spatial_gym_env/`, start the server with `uv run --project . server` (port 8000; set `ENABLE_WEB_INTERFACE=true` for the playground at `/web`). Build the image with `openenv build`, and deploy a Space with `openenv push` (or `openenv push --repo-id my-org/spatial-gym-env`). See the [`openenv push` reference](https://openenv.github.io/OpenEnv/main/reference/cli#openenv.cli.commands.push) for all options.
 
 The tests download the SPaRC dataset and skip themselves when Spatial-Gym is not installed. From the repository root:
 

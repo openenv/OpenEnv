@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openenv"
-version = "0.13.1.dev0"
+version = "0.14.1.dev0"
 description = "A unified framework for reinforcement learning environments"
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -14,8 +14,8 @@ dependencies = [
     # Core shared dependencies - minimal set required for all environments
     # Heavy dependencies (torch, numpy, smolagents, etc.) should be in
     # individual environment pyproject.toml files
-    "fastapi>=0.116.0",
-    "pydantic>=2.0.0",
+    "fastapi>=0.133.0",
+    "pydantic>=2.12.0",
     "packaging>=24.2",
     "typing_extensions>=4.0.0",
     "uvicorn>=0.24.0",
@@ -30,7 +30,7 @@ dependencies = [
     "tomli-w>=1.2.0",
     "websockets>=15.0.1",
     # MCP support
-    "fastmcp>=3.0.0,<4.0.0",
+    "fastmcp>=4.0.10,<5.0.0",
     # Web UI dependencies
     "gradio>=4.0.0",
     "httpx>=0.28.1",
@@ -41,7 +41,7 @@ dependencies = [
 # `pip install openenv` includes the full runtime; the extras below are
 # optional integrations.
 daytona = [
-    "daytona>=0.136.0",
+    "daytona>=0.136.0,<1",
     "pyyaml>=6.0",
 ]
 aca = [
@@ -78,7 +78,11 @@ harbor = [
     # (websockets>=15) and `tensorlake` (websockets>=13,<14) together.
     #
     # Harbor requires Python >= 3.12, so this extra is excluded from the 3.11 CI leg.
-    "harbor[e2b,modal,daytona,gke,ec2,runloop,novita,blaxel,beam,islo,opensandbox,cwsandbox,use-computer,cua]>=0.22.0; python_version >= '3.12'",
+    #
+    # Below 0.26 while Harbor task validation pins harbor==0.25.0
+    # (tests/validation_runtime). 0.26 needs FastMCP 4, so with FastMCP 4 here an
+    # unbounded range resolves to it.
+    "harbor[e2b,modal,daytona,gke,ec2,runloop,novita,blaxel,beam,islo,opensandbox,cwsandbox,use-computer,cua]>=0.22.0,<0.26; python_version >= '3.12'",
 ]
 
 [project.scripts]

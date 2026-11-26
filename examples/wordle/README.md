@@ -1,6 +1,6 @@
 # Wordle: SFT, then GRPO
 
-Train Qwen3-1.7B to play Wordle against the [`openenv/wordle`](https://huggingface.co/spaces/openenv/wordle) environment. The [tutorial](https://huggingface.co/docs/openenv/tutorials/wordle-grpo) walks through each step, with results, hardware and costs.
+Train Qwen3-1.7B to play Wordle against the [`openenv/wordle`](https://huggingface.co/spaces/openenv/wordle) environment. The [tutorial](https://openenv.github.io/OpenEnv/main/tutorials/wordle-grpo) walks through each step, with results, hardware and costs.
 
 | Script | What it does | Where it runs |
 |---|---|---|

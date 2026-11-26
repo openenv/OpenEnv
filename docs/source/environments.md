@@ -53,6 +53,13 @@ The OpenEnv community has built a catalog of ready-to-run environments that cove
       </div>
     </div>
     <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
+      <div class="font-bold mb-2">Data Analysis</div>
+      <p class="text-sm">Answer questions about real CSV, TSV and JSON files from a sandboxed Python session with pandas, on SmolDataEnvs tasks graded by the dataset's deterministic grader.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="environments/data_analysis" class="!no-underline border dark:border-gray-700 px-3 py-1 rounded text-sm hover:shadow">📄 Docs</a>
+      </div>
+    </div>
+    <div class="border dark:border-gray-700 p-5 rounded-lg shadow">
       <div class="font-bold mb-2">Chat</div>
       <p class="text-sm">Message-driven loop tailored for conversational agents that need structured turns, safety rails, and message attribution.</p>
       <div class="flex gap-2 mt-3">

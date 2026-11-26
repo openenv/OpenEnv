@@ -352,3 +352,129 @@ class TestJuliaExecutor:
 
         assert result.exit_code != 0
         assert result.stderr != ""
+
+
+# Prints whether a server variable is visible, the uid, whether a socket can be opened, and
+# what the syscalls that reach into other processes return.
+_ISOLATION_PROBE = """
+println(haskey(ENV, "SERVER_SECRET_FOR_TEST") ? "SECRET_VISIBLE" : "no secret")
+println("uid=", ccall(:getuid, Cint, ()))
+using Sockets
+try
+    close(listen(IPv4(0x7f000001), 0))
+    println("SOCKET_OPENED")
+catch e
+    println("socket refused: ", e)
+end
+# ptrace, process_vm_readv, process_vm_writev, pidfd_getfd, io_uring_enter, io_uring_register
+nrs = Sys.ARCH == :x86_64 ? [101, 310, 311, 438, 426, 427] : [117, 270, 271, 438, 426, 427]
+for nr in nrs
+    r = ccall(:syscall, Clong, (Clong, Clong, Clong, Clong, Clong), nr, 0, 0, 0, 0)
+    println("syscall ", nr, " ", r, " ", Libc.errno())
+end
+"""
+
+
+@pytest.mark.skipif(not julia_available, reason=julia_skip_reason)
+@pytest.mark.parametrize("use_pool", [False, True])
+def test_julia_code_gets_no_server_env_and_no_sockets(monkeypatch, use_pool):
+    from julia_env.server.julia_executor import JuliaExecutor
+    from julia_env.server.julia_sandbox import _socket_filter_unavailable
+
+    monkeypatch.setenv("SERVER_SECRET_FOR_TEST", "not-a-real-secret")
+    if use_pool:
+        assert JuliaExecutor.enable_process_pool(size=1)
+    try:
+        result = JuliaExecutor(use_process_pool=use_pool).run(_ISOLATION_PROBE)
+    finally:
+        if use_pool:
+            JuliaExecutor.shutdown_pool()
+
+    assert result.exit_code == 0, result.stderr
+    assert "no secret" in result.stdout
+    if not _socket_filter_unavailable():
+        assert "socket refused" in result.stdout, result.stdout
+        denied = [
+            line for line in result.stdout.splitlines() if line.startswith("syscall ")
+        ]
+        assert len(denied) == 6 and all(line.endswith(" -1 1") for line in denied), (
+            denied
+        )
+    if os.geteuid() == 0:
+        assert "uid=65534" in result.stdout, result.stdout
+
+
+@pytest.mark.skipif(not julia_available, reason=julia_skip_reason)
+def test_pool_does_not_carry_state_between_executions():
+    from julia_env.server.julia_executor import JuliaExecutor
+
+    assert JuliaExecutor.enable_process_pool(size=1)
+    try:
+        executor = JuliaExecutor(use_process_pool=True)
+        first = executor.run(
+            'global LEAKED = 1\nBase.:+(a::Int, b::String) = 42\nprintln(1 + "x")'
+        )
+        assert "42" in first.stdout, first.stderr
+        second = executor.run(
+            "println(isdefined(Main, :LEAKED))\n"
+            "println(hasmethod(+, Tuple{Int, String}))"
+        )
+    finally:
+        JuliaExecutor.shutdown_pool()
+
+    assert second.stdout.split() == ["false", "false"], second.stderr
+
+
+def test_shutdown_stops_a_replacement_worker_stuck_starting(monkeypatch):
+    import tempfile
+    import time
+
+    from julia_env.server.julia_process_pool import JuliaProcessPool
+
+    # A stand-in for julia: ready at first, then a replacement that never is.
+    # Open to nobody, who runs it when the tests run as root.
+    folder = Path(tempfile.mkdtemp())
+    folder.chmod(0o777)
+    fake_julia = folder / "julia"
+    fake_julia.write_text(
+        "#!/bin/sh\n"
+        'if [ -n "$JULIA_FAKE_STALL" ]; then\n'
+        '  echo $$ > "$JULIA_FAKE_STALL"; exec sleep 600\n'
+        "fi\n"
+        'echo "Julia worker ready" >&2\n'
+        "exec cat >/dev/null\n"
+    )
+    fake_julia.chmod(0o755)
+    pid_file = folder / "stuck.pid"
+    pool = JuliaProcessPool(
+        size=1, julia_path=str(fake_julia), optimization_flags=False
+    )
+    try:
+        monkeypatch.setenv("JULIA_FAKE_STALL", str(pid_file))
+        pool._return_worker(pool._get_available_worker())
+        deadline = time.monotonic() + 10
+        while not pid_file.exists() or not pid_file.read_text().strip():
+            assert time.monotonic() < deadline, "the replacement never started"
+            time.sleep(0.05)
+        stuck_pid = int(pid_file.read_text())
+
+        pool.shutdown()
+
+        deadline = time.monotonic() + 10
+        while _process_exists(stuck_pid):
+            assert time.monotonic() < deadline, "the stuck worker outlived shutdown"
+            time.sleep(0.05)
+        assert pool.workers == []
+    finally:
+        pool.shutdown()
+        shutil.rmtree(folder)
+
+
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True

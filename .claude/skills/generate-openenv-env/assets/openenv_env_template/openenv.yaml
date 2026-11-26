@@ -6,6 +6,11 @@ runtime: fastapi
 app: server.app:app
 port: 8000
 validation:
+  execution:
+    kind: openenv_ws
+    probe_path: validation/runtime.json
+    dockerfile: server/Dockerfile
+    context: .
   reward:
     range: [0.0, 1.0]
     oracle_tolerance: 0.0

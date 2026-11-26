@@ -225,3 +225,48 @@ class TestWaitForReadyTimeout:
             provider.wait_for_ready(timeout_s=5.0)
 
         assert mock_poll.call_args.kwargs["timeout_s"] == 5.0
+
+
+def test_server_does_not_inherit_credentials(monkeypatch):
+    """The server can run model-written code: credentials of this process stay
+    out of its environment unless passed in `env_vars`."""
+    monkeypatch.setenv("HF_TOKEN", "fake-hf-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-openai-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "fake-aws-secret")
+    monkeypatch.setenv("DB_PASSWORD", "fake-password")
+    monkeypatch.setenv("TOKENIZERS_PARALLELISM", "false")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    with patch.object(uv_provider, "_check_uv_installed"):
+        provider = UVProvider(
+            project_path="/tmp/some-env", env_vars={"ENV_API_KEY": "fake-env-key"}
+        )
+
+    with patch.object(uv_provider.subprocess, "Popen") as mock_popen:
+        mock_popen.return_value = MagicMock(poll=lambda: None)
+        provider.start(port=12345, env_vars={"OPENAI_API_KEY": "fake-passed-key"})
+
+    env = mock_popen.call_args.kwargs["env"]
+    for name in ("HF_TOKEN", "AWS_SECRET_ACCESS_KEY", "DB_PASSWORD"):
+        assert name not in env
+    assert env["OPENAI_API_KEY"] == "fake-passed-key"
+    assert env["ENV_API_KEY"] == "fake-env-key"
+    assert env["TOKENIZERS_PARALLELISM"] == "false"
+    assert env["CUDA_VISIBLE_DEVICES"] == "0"
+    assert "PATH" in env
+
+
+def test_dropped_credential_names_are_logged_without_values(monkeypatch, caplog):
+    """Users can tell which inherited credentials the server didn't get."""
+    monkeypatch.setenv("HF_TOKEN", "fake-hf-token")
+    monkeypatch.setenv("GITEA_PASSWORD", "fake-password")
+    with patch.object(uv_provider, "_check_uv_installed"):
+        provider = UVProvider(project_path="/tmp/some-env")
+
+    with patch.object(uv_provider.subprocess, "Popen") as mock_popen:
+        mock_popen.return_value = MagicMock(poll=lambda: None)
+        with caplog.at_level("WARNING", logger=uv_provider.__name__):
+            provider.start(port=12345, env_vars={"HF_TOKEN": "fake-passed-token"})
+
+    assert "GITEA_PASSWORD" in caplog.text
+    assert "HF_TOKEN" not in caplog.text
+    assert "fake-" not in caplog.text

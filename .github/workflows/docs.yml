@@ -1,0 +1,173 @@
+name: Docs
+
+# Builds the docs with HF doc-builder and publishes them to GitHub Pages (gh-pages
+# branch), with no Hugging Face token:
+#   - push to main         -> <site>/main/
+#   - release tag vX.Y.Z   -> <site>/vX.Y.Z/
+#   - manual run + version -> rebuilds that release from its tag
+#   - pull request         -> build only; docs_pr_preview.yml publishes it to
+#                             <site>/pr-preview/pr-N/
+# docs/pages/ adds the site layout that huggingface.co provides for doc-builder pages.
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "src/openenv/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to rebuild, e.g. v0.14.0. Leave empty to rebuild main."
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.version || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # doc-builder commit used for the build. docs_builder_update.yml opens an issue
+  # when huggingface/doc-builder moves ahead of it.
+  DOC_BUILDER_SHA: 07d98817a2624c1fe067d4268e1f80d1988cfe71
+  # Set the DOCS_SITE_URL repository variable when moving to a custom domain.
+  ROOT_URL: ${{ vars.DOCS_SITE_URL || 'https://openenv.github.io/OpenEnv' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      dest: ${{ steps.target.outputs.dest }}
+      publish: ${{ steps.target.outputs.publish }}
+    steps:
+      - name: Pick the target
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            version=main dest="pr-preview/pr-$PR_NUMBER" label="PR #$PR_NUMBER" ref="$GITHUB_SHA" publish=false noindex=true
+          elif [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION" dest="$INPUT_VERSION" label="$INPUT_VERSION" ref="refs/tags/$INPUT_VERSION"
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="$GITHUB_REF_NAME" dest="$GITHUB_REF_NAME" label="$GITHUB_REF_NAME" ref="$GITHUB_SHA"
+          else
+            version=main dest=main label=main ref="$GITHUB_SHA"
+          fi
+          if [[ ! "$version" =~ ^(main|v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::Not a release tag: $version"
+            exit 1
+          fi
+          if [ "$EVENT" != pull_request ]; then
+            # Only main publishes (a manual run from another branch only builds).
+            if [ "$GITHUB_REF" = refs/heads/main ] || [ "$GITHUB_REF_TYPE" = tag ]; then publish=true; else publish=false; fi
+            versions_url="$ROOT_URL/versions.json"
+          fi
+          {
+            echo "version=$version"
+            echo "dest=$dest"
+            echo "label=$label"
+            echo "ref=$ref"
+            echo "publish=$publish"
+            echo "versions_url=${versions_url:-}"
+            echo "noindex=${noindex:-}"
+          } >> "$GITHUB_OUTPUT"
+
+      # doc-builder derives the "Update on GitHub" links from this folder name.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.target.outputs.ref }}
+          path: OpenEnv
+          persist-credentials: false
+
+      # Site scripts come from this commit, so older release tags can be rebuilt.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tools
+          sparse-checkout: docs/pages
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: huggingface/doc-builder
+          ref: ${{ env.DOC_BUILDER_SHA }}
+          path: doc-builder
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install doc-builder and OpenEnv
+        run: |
+          uv venv --python 3.11
+          uv pip install ./doc-builder "./OpenEnv[core,cli]"
+
+      - name: Build pages with doc-builder
+        env:
+          NODE_OPTIONS: --max-old-space-size=6656
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          source .venv/bin/activate
+          cd doc-builder
+          doc-builder build openenv ../OpenEnv/docs/source \
+            --build_dir ../build --html --clean --version "$VERSION" \
+            --repo_owner openenv --repo_name OpenEnv
+
+      - name: Add the site layout
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          DEST: ${{ steps.target.outputs.dest }}
+          LABEL: ${{ steps.target.outputs.label }}
+          VERSIONS_URL: ${{ steps.target.outputs.versions_url }}
+          NOINDEX: ${{ steps.target.outputs.noindex }}
+        run: |
+          source .venv/bin/activate
+          python tools/docs/pages/build_site.py "build/openenv/$VERSION/en" site \
+            --site-url "$ROOT_URL/$DEST" --version-label "$LABEL" \
+            ${VERSIONS_URL:+--versions-url "$VERSIONS_URL"} ${NOINDEX:+--noindex}
+
+      - name: Compile the stylesheet
+        run: |
+          npm ci --prefix doc-builder/kit --no-audit --no-fund
+          node tools/docs/pages/build_css.mjs doc-builder/kit site site/docs.css
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: docs-site
+          path: site
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: docs-site
+          path: site
+
+      - name: Publish to gh-pages
+        env:
+          DEST: ${{ needs.build.outputs.dest }}
+        run: docs/pages/publish.sh "$DEST" site

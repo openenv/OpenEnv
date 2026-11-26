@@ -2,6 +2,8 @@
 
 """Tests for Chess environment."""
 
+import asyncio
+
 import pytest
 
 # Skip entire module if chess dependencies are not installed
@@ -179,6 +181,81 @@ class TestChessEnvironmentWithOpponent:
         assert obs.done is True
         assert obs.reward == -1.0
         assert obs.result == "0-1"
+
+    # 1.f3 e5 2.g4, black to move: Qh4 mates.
+    BLACK_TO_MOVE = "rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2"
+
+    @pytest.mark.parametrize("agent_color", ["white", "black"])
+    @pytest.mark.parametrize(
+        "fen", [None, BLACK_TO_MOVE], ids=["start", "black-to-move"]
+    )
+    def test_agent_moves_for_its_own_color_after_reset(self, agent_color, fen):
+        env = ChessEnvironment(opponent="random", agent_color=agent_color)
+        obs = env.reset(fen=fen, seed=0)
+        side_to_move = obs.fen.split()[1]
+        assert side_to_move == agent_color[0]
+
+    def test_agent_mate_from_a_black_to_move_fen_is_a_win(self):
+        env = ChessEnvironment(opponent="random", agent_color="black")
+        env.reset(fen=self.BLACK_TO_MOVE, seed=0)
+
+        obs = env.step(ChessAction(move="d8h4"))
+
+        assert obs.done is True
+        assert obs.reward == 1.0
+        assert obs.result == "0-1"
+
+
+class TestResetSeed:
+    """reset(seed=...) makes the agent's color and the random opponent reproducible."""
+
+    @staticmethod
+    def _play(env, seed):
+        """Reset with a seed, play two opening moves and return the move history."""
+        env.reset(seed=seed)
+        env.step(ChessAction(move="e2e4"))
+        env.step(ChessAction(move="g1f3"))
+        return list(env.state.move_history)
+
+    def test_same_seed_same_random_opponent_replies(self):
+        env = ChessEnvironment(opponent="random", agent_color="white")
+        assert self._play(env, 7) == self._play(env, 7)
+        # Different seeds still give different games
+        assert len({tuple(self._play(env, seed)) for seed in range(10)}) > 1
+
+    def test_same_seed_same_agent_color(self):
+        """With agent_color=None the color is random, and the seed fixes it.
+
+        A random opponent moves first when the agent plays black, so the move
+        history after reset shows the agent's color.
+        """
+        env = ChessEnvironment(opponent="random")
+        openings = []
+        for seed in range(20):
+            env.reset(seed=seed)
+            first = list(env.state.move_history)
+            env.reset(seed=seed)
+            assert env.state.move_history == first
+            openings.append(first)
+        # Both colors occur across seeds
+        assert any(not moves for moves in openings)
+        assert any(moves for moves in openings)
+
+    def test_episode_id_is_kept_or_generated(self):
+        env = ChessEnvironment(opponent=None)
+        env.reset(episode_id="game-1")
+        assert env.state.episode_id == "game-1"
+        env.reset()
+        first = env.state.episode_id
+        env.reset()
+        assert first and env.state.episode_id != first
+
+    def test_reset_async_forwards_seed(self):
+        env = ChessEnvironment(opponent="random", agent_color="black")
+        env.reset(seed=3)
+        expected = list(env.state.move_history)
+        asyncio.run(env.reset_async(seed=3))
+        assert env.state.move_history == expected
 
 
 class TestTemporalDiscounting:

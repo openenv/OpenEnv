@@ -17,7 +17,7 @@ pytest.importorskip("smolagents", reason="smolagents is not installed")
 from repl_env import LocalREPLEnv, LocalRLMRunner, REPLEnv
 from repl_env.models import CodeBlockResult, REPLAction, REPLObservation, REPLState
 from repl_env.recursive_controller import create_server_recursive_controller
-from repl_env.rubrics import ExactMatchRubric, REPLRubric
+from repl_env.rubrics import ExactMatchRubric, FuzzyMatchRubric, REPLRubric
 from repl_env.server.python_executor import PythonExecutor
 from repl_env.server.repl_environment import REPLEnvironment
 
@@ -321,6 +321,40 @@ class TestREPLEnvironment:
         obs = env.step(REPLAction(code="print('FINAL(wrong)')"))
         assert obs.done
         assert obs.reward == 0.0
+
+    @pytest.mark.parametrize(
+        "action",
+        [
+            REPLAction(code="print('FINAL()')"),
+            REPLAction(code="print('FINAL(   )')"),
+            REPLAction(code="", is_final=True),
+        ],
+        ids=["FINAL()", "blank FINAL", "is_final without answer"],
+    )
+    def test_fuzzy_rubric_gives_empty_answer_no_credit(self, action):
+        """An empty answer is contained in every string but earns nothing."""
+        env = REPLEnvironment(rubric=REPLRubric(outcome=FuzzyMatchRubric()))
+        env.reset(expected_answer="42")
+        obs = env.step(action)
+        assert obs.done
+        assert obs.metadata["final_answer"].strip() == ""
+        assert obs.reward == 0.0
+
+    @pytest.mark.parametrize(
+        ("answer", "expected", "reward"),
+        [
+            ("42", "42", 1.0),
+            ("The answer is 42", "42", 0.5),
+            ("4", "42", 0.5),
+            ("7", "42", 0.0),
+        ],
+    )
+    def test_fuzzy_rubric_scores_non_empty_answers(self, answer, expected, reward):
+        env = REPLEnvironment(rubric=REPLRubric(outcome=FuzzyMatchRubric()))
+        env.reset(expected_answer=expected)
+        obs = env.step(REPLAction(code=f"print('FINAL({answer})')"))
+        assert obs.done
+        assert obs.reward == reward
 
     def test_rubric_reward_on_error(self):
         """Test rubric process reward on code error."""

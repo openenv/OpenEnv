@@ -80,7 +80,7 @@ docker build -t maze_env-env:latest -f server/Dockerfile .
 
 ## Deploying to Hugging Face Spaces
 
-From `envs/maze_env/`, run `openenv push` (or `openenv push --repo-id my-org/maze-env`). See the [`openenv push` reference](https://huggingface.co/docs/openenv/reference/cli#openenv-push) for all options.
+From `envs/maze_env/`, run `openenv push` (or `openenv push --repo-id my-org/maze-env`). See the [`openenv push` reference](https://openenv.github.io/OpenEnv/main/reference/cli#openenv.cli.commands.push) for all options.
 
 ## Running the Default Maze
 
@@ -121,7 +121,7 @@ docker run -p 8000:8000 maze_env-env:latest
 The reward follows the underlying maze rules:
 - Small penalty for a move (`-0.05`)
 - Penalty for revisiting a cell (`-0.25`)
-- Penalty for invalid move (`-0.75`)
+- Penalty for invalid move (`-0.75`), including an action other than `0`–`3`
 - Reward for reaching the exit (`+10.0`)
 
 The episode ends with `lose` when the accumulated reward drops below `-0.5 * maze.size` (`-32` for the default maze).

@@ -290,7 +290,7 @@ def boundary(monkeypatch, task):
                 verifier_result=SimpleNamespace(rewards=rewards),
             )
 
-    async def create(config):
+    async def create(config, register_job=None):
         return Trial(config)
 
     monkeypatch.setattr(harbor, "DockerInspector", Inspector)
@@ -1146,7 +1146,7 @@ def test_missing_harbor_build_timeout_binding_is_a_startup_error(
 ):
     create = harbor._create_trial
 
-    async def missing_binding(config):
+    async def missing_binding(config, register_job=None):
         trial = await create(config)
         del trial._environment_build_timeout_sec
         return trial
@@ -1533,9 +1533,32 @@ def test_hf_sandbox_runs_every_trial_at_once_as_a_labelled_job(
     assert measured["job_ids"] == [trial["container_id"] for trial in native["trials"]]
 
 
+SEPARATE_VERIFIER = (
+    f'schema_version = "1.4"\n[environment]\ndocker_image = "{PINNED}"\n'
+    + '[verifier]\nenvironment_mode = "separate"\n[[artifacts]]\nsource = "/app"\n'
+)
+
+
+def test_hf_sandbox_runs_a_separate_verifier_from_the_task_image(
+    task, boundary, hf_jobs
+):
+    (task / "task.toml").write_text(SEPARATE_VERIFIER)
+    report = run_validation(task, sandbox="hf-sandbox")
+    assert result(report, "runtime.startup").status is CheckStatus.PASS
+    assert result(report, "semantic.oracle_max").status is CheckStatus.PASS
+    # Local Docker still refuses both extensions.
+    report = run_validation(task)
+    assert "outside hf-sandbox" in result(report, "runtime.startup").evidence[0]
+
+
 @pytest.mark.parametrize(
     "shape,reason",
-    [("dockerfile", "build and push the image"), ("user", "cannot switch users")],
+    [
+        ("dockerfile", "build and push the image"),
+        ("user", "cannot switch users"),
+        ("no-network", "non-public"),
+        ("verifier image", "reuse the task's pinned image"),
+    ],
 )
 def test_hf_sandbox_refuses_tasks_it_cannot_run(task, boundary, shape, reason):
     if shape == "user":
@@ -1543,6 +1566,43 @@ def test_hf_sandbox_refuses_tasks_it_cannot_run(task, boundary, shape, reason):
             stream.write(
                 f'[environment]\ndocker_image="{PINNED}"\n[agent]\nuser="1000"\n'
             )
+    if shape == "no-network":
+        (task / "task.toml").write_text(
+            SEPARATE_VERIFIER + '[verifier.environment]\nnetwork_mode = "no-network"\n'
+        )
+    if shape == "verifier image":
+        (task / "task.toml").write_text(SEPARATE_VERIFIER)
+        (task / "tests/Dockerfile").write_text("FROM debian:bookworm-slim\n")
+    report = run_validation(task, sandbox="hf-sandbox")
+    startup = result(report, "runtime.startup")
+    assert startup.status is CheckStatus.SKIP
+    assert reason in startup.evidence[0]
+    assert not boundary.trials
+
+
+@pytest.mark.parametrize(
+    "declaration,reason",
+    [
+        ('os = "windows"', "non-Linux"),
+        ('env = { TOKEN = "secret" }', "environment variables"),
+        ("gpus = 1", "GPU/TPU"),
+        ('tpu = { type = "v5e", topology = "2x2" }', "GPU/TPU"),
+        (
+            'mcp_servers = [{ name = "tools", url = "https://example.com" }]',
+            "GPU/TPU",
+        ),
+        ('healthcheck = { command = "true" }', "healthcheck"),
+        ('skills_dir = "skills"', "healthcheck"),
+    ],
+)
+def test_hf_sandbox_applies_restrictions_to_verifier_environment(
+    task, boundary, declaration, reason
+):
+    if declaration == 'os = "windows"':
+        (task / "tests/test.bat").write_text("@exit /b 0\n")
+    (task / "task.toml").write_text(
+        SEPARATE_VERIFIER + f"[verifier.environment]\n{declaration}\n"
+    )
     report = run_validation(task, sandbox="hf-sandbox")
     startup = result(report, "runtime.startup")
     assert startup.status is CheckStatus.SKIP

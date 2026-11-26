@@ -38,7 +38,7 @@ _SKILL_TIPS = """
 
 Use `openenv <command> --help` for full flag reference.
 
-Full CLI reference: https://huggingface.co/docs/openenv/reference/cli
+Full CLI reference: https://openenv.github.io/OpenEnv/main/reference/cli
 """
 
 CENTRAL_LOCAL = Path(".agents/skills")
