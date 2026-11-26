@@ -152,6 +152,11 @@ def custom_agents(monkeypatch):
     class MyOpenCode(OpenCode):
         pass
 
+    class RenamedOpenCode(OpenCode):
+        @staticmethod
+        def name() -> str:
+            return "renamed-opencode"
+
     class UnknownInstalledAgent(BaseInstalledAgent):
         @staticmethod
         def name() -> str:
@@ -167,6 +172,7 @@ def custom_agents(monkeypatch):
         HostSideAgent,
         SilentHostSideAgent,
         MyOpenCode,
+        RenamedOpenCode,
         UnknownInstalledAgent,
         MyPi,
         MyInterceptPi,
@@ -194,6 +200,21 @@ def test_a_host_side_agent_of_your_own_gets_the_proxy_as_kwargs(custom_agents):
 
 def test_a_subclass_of_a_known_agent_is_wired_like_it(custom_agents):
     name = f"{custom_agents}:MyOpenCode"
+    seam = seams.get(name)
+    model, kwargs, _, _ = seam.resolve(
+        base_url="https://capture.test", session="session-key", model="m"
+    )
+    assert seam.import_path == name
+    assert model == seams.SEAMS["opencode"].model_fmt.format(model="m")
+    provider = kwargs["opencode_config"]["provider"][seams.OPENCODE_PROVIDER]
+    assert provider["options"]["apiKey"] == "session-key"
+
+
+def test_a_subclass_that_renames_itself_is_still_wired_like_its_parent(custom_agents):
+    """MiMo's `MimoOpenCode` subclasses OpenCode and names itself `mimo-opencode`. Matching on
+    `name()` alone refused it as an unknown installed agent, though it talks to the model like
+    OpenCode."""
+    name = f"{custom_agents}:RenamedOpenCode"
     seam = seams.get(name)
     model, kwargs, _, _ = seam.resolve(
         base_url="https://capture.test", session="session-key", model="m"
