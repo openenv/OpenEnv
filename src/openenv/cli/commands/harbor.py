@@ -527,6 +527,7 @@ def build_images(
                 anonymous=verify_public,
                 require_digest_pin=require_digest_pin,
                 concurrency=concurrency,
+                task_ids=task or None,
             )
             if json_output:
                 print(json.dumps(result, indent=2, sort_keys=True))

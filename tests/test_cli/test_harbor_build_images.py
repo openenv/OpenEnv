@@ -803,3 +803,72 @@ def test_docker_buildx_builder_invokes_amd64_and_reads_digest(
     assert "--platform" in seen_cmd and "linux/amd64" in seen_cmd
     assert "--push" in seen_cmd
     assert "type=registry,ref=ghcr.io/org/cache" in seen_cmd
+
+
+def test_copy_dot_destination_and_single_segment_globs(tmp_path: Path):
+    env_dir = tmp_path / "environment"
+    (env_dir / "nested").mkdir(parents=True)
+    (env_dir / "app.py").write_text("root = 1\n", encoding="utf-8")
+    (env_dir / "nested" / "app.py").write_text("nested = 2\n", encoding="utf-8")
+
+    # `COPY app.py .` with `WORKDIR /app` must land at `app/app.py`, not overwrite `app` as a file.
+    parsed_dot = classify_dockerfile(
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY app.py .\n"
+    )
+    gz_dot, _ = build_copy_layer_tar(env_dir, parsed_dot.copy_ops)
+    assert gz_dot is not None
+    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(gz_dot)), mode="r:") as tar:
+        names = {m.name: m for m in tar.getmembers()}
+    assert "app/app.py" in names
+    assert names["app/app.py"].isfile()
+    assert names["app"].isdir()
+
+    # `COPY *.py /app/` must only match top-level `app.py`, not `nested/app.py`.
+    parsed_glob = classify_dockerfile(
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY *.py /app/\n"
+    )
+    gz_glob, _ = build_copy_layer_tar(env_dir, parsed_glob.copy_ops)
+    assert gz_glob is not None
+    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(gz_glob)), mode="r:") as tar:
+        extracted = tar.extractfile("app/app.py")
+        assert extracted is not None
+        assert extracted.read() == b"root = 1\n"
+
+
+def test_output_dir_overlap_rejected_and_verify_only_honors_task_filter(
+    tmp_path: Path,
+):
+    fake = FakeOCIRegistry()
+    good_digest = fake.seed_image("harness-hub/good", "v1")
+    transport = httpx.MockTransport(fake.handler)
+
+    suite = tmp_path / "suite"
+    single = _write_task(
+        suite / "tasks",
+        "good-task",
+        docker_image=f"ghcr.io/harness-hub/good@{good_digest}",
+    )
+    _write_task(suite / "tasks", "missing-image-task")
+
+    with OCIRegistryClient(
+        http=httpx.Client(transport=transport), anonymous=True
+    ) as pub:
+        # Overlapping output_dir must fail before deleting source task.
+        with pytest.raises(HarborImageError, match="output_dir must not overlap"):
+            build_harbor_images(
+                single,
+                output_dir=single,
+                public_client=pub,
+                registry_client=pub,
+            )
+        assert (single / "task.toml").is_file()
+
+        # Filtering verify_harbor_images to only good-task ignores missing-image-task.
+        res = verify_harbor_images(
+            suite,
+            anonymous=True,
+            require_digest_pin=True,
+            task_ids=["good-task"],
+            registry_client=pub,
+        )
+        assert res["total"] == 1 and res["ok"] == 1 and res["failed"] == 0

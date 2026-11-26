@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import base64
 import copy
-import fnmatch
 import gzip
 import hashlib
 import io
@@ -1278,22 +1277,42 @@ def _resolve_copy_sources(context_dir: Path, pattern: str) -> list[Path]:
     clean = pattern.lstrip("/")
     if clean in {".", ""}:
         return [context_dir]
+    ctx_resolved = context_dir.resolve()
     if any(ch in clean for ch in ("*", "?", "[")):
+        if "**" in PurePosixPath(clean).parts:
+            raise HarborImageError(
+                f"Recursive '**' COPY globs are not supported by OCI append: {pattern!r}"
+            )
         matched = sorted(
             p
-            for p in context_dir.rglob("*")
-            if fnmatch.fnmatch(p.relative_to(context_dir).as_posix(), clean)
+            for p in context_dir.glob(clean)
+            if (p.resolve() == ctx_resolved or p.resolve().is_relative_to(ctx_resolved))
         )
         if not matched:
             raise HarborImageError(f"COPY pattern matched no files: {pattern!r}")
         return matched
     candidate = (context_dir / clean).resolve()
-    ctx_resolved = context_dir.resolve()
     if not (candidate == ctx_resolved or candidate.is_relative_to(ctx_resolved)):
         raise HarborImageError(f"COPY source escapes build context: {pattern!r}")
     if not candidate.exists():
         raise HarborImageError(f"COPY source not found in environment/: {pattern!r}")
     return [candidate]
+
+
+def _copy_destination_is_dir(op: CopyOp, dest_norm: str) -> bool:
+    raw = op.destination.strip()
+    if (
+        raw in {".", "..", "/"}
+        or raw.endswith(("/", "/.", "/.."))
+        or dest_norm == "/"
+        or dest_norm.endswith("/")
+        or len(op.sources) > 1
+    ):
+        return True
+    # Destination equal to WORKDIR (e.g. WORKDIR /app + COPY f /app) is an existing directory.
+    if op.workdir and dest_norm.rstrip("/") == op.workdir.rstrip("/"):
+        return True
+    return False
 
 
 def build_copy_layer_tar(
@@ -1319,7 +1338,7 @@ def build_copy_layer_tar(
 
     for op in copy_ops:
         dest_norm = _normalize_container_path(op.destination, op.workdir)
-        dest_is_dir = dest_norm.endswith("/") or len(op.sources) > 1
+        dest_is_dir = _copy_destination_is_dir(op, dest_norm)
         dest_rel = dest_norm.strip("/")
 
         resolved_sources: list[Path] = []
@@ -1945,10 +1964,19 @@ def verify_harbor_images(
     anonymous: bool = True,
     require_digest_pin: bool = False,
     concurrency: int = 8,
+    task_ids: list[str] | None = None,
     registry_client: OCIRegistryClient | None = None,
 ) -> dict[str, Any]:
     """Verify every Harbor task's ``docker_image`` is pullable as ``linux/amd64``."""
     tasks = discover_task_dirs(root)
+    if task_ids is not None:
+        wanted = set(task_ids)
+        tasks = [(tid, tdir) for tid, tdir in tasks if tid in wanted]
+        missing = sorted(wanted - {tid for tid, _ in tasks})
+        if missing:
+            raise HarborImageError(
+                f"Requested task ID(s) not found under {root}: {missing}"
+            )
     results: dict[str, dict[str, Any]] = {}
 
     def check_one(item: tuple[str, Path]) -> tuple[str, dict[str, Any]]:
@@ -2042,6 +2070,25 @@ def build_harbor_images(
         allow_oci_append=allow_oci_append,
         task_ids=task_ids,
     )
+
+    if output_dir is not None:
+        out_resolved = output_dir.resolve()
+        src_resolved = root.resolve()
+        if (
+            out_resolved == src_resolved
+            or out_resolved.is_relative_to(src_resolved)
+            or src_resolved.is_relative_to(out_resolved)
+            or any(
+                out_resolved == p.task_dir.resolve()
+                or out_resolved.is_relative_to(p.task_dir.resolve())
+                or p.task_dir.resolve().is_relative_to(out_resolved)
+                for p in plans
+            )
+        ):
+            raise HarborImageError(
+                "output_dir must not overlap the input task/dataset directory; "
+                "use --in-place to update task.toml in place"
+            )
 
     needs_registry = any(p.action in {"oci_append", "build"} for p in plans)
     if needs_registry and not registry and not no_push:
