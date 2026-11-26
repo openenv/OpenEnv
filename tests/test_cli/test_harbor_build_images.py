@@ -461,6 +461,23 @@ def test_build_copy_layer_tar_matches_docker_copy_semantics(tmp_path: Path):
     assert names["testbed/sub/run.sh"].mode == 0o755
 
 
+def test_build_copy_layer_tar_copies_file_into_explicit_workdir(tmp_path: Path):
+    env_dir = tmp_path / "environment"
+    env_dir.mkdir()
+    (env_dir / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    parsed = classify_dockerfile(
+        "FROM python:3.12-slim\nWORKDIR /app\nCOPY app.py /app\n"
+    )
+
+    gz, _ = build_copy_layer_tar(env_dir, parsed.copy_ops)
+    assert gz is not None
+    with tarfile.open(fileobj=io.BytesIO(gzip.decompress(gz)), mode="r:") as tar:
+        names = {member.name: member for member in tar.getmembers()}
+
+    assert names["app"].isdir()
+    assert names["app/app.py"].isfile()
+
+
 def test_oci_registry_resolve_multiarch_and_append_layer(tmp_path: Path):
     fake = FakeOCIRegistry()
     base_digest = fake.seed_image(
@@ -768,6 +785,34 @@ def test_cli_build_images_plan_json(tmp_path: Path):
     assert data["total_tasks"] == 2
     assert data["actions"]["oci_append"] == 1
     assert data["actions"]["build"] == 1
+
+
+def test_cli_verify_only_forwards_task_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    captured: dict[str, Any] = {}
+
+    def fake_verify(root: Path, **kwargs: Any) -> dict[str, Any]:
+        captured["root"] = root
+        captured.update(kwargs)
+        return {"total": 0, "ok": 0, "failed": 0, "tasks": {}}
+
+    monkeypatch.setattr("openenv.harbor.images.verify_harbor_images", fake_verify)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "build-images",
+            str(tmp_path),
+            "--verify-only",
+            "--task",
+            "selected",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["task_ids"] == ["selected"]
 
 
 def test_docker_buildx_builder_invokes_amd64_and_reads_digest(
