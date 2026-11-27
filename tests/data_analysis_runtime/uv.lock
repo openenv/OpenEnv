@@ -998,6 +998,8 @@ dependencies = [
 requires-dist = [
     { name = "azure-containerapps-sandbox", marker = "extra == 'aca'", specifier = ">=0.1.0b2,<0.2.0" },
     { name = "azure-identity", marker = "extra == 'aca'", specifier = ">=1.23.0" },
+    { name = "cwsandbox", marker = "python_full_version >= '3.11' and extra == 'cwsandbox'", specifier = ">=0.23.3" },
+    { name = "cwsandbox", marker = "python_full_version >= '3.11' and extra == 'wandb'", specifier = ">=0.23.3" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.136.0,<1" },
     { name = "fastapi", specifier = ">=0.133.0" },
     { name = "fastapi-guard", marker = "extra == 'security'", specifier = ">=8.0.3,<9.0.0" },
@@ -1024,9 +1026,10 @@ requires-dist = [
     { name = "typer", specifier = ">=0.9.0" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
     { name = "uvicorn", specifier = ">=0.24.0" },
+    { name = "wandb", marker = "python_full_version >= '3.11' and extra == 'wandb'", specifier = ">=0.27" },
     { name = "websockets", specifier = ">=15.0.1" },
 ]
-provides-extras = ["daytona", "aca", "modal", "kubernetes", "novita", "inspect", "security", "harbor"]
+provides-extras = ["daytona", "aca", "cwsandbox", "wandb", "modal", "kubernetes", "novita", "inspect", "security", "harbor"]
 
 [package.metadata.requires-dev]
 dev = [
