@@ -93,6 +93,7 @@ class TextArenaEnv(EnvClient[TextArenaAction, TextArenaObservation, TextArenaSta
             current_player_id=obs_data.get("current_player_id", 0),
             legal_players=obs_data.get("legal_players", []),
             info=obs_data.get("info", {}),
+            rewards=obs_data.get("rewards", {}),
             reward=payload.get("reward"),
             done=payload.get("done", False),
             metadata=payload.get("metadata", obs_data.get("metadata", {})),
