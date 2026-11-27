@@ -666,14 +666,54 @@ def audit_environment(
     return file_hashes
 
 
+def _context_sources(dockerfile_text: str) -> list[str] | None:
+    """Return literal context sources, or None when the syntax is ambiguous."""
+    if re.search(r"(?im)^\s*#\s*(?:escape|syntax)\s*=", dockerfile_text):
+        return None
+
+    sources: list[str] = []
+    for raw_line in dockerfile_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "<<" in line or line.endswith("\\"):
+            return None
+        op, rest = (line.split(None, 1) + [""])[:2]
+        op = op.upper()
+        if op == "ONBUILD" or (op == "RUN" and "--mount" in rest):
+            return None
+        if op not in {"COPY", "ADD"}:
+            continue
+
+        if rest.startswith("--"):
+            return None
+        try:
+            if rest.startswith("["):
+                items = json.loads(rest)
+            elif any(char in rest for char in ("\\", '"', "'")):
+                return None
+            else:
+                items = rest.split()
+        except ValueError:
+            return None
+        if len(items) < 2 or not all(isinstance(item, str) and item for item in items):
+            return None
+        for source in items[:-1]:
+            if any(char in source for char in "$*?[\\") or "://" in source:
+                return None
+            sources.append(source)
+    return sources
+
+
 def compute_environment_hash(
     task_dir: Path,
     *,
     extra_dockerfile: str | None = None,
     existing_docker_image: str | None = None,
+    assume_static_context: bool = False,
 ) -> str:
-    """Deterministic SHA-256 of a task's effective build context."""
-    env_dir = task_dir / "environment"
+    """Hash the context, optionally limiting it to literal Dockerfile inputs."""
+    env_dir = (task_dir / "environment").resolve()
     digest = hashlib.sha256()
     if extra_dockerfile:
         digest.update(b"EXTRA_DOCKERFILE\0")
@@ -683,7 +723,30 @@ def compute_environment_hash(
         digest.update((existing_docker_image or "").encode("utf-8") + b"\0")
         return digest.hexdigest()
 
-    for path in sorted(env_dir.rglob("*")):
+    dockerfile = env_dir / "Dockerfile"
+    paths = None
+    if assume_static_context:
+        text = dockerfile.read_text(encoding="utf-8")
+        if extra_dockerfile:
+            text = text.rstrip() + "\n" + extra_dockerfile.strip() + "\n"
+        sources = _context_sources(text)
+        if sources is not None:
+            paths = {
+                dockerfile,
+                env_dir / ".dockerignore",
+                env_dir / "Dockerfile.dockerignore",
+            } & set(env_dir.iterdir())
+            try:
+                for source in sources:
+                    for match in _resolve_copy_sources(env_dir, source):
+                        paths.add(match)
+                        if match.is_dir():
+                            paths.update(match.rglob("*"))
+            except HarborImageError:
+                paths = None
+    if paths is None:
+        paths = set(env_dir.rglob("*"))
+    for path in sorted(paths):
         if path.is_dir() or path.is_symlink():
             continue
         rel = path.relative_to(env_dir).as_posix()
@@ -1862,6 +1925,7 @@ def plan_harbor_images(
     extra_dockerfile: str | None = None,
     skip_pinned: bool = True,
     allow_oci_append: bool = True,
+    assume_static_context: bool = False,
     task_ids: list[str] | None = None,
 ) -> list[TaskImagePlan]:
     """Audit, classify, and plan image operations for every Harbor task under ``root``."""
@@ -1888,6 +1952,7 @@ def plan_harbor_images(
             task_dir,
             extra_dockerfile=extra_dockerfile,
             existing_docker_image=existing,
+            assume_static_context=assume_static_context,
         )
 
         if not has_dockerfile:
@@ -1929,7 +1994,7 @@ def plan_harbor_images(
                     task_id=task_id,
                     task_dir=task_dir,
                     action="keep_pinned",
-                    env_hash=env_hash,
+                    env_hash=_sha256_bytes(existing.encode("utf-8")),
                     reason="task.toml already has a digest-pinned docker_image",
                     base_image=existing,
                     existing_docker_image=existing,
@@ -2045,6 +2110,7 @@ def build_harbor_images(
     extra_dockerfile: str | None = None,
     skip_pinned: bool = True,
     allow_oci_append: bool = True,
+    assume_static_context: bool = False,
     strip_dockerfile_for_shared: bool = False,
     verify_public: bool = True,
     no_push: bool = False,
@@ -2075,6 +2141,7 @@ def build_harbor_images(
         extra_dockerfile=extra_dockerfile,
         skip_pinned=skip_pinned,
         allow_oci_append=allow_oci_append,
+        assume_static_context=assume_static_context,
         task_ids=task_ids,
     )
 
