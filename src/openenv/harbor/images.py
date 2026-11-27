@@ -672,12 +672,18 @@ def _context_sources(dockerfile_text: str) -> list[str] | None:
     Files under ``environment/`` that no instruction reads (e.g. a source tree Harbor uploads at runtime) cannot
     change the image, so they must not split otherwise identical builds.
     """
-    if (
-        "<<" in dockerfile_text
-    ):  # heredocs: their bodies are not instructions, and a COPY heredoc has no context path
-        return None
+    # Heredoc bodies are not instructions: drop them before parsing (the Dockerfile itself is hashed anyway)
+    lines, end = [], None
+    for raw_line in dockerfile_text.splitlines():
+        if end is not None:
+            end = None if raw_line.strip() == end else end
+            continue
+        lines.append(raw_line)
+        marker = re.search(r"<<-?\s*[\"']?([A-Za-z_][A-Za-z0-9_]*)", raw_line)
+        if marker and not raw_line.lstrip().startswith("#"):
+            end = marker.group(1)
     sources: list[str] = []
-    for line in _join_dockerfile_lines(dockerfile_text):
+    for line in _join_dockerfile_lines("\n".join(lines)):
         op, rest = (line.split(None, 1) + [""])[:2]
         if "--mount" in rest:  # RUN --mount=type=bind reads the context without COPY
             return None
@@ -698,7 +704,9 @@ def _context_sources(dockerfile_text: str) -> list[str] | None:
             return None
         for source in items[:-1]:
             source = str(source)
-            if op.upper() == "ADD" and "://" in source:  # a URL, not the context
+            if source.startswith("<<") or (
+                op.upper() == "ADD" and "://" in source
+            ):  # heredoc or URL
                 continue
             if "$" in source or "**" in PurePosixPath(source.lstrip("/")).parts:
                 return None

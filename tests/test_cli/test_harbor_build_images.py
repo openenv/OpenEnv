@@ -840,12 +840,15 @@ def test_environment_hash_tabs_dockerignore_and_heredocs(tmp_path: Path):
     )
     assert compute_environment_hash(c) != compute_environment_hash(d)
 
-    heredoc_df = "FROM python:3.12-slim\nCOPY <<EOF /app/config.txt\nhello\nEOF\n"
-    e = _write_task(tmp_path, "e", dockerfile=heredoc_df, env_files={"notes.txt": "a"})
-    f = _write_task(tmp_path, "f", dockerfile=heredoc_df, env_files={"notes.txt": "b"})
-    assert compute_environment_hash(e) != compute_environment_hash(
-        f
-    )  # falls back to the whole context
+    # Heredoc payloads live in the Dockerfile: files outside it still do not count
+    heredoc_df = (
+        "FROM python:3.12-slim\n# cat <<NOTE is not a heredoc here\n"
+        "COPY <<EOF /app/config.txt\nCOPY source/ /nowhere/\nEOF\n"
+        "RUN <<SH\necho hi\nSH\n"
+    )
+    e = _write_task(tmp_path, "e", dockerfile=heredoc_df, env_files={"source/a": "1"})
+    f = _write_task(tmp_path, "f", dockerfile=heredoc_df, env_files={"source/a": "2"})
+    assert compute_environment_hash(e) == compute_environment_hash(f)
 
 
 def test_cli_build_images_plan_json(tmp_path: Path):
