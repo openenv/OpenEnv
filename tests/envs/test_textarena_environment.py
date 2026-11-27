@@ -1,3 +1,4 @@
+import json
 import random
 import threading
 from types import SimpleNamespace
@@ -570,3 +571,48 @@ def test_sudoku_clues_from_env_kwargs(monkeypatch):
     board = env.reset().messages[0].content.split("Game Board:")[-1]
 
     assert board.count(".") <= 81 - 65
+
+
+def test_observation_reports_every_player_reward(fake_textarena, monkeypatch):
+    """Self-play clients read each seat's reward from the step observation."""
+    env = fake_textarena()
+    obs = env.reset()
+    assert obs.rewards == {}
+
+    def finish(message):
+        env._ta_env.state.rewards = {0: 1, 1: -1}
+        return True, {}
+
+    monkeypatch.setattr(env._ta_env, "step", finish)
+    obs = env.step(TextArenaAction(message="win"))
+
+    assert obs.rewards == {0: 1.0, 1: -1.0}
+    assert obs.reward == 1.0
+
+
+def test_client_parses_every_player_reward():
+    """JSON turns the player ids into strings, the client turns them back."""
+    from openenv.core.env_server.serialization import serialize_observation
+    from textarena_env.client import TextArenaEnv
+    from textarena_env.models import TextArenaObservation
+
+    observation = TextArenaObservation(
+        prompt="", rewards={0: 1.0, 1: -1.0}, done=True, reward=1.0
+    )
+    payload = json.loads(json.dumps(serialize_observation(observation)))
+
+    result = TextArenaEnv._parse_result(None, payload)
+
+    assert result.observation.rewards == {0: 1.0, 1: -1.0}
+
+
+def test_tictactoe_self_play_reports_both_rewards():
+    pytest.importorskip("textarena", reason="textarena not installed")
+    env = TextArenaEnvironment(env_id="TicTacToe-v0", num_players=2)
+    obs = env.reset(seed=0)
+    moves = {0: ["[4]", "[0]", "[8]"], 1: ["[1]", "[2]"]}
+    while not obs.done:
+        assert obs.rewards == {}
+        obs = env.step(TextArenaAction(message=moves[obs.current_player_id].pop(0)))
+
+    assert obs.rewards == {0: 1.0, 1: -1.0}

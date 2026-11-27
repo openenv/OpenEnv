@@ -34,13 +34,19 @@ class TextArenaAction(Action):
 
 
 class TextArenaObservation(Observation):
-    """Observation returned from any TextArena game."""
+    """Observation returned from any TextArena game.
+
+    `reward` is the reward of the current player (or player 0). `rewards`
+    holds every player's reward by player id once TextArena reports them,
+    usually at the end of the game, and is empty before that.
+    """
 
     prompt: str
     messages: List[TextArenaMessage] = Field(default_factory=list)
     current_player_id: int = 0
     legal_players: List[int] = Field(default_factory=list)
     info: Dict[str, Any] = Field(default_factory=dict)
+    rewards: Dict[int, float] = Field(default_factory=dict)
 
 
 class TextArenaState(State):

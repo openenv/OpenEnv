@@ -248,6 +248,10 @@ class TextArenaEnvironment(Environment):
         reward = self._extract_reward()
         observation.reward = reward
         self._state.last_reward = reward
+        # Every player's reward, so one client playing all seats can read them.
+        rewards = getattr(self._ta_env.state, "rewards", None)
+        if isinstance(rewards, dict):
+            observation.rewards = rewards
 
         reward_signals = self._compute_reward_signals(
             action=action, observation=observation

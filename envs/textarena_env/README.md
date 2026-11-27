@@ -135,6 +135,7 @@ openenv push --repo-id my-org/textarena-env -e TEXTARENA_ENV_ID=Wordle-v0
 - `legal_players` (List[int]) - List of valid player IDs
 - `info` (Dict) - Additional game metadata
 - `reward` (float) - Reward for the current step (inherited from Observation)
+- `rewards` (Dict[int, float]) - Every player's reward by player ID, filled once the game reports rewards (usually at the end), empty before
 - `done` (bool) - Whether the episode has ended (inherited from Observation)
 
 ### TextArenaMessage
@@ -193,6 +194,24 @@ The server supports configuration via environment variables:
 - `TEXTARENA_MAX_TURNS` - Maximum turns per episode
 - `TEXTARENA_DOWNLOAD_NLTK` - Download NLTK data (default: "1")
 - `TEXTARENA_KW_*` - Pass additional kwargs to TextArena. Values are read as JSON, so numbers and booleans keep their type (e.g., `TEXTARENA_KW_CLUES=65` for Sudoku, `TEXTARENA_KW_difficulty=hard`)
+
+### Self-Play in Two-Player Games
+
+One client can play every seat of a multi-player game. Start the server with `TEXTARENA_ENV_ID=TicTacToe-v0` and `TEXTARENA_NUM_PLAYERS=2`, send each move for the player in `current_player_id`, and read each player's reward from `rewards` when the game ends:
+
+```python
+from textarena_env import TextArenaAction, TextArenaEnv
+
+with TextArenaEnv(base_url="<ENV_HTTP_URL_HERE>").sync() as env:
+    result = env.reset()
+    moves = {0: ["[4]", "[0]", "[8]"], 1: ["[1]", "[2]"]}
+    while not result.done:
+        player = result.observation.current_player_id
+        result = env.step(TextArenaAction(message=moves[player].pop(0)))
+    print(result.observation.rewards)  # {0: 1.0, 1: -1.0}
+```
+
+`reward` keeps its single-player meaning, so use `rewards` to credit each seat.
 
 ## Development & Testing
 
