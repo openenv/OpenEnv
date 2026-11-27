@@ -115,6 +115,9 @@ jobs:
           - name: openspiel-env
             dockerfile: envs/openspiel_env/server/Dockerfile
             context: envs/openspiel_env
+          - name: openclaw-env
+            dockerfile: envs/openclaw_env/server/Dockerfile
+            context: .
 
     steps:
       - name: Checkout code
