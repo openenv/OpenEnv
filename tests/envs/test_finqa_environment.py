@@ -987,5 +987,183 @@ class TestEnvironment:
         assert isinstance(obs.done, bool)
 
 
+class TestTaskAPI:
+    """The benchmark questions are published as Task API tasks of one split.
+
+    Self-contained (synthetic data, no downloaded dataset needed) so it runs in CI.
+    """
+
+    N = 20
+
+    @pytest.fixture
+    def data_path(self, tmp_path):
+        pytest.importorskip("pandas")
+        questions = tmp_path / "benchmark_questions"
+        questions.mkdir()
+        rows = ["id,user_query,company,question,answer"]
+        rows += [
+            f"q{i},query {i},company{i % 3},question {i},\\boxed{{{i}}}"
+            for i in range(self.N)
+        ]
+        (questions / "finqa.csv").write_text("\n".join(rows) + "\n")
+        (tmp_path / "input_companies").mkdir()
+        return str(tmp_path)
+
+    @staticmethod
+    def _make_env(data_path):
+        from envs.finqa_env.server.finqa_environment import FinQAEnvironment
+
+        return FinQAEnvironment(data_path=data_path)
+
+    def test_discovery_on_fresh_instance_has_no_side_effects(self, data_path):
+        fresh = self._make_env(data_path)
+        assert fresh.list_splits() == ["test"]
+        assert fresh.num_tasks("test") == self.N
+        tasks = fresh.list_tasks("test")
+        assert len(tasks) == self.N
+        assert tasks[4] == {
+            "id": "finqa-test-4",
+            "split": "test",
+            "index": 4,
+            "group": "company1",
+        }
+        assert fresh.get_task("test", 4) == tasks[4]
+        assert fresh.get_task_range("test", 2, 6) == tasks[2:6]
+        assert fresh.get_task_range("test", -3) == tasks[-3:]
+        assert fresh.get_task_range("test", 5, 2) == []
+        assert fresh.get_task_range("test", 19, 25) == tasks[-1:]
+        assert fresh.get_task_range("test") == tasks
+
+        env = self._make_env(data_path)
+        twin = self._make_env(data_path)
+        env.reset(seed=3)
+        twin.reset(seed=3)
+        state = env.state.model_dump()
+        env.list_tasks("test")
+        env.get_task("test", 0)
+        env.get_task_range("test", 0, 5)
+        env.num_tasks("test")
+        assert env.state.model_dump() == state
+        assert env.reset().metadata["question"] == twin.reset().metadata["question"]
+
+    @pytest.mark.parametrize("index", [-1, 20])
+    def test_invalid_index(self, data_path, index):
+        with pytest.raises(IndexError):
+            self._make_env(data_path).get_task("test", index)
+
+    def test_unknown_split(self, data_path):
+        env = self._make_env(data_path)
+        with pytest.raises(ValueError):
+            env.num_tasks("train")
+        with pytest.raises(ValueError):
+            env.get_task("train", -1)
+        with pytest.raises(ValueError):
+            env.reset(split="train", index=0)
+        with pytest.raises(ValueError):
+            env.reset(split="train")
+
+    def test_reset_selects_the_indexed_question(self, data_path):
+        env = self._make_env(data_path)
+        for i in range(self.N):
+            obs = env.reset(split="test", index=i, seed=0)
+            assert obs.metadata["question"] == f"query {i}"
+            assert env.state.question_id == f"q{i}"
+
+    def test_seed_does_not_change_the_indexed_question(self, data_path):
+        env = self._make_env(data_path)
+        questions = {
+            env.reset(split="test", index=7, seed=s).metadata["question"]
+            for s in range(5)
+        }
+        assert questions == {"query 7"}
+
+    def test_indexed_reset_keeps_the_seeded_order(self, data_path):
+        a = self._make_env(data_path)
+        b = self._make_env(data_path)
+        a.reset(seed=3)
+        b.reset(seed=3)
+        b.reset(split="test", index=5)
+        assert a.reset().metadata["question"] == b.reset().metadata["question"]
+
+    def test_indexed_episode_is_scored(self, data_path):
+        from openenv.core.env_server.mcp_types import CallToolAction
+
+        env = self._make_env(data_path)
+        for i in range(self.N):
+            env.reset(split="test", index=i, seed=0)
+            obs = env.step(
+                CallToolAction(
+                    tool_name="submit_answer", arguments={"answer": f"\\boxed{{{i}}}"}
+                )
+            )
+            assert obs.done is True
+            assert obs.reward == 1.0
+
+    def test_invalid_selection_leaves_state(self, data_path):
+        env = self._make_env(data_path)
+        env.reset(split="test", index=2)
+        state = env.state.model_dump()
+        with pytest.raises(IndexError):
+            env.reset(split="test", index=self.N, episode_id="x")
+        assert env.state.model_dump() == state
+
+    def test_invalid_selection_with_a_seed_keeps_the_order(self, data_path):
+        env, twin = self._make_env(data_path), self._make_env(data_path)
+        env.reset(seed=3)
+        twin.reset(seed=3)
+        with pytest.raises(IndexError):
+            env.reset(split="test", index=self.N, seed=9)
+        with pytest.raises(ValueError):
+            env.reset(split="train", seed=9)
+        env.reset()
+        twin.reset()
+        assert env.state.question_id == twin.state.question_id
+
+    def test_task_api_is_not_an_mcp_tool(self, data_path):
+        from envs.finqa_env.models import AVAILABLE_TOOLS
+        from openenv.core.env_server.mcp_types import ListToolsAction
+
+        env = self._make_env(data_path)
+        env.reset(seed=0)
+        obs = env.step(ListToolsAction())
+        assert sorted(tool.name for tool in obs.tools) == sorted(AVAILABLE_TOOLS)
+
+    def test_selection_over_http_and_websocket(self, data_path, monkeypatch):
+        # Other env apps turn the web interface on at import, and it would build
+        # an environment before DATA_PATH is patched.
+        monkeypatch.setenv("ENABLE_WEB_INTERFACE", "false")
+        from envs.finqa_env.server import app as app_module
+        from fastapi.testclient import TestClient
+
+        monkeypatch.setattr(app_module, "DATA_PATH", data_path)
+        client = TestClient(app_module.app)
+
+        assert client.get("/finqa_env/splits").json() == [
+            {"name": "test", "type": "test"}
+        ]
+        response = client.post("/finqa_env/num_tasks", json={"split": "test"})
+        assert response.json() == {"num_tasks": self.N}
+        response = client.post("/finqa_env/task", json={"split": "test", "index": 20})
+        assert response.status_code == 400
+        response = client.post(
+            "/finqa_env/task_range", json={"split": "test", "start": 0, "stop": 2}
+        )
+        assert [task["id"] for task in response.json()["tasks"]] == [
+            "finqa-test-0",
+            "finqa-test-1",
+        ]
+
+        properties = client.get("/schema").json()["reset"]["properties"]
+        assert {"split", "index"} <= set(properties)
+
+        response = client.post("/reset", json={"split": "test", "index": 3})
+        assert response.json()["observation"]["metadata"]["question"] == "query 3"
+
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "reset", "data": {"split": "test", "index": 11}})
+            message = ws.receive_json()
+        assert message["data"]["observation"]["metadata"]["question"] == "query 11"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

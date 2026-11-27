@@ -24,6 +24,9 @@ from .tools import FinQATools
 
 logger = logging.getLogger(__name__)
 
+# The benchmark is for evaluation only, so every question is in one test split.
+SPLITS = ["test"]
+
 
 class FinQAEnvironment(MCPEnvironment):
     """
@@ -175,29 +178,147 @@ class FinQAEnvironment(MCPEnvironment):
         self._question_index += 1
         return question
 
+    def list_splits(self) -> list[str]:
+        """
+        List the task splits.
+
+        Returns:
+            `list[str]`: `["test"]`, which holds every benchmark question.
+        """
+        return list(SPLITS)
+
+    def num_tasks(self, split: str) -> int:
+        """
+        Return the number of tasks in a split, without starting an episode.
+
+        Args:
+            split (`str`):
+                Split name.
+
+        Returns:
+            `int`: Number of benchmark questions.
+
+        Raises:
+            `ValueError`: If the split is unknown.
+        """
+        if split not in SPLITS:
+            raise ValueError(f"unknown split {split!r}; expected one of {SPLITS}")
+        return len(self.questions)
+
+    def get_task(self, split: str, index: int) -> dict[str, Any]:
+        """
+        Describe a task without loading its question.
+
+        Args:
+            split (`str`):
+                Split name.
+            index (`int`):
+                Zero-based row of the benchmark CSV.
+
+        Returns:
+            `dict[str, Any]`: The task's `id`, `split`, `index` and `group` (the
+            company).
+
+        Raises:
+            `ValueError`: If the split is unknown.
+            `IndexError`: If the index is outside the split.
+        """
+        n = self.num_tasks(split)
+        if not 0 <= index < n:
+            raise IndexError(f"index {index} out of range for split {split!r} (n={n})")
+        return {
+            "id": f"{self.task}-{split}-{index}",
+            "split": split,
+            "index": index,
+            "group": self.questions[index]["company"],
+        }
+
+    def get_task_range(
+        self, split: str, start: int | None = None, stop: int | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Describe a slice of a split, with Python slice semantics.
+
+        Args:
+            split (`str`):
+                Split name.
+            start (`int`, *optional*):
+                Inclusive start; negative values count from the end.
+            stop (`int`, *optional*):
+                Exclusive stop; negative values count from the end.
+
+        Returns:
+            `list[dict[str, Any]]`: Task specs in split order.
+
+        Raises:
+            `ValueError`: If the split is unknown.
+        """
+        return [
+            self.get_task(split, index)
+            for index in range(self.num_tasks(split))[slice(start, stop)]
+        ]
+
+    def list_tasks(self, split: str) -> list[dict[str, Any]]:
+        """
+        Describe every task in a split.
+
+        Args:
+            split (`str`):
+                Split name.
+
+        Returns:
+            `list[dict[str, Any]]`: Task specs in split order.
+
+        Raises:
+            `ValueError`: If the split is unknown.
+        """
+        return self.get_task_range(split)
+
     def reset(
         self,
         seed: Optional[int] = None,
         episode_id: Optional[str] = None,
+        split: str = "test",
+        index: int | None = None,
         **kwargs: Any,
     ) -> Observation:
         """
         Reset the environment for a new episode.
 
         Args:
-            seed: If given, reseed the question order. The same seed always
-                yields the same question, and the same sequence of questions
-                on the unseeded resets that follow.
-            episode_id: Optional episode identifier (generated if omitted)
+            seed (`int`, *optional*):
+                Reseeds the order of unindexed resets: the same seed gives the
+                same question, and the same sequence on the unseeded resets that
+                follow. It does not change an indexed question.
+            episode_id (`str`, *optional*):
+                Episode identifier, generated when omitted.
+            split (`str`, *optional*, defaults to `"test"`):
+                Task split.
+            index (`int`, *optional*):
+                Row of the split to load. The order of unindexed resets does not
+                move. Without it, the next question of that order is loaded.
 
         Returns:
-            Initial observation with the question
+            `Observation`: The initial observation, with the question.
+
+        Raises:
+            `ValueError`: If the split is unknown.
+            `IndexError`: If the index is outside the split.
         """
+        # Validate before changing any state.
+        if index is None:
+            self.num_tasks(split)
+        else:
+            self.get_task(split, index)
+
         if seed is not None:
             self._rng = random.Random(seed)
             self._start_new_pass()
 
-        question = self._get_next_question()
+        if index is None:
+            question = self._get_next_question()
+        else:
+            question = self.questions[index]
         self._state = FinQAState(
             episode_id=episode_id or str(uuid.uuid4()),
             step_count=0,
