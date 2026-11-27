@@ -11,12 +11,18 @@ Integrates the Reasoning Gym library to provide single-step reasoning tasks.
 Each episode presents one question, the agent submits an answer, and receives a score.
 """
 
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 import reasoning_gym
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
+from reasoning_gym.arithmetic.chain_sum import ChainSumCurriculum
+from reasoning_gym.coaching.base_curriculum import (
+    DefaultCurriculumContext,
+    RangeAttributeMode,
+)
 from reasoning_gym.composite import DatasetSpec
 
 try:
@@ -28,6 +34,21 @@ except ImportError:
 DEFAULT_DATASET_NAME = "leg_counting"
 DEFAULT_DATASET_SIZE = 1000
 DEFAULT_DATASET_SEED = 42
+
+LEVELS = [
+    (0, 0),
+    (1, 0),
+    (1, 1),
+    (2, 1),
+    (2, 2),
+    (3, 2),
+    (3, 3),
+    (4, 3),
+    (4, 4),
+    (5, 4),
+]
+TASKS_PER_TIER = {"train": 2000, "test": 100}
+SPLIT_SEED_OFFSET = {"train": 0, "test": 500_000_000}
 
 
 class ReasoningGymEnvironment(Environment):
@@ -79,6 +100,102 @@ class ReasoningGymEnvironment(Environment):
         self._dataset_config: Optional[Dict[str, Any]] = None
         self._dataset_specs: Optional[List[Dict[str, Any]]] = None
 
+    def list_splits(self) -> list[str]:
+        """
+        List the finite splits of chain-sum tasks.
+
+        Returns:
+            `list[str]`: The train and test split names.
+        """
+        return list(TASKS_PER_TIER)
+
+    def num_tasks(self, split: str) -> int:
+        """
+        Return a split's task count without starting an episode.
+
+        Args:
+            split (`str`):
+                Split name.
+
+        Returns:
+            `int`: Number of tasks across all ten difficulty levels.
+
+        Raises:
+            `ValueError`: If the split is unknown.
+        """
+        if split not in TASKS_PER_TIER:
+            raise ValueError(f"unknown split {split!r}")
+        return len(LEVELS) * TASKS_PER_TIER[split]
+
+    def get_task(self, split: str, index: int) -> dict[str, Any]:
+        """
+        Describe a task without generating its question.
+
+        Args:
+            split (`str`):
+                Split name.
+            index (`int`):
+                Zero-based position in the split.
+
+        Returns:
+            `dict[str, Any]`: Stable id, split, index, group and difficulty.
+
+        Raises:
+            `ValueError`: If the split is unknown.
+            `IndexError`: If the index is outside the split.
+        """
+        n = self.num_tasks(split)
+        if not 0 <= index < n:
+            raise IndexError(index)
+        return {
+            "id": f"chain_sum-{split}-{index}",
+            "split": split,
+            "index": index,
+            "group": "chain_sum",
+            "difficulty": index % len(LEVELS),
+        }
+
+    def get_task_range(
+        self, split: str, start: int | None = None, stop: int | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Describe a slice of the split, with Python slice semantics.
+
+        Args:
+            split (`str`):
+                Split name.
+            start (`int`, *optional*):
+                Inclusive start, including negative offsets from the end.
+            stop (`int`, *optional*):
+                Exclusive stop, including negative offsets from the end.
+
+        Returns:
+            `list[dict[str, Any]]`: Task specs in split order.
+
+        Raises:
+            `ValueError`: If the split is unknown.
+        """
+        return [
+            self.get_task(split, index)
+            for index in range(self.num_tasks(split))[slice(start, stop)]
+        ]
+
+    def list_tasks(self, split: str) -> list[dict[str, Any]]:
+        """
+        Describe every task in a split.
+
+        Args:
+            split (`str`):
+                Split name.
+
+        Returns:
+            `list[dict[str, Any]]`: Task specs with interleaved difficulty levels.
+
+        Raises:
+            `ValueError`: If the split is unknown.
+        """
+        return self.get_task_range(split)
+
     def reset(
         self,
         dataset_name: Optional[str] = None,
@@ -87,34 +204,75 @@ class ReasoningGymEnvironment(Environment):
         seed: Optional[int] = None,
         size: Optional[int] = None,
         episode_id: Optional[str] = None,
+        split: str = "train",
+        index: int | None = None,
     ) -> ReasoningGymObservation:
         """
-        Reset the environment and get the next question.
+        Reset the environment and return the next question.
 
-        If no parameters are provided and no dataset exists, creates a default 'leg_counting' dataset
+        Without `index`, the dataset options build a new dataset; without them, the
+        current dataset is reused, or a default `leg_counting` dataset (fixed seed
+        and size) is created when there is none. With `index`, the question is the
+        chain-sum task at that position of `split`.
 
         Args:
-            dataset_name: Name of dataset (e.g., 'leg_counting', 'composite').
-                         If None and dataset exists, reuses existing dataset.
-                         If None and no dataset exists, creates default 'leg_counting'.
-            dataset_config: For non-composite datasets, config dict with task-specific params.
-                          Required if dataset_name is provided and not 'composite'.
-            dataset_specs: For composite datasets, list of dicts defining structure.
-                          Required if dataset_name is 'composite'.
-            seed: Random seed for dataset generation.
-                 Required if dataset_name is provided.
-                 Defaults to 42 when creating default dataset.
-            size: Number of questions in dataset.
-                 Required if dataset_name is provided.
-                 Defaults to 100 when creating default dataset.
-            episode_id: Optional episode ID
+            dataset_name (`str`, *optional*):
+                Name of a reasoning_gym dataset, such as `"leg_counting"`, or
+                `"composite"`.
+            dataset_config (`Dict[str, Any]`, *optional*):
+                Options of a dataset that is not composite.
+            dataset_specs (`List[Dict[str, Any]]`, *optional*):
+                The datasets of a composite dataset; required when `dataset_name` is
+                `"composite"`.
+            seed (`int`, *optional*):
+                Seed of the new dataset; required with `dataset_name`. With `index`,
+                it picks a variant of the task.
+            size (`int`, *optional*):
+                Number of questions of the new dataset; required with
+                `dataset_name`.
+            episode_id (`str`, *optional*):
+                Id of the episode; a new one is generated without it.
+            split (`str`, *optional*, defaults to `"train"`):
+                Split of the selected chain-sum task; used only with `index`.
+            index (`int`, *optional*):
+                Task position. Selects a chain-sum level and question, using
+                `(seed or 0) * 1_000_000_000 + split_offset + index`. Cannot be
+                combined with dataset options.
 
         Returns:
-            ReasoningGymObservation with question and metadata
+            `ReasoningGymObservation`: The question, not done and not scored.
 
         Raises:
-            ValueError: If parameters are invalid or missing
+            `ValueError`: If `index` comes with dataset options or an unknown split,
+                if `seed` or `size` is missing with `dataset_name`, or if a
+                composite dataset has no specs.
+            `IndexError`: If `index` is outside the split.
         """
+        if index is not None:
+            if any(
+                option is not None
+                for option in (dataset_name, dataset_config, dataset_specs, size)
+            ):
+                raise ValueError("index cannot be combined with dataset options")
+            task = self.get_task(split, index)
+            curriculum = ChainSumCurriculum()
+            terms, digits = LEVELS[task["difficulty"]]
+            curriculum.set_attr_level("num_terms", terms)
+            curriculum.set_attr_level("num_digits", digits)
+            config = asdict(
+                curriculum.generate_configuration(
+                    context=DefaultCurriculumContext(
+                        mode=RangeAttributeMode.UPPER_BOUND
+                    )
+                )
+            )
+            config.pop("seed")
+            config.pop("size")
+            dataset_name = "chain_sum"
+            dataset_config = config
+            seed = (seed or 0) * 1_000_000_000 + SPLIT_SEED_OFFSET[split] + index
+            size = 1
+
         # Check if we need to rebuild dataset
         if dataset_name is not None:
             # Validate parameters
