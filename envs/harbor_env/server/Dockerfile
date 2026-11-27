@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest
+ARG BASE_IMAGE=ghcr.io/openenv/openenv-base:latest
 FROM ${BASE_IMAGE} AS builder
 
 # Harbor requires Python >= 3.12 while openenv-base ships 3.11, so `uv sync` downloads its own
