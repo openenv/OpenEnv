@@ -23,6 +23,7 @@ A few integrations ship as optional extras. Install them with
 | `inspect` | The Inspect AI evaluation harness |
 | `harbor` | The [Harbor integration](environments/harbor) and its sandbox backends (Python 3.12+) |
 | `daytona`, `aca`, `modal`, `novita` | Cloud sandbox providers (see [Runtime Providers](guides/runtime-providers)) |
+| `agent-sandbox` | The [Kubernetes agent-sandbox provider](guides/runtime-providers#agentsandboxprovider) (Python 3.11+) |
 
 ## Try an Environment
 
