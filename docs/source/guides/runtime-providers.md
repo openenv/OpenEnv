@@ -62,6 +62,7 @@ is a one-line change.
 | `NovitaSandboxProvider` | Novita AI sandboxes | `pip install openenv[novita]` | ✅ |
 | `HFSandboxProvider` | Hugging Face sandboxes (billed as HF Jobs) | core | ✅ |
 | `KubernetesProvider` | Kubernetes cluster | `pip install openenv[kubernetes]` | ✅ |
+| `BoxdProvider` | boxd machines (microVMs) | `pip install openenv[boxd]` | ✅ |
 
 Cloud-provider SDKs are optional extras, imported lazily, so installing core
 OpenEnv pulls in no cloud SDK. The core providers (`LocalDockerProvider`,
@@ -91,8 +92,8 @@ async with MyEnv(provider=provider) as env:
     ...
 ```
 
-`ModalProvider`, `DaytonaProvider`, `ACASandboxProvider`, and `HFSandboxProvider`
-support this provider-owned flow. Providers that require an explicit image at
+`ModalProvider`, `DaytonaProvider`, `ACASandboxProvider`, `HFSandboxProvider`,
+and `BoxdProvider` support this provider-owned flow. Providers that require an explicit image at
 `start_container()` time, such as `LocalDockerProvider` and
 `DockerSwarmProvider`, should still be started manually and passed in with the
 returned `base_url`:
@@ -177,6 +178,82 @@ provider = ACASandboxProvider(
     sdk_kwargs={},
 )
 ```
+
+### BoxdProvider
+
+Runs the server in a [boxd](https://boxd.sh) machine, a microVM with Docker
+installed. Install with `pip install openenv[boxd]`. Requires a boxd API key,
+as `api_key=` or the `BOXD_API_KEY` environment variable. `org=` picks the
+organization (the key's own by default), and `region=` or `BOXD_REGION` picks
+the region, `fra` or `nyc`.
+
+The provider creates one isolated machine per `start_container`, runs the
+image in it with `docker run`, and returns the machine's HTTPS URL, pinned to
+port 8000. The URL is reachable from the internet with no login in front of
+it: anyone who has it can drive the environment. The provider therefore
+requires `public=True`, and raises `ValueError` without it. Treat the URL like
+a secret. The provider keeps it out of its errors and logs.
+`stop_container()` deletes the machine. `env_vars` reach the container through
+a `docker run --env-file` that is removed after the run.
+
+```python
+from openenv.core.containers.runtime.boxd_provider import BoxdProvider
+
+provider = BoxdProvider(public=True, image="ghcr.io/huggingface/openenv-echo-env:latest")
+```
+
+A local Dockerfile works too. The build context is uploaded to the machine and
+built there with `docker build`:
+
+```python
+image = BoxdProvider.image_from_dockerfile("envs/echo_env/server/Dockerfile")
+provider = BoxdProvider(public=True, image=image)
+```
+
+The machine is isolated: it joins no private network, has no boxd metadata
+endpoint and holds no boxd credentials or integrations, so code in the
+environment cannot act on your boxd account. A request to
+`http://169.254.169.254/` from inside the container fails. Outbound
+internet is open by default. `egress_allow` restricts it to the hostnames,
+public IPv4 addresses and CIDRs you list. The provider sets the list on the
+new machine after the image is pulled or built and before the container
+starts. New rules can take about a second to apply, so the container's first
+moments may still reach the network. `["none"]` blocks all outbound traffic.
+An empty list raises `ValueError`. Requests to the machine's URL keep working
+either way:
+
+```python
+provider = BoxdProvider(
+    public=True,
+    image="ghcr.io/huggingface/openenv-echo-env:latest",
+    egress_allow=["api.example.com"],
+)
+```
+
+The provider turns idle suspend and hibernation off, so the machine keeps
+running between `start_container()` and the first connect, and through quiet
+stretches of a session. What bounds its lifetime is `delete_after`: boxd
+deletes the machine that many seconds after it was created, one hour by
+default, even when `stop_container()` never runs (a crashed or killed script).
+The delete closes any open session. Set it above your longest session, or pass
+`delete_after=None` to keep the machine running until `stop_container()`:
+
+```python
+provider = BoxdProvider(
+    public=True,
+    image="ghcr.io/huggingface/openenv-echo-env:latest",
+    delete_after=4 * 3600,
+)
+```
+
+`vcpu` and `memory` pick the machine size (`1`/`"4G"`, `2`/`"8G"`, `4`/`"16G"`
+or `8`/`"32G"`); the organization's default applies otherwise.
+
+Full example: [`examples/boxd_echo_env.py`](https://github.com/openenv/OpenEnv/blob/main/examples/boxd_echo_env.py).
+
+**Owner:** Michiel Voortman ([MichielMAnalytics](https://github.com/MichielMAnalytics)) at boxd
+owns this provider. Report SDK breakage in a GitHub issue and mention the
+owner.
 
 ### DaytonaProvider
 
