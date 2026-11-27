@@ -815,6 +815,39 @@ def test_environment_hash_ignores_files_the_dockerfile_never_copies(tmp_path: Pa
     assert compute_environment_hash(f) != compute_environment_hash(g)
 
 
+def test_environment_hash_tabs_dockerignore_and_heredocs(tmp_path: Path):
+    tab_df = "FROM python:3.12-slim\nCOPY\tsource/ /app/\n"
+    a = _write_task(
+        tmp_path, "a", dockerfile=tab_df, env_files={"source/app.py": "x = 1\n"}
+    )
+    b = _write_task(
+        tmp_path, "b", dockerfile=tab_df, env_files={"source/app.py": "x = 2\n"}
+    )
+    assert compute_environment_hash(a) != compute_environment_hash(b)
+
+    copy_df = "FROM python:3.12-slim\nCOPY source/ /app/\n"
+    c = _write_task(
+        tmp_path,
+        "c",
+        dockerfile=copy_df,
+        env_files={"source/app.py": "x\n", ".dockerignore": "*.pyc\n"},
+    )
+    d = _write_task(
+        tmp_path,
+        "d",
+        dockerfile=copy_df,
+        env_files={"source/app.py": "x\n", ".dockerignore": "*.md\n"},
+    )
+    assert compute_environment_hash(c) != compute_environment_hash(d)
+
+    heredoc_df = "FROM python:3.12-slim\nCOPY <<EOF /app/config.txt\nhello\nEOF\n"
+    e = _write_task(tmp_path, "e", dockerfile=heredoc_df, env_files={"notes.txt": "a"})
+    f = _write_task(tmp_path, "f", dockerfile=heredoc_df, env_files={"notes.txt": "b"})
+    assert compute_environment_hash(e) != compute_environment_hash(
+        f
+    )  # falls back to the whole context
+
+
 def test_cli_build_images_plan_json(tmp_path: Path):
     src = tmp_path / "suite" / "tasks"
     _write_task(

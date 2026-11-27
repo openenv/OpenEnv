@@ -672,9 +672,13 @@ def _context_sources(dockerfile_text: str) -> list[str] | None:
     Files under ``environment/`` that no instruction reads (e.g. a source tree Harbor uploads at runtime) cannot
     change the image, so they must not split otherwise identical builds.
     """
+    if (
+        "<<" in dockerfile_text
+    ):  # heredocs: their bodies are not instructions, and a COPY heredoc has no context path
+        return None
     sources: list[str] = []
     for line in _join_dockerfile_lines(dockerfile_text):
-        op, _, rest = line.partition(" ")
+        op, rest = (line.split(None, 1) + [""])[:2]
         if "--mount" in rest:  # RUN --mount=type=bind reads the context without COPY
             return None
         if op.upper() not in {"COPY", "ADD"}:
@@ -682,9 +686,8 @@ def _context_sources(dockerfile_text: str) -> list[str] | None:
         flags = []
         rest = rest.strip()
         while rest.startswith("--"):
-            flag, _, rest = rest.partition(" ")
+            flag, rest = (rest.split(None, 1) + [""])[:2]
             flags.append(flag)
-            rest = rest.lstrip()
         if any(
             flag.startswith("--from=") for flag in flags
         ):  # another stage or image, not the context
@@ -727,7 +730,8 @@ def compute_environment_hash(
     if sources is None:
         paths = set(env_dir.rglob("*"))
     else:
-        paths = {dockerfile}
+        # Kaniko and Buildx filter the context through .dockerignore
+        paths = {dockerfile, env_dir / ".dockerignore"} & set(env_dir.iterdir())
         for source in sources:
             for match in _resolve_copy_sources(env_dir, source):
                 paths |= {match, *match.rglob("*")} if match.is_dir() else {match}
