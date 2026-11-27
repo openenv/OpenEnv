@@ -778,7 +778,9 @@ def test_environment_hash_ignores_files_the_dockerfile_never_copies(tmp_path: Pa
         tmp_path, "b", dockerfile=run_df, env_files={"source/app.py": "x = 2\n"}
     )
     # Uploaded by Harbor at runtime, not baked into the image: one build serves both tasks
-    assert compute_environment_hash(a) == compute_environment_hash(b)
+    assert compute_environment_hash(
+        a, assume_static_context=True
+    ) == compute_environment_hash(b, assume_static_context=True)
 
     copy_df = "FROM python:3.12-slim\nCOPY source/ /app/\n"
     c = _write_task(
@@ -799,11 +801,13 @@ def test_environment_hash_ignores_files_the_dockerfile_never_copies(tmp_path: Pa
         dockerfile=copy_df,
         env_files={"source/app.py": "x = 1\n", "notes.txt": "b"},
     )
-    assert compute_environment_hash(c) != compute_environment_hash(
-        d
-    )  # copied file differs
-    assert compute_environment_hash(c) == compute_environment_hash(
-        e
+    assert compute_environment_hash(
+        c, assume_static_context=True
+    ) != compute_environment_hash(d, assume_static_context=True)  # copied file differs
+    assert compute_environment_hash(
+        c, assume_static_context=True
+    ) == compute_environment_hash(
+        e, assume_static_context=True
     )  # only an uncopied file differs
 
     # A bind mount reads the context without COPY: every file counts
@@ -812,10 +816,13 @@ def test_environment_hash_ignores_files_the_dockerfile_never_copies(tmp_path: Pa
     )
     f = _write_task(tmp_path, "f", dockerfile=mount_df, env_files={"setup.py": "a"})
     g = _write_task(tmp_path, "g", dockerfile=mount_df, env_files={"setup.py": "b"})
-    assert compute_environment_hash(f) != compute_environment_hash(g)
+    assert compute_environment_hash(
+        f, assume_static_context=True
+    ) != compute_environment_hash(g, assume_static_context=True)
 
 
-def test_environment_hash_tabs_dockerignore_and_heredocs(tmp_path: Path):
+@pytest.mark.parametrize("ignore_file", [".dockerignore", "Dockerfile.dockerignore"])
+def test_environment_hash_tabs_and_ignore_rules(tmp_path: Path, ignore_file: str):
     tab_df = "FROM python:3.12-slim\nCOPY\tsource/ /app/\n"
     a = _write_task(
         tmp_path, "a", dockerfile=tab_df, env_files={"source/app.py": "x = 1\n"}
@@ -823,32 +830,76 @@ def test_environment_hash_tabs_dockerignore_and_heredocs(tmp_path: Path):
     b = _write_task(
         tmp_path, "b", dockerfile=tab_df, env_files={"source/app.py": "x = 2\n"}
     )
-    assert compute_environment_hash(a) != compute_environment_hash(b)
+    assert compute_environment_hash(
+        a, assume_static_context=True
+    ) != compute_environment_hash(b, assume_static_context=True)
 
     copy_df = "FROM python:3.12-slim\nCOPY source/ /app/\n"
     c = _write_task(
         tmp_path,
         "c",
         dockerfile=copy_df,
-        env_files={"source/app.py": "x\n", ".dockerignore": "*.pyc\n"},
+        env_files={"source/app.py": "x\n", ignore_file: "*.pyc\n"},
     )
     d = _write_task(
         tmp_path,
         "d",
         dockerfile=copy_df,
-        env_files={"source/app.py": "x\n", ".dockerignore": "*.md\n"},
+        env_files={"source/app.py": "x\n", ignore_file: "*.md\n"},
     )
-    assert compute_environment_hash(c) != compute_environment_hash(d)
+    assert compute_environment_hash(
+        c, assume_static_context=True
+    ) != compute_environment_hash(d, assume_static_context=True)
 
-    # Heredoc payloads live in the Dockerfile: files outside it still do not count
-    heredoc_df = (
-        "FROM python:3.12-slim\n# cat <<NOTE is not a heredoc here\n"
-        "COPY <<EOF /app/config.txt\nCOPY source/ /nowhere/\nEOF\n"
-        "RUN <<SH\necho hi\nSH\n"
+
+@pytest.mark.parametrize(
+    "instructions",
+    [
+        'ENV TEMPLATE="<<VERSION>>"\nCOPY source/ /app/\n',
+        "RUN <<END-SCRIPT\necho hi\nEND-SCRIPT\nCOPY source/ /app/\n",
+        "COPY sou" + "\\\n" + "rce/ /app/\n",
+        "COPY [^a]* /app/\n",
+        "COPY missing /app/\n",
+    ],
+)
+def test_environment_hash_falls_back_for_ambiguous_sources(
+    tmp_path: Path, instructions: str
+):
+    dockerfile = "FROM python:3.12-slim\n" + instructions
+    a = _write_task(tmp_path, "a", dockerfile=dockerfile, env_files={"source/a": "1"})
+    b = _write_task(tmp_path, "b", dockerfile=dockerfile, env_files={"source/a": "2"})
+    assert compute_environment_hash(
+        a, assume_static_context=True
+    ) == compute_environment_hash(a)
+    assert compute_environment_hash(a) != compute_environment_hash(b)
+
+
+def test_cli_build_images_static_context_is_opt_in(tmp_path: Path):
+    dockerfile = "FROM example.com/base:latest\nRUN echo ready\n"
+    for name in ("a", "b"):
+        _write_task(tmp_path, name, dockerfile=dockerfile, env_files={"app.py": name})
+    args = ["build-images", str(tmp_path), "--plan", "--json"]
+    for options, expected in [([], 2), (["--assume-static-context"], 1)]:
+        result = CliRunner().invoke(app, args + options)
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["unique_environments"] == expected
+
+
+def test_cli_build_images_plan_preserves_distinct_pins(tmp_path: Path):
+    for name in ("a", "b"):
+        _write_task(
+            tmp_path,
+            name,
+            dockerfile="FROM python:3.12-slim\n",
+            docker_image=f"ghcr.io/example/base@sha256:{name * 64}",
+        )
+    result = CliRunner().invoke(
+        app, ["build-images", str(tmp_path), "--plan", "--json"]
     )
-    e = _write_task(tmp_path, "e", dockerfile=heredoc_df, env_files={"source/a": "1"})
-    f = _write_task(tmp_path, "f", dockerfile=heredoc_df, env_files={"source/a": "2"})
-    assert compute_environment_hash(e) == compute_environment_hash(f)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["actions"]["keep_pinned"] == 2
+    assert data["unique_environments"] == 2
 
 
 def test_cli_build_images_plan_json(tmp_path: Path):

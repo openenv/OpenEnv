@@ -420,6 +420,13 @@ def build_images(
             help="Optional OCI repository for Kaniko / BuildKit layer cache (e.g. ghcr.io/org/repo-cache).",
         ),
     ] = "",
+    assume_static_context: Annotated[
+        bool,
+        typer.Option(
+            "--assume-static-context",
+            help="Deduplicate using literal Dockerfile inputs when base images have no inherited ONBUILD triggers.",
+        ),
+    ] = False,
     no_oci_append: Annotated[
         bool,
         typer.Option(
@@ -550,6 +557,7 @@ def build_images(
                 extra_dockerfile=extra_text,
                 skip_pinned=not rebuild_pinned,
                 allow_oci_append=not no_oci_append,
+                assume_static_context=assume_static_context,
                 task_ids=task or None,
             )
             unique_envs = len({(p.action, p.env_hash) for p in plans})
@@ -604,6 +612,7 @@ def build_images(
             extra_dockerfile=extra_text,
             skip_pinned=not rebuild_pinned,
             allow_oci_append=not no_oci_append,
+            assume_static_context=assume_static_context,
             strip_dockerfile_for_shared=strip_dockerfile,
             verify_public=verify_public,
             no_push=no_push,
