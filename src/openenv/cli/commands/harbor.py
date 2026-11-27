@@ -1,8 +1,9 @@
 """`openenv harbor` — run Harbor tasks with token-level capture.
 
-Five commands, in the order you would use them:
+Six commands, in the order you would use them:
 
     openenv harbor info                     what can this machine run right now?
+    openenv harbor build-images tasks/      build/append/pin OCI images into task.toml (no Spaces)
     openenv harbor rollout --task-index 0   one rollout, end to end, no server
     openenv harbor export-sft results/      rollouts as SFT rows (messages + tools)
     openenv harbor serve                    the env server, for trainers and clients
@@ -299,6 +300,350 @@ def info(
             print("\nharness preflight (construction only; capture is untested)")
             print(json.dumps(checked, indent=2))
     if checked is not None and not checked["ok"]:
+        raise typer.Exit(1)
+
+
+@app.command("build-images")
+def build_images(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            help="Harbor task directory (with task.toml) or dataset directory containing tasks."
+        ),
+    ],
+    registry: Annotated[
+        str,
+        typer.Option(
+            "--registry",
+            help="Target OCI repository, e.g. ghcr.io/your-org/your-tasks (no Spaces required).",
+        ),
+    ] = "",
+    builder: Annotated[
+        str,
+        typer.Option(
+            "--builder",
+            help="Builder for RUN Dockerfiles: auto | kaniko | docker | oci-append.",
+        ),
+    ] = "auto",
+    output_dir: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--output-dir",
+            help="Write updated Harbor task copies with pinned task.toml here (leaves input untouched).",
+        ),
+    ] = None,
+    in_place: Annotated[
+        bool,
+        typer.Option(
+            "--in-place",
+            help="Rewrite [environment].docker_image directly in each task.toml.",
+        ),
+    ] = False,
+    receipts: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--receipts",
+            help="JSON manifest of resolved image digests (also used to resume interrupted batches).",
+        ),
+    ] = None,
+    per_task_receipts_dir: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--per-task-receipts-dir",
+            help="Directory for incremental `<task_id>.json` receipts (resumable and directly consumable by downstream stages).",
+        ),
+    ] = None,
+    task: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--task",
+            help="Build only the named task ID(s) under `path` (repeatable).",
+        ),
+    ] = None,
+    extra_dockerfile: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--extra-dockerfile",
+            help="Optional Dockerfile fragment appended to each task's Dockerfile (e.g. harness installs).",
+        ),
+    ] = None,
+    tag_prefix: Annotated[
+        str,
+        typer.Option("--tag-prefix", help="Prefix added to each pushed OCI tag."),
+    ] = "",
+    concurrency: Annotated[
+        int,
+        typer.Option(
+            "--concurrency",
+            min=1,
+            help="Maximum parallel builds, OCI appends, or registry checks.",
+        ),
+    ] = 4,
+    namespace: Annotated[
+        str,
+        typer.Option(
+            "--namespace",
+            help="Hugging Face namespace for Kaniko Jobs and temporary build-context bucket.",
+        ),
+    ] = "",
+    flavor: Annotated[
+        str,
+        typer.Option(
+            "--flavor",
+            help="HF Jobs hardware flavor for --builder kaniko (e.g. cpu-basic, cpu-upgrade, cpu-xl).",
+        ),
+    ] = "cpu-basic",
+    timeout: Annotated[
+        str,
+        typer.Option(
+            "--timeout", help="Max duration for each Kaniko HF Job (e.g. 30m, 1h)."
+        ),
+    ] = "30m",
+    kaniko_image: Annotated[
+        str,
+        typer.Option(
+            "--kaniko-image",
+            help="Kaniko debug image used by --builder kaniko.",
+        ),
+    ] = "ghcr.io/osscontainertools/kaniko:debug",
+    bucket: Annotated[
+        str,
+        typer.Option(
+            "--bucket",
+            help="Private HF Bucket name (or namespace/name) for temporary Kaniko context tarballs.",
+        ),
+    ] = "openenv-kaniko-builds",
+    cache_repo: Annotated[
+        str,
+        typer.Option(
+            "--cache-repo",
+            help="Optional OCI repository for Kaniko / BuildKit layer cache (e.g. ghcr.io/org/repo-cache).",
+        ),
+    ] = "",
+    assume_static_context: Annotated[
+        bool,
+        typer.Option(
+            "--assume-static-context",
+            help="Deduplicate using literal Dockerfile inputs when base images have no inherited ONBUILD triggers.",
+        ),
+    ] = False,
+    no_oci_append: Annotated[
+        bool,
+        typer.Option(
+            "--no-oci-append",
+            help="Force COPY-only Dockerfiles through --builder instead of pure-Python OCI layer append.",
+        ),
+    ] = False,
+    rebuild_pinned: Annotated[
+        bool,
+        typer.Option(
+            "--rebuild-pinned",
+            help="Rebuild tasks even when task.toml already has a @sha256-pinned docker_image.",
+        ),
+    ] = False,
+    strip_dockerfile: Annotated[
+        bool,
+        typer.Option(
+            "--strip-dockerfile",
+            help="Remove environment/Dockerfile on shared-image tasks so Harbor uploads environment/ at start.",
+        ),
+    ] = False,
+    verify_public: Annotated[
+        bool,
+        typer.Option(
+            "--verify-public/--no-verify-public",
+            help="Verify every pushed image is anonymously pullable as linux/amd64 (required by HF Sandbox).",
+        ),
+    ] = True,
+    plan_only: Annotated[
+        bool,
+        typer.Option(
+            "--plan",
+            help="Audit, classify, and deduplicate tasks without building or pushing.",
+        ),
+    ] = False,
+    verify_only: Annotated[
+        bool,
+        typer.Option(
+            "--verify-only",
+            help="Preflight-check that every task.toml points to a pullable linux/amd64 image.",
+        ),
+    ] = False,
+    require_digest_pin: Annotated[
+        bool,
+        typer.Option(
+            "--require-digest-pin",
+            help="With --verify-only, fail if any docker_image uses a mutable tag instead of @sha256:...",
+        ),
+    ] = False,
+    no_push: Annotated[
+        bool,
+        typer.Option(
+            "--no-push",
+            help="Build images without pushing to a registry (useful for Kaniko/Docker smoke tests).",
+        ),
+    ] = False,
+    registry_user: Annotated[
+        str,
+        typer.Option(
+            "--registry-user",
+            help="Registry username (defaults to env GHCR_USERNAME / REGISTRY_USERNAME or ~/.docker/config.json).",
+        ),
+    ] = "",
+    registry_password: Annotated[
+        str,
+        typer.Option(
+            "--registry-password",
+            help="Registry token/password (prefer env GHCR_TOKEN / REGISTRY_PASSWORD over CLI flags).",
+        ),
+    ] = "",
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json", help="Emit JSON output instead of a human-readable summary."
+        ),
+    ] = False,
+) -> None:
+    """Build, append, push, and verify OCI images for Harbor tasks (no Docker Spaces).
+
+    Audits each task's `environment/`, deduplicates identical build contexts, uses pure-Python OCI
+    layer append for COPY-only Dockerfiles, runs Kaniko on HF Jobs (`--builder kaniko`) or Docker
+    Buildx (`--builder docker`) for RUN Dockerfiles, verifies `linux/amd64` pullability, and pins
+    `[environment].docker_image = "<repo>@sha256:<digest>"` in `task.toml`.
+    """
+    from openenv.harbor.images import (
+        build_harbor_images,
+        HarborImageError,
+        plan_harbor_images,
+        verify_harbor_images,
+    )
+
+    if plan_only and verify_only:
+        raise typer.BadParameter("Pass either --plan or --verify-only, not both.")
+    if output_dir is not None and in_place:
+        raise typer.BadParameter("Pass either --output-dir or --in-place, not both.")
+
+    extra_text = (
+        extra_dockerfile.read_text(encoding="utf-8") if extra_dockerfile else None
+    )
+
+    try:
+        if verify_only:
+            result = verify_harbor_images(
+                path,
+                anonymous=verify_public,
+                require_digest_pin=require_digest_pin,
+                concurrency=concurrency,
+                task_ids=task or None,
+            )
+            if json_output:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(
+                    f"verified  {result['ok']}/{result['total']} tasks pullable as linux/amd64"
+                )
+                for tid, rec in sorted(result["tasks"].items()):
+                    if not rec["ok"]:
+                        print(f"  FAIL  {tid}: {rec['error']}")
+            if result["failed"]:
+                raise typer.Exit(1)
+            return
+
+        if plan_only:
+            plans = plan_harbor_images(
+                path,
+                registry=registry or None,
+                tag_prefix=tag_prefix,
+                extra_dockerfile=extra_text,
+                skip_pinned=not rebuild_pinned,
+                allow_oci_append=not no_oci_append,
+                assume_static_context=assume_static_context,
+                task_ids=task or None,
+            )
+            unique_envs = len({(p.action, p.env_hash) for p in plans})
+            payload = {
+                "total_tasks": len(plans),
+                "unique_environments": unique_envs,
+                "actions": {
+                    action: sum(p.action == action for p in plans)
+                    for action in (
+                        "keep_pinned",
+                        "verify_shared",
+                        "oci_append",
+                        "build",
+                    )
+                },
+                "tasks": [
+                    {
+                        "task_id": p.task_id,
+                        "action": p.action,
+                        "env_hash": p.env_hash,
+                        "base_image": p.base_image,
+                        "target_tag": p.target_tag,
+                        "reason": p.reason,
+                    }
+                    for p in plans
+                ],
+            }
+            if json_output:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(
+                    f"plan      {payload['total_tasks']} task(s), "
+                    f"{payload['unique_environments']} unique environment(s): "
+                    + ", ".join(f"{k}={v}" for k, v in payload["actions"].items() if v)
+                )
+                for item in payload["tasks"]:
+                    print(
+                        f"  {item['action']:<13} {item['task_id']}  ({item['reason']})"
+                    )
+            return
+
+        summary = build_harbor_images(
+            path,
+            registry=registry or None,
+            builder=builder,
+            output_dir=output_dir,
+            in_place=in_place,
+            receipts_path=receipts,
+            per_task_receipts_dir=per_task_receipts_dir,
+            task_ids=task or None,
+            tag_prefix=tag_prefix,
+            extra_dockerfile=extra_text,
+            skip_pinned=not rebuild_pinned,
+            allow_oci_append=not no_oci_append,
+            assume_static_context=assume_static_context,
+            strip_dockerfile_for_shared=strip_dockerfile,
+            verify_public=verify_public,
+            no_push=no_push,
+            concurrency=concurrency,
+            namespace=namespace or None,
+            flavor=flavor,
+            timeout=timeout,
+            kaniko_image=kaniko_image,
+            bucket_name=bucket,
+            cache_repo=cache_repo or None,
+            registry_username=registry_user or None,
+            registry_password=registry_password or None,
+            progress=None if json_output else print,
+        )
+    except (HarborImageError, FileNotFoundError, ValueError) as exc:
+        if json_output:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    else:
+        print(
+            f"done      resolved={summary['resolved']} "
+            f"built_no_push={summary['built_no_push']} "
+            f"failed={summary['failed']} "
+            f"(unique_envs={summary['unique_environments']}/{summary['total_tasks']})"
+        )
+    if summary["failed"]:
         raise typer.Exit(1)
 
 
