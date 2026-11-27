@@ -47,7 +47,7 @@ from pydantic import ValidationError
 
 from ._utils import overrides_method
 from .interfaces import Environment
-from .mcp_environment import get_server_tools
+from .mcp_environment import get_server_tools, MCPEnvironment
 from .mcp_types import (
     CallToolAction,
     CallToolObservation,
@@ -1481,6 +1481,41 @@ class HTTPEnvServer:
                             request_id=request_id,
                         )
 
+                    uses_step_lifecycle = isinstance(
+                        _env, MCPEnvironment
+                    ) and overrides_method(_env.step_async, MCPEnvironment.step_async)
+                    if uses_step_lifecycle:
+                        observation = await call_mcp_style_step(
+                            CallToolAction(
+                                tool_name=tool_name,
+                                arguments=arguments,
+                            )
+                        )
+                        if not isinstance(observation, CallToolObservation):
+                            return JsonRpcResponse.success(
+                                result=None,
+                                request_id=request_id,
+                            )
+                        if observation.error:
+                            err_code = (
+                                JsonRpcErrorCode.INVALID_PARAMS
+                                if observation.error.error_type
+                                in (
+                                    ToolErrorType.INVALID_ARGS,
+                                    ToolErrorType.TOOL_NOT_FOUND,
+                                )
+                                else JsonRpcErrorCode.INTERNAL_ERROR
+                            )
+                            return JsonRpcResponse.error_response(
+                                err_code,
+                                observation.error.message,
+                                request_id=request_id,
+                            )
+                        return JsonRpcResponse.success(
+                            result=_make_json_serializable(observation.result),
+                            request_id=request_id,
+                        )
+
                     if hasattr(_env, "_mode_tools") and any(
                         m is not None for m in _env._mode_tools.get(tool_name, {})
                     ):
@@ -2002,7 +2037,7 @@ all schema information needed to interact with the environment.
         async def mcp_endpoint(request_raw: Request) -> Dict[str, Any]:
             """MCP JSON-RPC endpoint for production mode.
 
-            Bypasses step() overhead and provides direct access to MCP tools.
+            Uses an environment's overridden step lifecycle when present.
             Supports tools/list and tools/call methods.
             """
             # Parse JSON manually to handle parse errors gracefully

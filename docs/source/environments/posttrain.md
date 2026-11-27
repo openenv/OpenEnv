@@ -121,8 +121,9 @@ Through `step(CallToolAction(...))`, an episode ends when the agent calls
 `submit`, after `max_steps` tool calls (default 100) or after the task's time limit.
 The step and time limits give reward 0.
 
-Direct `/mcp` calls, including `env.call_tool`, bypass the step and time limits
-and do not return the final step observation with reward and `service_spend`.
+Direct `/mcp` calls, including `env.call_tool`, follow the environment's step and
+time limits. They still return only the JSON-RPC tool result, not the final step
+observation with reward and `service_spend`.
 
 If the score job itself fails, times out or is cancelled, the episode ends
 unscored: `reward` is `None` and `episode_end.reason` is `score_failed`, since
