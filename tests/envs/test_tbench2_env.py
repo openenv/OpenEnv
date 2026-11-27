@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -17,11 +18,6 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 for _p in (_REPO_ROOT, os.path.join(_REPO_ROOT, "envs")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-
-try:
-    import camel  # noqa: F401
-except Exception:
-    camel = None
 
 from envs.tbench2_env.models import Tbench2Action
 from envs.tbench2_env.server import tbench2_env_environment
@@ -38,6 +34,9 @@ class _FakeTerminalToolkit:
     def shell_exec(self, **kwargs):
         return ""
 
+    def close(self):
+        pass
+
 
 def test_tbench2_reset_uses_default_task_id(monkeypatch, tmp_path: Path):
     """HTTP resets without kwargs should land on the default demo task."""
@@ -47,8 +46,8 @@ def test_tbench2_reset_uses_default_task_id(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(
         tbench2_env_environment,
-        "_require_terminal_toolkit",
-        lambda: _FakeTerminalToolkit,
+        "_TerminalSessions",
+        _FakeTerminalToolkit,
     )
 
     env = Tbench2Environment(
@@ -74,8 +73,8 @@ def test_tbench2_reset_reports_execution_budgets(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(
         tbench2_env_environment,
-        "_require_terminal_toolkit",
-        lambda: _FakeTerminalToolkit,
+        "_TerminalSessions",
+        _FakeTerminalToolkit,
     )
     env = Tbench2Environment(
         tasks_dir=str(tmp_path),
@@ -143,8 +142,8 @@ def test_reset_invalid_verifier_budget_uses_finite_default(
 def _make_env(monkeypatch, tmp_path: Path, task_id: str) -> Tbench2Environment:
     monkeypatch.setattr(
         tbench2_env_environment,
-        "_require_terminal_toolkit",
-        lambda: _FakeTerminalToolkit,
+        "_TerminalSessions",
+        _FakeTerminalToolkit,
     )
     return Tbench2Environment(
         tasks_dir=str(tmp_path),
@@ -293,6 +292,9 @@ class _RecordingToolkit:
         self.calls.append(kwargs)
         return self.output
 
+    def close(self):
+        pass
+
 
 @pytest.mark.parametrize("docker_mode", [False, True])
 @pytest.mark.parametrize("canonical", [False, True])
@@ -330,8 +332,8 @@ def test_verifier_budget_frozen_until_next_reset(
         toolkit = _RecordingToolkit(output)
         monkeypatch.setattr(
             tbench2_env_environment,
-            "_require_terminal_toolkit",
-            lambda: lambda **kwargs: toolkit,
+            "_TerminalSessions",
+            lambda **kwargs: toolkit,
         )
         env = Tbench2Environment(tasks_dir=str(tmp_path), withhold_tests=False)
 
@@ -400,6 +402,37 @@ def test_evaluate_missing_verdict_raises_not_zero(tmp_path: Path, staged_paths):
 
     assert not stage_tests.exists()
     assert not stage_logs.exists()
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_evaluate_non_finite_verdict_raises(value, tmp_path: Path, staged_paths):
+    """reward.txt holding nan or inf is no verdict either. float() reads
+    both, so without a check the trainer would get a NaN or infinite
+    reward."""
+    stage_tests, stage_logs = staged_paths
+    task = _make_task_dir(tmp_path)
+    env = Tbench2Environment(withhold_tests=True)
+    env._task_dir = task
+    env._workdir = str(tmp_path)
+    env._terminal_toolkit = _RecordingToolkit(output=f"__TB2_REWARD__:{value}")
+    env._withhold_verifier_assets(task)
+
+    with pytest.raises(RuntimeError, match="produced no verdict"):
+        env._evaluate_task()
+
+    assert not stage_tests.exists()
+    assert not stage_logs.exists()
+
+
+def test_evaluate_docker_non_finite_verdict_raises(tmp_path: Path):
+    """Docker-mode twin: a nan verdict errors out instead of scoring NaN."""
+    task = _make_task_dir(tmp_path)
+    env = Tbench2DockerEnvironment()
+    env._container = _FakeContainer(exec_output=b"__TB2_REWARD__:nan\n")
+    env._task_dir = task
+
+    with pytest.raises(RuntimeError, match="produced no verdict"):
+        env._evaluate_docker()
 
 
 def test_evaluate_without_tests_scores_zero(tmp_path: Path, staged_paths):
@@ -890,7 +923,6 @@ def test_docker_exec_passes_command_as_argv(tmp_path: Path):
     assert raw[2] == "cd /app && echo 'hi there'"
 
 
-@pytest.mark.skipif(camel is None, reason="camel-ai not installed")
 @pytest.mark.skipif(
     os.environ.get("TB2_ENABLE_TESTS", "0") != "1",
     reason="TB2_ENABLE_TESTS not enabled",
@@ -905,4 +937,141 @@ def test_tbench2_env_smoke():
     assert result.output
 
     env.step(Tbench2Action(action_type="close"))
+    env.close()
+
+
+def test_agent_shell_gets_no_server_secrets(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("HF_TOKEN", "hf_FAKEtoken0000000000000000000000000")
+    monkeypatch.setenv("MY_API_KEY", "fake-key")
+    shell = tbench2_env_environment._TerminalSessions(str(tmp_path), timeout=20)
+
+    output = shell.shell_exec(id="s", command="env", block=True)
+
+    assert "PATH=" in output
+    assert "HF_TOKEN" not in output
+    assert "fake-key" not in output
+
+
+@pytest.fixture
+def shell(tmp_path: Path):
+    shell = tbench2_env_environment._TerminalSessions(str(tmp_path), timeout=20)
+    yield shell
+    shell.close()
+
+
+def test_shell_exec_blocking_runs_in_workdir(shell, tmp_path: Path):
+    output = shell.shell_exec(id="s", command="pwd -P && echo err >&2")
+
+    assert output.split() == [str(tmp_path.resolve()), "err"]
+    assert shell.shell_exec(id="s", command="true") == (
+        "Command executed successfully (no output)."
+    )
+
+
+def test_shell_exec_keeps_quotes_intact(shell):
+    assert shell.shell_exec(id="s", command=r"echo 'it'\''s'").strip() == "it's"
+
+
+def test_shell_background_session_view_write_wait_kill(shell):
+    started = shell.shell_exec(id="py", command="cat", block=False)
+    assert "Session 'py' started" in started
+
+    assert shell.shell_write_to_process(id="py", command="hello").strip() == "hello"
+    assert "No new output" in shell.shell_view(id="py")
+
+    shell.shell_kill_process(id="py")
+    assert "SESSION TERMINATED" in shell.shell_view(id="py")
+
+
+def test_shell_view_shows_prompt_without_newline(shell):
+    shell.shell_exec(
+        id="s", command='python3 -c \'print("hi", input("Name: "))\'', block=False
+    )
+
+    assert shell.shell_wait(id="s", wait_seconds=0.5) == "Name: "
+    assert "hi Ada" in shell.shell_write_to_process(id="s", command="Ada")
+
+
+def test_shell_wait_returns_output_when_session_finishes(shell):
+    shell.shell_exec(id="s", command="sleep 0.2; echo done", block=False)
+
+    output = shell.shell_wait(id="s", wait_seconds=5)
+
+    assert output.startswith("done")
+    assert output.endswith("--- SESSION TERMINATED ---")
+
+
+def test_shell_blocking_timeout_becomes_background_session(shell):
+    output = shell.shell_exec(id="slow", command="echo start; sleep 30", timeout=0.5)
+    assert "keeps running as session 'slow'" in output
+
+    assert "start" in shell.shell_view(id="slow")
+    with pytest.raises(ValueError, match="still running"):
+        shell.shell_exec(id="slow", command="true")
+    shell.shell_kill_process(id="slow")
+    assert not shell.sessions["slow"].running()
+
+
+def test_shell_kill_stops_child_processes(shell, tmp_path: Path):
+    marker = tmp_path / "marker"
+    shell.shell_exec(id="s", command=f"(sleep 1; touch {marker}) & wait", block=False)
+
+    shell.shell_kill_process(id="s")
+
+    time.sleep(1.5)
+    assert not marker.exists()
+
+
+def test_shell_unknown_session_raises(shell):
+    with pytest.raises(ValueError, match="No session found"):
+        shell.shell_view(id="missing")
+
+
+def test_shell_write_content_to_file_relative_to_workdir(shell, tmp_path: Path):
+    shell.shell_write_content_to_file(content="x = 1\n", file_path="sub/a.py")
+
+    assert (tmp_path / "sub" / "a.py").read_text() == "x = 1\n"
+
+
+def test_close_kills_background_sessions(shell):
+    shell.shell_exec(id="s", command="sleep 30", block=False)
+    session = shell.sessions["s"]
+
+    shell.close()
+
+    assert not session.running()
+    assert shell.sessions == {}
+
+
+def test_local_episode_runs_commands_without_fakes(tmp_path: Path):
+    task_dir = tmp_path / "demo"
+    task_dir.mkdir()
+    (task_dir / "instruction.md").write_text("Create done.txt.\n")
+    # The server module imports its models as `tbench2_env.models`, so use its class.
+    Action = tbench2_env_environment.Tbench2Action
+    env = Tbench2Environment(
+        tasks_dir=str(tmp_path), output_dir=str(tmp_path / "runs"), withhold_tests=False
+    )
+
+    assert env.reset(task_id="demo").success
+    result = env.step(Action(action_type="exec", command="echo hi > done.txt"))
+    assert result.success, result.error
+    assert (task_dir / "done.txt").read_text() == "hi\n"
+
+    env.step(
+        Action(
+            action_type="exec",
+            command="sleep 0.2; echo bg",
+            block=False,
+            session_id="bg",
+        )
+    )
+    waited = env.step(Action(action_type="wait", session_id="bg", wait_seconds=5))
+    assert waited.success, waited.error
+    assert waited.output.startswith("bg")
+
+    missing = env.step(Action(action_type="view", session_id="nope"))
+    assert not missing.success
+    assert "No session found" in missing.error
+
     env.close()

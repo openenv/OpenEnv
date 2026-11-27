@@ -131,6 +131,7 @@ class FinQAEnvironment(MCPEnvironment):
 
         self._state = FinQAState()
         self._history: List[Dict[str, Any]] = []
+        self._final_observation: Optional[Observation] = None
 
     def _load_questions(self) -> List[Dict[str, Any]]:
         """Load questions from the benchmark CSV."""
@@ -206,6 +207,7 @@ class FinQAEnvironment(MCPEnvironment):
             question_id=question["id"],
         )
         self._history = []
+        self._final_observation = None
 
         logger.info(
             f"Reset episode {self._state.episode_id} with question: {question['question'][:200]}..."
@@ -242,6 +244,11 @@ class FinQAEnvironment(MCPEnvironment):
             },
         )
 
+    def _end_episode(self, observation: Observation) -> Observation:
+        """Keep the terminal observation; later steps return it again."""
+        self._final_observation = observation.model_copy(deep=True)
+        return observation
+
     def step(
         self,
         action: Action,
@@ -254,6 +261,11 @@ class FinQAEnvironment(MCPEnvironment):
         Delegates to base class for MCP actions. Handles submit_answer
         reward computation and max-step termination.
         """
+        # After the episode ended (answer submitted or max steps reached), no
+        # tool runs and nothing is scored: return the final observation again.
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
+
         self._state.step_count += 1
 
         # Let the base class handle MCP actions
@@ -267,14 +279,16 @@ class FinQAEnvironment(MCPEnvironment):
                 f"Episode {self._state.episode_id} ended: "
                 f"submitted='{submitted_answer}', truth='{self._state.ground_truth}', reward={reward}"
             )
-            return Observation(
-                done=True,
-                reward=reward,
-                metadata={
-                    **obs.metadata,
-                    "ground_truth": self._state.ground_truth,
-                    "submitted_answer": submitted_answer,
-                },
+            return self._end_episode(
+                Observation(
+                    done=True,
+                    reward=reward,
+                    metadata={
+                        **obs.metadata,
+                        "ground_truth": self._state.ground_truth,
+                        "submitted_answer": submitted_answer,
+                    },
+                )
             )
 
         # Check for max steps
@@ -282,13 +296,15 @@ class FinQAEnvironment(MCPEnvironment):
             logger.info(
                 f"Episode {self._state.episode_id} terminated: max steps reached"
             )
-            return Observation(
-                done=True,
-                reward=0.0,
-                metadata={
-                    **obs.metadata,
-                    "error": f"Max steps ({self.max_steps}) reached without submitting answer.",
-                },
+            return self._end_episode(
+                Observation(
+                    done=True,
+                    reward=0.0,
+                    metadata={
+                        **obs.metadata,
+                        "error": f"Max steps ({self.max_steps}) reached without submitting answer.",
+                    },
+                )
             )
 
         return obs
@@ -306,6 +322,11 @@ class FinQAEnvironment(MCPEnvironment):
         termination) but delegates to MCPEnvironment.step_async to avoid
         the run_async_safely event-loop deadlock on the WebSocket path.
         """
+        # After the episode ended (answer submitted or max steps reached), no
+        # tool runs and nothing is scored: return the final observation again.
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
+
         self._state.step_count += 1
 
         obs = await super().step_async(action, timeout_s=timeout_s, **kwargs)
@@ -317,27 +338,31 @@ class FinQAEnvironment(MCPEnvironment):
                 f"Episode {self._state.episode_id} ended: "
                 f"submitted='{submitted_answer}', truth='{self._state.ground_truth}', reward={reward}"
             )
-            return Observation(
-                done=True,
-                reward=reward,
-                metadata={
-                    **obs.metadata,
-                    "ground_truth": self._state.ground_truth,
-                    "submitted_answer": submitted_answer,
-                },
+            return self._end_episode(
+                Observation(
+                    done=True,
+                    reward=reward,
+                    metadata={
+                        **obs.metadata,
+                        "ground_truth": self._state.ground_truth,
+                        "submitted_answer": submitted_answer,
+                    },
+                )
             )
 
         if self._state.step_count >= self.max_steps:
             logger.info(
                 f"Episode {self._state.episode_id} terminated: max steps reached"
             )
-            return Observation(
-                done=True,
-                reward=0.0,
-                metadata={
-                    **obs.metadata,
-                    "error": f"Max steps ({self.max_steps}) reached without submitting answer.",
-                },
+            return self._end_episode(
+                Observation(
+                    done=True,
+                    reward=0.0,
+                    metadata={
+                        **obs.metadata,
+                        "error": f"Max steps ({self.max_steps}) reached without submitting answer.",
+                    },
+                )
             )
 
         return obs

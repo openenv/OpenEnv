@@ -1,6 +1,6 @@
 # Wordle: SFT, then GRPO
 
-Train Qwen3-1.7B to play Wordle against the [`openenv/wordle`](https://huggingface.co/spaces/openenv/wordle) environment. The [tutorial](https://huggingface.co/docs/openenv/tutorials/wordle-grpo) walks through each step, with results, hardware and costs.
+Train Qwen3-1.7B to play Wordle against the [`openenv/wordle`](https://huggingface.co/spaces/openenv/wordle) environment. The [tutorial](https://openenv.github.io/OpenEnv/main/tutorials/wordle-grpo) walks through each step, with results, hardware and costs.
 
 | Script | What it does | Where it runs |
 |---|---|---|
@@ -22,4 +22,4 @@ uv run evaluate.py --model <user>/Qwen3-1.7B-Wordle-SFT-GRPO --thinking --max-ne
     --secrets "$(cat secrets30.txt)" --out grpo.jsonl
 ```
 
-GRPO plays 64 games at once, one environment session each. Duplicate the `openenv/wordle` Space and set `MAX_CONCURRENT_ENVS=64` on your copy before training.
+GRPO plays 64 games at once, one environment session each, plus the sessions still being closed between games. Duplicate the `openenv/wordle` Space and set `MAX_CONCURRENT_ENVS=96` on your copy before training.

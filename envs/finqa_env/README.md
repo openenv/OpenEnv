@@ -17,7 +17,7 @@ tags:
 
 A financial question-answering environment for RL training. Evaluates LLMs on their ability to answer complex financial questions using tool calls on SEC 10-K filing data.
 
-Based on [FinQABenchmark](https://github.com/snorkel-ai/FinQABenchmark) from Snorkel AI.
+Based on Snorkel AI's FinQA benchmark ([`snorkelai/finqa-data`](https://huggingface.co/datasets/snorkelai/finqa-data)).
 
 ## Overview
 
@@ -112,6 +112,8 @@ Tools are auto-discovered via MCP. Use `await env.list_tools()` to see all avail
 | `get_table_info` | Get table metadata (columns, dtypes, unique values) | `company_name: str, table_name: str` |
 | `sql_query` | Execute SQL query on a table (requires filters) | `company_name: str, table_name: str, query: str` |
 | `submit_answer` | Submit final answer (ends episode) | `answer: str` |
+
+Once the episode has ended (an answer was submitted or `FINQA_MAX_STEPS` was reached), further `step()` calls (the WebSocket session) do not run tools or score answers. They return the final observation again (`done=True`, same reward) until the next `reset()`.
 
 ### Tool Constraints
 

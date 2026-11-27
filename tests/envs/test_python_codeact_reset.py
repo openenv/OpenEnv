@@ -20,10 +20,24 @@ from envs.coding_env.models import CodeAction
 from envs.coding_env.server.python_codeact_env import PythonCodeActEnv
 
 
-def test_reset_clears_executor_state():
+@pytest.fixture
+def make_env():
+    """Build envs and stop their worker processes after the test."""
+    envs = []
+
+    def factory(**kwargs) -> PythonCodeActEnv:
+        envs.append(PythonCodeActEnv(**kwargs))
+        return envs[-1]
+
+    yield factory
+    for env in envs:
+        env.close()
+
+
+def test_reset_clears_executor_state(make_env):
     """Test that reset() clears functions and variables defined in
     previous execution."""
-    env = PythonCodeActEnv()
+    env = make_env()
 
     # Initial reset
     obs = env.reset()
@@ -55,9 +69,9 @@ def test_reset_clears_executor_state():
     assert "my_function" in obs3.stderr or "NameError" in obs3.stderr
 
 
-def test_reset_clears_variables():
+def test_reset_clears_variables(make_env):
     """Test that reset() clears variables defined in previous execution."""
-    env = PythonCodeActEnv()
+    env = make_env()
 
     # Initial reset
     env.reset()
@@ -85,9 +99,9 @@ def test_reset_clears_variables():
     assert "my_variable" in obs3.stderr or "NameError" in obs3.stderr
 
 
-def test_reset_clears_imports():
+def test_reset_clears_imports(make_env):
     """Test that reset() clears imported modules from previous execution."""
-    env = PythonCodeActEnv()
+    env = make_env()
 
     # Initial reset
     env.reset()
@@ -119,9 +133,9 @@ def test_reset_clears_imports():
     )
 
 
-def test_json_import_is_available_by_default():
+def test_json_import_is_available_by_default(make_env):
     """Test that the coding env permits common JSON serialization code."""
-    env = PythonCodeActEnv()
+    env = make_env()
     env.reset()
 
     action = CodeAction(
@@ -133,9 +147,9 @@ def test_json_import_is_available_by_default():
     assert obs.stdout.strip() == '{"n": 3, "status": "ok"}'
 
 
-def test_reset_preserves_step_count_reset():
+def test_reset_preserves_step_count_reset(make_env):
     """Test that reset() properly resets step count."""
-    env = PythonCodeActEnv()
+    env = make_env()
 
     # Initial reset
     env.reset()
@@ -158,9 +172,9 @@ def test_reset_preserves_step_count_reset():
     assert env.state.step_count == 1
 
 
-def test_reset_changes_episode_id():
+def test_reset_changes_episode_id(make_env):
     """Test that reset() generates a new episode ID."""
-    env = PythonCodeActEnv()
+    env = make_env()
 
     # Initial reset
     env.reset()

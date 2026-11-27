@@ -249,6 +249,22 @@ class HarborEnvironment(MCPEnvironment):
         from .models import HarborRolloutResult
         from .rollout import run_rollout as _run
 
+        # The client names the harness, and a `module:Class` name makes this server import that
+        # module. Only the import paths the operator allowed at startup are accepted.
+        allowed = {
+            entry.strip()
+            for entry in os.environ.get("OPENENV_HARBOR_ALLOW_HARNESS", "").split(",")
+            if entry.strip()
+        }
+        if ":" in harness and harness not in allowed:
+            return HarborRolloutResult(
+                ok=False,
+                error=f"harness {harness!r} is not allowed on this server: start it with "
+                f"`openenv harbor serve --allow-harness {harness}`",
+                harness=harness,
+                sandbox=sandbox,
+            ).model_dump_json()
+
         service = self._service()
         if service is None:
             return HarborRolloutResult(
@@ -265,6 +281,20 @@ class HarborEnvironment(MCPEnvironment):
             return HarborRolloutResult(
                 ok=False, error=str(exc)[:400], harness=harness, sandbox=sandbox
             ).model_dump_json()
+
+        # Same rule as the web UI: a task that gets this server's environment variables or files
+        # runs only on the server's own endpoint, since the caller's model would see the secrets.
+        if llm_url:
+            from .ui_data import reads_environment
+
+            if reads_environment(split, int(task_index)):
+                return HarborRolloutResult(
+                    ok=False,
+                    error="this task passes the server's environment variables or files into "
+                    "the sandbox, so it runs only on the server's own endpoint, not with llm_url",
+                    harness=harness,
+                    sandbox=sandbox,
+                ).model_dump_json()
 
         # This tool is `async` on purpose. FastMCP dispatches a SYNC tool body through
         # `anyio.to_thread.run_sync` with no limiter (`fastmcp/utilities/async_utils.py`), which
@@ -310,6 +340,7 @@ class HarborEnvironment(MCPEnvironment):
                 sandbox=sandbox,
                 registry=service.capture.registry,
                 intercept_url=service.public_url,
+                local_intercept_url=service.local_url,
                 model=served,
                 trials_dir=_trials_dir(),
                 dataset=split,

@@ -14,7 +14,7 @@ from typing import Any, Optional
 import pytest
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import Action, Observation, State
-from openenv.core.rubrics import Rubric
+from openenv.core.rubrics import Rubric, Sequential, TrajectoryRubric
 
 
 # Test fixtures - using Pydantic models
@@ -70,6 +70,16 @@ class AsyncCompositeRubric(Rubric):
         score1 = await self.child1(action, observation)
         score2 = await self.child2(action, observation)
         return (score1 + score2) / 2
+
+
+class RecordingTrajectoryRubric(TrajectoryRubric):
+    """Trajectory rubric that only records steps."""
+
+    def score_trajectory(self, trajectory):
+        return 1.0
+
+    def compute_step_rewards(self):
+        return [1.0] * len(self._trajectory)
 
 
 class AsyncEnvironment(Environment[MockAction, MockObservation, MockState]):
@@ -213,6 +223,20 @@ class TestAsyncEnvironmentRubricIntegration:
 
         await env.reset_async()
         assert rubric.step_count == 0  # Reset clears state
+
+    @pytest.mark.asyncio
+    async def test_composed_rubric_resets_children_on_reset_async(self):
+        """reset_async clears trajectory rubrics nested in containers."""
+        trajectory = RecordingTrajectoryRubric()
+        env = AsyncEnvironment(rubric=Sequential(AsyncRubric(1.0), trajectory))
+
+        await env.reset_async()
+        await env.step_async(MockAction(content="a"))
+        await env.reset_async()
+        assert trajectory.trajectory == []
+
+        await env.step_async(MockAction(content="b"))
+        assert len(trajectory.trajectory) == 1
 
     @pytest.mark.asyncio
     async def test_async_rubric_introspection(self):

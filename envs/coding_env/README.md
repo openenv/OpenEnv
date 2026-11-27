@@ -94,6 +94,54 @@ docker build -t coding-env:latest -f envs/coding_env/server/Dockerfile .
 - `step_count` (int) - Number of steps taken
 - `last_exit_code` (int) - Exit code from the last execution
 
+### Sessions and isolation
+
+Each session runs its code in its own Python worker process, and `reset()`
+starts a new one, so nothing an episode defines or changes in the interpreter
+reaches the next episode or another session.
+
+Workers are forked from a template process (a zygote) that the server starts
+on the first `reset()`. The zygote starts with a minimal environment, so
+neither it nor the workers see the server's environment variables, and it
+imports smolagents and the authorized modules once, which takes a few
+seconds. After that a new worker is ready in milliseconds and shares most of
+its memory with the zygote (about 10 MB per worker on Linux). Each worker gets
+its own home, working and temporary directory (`HOME`, `TMPDIR`), removed when
+the session ends. A step that runs past the timeout kills only its own
+worker, and if the zygote dies the server starts a new one.
+
+When the server runs as root, each worker switches to the unprivileged
+`nobody` user right after the fork, before it runs any model code, so it
+can't signal the server, the zygote or processes of other users. On Linux the
+zygote and the workers are non-dumpable, and so is the server started from
+`server/app.py`, so other processes of the same user can't read their memory
+or environment through `/proc`.
+
+On Linux (x86_64 and aarch64) each worker also installs a seccomp filter
+before it runs any model code: it can't create sockets of any family, so even
+with modules like `requests` or `pandas` authorized, model code has no network.
+The filter needs no capability, so it also applies where network namespaces
+are not available (no `CAP_SYS_ADMIN`). Elsewhere the server logs a warning.
+
+- `CODING_ENV_EXEC_TIMEOUT_S`: hard limit per step (default `30`). A step that
+  runs longer is stopped, its worker is killed, and the next step starts with a
+  fresh interpreter.
+- `MAX_CONCURRENT_ENVS`: max concurrent sessions (default `8`). Each session
+  holds one worker process.
+
+Limits:
+
+- All workers run as the same user, and when the server isn't root they run
+  as the server's user. The import allowlist, which leaves out `os` by
+  default, is what keeps one session's code from signaling other sessions'
+  workers (or, without root, the server).
+- Each session has its own temporary directory, but `/tmp` itself is still
+  shared if file access (`os`, `open`) is authorized.
+- There is no memory limit per worker. The container's limit is the guard,
+  and a worker that gets killed only restarts its own session.
+- Workers share the server's stderr, so if `os` is authorized, model code can
+  write lines into the server log.
+
 ## Advanced Usage
 
 ### Connecting to an Existing Server

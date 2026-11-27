@@ -211,7 +211,7 @@ rfcs/
 │   └── tester.md                 # Write high-signal, failing tests
 │
 └── hooks/                    # Automation scripts
-    ├── lint.sh                   # Run ruff format check
+    ├── lint.sh                   # Check CI import sort, format, and lint (src/ tests/)
     ├── test.sh                   # Run pytest
     ├── check-debug.sh            # Find debug code
     ├── post-push-pr.sh           # Validate PR after push (freshness, CI, conflicts)
@@ -283,6 +283,11 @@ ThinkingBox examples: `example_usage.py` is a public-client smoke test, while `e
 | `.claude/docs/INVARIANTS.md` | Rules that must never be broken |
 
 ## Harbor integration
+
+`examples/coding_audit/` owns the supplemental operator coding audit, its standalone
+`python -m examples.coding_audit` CLI, and offline tests. It is separate from core
+RFC 008 validation. `examples/hub_validation_pipeline/` prepares and submits its
+frozen cloud bundles.
 
 `src/openenv/core/harness/capture/` records inference calls independently of a trainer or tokenizer. `src/openenv/harbor/` runs Harbor tasks, reconciles their trajectories, and exposes the shared training contract through clients and the Gradio playground. `envs/harbor_env/` is the installable environment wrapper. `examples/harbor/nemo_shell_profile/` provides the explicitly qualified NeMo shell workflow.
 

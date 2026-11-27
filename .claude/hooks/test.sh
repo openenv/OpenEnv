@@ -12,12 +12,16 @@ if ! command -v uv &> /dev/null; then
 fi
 
 echo "=== Running tests ==="
+# pre-push runs this script, and git exports these to hooks. Tests that run git
+# in a throwaway repo would otherwise act on this one.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 # Note: Using timeout to prevent hanging tests from blocking indefinitely (5 min max)
 # Matches .github/workflows/test.yml exactly to catch CI failures before push
 PYTHONPATH=src:envs timeout 300 uv run pytest tests/ \
     --ignore=tests/envs/test_browsergym_environment.py \
     --ignore=tests/envs/test_dipg_environment.py \
     --ignore=tests/envs/test_websearch_environment.py \
+    --ignore=tests/envs/test_sql_optim_environment.py \
     --ignore=tests/envs/test_python_codeact_reset.py \
     --ignore=tests/envs/test_python_codeact_rewards.py \
     --ignore=tests/envs/test_textarena_environment.py \

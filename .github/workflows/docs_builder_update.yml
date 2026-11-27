@@ -1,0 +1,56 @@
+name: doc-builder update check
+
+# Dependabot cannot see the doc-builder commit pinned in docs.yml (it is not a
+# `uses:` reference), so check it weekly and keep one issue open while
+# huggingface/doc-builder main is ahead of the pin.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TITLE: "Update the pinned doc-builder commit"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/workflows/docs.yml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Compare the pin with doc-builder main
+        run: |
+          pinned=$(sed -nE 's/^ *DOC_BUILDER_SHA: ([0-9a-f]{40}).*/\1/p' .github/workflows/docs.yml)
+          latest=$(gh api repos/huggingface/doc-builder/commits/main --jq .sha)
+          issue=$(gh issue list -R "$REPO" --state open --search "\"$TITLE\" in:title" \
+            --json number,title --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ "$pinned" = "$latest" ]; then
+            echo "doc-builder pin is up to date"
+            if [ -n "$issue" ]; then
+              gh issue close "$issue" -R "$REPO" --comment "The pin now matches doc-builder main."
+            fi
+            exit 0
+          fi
+          ahead=$(gh api "repos/huggingface/doc-builder/compare/$pinned...$latest" --jq .ahead_by)
+          body="huggingface/doc-builder main is $ahead commit(s) ahead of the commit pinned in \`.github/workflows/docs.yml\`.
+
+          - Pinned: \`$pinned\`
+          - Latest: \`$latest\`
+          - Changes: https://github.com/huggingface/doc-builder/compare/$pinned...$latest
+
+          To update, set \`DOC_BUILDER_SHA\` in \`.github/workflows/docs.yml\` to the latest commit and check the docs preview on the pull request. This issue closes on its own once the pin matches."
+          if [ -n "$issue" ]; then
+            gh issue edit "$issue" -R "$REPO" --body "$body"
+          else
+            gh issue create -R "$REPO" --title "$TITLE" --body "$body"
+          fi

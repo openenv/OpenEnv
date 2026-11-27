@@ -1753,6 +1753,31 @@ def test_archive_extraction_keeps_safe_members_beneath_destination(
     assert not (destination / "README.md").exists()
 
 
+def test_archive_extraction_skips_bytecode_the_bundle_hash_ignores(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "bytecode.tar.gz"
+    payload = b"bytes"
+    with tarfile.open(archive, "w:gz") as output:
+        for name in (
+            "root/servers/tool.py",
+            "root/servers/__pycache__/tool.cpython-312.pyc",
+            "root/dataset/case.pyc",
+            "root/dataset/case.pyo",
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            output.addfile(member, io.BytesIO(payload))
+
+    destination = tmp_path / "out"
+    _extract_archive(archive, destination)
+
+    assert (destination / "servers/tool.py").read_bytes() == payload
+    assert not (destination / "servers/__pycache__").exists()
+    assert not (destination / "dataset/case.pyc").exists()
+    assert not (destination / "dataset/case.pyo").exists()
+
+
 def test_archive_extraction_rejects_resolved_target_escape(tmp_path: Path) -> None:
     archive = tmp_path / "symlink-parent.tar.gz"
     payload = b"bad"

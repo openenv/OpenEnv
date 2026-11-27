@@ -262,9 +262,11 @@ consecutive calls from different replicas; comparing values directly misread one
 
 ## Training with TRL
 
-TRL trains a policy on these rollouts with `AsyncGRPOTrainer` (`trl.experimental`, TRL 1.15 or
-later): you pass a `HarborSessionFactory` (a `functools.partial` with the server URL), and a
-`HarnessRolloutWorker` calls it with its sampling policy, opens one session per rollout and trains on each session's validated `TrainingTrace`.
+TRL trains a policy on these rollouts with `HarnessAsyncGRPOTrainer`
+(`trl.experimental.async_grpo.openenv_harness`, TRL 1.18 or later), an `AsyncGRPOTrainer` whose
+rollouts are harness sessions: you pass a
+`HarborSessionFactory` (a `functools.partial` with the server URL), and the trainer calls it with its
+sampling policy, opens one session per rollout and trains on each session's validated `TrainingTrace`.
 
 - [`examples/async_grpo_harbor`](https://github.com/huggingface/trl/tree/main/examples/async_grpo_harbor):
   a complete training script, with local setup and a Hugging Face Jobs launcher.
@@ -384,7 +386,7 @@ Exit codes:
 | code | meaning |
 |---|---|
 | `0` | success |
-| `1` | ran, but failed. `rollout` returns this if **any** rollout in the batch was unusable |
+| `1` | ran, but failed. `rollout` returns this if **any** rollout in the batch was unusable; `info --harness` returns it if construction or wiring checks fail |
 | `2` | usage error: a missing or invalid flag. Nothing ran |
 
 The `1` and `2` split matters if you are scripting this: `2` means the command never started, so
@@ -392,7 +394,9 @@ retrying it unchanged will fail the same way.
 
 ### `openenv harbor info`
 
-Report what this machine can run. Read-only: boots no sandbox, starts no server, makes no rollout.
+Report what this machine can run. Boots no sandbox, starts no server, makes no rollout.
+With `--harness`, imports and constructs that agent locally using dummy capture credentials and
+temporary logs. Only check code you trust; its constructor runs, but its setup and run methods do not.
 
 | flag | type | default | meaning |
 |---|---|---|---|
@@ -400,11 +404,13 @@ Report what this machine can run. Read-only: boots no sandbox, starts no server,
 | `--model` | str | `""` | Served model id. Auto-detected when the endpoint serves exactly one |
 | `--dataset` | str | none | Dataset spec. Repeatable, or comma-separated |
 | `--env-file` | path | `""` | dotenv with provider credentials, loaded before the checks |
+| `--harness` | str | `""` | Check a seam name or trusted `module:Class`; show its capture wiring and try constructing it |
 | `--verbose` | flag | off | List all 30 harnesses, not only the 16 validated |
 | `--json` | flag | off | Emit machine-readable JSON instead of the text report |
 
 ```bash
 openenv harbor info --llm-url $LLM --dataset org/tasks --json
+openenv harbor info --harness my_package.agent:MyAgent --model org/model --json
 ```
 
 The JSON has four top-level keys: `llm`, `sandboxes`, `datasets`, `harnesses`. Each sandbox entry is
@@ -414,6 +420,12 @@ The JSON has four top-level keys: `llm`, `sandboxes`, `datasets`, `harnesses`. E
 openenv harbor info --llm-url $LLM --json \
   | jq -r '.sandboxes[] | select(.available) | .name'
 ```
+
+`--harness` adds a `harness` object with `ok` and either the dummy wiring or an error in `detail`.
+It catches import errors, incorrect subclasses, constructor failures, and host-side agents that
+declare neither `api_base` nor `api_key` as constructor parameters or options fields. A successful
+check confirms construction only; it does not validate model calls, capture or sandbox installation.
+Without `--model` or an endpoint's detected model, the check uses `preflight-model`.
 
 ### `openenv harbor rollout`
 
@@ -552,11 +564,33 @@ ids and logprobs, and where the agent emits a trajectory, its own record agreed 
 
 Supporting four dialects rather than chat-completions alone is what makes the last four rows work.
 
-`terminus-2` runs in the server process rather than inside the sandbox, so it reaches the proxy on
-localhost and needs no public URL.
+`terminus-2` and host-side agents of your own run in the server process rather than inside the
+sandbox, so they are handed the proxy's localhost URL and need no public one.
 
 The other 14 known agents have a seam but are untested; run `openenv harbor info --verbose` to list
-them. Anything Harbor supports can be reached with `--harness module:Class`.
+them.
+
+### Your own agent
+
+Name any Harbor agent class by import path, `--harness my_package.agent:MyAgent`, in `rollout`, in
+`serve` rollouts and from a trainer. Naming a class imports its module, so `serve` accepts only the
+import paths its operator lists with `--allow-harness my_package.agent:MyAgent`. How the class is
+pointed at the proxy depends on what it is:
+
+Install the module in the process that runs the agent: the CLI process for `rollout`, or the
+server's environment/image for `serve` and remote trainers. Installing it only in a trainer is insufficient.
+
+| the class | what it gets |
+|---|---|
+| a subclass of an agent above (its `name()` is a known harness) | that agent's wiring. If OpenEnv runs that agent through its own subclass, such as `openenv.harbor.install_fixes:InterceptPi` for pi, subclass that one instead: the error names it |
+| a host-side agent (a `BaseAgent` that calls the model from the server process) | `api_base` (the proxy's `/v1` URL, on localhost) and `api_key` (the rollout's session id) as constructor kwargs |
+| any other agent installed into the sandbox | refused: add a seam for it in `openenv/harbor/seams.py` |
+
+A host-side agent declares both kwargs as constructor parameters or options fields; otherwise
+OpenEnv refuses it before starting a trial. It sends every model call to `api_base` with
+`api_key` as the bearer token; capture, reward and training traces then work as for any other
+harness. Nothing reaches the sandbox or the verifier. Options the server has no way to pass, such as
+provider extras, are best read from the agent's own environment variables.
 
 ## Supported sandboxes
 
@@ -598,6 +632,10 @@ Two different things share the word "sandbox", and mixing them up is a common ea
 A backend counts as usable only if its class imports **and** Harbor's own preflight passes.
 Credentials alone are not enough: a provider with valid keys but no SDK installed would otherwise
 report available and fail at rollout time.
+
+Set `OPENENV_HARBOR_MAX_SANDBOX_STARTS` to cap how many sandboxes may be starting at once when a
+backend throttles creation. It does not limit how many rollouts run (`MAX_CONCURRENT_ENVS` does).
+On SIGINT or SIGTERM the process stops the sandboxes it started before exiting.
 
 ### Rewards
 

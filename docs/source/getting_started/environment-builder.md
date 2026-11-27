@@ -40,7 +40,7 @@ openenv build
 openenv validate --level static --skip-build
 ```
 
-`openenv validate` reads the `validation:` contract in `openenv.yaml`, checks the normalized manifest against the selected severity policy and exits non-zero when a required check fails. The report's `levels_run` field records which levels ran. To validate a running server, use `openenv validate --url http://localhost:8000`.
+`openenv validate` reads the `validation:` contract in `openenv.yaml`, checks the normalized manifest against the selected severity policy and exits non-zero when a required check fails. The report's `levels_run` field records which levels ran. `openenv validate --level runtime` (needs Docker) builds the image, starts it and replays the actions in `validation/runtime.json`, the plan that `validation.execution` points to. `openenv init` generates both. To validate a running server, use `openenv validate --url http://localhost:8000`.
 
 ## Push to Hugging Face Spaces
 
@@ -90,7 +90,7 @@ variables:
   OPENSPIEL_GAME: catch
 ```
 
-CLI `-e` overrides matching keys. Put secrets (API keys, tokens) only on the CLI with `--secret KEY=VALUE`, never in the yaml.
+CLI `-e` overrides matching keys. Put secrets (API keys, tokens) only on the CLI with `--secret KEY=VALUE`, never in the yaml. Secrets are environment variables of the server, so code the model writes must not run in the server process or inherit its environment (see [Keep secrets away from model code](../guides/first-environment.md#keep-secrets-away-from-model-code)).
 
 To fork or update someone else's environment, see [Contributing Environments](contributing-envs.md).
 

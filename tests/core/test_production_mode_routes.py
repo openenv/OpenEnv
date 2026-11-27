@@ -517,6 +517,9 @@ class TestHTTPMCPEndpoint:
         assert "result" in data
         assert "tools" in data["result"]
         assert len(data["result"]["tools"]) > 0
+        add_tool = next(t for t in data["result"]["tools"] if t["name"] == "add")
+        assert set(add_tool["inputSchema"]["properties"]) == {"a", "b"}
+        assert "input_schema" not in add_tool
 
     def test_mcp_tools_call_via_http(self, app):
         """Test tools/call via HTTP /mcp endpoint."""
@@ -1082,6 +1085,7 @@ class TestMCPSessionTransportPersistence:
             env=StatefulMCPEnv,
             action_cls=None,
             observation_cls=None,
+            max_concurrent_envs=3,
         )
 
     async def test_http_session_mcp_state_persists_across_calls(self, stateful_mcp_app):
@@ -1210,6 +1214,89 @@ class TestMCPSessionTransportPersistence:
                 f"Second WS call should return 2, got: {resp2}. "
                 "WebSocket MCP session is not persisting state."
             )
+
+    async def test_http_sessions_isolate_state_and_close_resets_it(
+        self, stateful_mcp_app
+    ):
+        """State belongs to one OpenEnv session, not the shared FastMCP server."""
+        import httpx
+        from httpx import ASGITransport
+
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=stateful_mcp_app), base_url="http://test"
+        ) as client:
+
+            async def request(method, params):
+                response = await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": method,
+                        "params": params,
+                        "id": 1,
+                    },
+                )
+                assert response.status_code == 200
+                payload = response.json()
+                assert "error" not in payload, payload
+                return payload["result"]
+
+            async def increment(sid):
+                result = await request(
+                    "tools/call",
+                    {"name": "inc_counter", "arguments": {}, "session_id": sid},
+                )
+                return result["data"]
+
+            first = (await request("openenv/session/create", {}))["session_id"]
+            second = (await request("openenv/session/create", {}))["session_id"]
+            try:
+                assert await increment(first) == "1"
+                assert await increment(second) == "1"
+                assert await increment(first) == "2"
+                await request("openenv/session/close", {"session_id": first})
+                first = None
+                replacement = (await request("openenv/session/create", {}))[
+                    "session_id"
+                ]
+                try:
+                    assert await increment(replacement) == "1"
+                    assert await increment(second) == "2"
+                finally:
+                    await request("openenv/session/close", {"session_id": replacement})
+            finally:
+                if first is not None:
+                    await request("openenv/session/close", {"session_id": first})
+                await request("openenv/session/close", {"session_id": second})
+
+    def test_websocket_sessions_isolate_state(self, stateful_mcp_app):
+        """Concurrent WebSocket connections retain independent MCP state."""
+        from starlette.testclient import TestClient
+
+        def increment(websocket):
+            websocket.send_json(
+                {
+                    "type": "mcp",
+                    "data": {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {"name": "inc_counter", "arguments": {}},
+                        "id": 1,
+                    },
+                }
+            )
+            response = websocket.receive_json()
+            assert response["type"] == "mcp"
+            assert "error" not in response["data"], response
+            return response["data"]["result"]["data"]
+
+        with TestClient(stateful_mcp_app) as client:
+            with client.websocket_connect("/ws") as first:
+                with client.websocket_connect("/ws") as second:
+                    assert increment(first) == "1"
+                    assert increment(second) == "1"
+                    assert increment(first) == "2"
+                    assert increment(second) == "2"
 
     async def test_concurrent_close_during_tool_call(self, stateful_mcp_app):
         """Concurrent session/close during active tool call returns clean responses.
@@ -1513,6 +1600,578 @@ class TestMCPSessionResourceLeaks:
             server._sessions.pop(session_id, None)
             server._session_executors.pop(session_id, None)
         executor.shutdown(wait=False)
+
+    async def test_create_session_releases_slot_when_cancelled(self):
+        """Cancelling a task mid-session-creation must release the slot and the env.
+
+        `_create_session` reserves `_sessions[sid] = None` plus an executor
+        before building the environment outside the lock. `CancelledError` is
+        not an `Exception`, so the failure handlers cannot see it: without
+        explicit handling the reservation outlives the cancelled task. It keeps
+        counting against `max_concurrent_envs` and never reaches
+        `_session_info`, which is the only mapping the idle reaper scans, so
+        nothing reclaims it for the life of the process.
+
+        Releasing the slot is not sufficient on its own. Cancelling the await
+        does not stop the thread running the factory, so the environment that
+        thread goes on to build must be closed too, or a container-backed env
+        keeps its container alive while the slot reads as free.
+        """
+        import asyncio
+        import threading
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        factory_entered = threading.Event()
+        release_factory = threading.Event()
+        constructed = threading.Event()
+        closed = threading.Event()
+        close_threads: list[str] = []
+
+        class SlowEnv(Environment):
+            """An env whose construction blocks, as a container-backed one does."""
+
+            def __init__(self):
+                super().__init__()
+                factory_entered.set()
+                release_factory.wait(5)
+                constructed.set()
+
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def close(self):
+                close_threads.append(threading.current_thread().name)
+                closed.set()
+
+        server = HTTPEnvServer(
+            env=SlowEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        loop_thread = threading.current_thread().name
+        task = asyncio.create_task(server._create_session())
+        # Wait in a worker thread so the event loop stays free to run the task.
+        entered = await asyncio.get_running_loop().run_in_executor(
+            None, factory_entered.wait, 5
+        )
+        assert entered, "environment factory never started"
+
+        # Cancel and let the cancellation be handled while the factory is still
+        # blocked. Capacity stays reserved until the uncontrollable factory
+        # finishes and its environment has been closed.
+        task.cancel()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        reserved_during_cleanup = server.get_capacity_status().active_sessions
+        release_factory.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert reserved_during_cleanup == 1
+        assert server._sessions == {}, (
+            f"Reserved session slot leaked after cancellation: "
+            f"{list(server._sessions.keys())}"
+        )
+        assert server._session_executors == {}, (
+            f"Executor leaked after cancellation: "
+            f"{list(server._session_executors.keys())}"
+        )
+        assert server._session_stacks == {}, (
+            f"Stack leaked after cancellation: {list(server._session_stacks.keys())}"
+        )
+        assert server.get_capacity_status().active_sessions == 0
+
+        # Cancelling the await does not stop the factory thread, so the
+        # environment it goes on to build must still be closed. Otherwise a
+        # container-backed env keeps its container alive while the server
+        # reports the slot as free.
+        assert constructed.is_set(), "environment factory never finished"
+        assert closed.is_set(), "environment built after cancellation was never closed"
+        assert loop_thread not in close_threads, (
+            f"close() ran on the event loop thread {loop_thread!r}; it must run "
+            f"on the executor the env was created on"
+        )
+
+        # The freed slot must be usable: at the default capacity of 1 a leak
+        # refuses every later client with SessionCapacityError until restart.
+        session_id, _env = await server._create_session()
+        assert session_id in server._session_info
+        await server._destroy_session(session_id)
+
+    async def test_cancelled_creation_closes_env_on_the_executor_thread(self):
+        """A completed factory future must still be closed off the event loop."""
+        import asyncio
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        closed = threading.Event()
+        close_threads: list[str] = []
+
+        class ThreadRecordingEnv(Environment):
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def close(self):
+                close_threads.append(threading.current_thread().name)
+                closed.set()
+
+        server = HTTPEnvServer(
+            env=ThreadRecordingEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        # A finished future exercises cleanup after construction won the race.
+        executor = ThreadPoolExecutor(max_workers=1)
+        factory_future = executor.submit(ThreadRecordingEnv)
+        factory_future.result(timeout=5)
+        assert factory_future.done()
+
+        loop_thread = threading.current_thread().name
+        await server._discard_reserved_session(
+            "reserved-but-never-opened", executor, factory_future=factory_future
+        )
+
+        assert await asyncio.get_running_loop().run_in_executor(None, closed.wait, 5), (
+            "environment from an already-finished factory was never closed"
+        )
+        assert loop_thread not in close_threads, (
+            f"close() ran on the event loop thread {loop_thread!r}; "
+            f"it must run on the executor the env was created on"
+        )
+
+    async def test_repeated_cancellation_waits_for_cleanup_blocked_on_session_lock(
+        self,
+    ):
+        """Cancellation must not escape while reserved-session cleanup is blocked."""
+        import asyncio
+        import threading
+        from contextlib import asynccontextmanager
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        enter_started = asyncio.Event()
+        finish_enter = asyncio.Event()
+        closed = threading.Event()
+
+        class LockBlockedCleanupEnv(Environment):
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                enter_started.set()
+                await finish_enter.wait()
+                yield object()
+
+            def close(self):
+                closed.set()
+
+        server = HTTPEnvServer(
+            env=LockBlockedCleanupEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        creation = asyncio.create_task(server._create_session())
+        await asyncio.wait_for(enter_started.wait(), timeout=5)
+
+        await server._session_lock.acquire()
+        try:
+            finish_enter.set()
+            # Let enter_async_context() finish so creation blocks registering
+            # the completed session on the lock held above.
+            for _ in range(3):
+                await asyncio.sleep(0)
+
+            creation.cancel()
+            # Let the first cancellation reach the cleanup path, which must
+            # also wait for the lock held above.
+            for _ in range(3):
+                await asyncio.sleep(0)
+            creation.cancel()
+            for _ in range(3):
+                await asyncio.sleep(0)
+            finished_while_cleanup_blocked = creation.done()
+        finally:
+            server._session_lock.release()
+
+        with pytest.raises(asyncio.CancelledError):
+            await creation
+
+        assert not finished_while_cleanup_blocked, (
+            "_create_session propagated repeated cancellation before its "
+            "lock-blocked cleanup completed"
+        )
+        assert closed.is_set(), "environment was not closed before cancellation escaped"
+        assert server._sessions == {}
+        assert server._session_executors == {}
+        assert server._session_stacks == {}
+        assert server._session_info == {}
+
+    async def test_single_thread_cancelled_factory_closes_before_replacement_starts(
+        self,
+    ):
+        """A replacement constructor must not overtake cancelled-factory cleanup."""
+        import asyncio
+        import threading
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        first_started = threading.Event()
+        release_first = threading.Event()
+        first_closed = threading.Event()
+        second_started = threading.Event()
+        second_saw_first_closed: list[bool] = []
+        instances: list[Environment] = []
+        instance_lock = threading.Lock()
+
+        class SingleThreadEnv(Environment):
+            REQUIRES_SINGLE_THREAD_EXECUTOR = True
+            SUPPORTS_CONCURRENT_SESSIONS = True
+
+            def __init__(self):
+                super().__init__()
+                with instance_lock:
+                    self.number = len(instances) + 1
+                    instances.append(self)
+                if self.number == 1:
+                    first_started.set()
+                    release_first.wait(5)
+                else:
+                    second_saw_first_closed.append(first_closed.is_set())
+                    second_started.set()
+
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def close(self):
+                if self.number == 1:
+                    first_closed.set()
+
+        server = HTTPEnvServer(
+            env=SingleThreadEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=2,
+                session_timeout=None,
+            ),
+        )
+
+        first_creation = asyncio.create_task(server._create_session())
+        assert await asyncio.get_running_loop().run_in_executor(
+            None, first_started.wait, 5
+        )
+        first_creation.cancel()
+
+        # The buggy path completes cancellation and frees capacity immediately,
+        # even though the factory still owns the shared executor thread.
+        for _ in range(10):
+            await asyncio.sleep(0)
+            if first_creation.done():
+                break
+
+        replacement = asyncio.create_task(server._create_session())
+        for _ in range(3):
+            await asyncio.sleep(0)
+        release_first.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await first_creation
+
+        replacement_session_id, _ = await replacement
+        await server._destroy_session(replacement_session_id)
+
+        assert first_closed.is_set(), "cancelled factory's environment was not closed"
+        assert second_started.is_set()
+        assert second_saw_first_closed == [True], (
+            "replacement constructor ran before the cancelled environment closed"
+        )
+        assert server._shared_session_executor is not None
+        server._shared_session_executor.shutdown(wait=True)
+
+    async def test_repeated_cancellation_during_mcp_enter_waits_for_env_cleanup(self):
+        """Cancellation in mcp_session.__aenter__ must finish all cleanup first."""
+        import asyncio
+        import threading
+        from contextlib import asynccontextmanager
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        enter_started = asyncio.Event()
+        enter_unwind_started = asyncio.Event()
+        release_enter_unwind = asyncio.Event()
+        enter_unwound = asyncio.Event()
+        never_finish_enter = asyncio.Event()
+        close_started = threading.Event()
+        release_close = threading.Event()
+        closed = threading.Event()
+
+        class CancelledMCPEnterEnv(Environment):
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                enter_started.set()
+                try:
+                    await never_finish_enter.wait()
+                    yield object()
+                finally:
+                    # Releasing resources here has to await, which is the window
+                    # a repeated cancellation can abort. The stack registers no
+                    # exit callback for an __aenter__ that never returned, so
+                    # nothing else can replay this cleanup.
+                    enter_unwind_started.set()
+                    await release_enter_unwind.wait()
+                    enter_unwound.set()
+
+            def close(self):
+                close_started.set()
+                release_close.wait(5)
+                closed.set()
+
+        server = HTTPEnvServer(
+            env=CancelledMCPEnterEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        creation = asyncio.create_task(server._create_session())
+        await asyncio.wait_for(enter_started.wait(), timeout=5)
+        creation.cancel()
+
+        # Cancel a second time while the entry's own unwind is awaiting, before
+        # it can finish releasing what __aenter__ had acquired.
+        await asyncio.wait_for(enter_unwind_started.wait(), timeout=5)
+        creation.cancel()
+        for _ in range(10):
+            await asyncio.sleep(0)
+        finished_before_unwind = creation.done()
+        release_enter_unwind.set()
+
+        assert await asyncio.get_running_loop().run_in_executor(
+            None, close_started.wait, 5
+        ), "environment cleanup never started"
+
+        creation.cancel()
+        for _ in range(3):
+            await asyncio.sleep(0)
+        finished_before_close = creation.done()
+        release_close.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await creation
+
+        assert not finished_before_unwind, (
+            "_create_session propagated repeated cancellation while the "
+            "interrupted MCP __aenter__ was still unwinding"
+        )
+        assert not finished_before_close, (
+            "_create_session propagated repeated cancellation while the env "
+            "from an interrupted MCP __aenter__ was still closing"
+        )
+        assert enter_unwound.is_set(), (
+            "repeated cancellation abandoned the MCP __aenter__ unwind"
+        )
+        assert closed.is_set(), "environment was not closed before cancellation escaped"
+        assert server._sessions == {}
+        assert server._session_executors == {}
+        assert server._session_stacks == {}
+        assert server._session_info == {}
+
+    async def test_cancel_during_failed_mcp_enter_closes_environment_once(self):
+        """Startup failure and cancellation must share one cleanup owner."""
+        import asyncio
+        import threading
+        from contextlib import asynccontextmanager
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        close_started = threading.Event()
+        release_close = threading.Event()
+        closes: list[int] = []
+
+        class FailingMCPEnterEnv(Environment):
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                raise RuntimeError("MCP handshake failed")
+                yield object()
+
+            def close(self):
+                closes.append(threading.get_ident())
+                close_started.set()
+                release_close.wait(5)
+
+        server = HTTPEnvServer(
+            env=FailingMCPEnterEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1,
+                session_timeout=None,
+            ),
+        )
+
+        creation = asyncio.create_task(server._create_session())
+        try:
+            # The startup-failure handler has already dispatched one close.
+            assert await asyncio.get_running_loop().run_in_executor(
+                None, close_started.wait, 5
+            ), "startup failure never closed the environment"
+
+            creation.cancel()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            release_close.set()
+
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(creation, timeout=5)
+
+            assert len(closes) == 1, f"environment closed {len(closes)} times"
+            assert server.active_sessions == 0
+            assert server._sessions == {}
+            assert server._session_executors == {}
+        finally:
+            release_close.set()
+            await asyncio.gather(creation, return_exceptions=True)
+
+    async def test_blocked_mcp_entry_does_not_starve_other_shared_factories(self):
+        """A stalled MCP handshake must not hold the shared creation lock."""
+        import asyncio
+        from contextlib import asynccontextmanager
+
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        loop = asyncio.get_running_loop()
+        first_entered = asyncio.Event()
+        release_first_enter = asyncio.Event()
+        second_constructed = asyncio.Event()
+        instances: list[Environment] = []
+
+        class SingleThreadMCPEnv(Environment):
+            REQUIRES_SINGLE_THREAD_EXECUTOR = True
+            SUPPORTS_CONCURRENT_SESSIONS = True
+
+            def __init__(self):
+                super().__init__()
+                self.number = len(instances) + 1
+                instances.append(self)
+                if self.number == 2:
+                    loop.call_soon_threadsafe(second_constructed.set)
+
+            @property
+            def state(self):
+                return State(step_count=0)
+
+            def reset(self, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            def step(self, action, **kwargs):
+                return Observation(done=False, reward=0.0)
+
+            @asynccontextmanager
+            async def mcp_session(self):
+                if self.number == 1:
+                    first_entered.set()
+                    await release_first_enter.wait()
+                yield object()
+
+        server = HTTPEnvServer(
+            env=SingleThreadMCPEnv,
+            action_cls=Action,
+            observation_cls=Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=2,
+                session_timeout=None,
+            ),
+        )
+
+        first = asyncio.create_task(server._create_session())
+        second = None
+        try:
+            await asyncio.wait_for(first_entered.wait(), timeout=5)
+            second = asyncio.create_task(server._create_session())
+            try:
+                await asyncio.wait_for(second_constructed.wait(), timeout=1)
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "second factory starved behind MCP entry with an idle executor"
+                )
+        finally:
+            release_first_enter.set()
+            tasks = [first] + ([second] if second is not None else [])
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for session_id in list(server._sessions):
+                await server._destroy_session(session_id)
+            assert server._shared_session_executor is not None
+            server._shared_session_executor.shutdown(wait=True)
 
 
 class TestHTTPMCPSessionShutdown:
@@ -1849,6 +2508,178 @@ class TestHTTPMCPSessionReaper:
         server._start_reaper()
         # No task should be created when timeout is None
         assert server._reaper_task is None
+
+
+class TestWebSocketSessionReaper:
+    """The idle-session reaper running against plain `/ws` sessions.
+
+    The reaper polls every `max(timeout / 4, 5)` seconds, so with a 1 s
+    timeout its first check runs 5 s after app startup.
+    """
+
+    @staticmethod
+    def make_server(env_cls):
+        from openenv.core.env_server.types import ConcurrencyConfig
+
+        server = HTTPEnvServer(
+            env_cls,
+            MinimalAction,
+            Observation,
+            concurrency_config=ConcurrencyConfig(
+                max_concurrent_envs=1, session_timeout=1.0
+            ),
+        )
+        app = FastAPI()
+        server.register_routes(app)
+        return app, server
+
+    @staticmethod
+    def wait_until_reaped(server, deadline_s=8.0):
+        import time
+
+        deadline = time.monotonic() + deadline_s
+        while server.active_sessions and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert server.active_sessions == 0
+
+    def test_step_spanning_reaper_check_is_not_reaped(self):
+        import asyncio
+
+        envs = []
+
+        class SlowStepEnvironment(MinimalEnvironment):
+            def __init__(self):
+                super().__init__()
+                self.busy = False
+                self.closed_mid_step = False
+                envs.append(self)
+
+            async def step_async(self, action, **kwargs):
+                self.busy = True
+                # Longer than the timeout, and spans the reaper's first check.
+                await asyncio.sleep(5.5)
+                self.busy = False
+                return MinimalObservation(response="slow", reward=1.0)
+
+            def close(self):
+                if self.busy:
+                    self.closed_mid_step = True
+
+        app, server = self.make_server(SlowStepEnvironment)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "reset", "data": {}})
+            assert ws.receive_json()["type"] == "observation"
+
+            ws.send_json({"type": "step", "data": {"message": "slow"}})
+            response = ws.receive_json()
+
+            assert response["type"] == "observation"
+            assert response["data"]["observation"]["response"] == "slow"
+            assert not envs[0].closed_mid_step
+            assert server.active_sessions == 1
+
+    def test_reaped_websocket_session_stops_serving(self):
+        from starlette.websockets import WebSocketDisconnect
+
+        app, server = self.make_server(MinimalEnvironment)
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws") as ws:
+                ws.send_json({"type": "reset", "data": {}})
+                assert ws.receive_json()["type"] == "observation"
+                self.wait_until_reaped(server)
+
+                ws.send_json({"type": "step", "data": {"message": "hi"}})
+                response = ws.receive_json()
+                assert response["type"] == "error"
+                assert response["data"]["code"] == "SESSION_ERROR"
+                with pytest.raises(WebSocketDisconnect):
+                    ws.receive_json()
+
+            # The released slot is free for a new session.
+            with client.websocket_connect("/ws") as ws2:
+                ws2.send_json({"type": "reset", "data": {}})
+                assert ws2.receive_json()["type"] == "observation"
+                assert server.active_sessions == 1
+
+    def test_idle_session_is_reaped_after_failed_step(self):
+        envs = []
+
+        class FailingStepEnvironment(MinimalEnvironment):
+            def __init__(self):
+                super().__init__()
+                self.closed = False
+                envs.append(self)
+
+            def step(self, action):
+                raise RuntimeError("step failed")
+
+            def close(self):
+                self.closed = True
+
+        app, server = self.make_server(FailingStepEnvironment)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "reset", "data": {}})
+            assert ws.receive_json()["type"] == "observation"
+            ws.send_json({"type": "step", "data": {"message": "hi"}})
+            assert ws.receive_json()["data"]["code"] == "EXECUTION_ERROR"
+
+            self.wait_until_reaped(server)
+            assert envs[0].closed
+
+    def test_second_socket_on_session_keeps_step_in_flight(self):
+        import asyncio
+        import time
+
+        envs = []
+
+        class SlowStepEnvironment(MinimalEnvironment):
+            def __init__(self):
+                super().__init__()
+                self.busy = False
+                self.closed_mid_step = False
+                envs.append(self)
+
+            async def step_async(self, action, **kwargs):
+                self.busy = True
+                await asyncio.sleep(5.5)
+                self.busy = False
+                return MinimalObservation(response="slow", reward=1.0)
+
+            def close(self):
+                if self.busy:
+                    self.closed_mid_step = True
+
+        app, server = self.make_server(SlowStepEnvironment)
+        with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "reset", "data": {}})
+            assert ws.receive_json()["type"] == "observation"
+            # A /ws client can learn its session ID and attach a second socket.
+            ws.send_json(
+                {
+                    "type": "mcp",
+                    "data": {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "openenv/session/create",
+                        "params": {},
+                    },
+                }
+            )
+            session_id = ws.receive_json()["data"]["result"]["session_id"]
+
+            ws.send_json({"type": "step", "data": {"message": "slow"}})
+            deadline = time.monotonic() + 2
+            while not envs[0].busy and time.monotonic() < deadline:
+                time.sleep(0.01)
+            # The second socket's message ends while the step is still running.
+            with client.websocket_connect(f"/ws?session_id={session_id}") as ws2:
+                ws2.send_json({"type": "state"})
+                assert ws2.receive_json()["type"] == "state"
+
+            response = ws.receive_json()
+            assert response["data"]["observation"]["response"] == "slow"
+            assert not envs[0].closed_mid_step
+            assert server.active_sessions == 1
 
 
 class TestWebSocketMCP:

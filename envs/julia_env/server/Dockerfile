@@ -77,21 +77,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Julia installation from builder
-# juliaup stores the manager in ~/.juliaup and actual Julia versions in ~/.julia/juliaup
-COPY --from=builder /root/.juliaup /root/.juliaup
-COPY --from=builder /root/.julia /root/.julia
+# Copy the Julia installation from builder, outside /root so that Julia code can
+# run as nobody. juliaup keeps the actual Julia versions in ~/.julia/juliaup.
+COPY --from=builder /root/.julia/juliaup /opt/julia
 
 # Create a direct symlink to Julia binary, bypassing the juliaup wrapper
 # This prevents juliaup from trying to check for updates at runtime
-# The juliaup wrapper (at ~/.juliaup/bin/julia) triggers network calls;
-# the actual Julia binary is in ~/.julia/juliaup/julia-*/bin/julia
 RUN echo "Looking for Julia binary..." && \
-    ls -la /root/.julia/juliaup/ && \
-    JULIA_BIN=$(find /root/.julia/juliaup -type f -executable -name "julia" 2>/dev/null | head -1) && \
+    JULIA_BIN=$(find /opt/julia -type f -executable -name "julia" 2>/dev/null | head -1) && \
     if [ -z "$JULIA_BIN" ]; then \
-        echo "ERROR: Could not find Julia binary. Contents of .julia/juliaup:" && \
-        find /root/.julia -name "julia*" -ls && \
+        echo "ERROR: Could not find Julia binary. Contents of /opt/julia:" && \
+        find /opt/julia -name "julia*" -ls && \
         exit 1; \
     fi && \
     ln -sf "$JULIA_BIN" /usr/local/bin/julia && \
@@ -99,6 +95,12 @@ RUN echo "Looking for Julia binary..." && \
 
 # Verify Julia works without network
 RUN julia --version
+
+# Precompile the standard library into a depot that Julia code running as
+# nobody can read but not change.
+ENV JULIA_DEPOT_PATH="/opt/julia-depot:"
+RUN julia -e 'using Test, LinearAlgebra, Statistics, Printf, Random, Dates, SparseArrays, Distributed, Sockets, DelimitedFiles' && \
+    chmod -R a+rX,go-w /opt/julia-depot
 
 ENV PATH="/usr/local/bin:${PATH}"
 
@@ -132,4 +134,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 EXPOSE 8000
 
 # Run the FastAPI server
-CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "cd /app/env && exec uvicorn server.app:app --host 0.0.0.0 --port 8000"]

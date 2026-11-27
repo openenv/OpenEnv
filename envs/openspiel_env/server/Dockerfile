@@ -64,4 +64,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=120s --retries=3 \
 EXPOSE 8000
 
 # Run the FastAPI server
-CMD uvicorn server.app:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 120 --workers ${WORKERS}
+CMD exec uvicorn server.app:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 120 --workers ${WORKERS}

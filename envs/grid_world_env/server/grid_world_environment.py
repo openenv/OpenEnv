@@ -38,13 +38,30 @@ class GridWorldEnvironment(Environment):
         # Initialize the base OpenEnv State Container
         self._state = State(episode_id=str(uuid.uuid4()), step_count=0)
 
-    def reset(self) -> GridWorldObservation:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> GridWorldObservation:
+        """
+        Put the agent back at [0, 0] and start a new episode.
+
+        Args:
+            seed (`int`, *optional*):
+                Accepted for API compatibility. Grid World has no randomness, so
+                it has no effect.
+            episode_id (`str`, *optional*):
+                Episode identifier. A UUID is generated when it is not given.
+        """
         # Update State
         self.agent_x = 0
         self.agent_y = 0
 
         self._state.step_count = 0
-        self._state.episode_id = str(uuid.uuid4())
+        self._state.episode_id = (
+            episode_id if episode_id is not None else str(uuid.uuid4())
+        )
         # Return initial observation (reward must be float 0.0, not None)
         return GridWorldObservation(
             x=self.agent_x,

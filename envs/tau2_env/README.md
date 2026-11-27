@@ -129,6 +129,6 @@ The image starts from a Python 3.12 base rather than `openenv-base`, because τ�
 ## Notes
 
 - τ²-bench is installed from GitHub, pinned to a commit. The `tau2` package on PyPI is an unrelated project.
-- To evaluate Claude Code on τ²-bench, see [Evaluate Claude Code in an Environment](https://huggingface.co/docs/openenv/tutorials/claude-code-harness).
+- To evaluate Claude Code on τ²-bench, see [Evaluate Claude Code in an Environment](https://openenv.github.io/OpenEnv/main/tutorials/claude-code-harness).
 - Train on the `train` split and evaluate on `test`, so training does not leak into the benchmark.
 - litellm has no prices for Inference Providers models, so τ²-bench reports the cost of those runs as $0.

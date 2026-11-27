@@ -21,7 +21,7 @@ def extract_boxed_answer(text: str) -> Optional[str]:
     Returns:
         The extracted answer or None if not found
     """
-    match = re.search(r"\\boxed\{([^}]+)\}", text)
+    match = re.search(r"\\boxed\{((?:[^{}]|\{[^{}]*\})+)\}", text)
     if match:
         return match.group(1).strip()
     return None
@@ -37,7 +37,7 @@ def extract_all_boxed_answers(text: str) -> list:
     Returns:
         List of extracted answers
     """
-    matches = re.findall(r"\\boxed\{([^}]+)\}", text)
+    matches = re.findall(r"\\boxed\{((?:[^{}]|\{[^{}]*\})+)\}", text)
     return [m.strip() for m in matches]
 
 
@@ -175,6 +175,11 @@ def _split_multi_value(text: str) -> list:
     return results
 
 
+def _strip_thousands_separators(text: str) -> str:
+    """Drop commas between digit groups, so "-3,514" stays one value when splitting."""
+    return re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", text)
+
+
 def compare_single_values(
     pred_num: Optional[float],
     truth_num: Optional[float],
@@ -205,6 +210,44 @@ def compare_single_values(
     return pred_str == truth_str
 
 
+def _values_match(
+    pred_values: list,
+    truth_values: list,
+    tolerance: float,
+    max_absolute_diff: float,
+) -> bool:
+    """Compare predicted values with ground truth values pairwise, in order."""
+    if len(pred_values) != len(truth_values):
+        return False
+
+    for pred_val, truth_val in zip(pred_values, truth_values):
+        # Strip year/label prefix (e.g. "2024: -4" -> "-4")
+        pred_val_cleaned = (
+            re.sub(r"^[^:]*:\s*", "", pred_val) if ":" in pred_val else pred_val
+        )
+        pred_num, pred_str = normalize_answer(pred_val_cleaned)
+        truth_num, truth_str = normalize_answer(truth_val)
+
+        if not compare_single_values(
+            pred_num, truth_num, pred_str, truth_str, tolerance, max_absolute_diff
+        ):
+            # Fallback: try without % conversion (for percentage points like "4.5%" vs "4.5")
+            pred_num_no_pct, _ = normalize_answer(
+                pred_val_cleaned, convert_percent=False
+            )
+            if not compare_single_values(
+                pred_num_no_pct,
+                truth_num,
+                pred_str,
+                truth_str,
+                tolerance,
+                max_absolute_diff,
+            ):
+                return False
+
+    return True
+
+
 def compute_reward(
     predicted: str,
     ground_truth: str,
@@ -232,37 +275,21 @@ def compute_reward(
     truth_boxed = extract_all_boxed_answers(ground_truth)
 
     if len(truth_boxed) > 1:
-        # Multiple ground truth values - split prediction by comma/semicolon
-        pred_values = re.split(r"[,;]\s*", predicted.strip())
-
-        if len(pred_values) != len(truth_boxed):
-            return 0.0  # Different number of values
-
-        # Compare each pair
-        for pred_val, truth_val in zip(pred_values, truth_boxed):
-            # Strip year/label prefix (e.g. "2024: -4" -> "-4")
-            pred_val_cleaned = (
-                re.sub(r"^[^:]*:\s*", "", pred_val) if ":" in pred_val else pred_val
-            )
-            pred_num, pred_str = normalize_answer(pred_val_cleaned)
-            truth_num, truth_str = normalize_answer(truth_val)
-
-            if not compare_single_values(
-                pred_num, truth_num, pred_str, truth_str, tolerance, max_absolute_diff
-            ):
-                # Fallback: try without % conversion (for percentage points like "4.5%" vs "4.5")
-                pred_num_no_pct, _ = normalize_answer(pred_val, convert_percent=False)
-                if not compare_single_values(
-                    pred_num_no_pct,
-                    truth_num,
-                    pred_str,
-                    truth_str,
-                    tolerance,
-                    max_absolute_diff,
-                ):
-                    return 0.0
-
-        return 1.0  # All values matched
+        # Multiple ground truth values. Split the prediction by comma/semicolon,
+        # then retry with thousands separators kept inside their numbers
+        # ("-3,514, 1,424") and with the prediction's own \boxed{} values.
+        pred_text = predicted.strip()
+        candidates = [
+            re.split(r"[,;]\s*", pred_text),
+            re.split(r"[,;]\s*", _strip_thousands_separators(pred_text)),
+            extract_all_boxed_answers(pred_text),
+        ]
+        if any(
+            _values_match(pred_values, truth_boxed, tolerance, max_absolute_diff)
+            for pred_values in candidates
+        ):
+            return 1.0
+        return 0.0
 
     # Single value comparison
     pred_num, pred_str = normalize_answer(predicted)

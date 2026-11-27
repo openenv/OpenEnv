@@ -15,12 +15,16 @@ following the same separation used by the official RLM implementation and DSPy:
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass
 from typing import Callable
 
 from .local import LocalREPLEnv
+from .managed_children import (
+    MANAGED_CHILD_TOOLS_PROMPT,
+    ManagedChildBackend,
+    ManagedChildConfig,
+)
 from .prompts import (
     build_rlm_system_prompt,
     build_user_prompt,
@@ -30,6 +34,10 @@ from .prompts import (
     RLM_SYSTEM_PROMPT,
 )
 from .recursive_backends import BackendLimits, LocalChildRLMBackend, RecursiveBackend
+from .recursive_controller import (
+    create_server_recursive_controller,
+    RecursiveController,
+)
 
 
 ChatFn = Callable[..., str]
@@ -66,6 +74,7 @@ class LocalRLMRunner:
         on_subcall_complete: Callable[[int, str, float, str | None], None]
         | None = None,
         verbose: bool = False,
+        managed_children: ManagedChildConfig | None = None,
     ) -> None:
         self.llm_chat_fn = llm_chat_fn
         self.system_prompt = system_prompt
@@ -82,6 +91,9 @@ class LocalRLMRunner:
         self.on_subcall_start = on_subcall_start
         self.on_subcall_complete = on_subcall_complete
         self.verbose = verbose
+        self.managed_children = managed_children
+        if managed_children is not None and backend_factory is not None:
+            raise ValueError("Choose managed_children or backend_factory, not both")
 
     def _default_backend_factory(
         self, llm_chat_fn: ChatFn, **kwargs
@@ -106,14 +118,27 @@ class LocalRLMRunner:
             on_subcall_complete=self.on_subcall_complete,
         )
 
-    def run(
-        self,
-        context: str,
-        task_prompt: str,
-        *,
-        model: str | None = None,
-        timeout_s: float | None = None,
-    ) -> RLMRunResult:
+    def _create_controller(self) -> RecursiveController:
+        if self.managed_children is not None:
+            if self.depth != 0:
+                raise ValueError(
+                    "Managed child controllers must be created at the root"
+                )
+            return create_server_recursive_controller(
+                self.llm_chat_fn,
+                max_depth=self.max_depth,
+                max_iterations=self.max_iterations,
+                system_prompt=self.system_prompt,
+                max_batch_workers=self.max_batch_workers,
+                max_children_total=self.max_children_total,
+                max_children_per_batch=self.max_children_per_batch,
+                result_truncation_limit=self.result_truncation_limit,
+                per_child_timeout_s=self.per_child_timeout_s,
+                env_max_iterations_multiplier=self.env_max_iterations_multiplier,
+                managed_children=self.managed_children,
+                on_subcall_start=self.on_subcall_start,
+                on_subcall_complete=self.on_subcall_complete,
+            )
         backend = self.backend_factory(
             self.llm_chat_fn,
             system_prompt=self.system_prompt,
@@ -122,12 +147,25 @@ class LocalRLMRunner:
             depth=self.depth,
             env_max_iterations_multiplier=self.env_max_iterations_multiplier,
         )
-        with LocalREPLEnv(
+        return RecursiveController(
             llm_query_fn=backend.query,
             llm_batch_fn=backend.query_batched,
-            subcall_fn=backend.recursive_query,
-            subcall_batch_fn=backend.recursive_query_batched,
-        ) as env:
+            rlm_query_fn=backend.recursive_query,
+            rlm_batch_fn=backend.recursive_query_batched,
+            backend=backend,
+        )
+
+    def run(
+        self,
+        context: str,
+        task_prompt: str,
+        *,
+        model: str | None = None,
+        timeout_s: float | None = None,
+    ) -> RLMRunResult:
+        controller = self._create_controller()
+        backend = controller.backend
+        with LocalREPLEnv(recursive_controller=controller) as env:
             result = env.reset(
                 context=context,
                 task_prompt=task_prompt,
@@ -141,7 +179,10 @@ class LocalRLMRunner:
                 context_total_length=obs.context_length,
                 context_type="str",
             )
-            messages = build_rlm_system_prompt(self.system_prompt, query_metadata)
+            system_prompt = self.system_prompt
+            if isinstance(backend, ManagedChildBackend):
+                system_prompt += "\n" + MANAGED_CHILD_TOOLS_PROMPT
+            messages = build_rlm_system_prompt(system_prompt, query_metadata)
             messages.append(build_user_prompt(root_prompt=task_prompt, iteration=0))
 
             run_start = time.perf_counter()
@@ -248,7 +289,9 @@ class LocalRLMRunner:
             idx = response.find("FINAL(")
             if idx != -1:
                 depth, start = 0, idx + len("FINAL")
-                for i, ch in enumerate(response[idx + len("FINAL"):], start=idx + len("FINAL")):
+                for i, ch in enumerate(
+                    response[idx + len("FINAL") :], start=idx + len("FINAL")
+                ):
                     if ch == "(":
                         depth += 1
                     elif ch == ")":

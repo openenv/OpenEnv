@@ -305,6 +305,10 @@ def _extract_archive(archive: Path, destination: Path) -> None:
             relative_parts = path.parts[1:]
             if not relative_parts or relative_parts[0] not in _ALLOWED_TOP_LEVELS:
                 continue
+            # _bundle_sha256 does not hash bytecode, so never extract it: an
+            # unverified .pyc next to the bundled servers could be imported.
+            if "__pycache__" in relative_parts or path.suffix in {".pyc", ".pyo"}:
+                continue
             if (
                 member.issym()
                 or member.islnk()

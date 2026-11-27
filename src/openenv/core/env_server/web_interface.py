@@ -169,7 +169,7 @@ def get_quick_start_markdown(
         lines += ["", after]
     lines += [
         "",
-        "More in the [OpenEnv documentation](https://huggingface.co/docs/openenv).",
+        "More in the [OpenEnv documentation](https://openenv.github.io/OpenEnv/).",
     ]
     return "\n".join(lines)
 
@@ -643,6 +643,8 @@ def create_web_interface_app(
         css=OPENENV_GRADIO_CSS,
     )
 
+    # Security middleware is attached inside create_fastapi_app, before the
+    # gradio mount at /web; it is app-level middleware, so it covers the mount.
     return app
 
 

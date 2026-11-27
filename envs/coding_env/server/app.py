@@ -26,7 +26,12 @@ from contextlib import suppress
 
 from coding_env.models import CodeAction, CodeObservation, CodeState
 from coding_env.server.python_codeact_env import PythonCodeActEnv
+from coding_env.server.python_executor import set_non_dumpable
 from openenv.core.env_server import create_app
+
+# Model code runs in worker processes that may share this server's uid, so keep
+# them from reading this process's memory and environment through /proc.
+set_non_dumpable()
 
 # Create the app with web interface and README integration
 # Pass the class (factory) instead of an instance for WebSocket session support
@@ -36,6 +41,7 @@ app = create_app(
     CodeObservation,
     env_name="coding_env",
     state_cls=CodeState,
+    max_concurrent_envs=int(os.getenv("MAX_CONCURRENT_ENVS", "8")),
 )
 
 

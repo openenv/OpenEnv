@@ -248,9 +248,25 @@ class RolloutGraph:
         self._nodes: dict[str, TurnNode] = {}
         self._order: list[str] = []
         self._children: dict[str, list[str]] = {}
+        # Every request re-sends the whole history, so each turn decodes a fresh copy of every
+        # earlier image and long text. Keep one copy per graph. Only immutable strings are shared;
+        # message dicts and lists stay per turn.
+        self._shared_text: dict[str, str] = {}
+
+    def _share_text(self, value: Any) -> Any:
+        if isinstance(value, str) and len(value) >= 1024:
+            return self._shared_text.setdefault(value, value)
+        if isinstance(value, list):
+            return [self._share_text(item) for item in value]
+        if isinstance(value, dict):
+            return {key: self._share_text(item) for key, item in value.items()}
+        return value
 
     # --- construction --------------------------------------------------
     def add_turn(self, node: TurnNode) -> TurnNode:
+        node.request_messages = self._share_text(node.request_messages)
+        node.request_tools = self._share_text(node.request_tools)
+        node.response_message = self._share_text(node.response_message)
         node.index = len(self._order)
         node.parent_id = self._find_parent(node)
         self._nodes[node.node_id] = node

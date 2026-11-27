@@ -1,0 +1,8 @@
+{
+  "plan_schema_version": "1",
+  "reset": {"episode_id": "__ENV_NAME__-smoke", "seed": 0},
+  "actions": [
+    {"message": "Hello"},
+    {"message": "Hello, World!"}
+  ]
+}

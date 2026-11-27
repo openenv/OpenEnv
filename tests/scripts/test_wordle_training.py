@@ -17,7 +17,8 @@ def run_training(monkeypatch, script, trainer, client=None):
         sys,
         "argv",
         [script, "--model", "example/model", "--hub-model-id", "example/output"]
-        + (["--dataset", "example/games"] if script == "sft.py" else []),
+        + (["--dataset", "example/games"] if script == "sft.py" else [])
+        + (["--env-url", "https://e.hf.space"] if script == "grpo.py" else []),
     )
     modules = {
         "torch": SimpleNamespace(bfloat16="bfloat16", float32="float32"),
@@ -84,6 +85,12 @@ class WordleClient:
             done=done,
             reward=reward,
         )
+
+    def sync(self):
+        return self
+
+    def close(self):
+        pass
 
     def reset(self):
         return self.result()

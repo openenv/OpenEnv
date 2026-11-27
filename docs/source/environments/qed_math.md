@@ -184,7 +184,7 @@ The environment normalizes many dataset formats automatically:
 | Field | Type | Description |
 |-------|------|-------------|
 | `problem` | `str` | Math problem statement |
-| `reference_solution` | `str` | Ground-truth solution |
+| `reference_solution` | `str` | Always empty. The ground-truth solution stays on the server and is only used for grading. |
 | `grading_guidelines` | `str` | Rubric / marking scheme |
 | `problem_id` | `str` | Unique identifier |
 | `problem_type` | `str` | `"proof"`, `"answer"`, or `"multi_step"` |
@@ -234,7 +234,7 @@ For answer-mode problems (`evaluation_mode: "answer"`), grading is routed throug
 
 ### Harness-injected token count
 
-Steps 4 and 5 require the full generation length (including any reasoning trace that is stripped before grading). This value cannot come from the agent — it is supplied by the training harness as an out-of-band field in the HTTP step request body, mirroring the [`StateUsageTracker`](https://github.com/PrimeIntellect-ai/verifiers/blob/main/verifiers/utils/usage_utils.py) pattern from PrimeIntellect/verifiers:
+Steps 4 and 5 require the full generation length (including any reasoning trace that is stripped before grading). This value cannot come from the agent — it is supplied by the training harness as an out-of-band field in the HTTP step request body, mirroring the [`StateUsageTracker`](https://github.com/PrimeIntellect-ai/verifiers/blob/fd495e5c4784a62cbed112fe8611c690f85a4f0c/verifiers/utils/usage_utils.py#L22) pattern from PrimeIntellect/verifiers:
 
 ```python
 # Training harness (pseudocode)

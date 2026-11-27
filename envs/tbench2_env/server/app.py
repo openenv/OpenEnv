@@ -29,7 +29,7 @@ Usage:
 
 Environment Variables:
     TB2_MODE: Execution mode - "local" (default) or "docker"
-    MAX_CONCURRENT_ENVS: Maximum concurrent WebSocket sessions (default: 8)
+    MAX_CONCURRENT_ENVS: Maximum concurrent WebSocket sessions (default: 8 in docker mode, 1 in local mode)
 """
 
 import os
@@ -41,13 +41,18 @@ try:
     # In-repo imports
     from tbench2_env.models import Tbench2Action, Tbench2Observation, Tbench2State
 
-    from .tbench2_env_environment import Tbench2DockerEnvironment, Tbench2Environment
+    from .tbench2_env_environment import (
+        set_non_dumpable,
+        Tbench2DockerEnvironment,
+        Tbench2Environment,
+    )
 except Exception as e:  # pragma: no cover
     from models import Tbench2Action, Tbench2Observation, Tbench2State
 
     # Standalone imports (when environment is standalone with openenv from pip)
     from openenv.core.env_server.http_server import create_app
     from server.tbench2_env_environment import (
+        set_non_dumpable,
         Tbench2DockerEnvironment,
         Tbench2Environment,
     )
@@ -64,6 +69,9 @@ if _TB2_MODE == "docker":
 elif _TB2_MODE == "local":
     _DEFAULT_ENVIRONMENT = Tbench2Environment
     _ENV_SUFFIX = " (local mode)"
+    # The agent's shell runs as this server's user: keep it from reading this
+    # process's environment and memory through /proc.
+    set_non_dumpable()
 else:
     # No silent aliases: the old "auto" value claimed to auto-detect Docker
     # but always ran local mode, and a typo'd mode would quietly do the same.
@@ -73,7 +81,10 @@ else:
 
 
 # Create the app with web interface and README integration
-max_concurrent = int(os.getenv("MAX_CONCURRENT_ENVS", "8"))
+# Local mode serves one session at a time (see Tbench2Environment).
+max_concurrent = int(
+    os.getenv("MAX_CONCURRENT_ENVS", "8" if _TB2_MODE == "docker" else "1")
+)
 
 app = create_app(
     _DEFAULT_ENVIRONMENT,
