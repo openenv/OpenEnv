@@ -1,0 +1,26 @@
+{
+  "manual_root": true,
+  "root_model_generated": false,
+  "included_in_accuracy": false,
+  "real_child_model": "Qwen/Qwen3-0.6B",
+  "recursive_runs": 1,
+  "reward": 1.0,
+  "trace": [
+    {
+      "code": "handle=rlm_query(\"Read this evidence: Paris is the capital of France. What is France's capital? Use one Python repl block and print(FINAL(answer)) to submit the single-word answer.\", blocking=False); print(handle)",
+      "output": "8eab587cc2774cc58dda1bd6454d34f5\n",
+      "seconds": 0.006172750028781593
+    },
+    {
+      "code": "print(context[context.find('=== Neighbor ==='):])",
+      "output": "=== Neighbor ===\nBelgium borders France.\n",
+      "seconds": 0.0003089170204475522
+    },
+    {
+      "code": "child_answer=rlm_wait(handle, timeout_s=30); print(child_answer.replace('FINAL', 'child_result'))",
+      "output": "Paris\n",
+      "seconds": 3.3086664580041543
+    }
+  ],
+  "note": "Manual API mechanism check with real GPU child; not a model-generated root trajectory, not held-out accuracy or a speedup benchmark."
+}

@@ -1,0 +1,104 @@
+{
+  "model_and_dataset_revisions": {
+    "Qwen/Qwen3.5-4B": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "Qwen/Qwen3-0.6B": "c1899de289a04d12100db370d81485cdf75e47ca",
+    "hotpotqa/hotpot_qa": "1908d6afbbead072334abe2965f91bd2709910ab"
+  },
+  "training_runtime_versions": {
+    "torch": "2.13.0",
+    "trl": "1.18.0",
+    "transformers": "5.24.1",
+    "vllm": "0.29.0",
+    "kernels": "0.18.2",
+    "trackio": "0.45.1",
+    "openai": "3.59.0",
+    "datasets": "5.2.0",
+    "peft": "0.22.0"
+  },
+  "openenv": "0.14.0",
+  "openenv_repl_commit": "3659dc73eb8114724209e642eee749cd94348ce3",
+  "optimizer_steps": 50,
+  "episodes_per_step": 32,
+  "evaluation_questions_per_model": 100,
+  "evaluation_selection": "First 100 rows of the HotpotQA distractor validation split, in dataset order. One training run.",
+  "root_hardware": "NVIDIA RTX PRO 6000 96GB",
+  "child_hardware": "NVIDIA A10G 24GB",
+  "frozen_child": true,
+  "sft_warmup": false,
+  "training_continuation": "A diagnostic training process exited after step 11. Standard Trainer resume from the intact step-10 checkpoint retained optimizer/RNG state; final history contains steps 1\u201350. Reported training cost includes both segments and the discarded step. No extra resume helper is part of the example.",
+  "source_input_hashes_location": "results.json: source_sha256",
+  "training_date_utc": "2026-11-24",
+  "final_adapter_audit": {
+    "tensor_count": 692,
+    "all_finite": true,
+    "lora_B_tensors": 346,
+    "nonzero_lora_B_tensors": 248,
+    "sha256": "7063e9e8ff5e9bb9e1bed41619802445ef51ad8f736914235b7bbc80a13f9c49"
+  },
+  "saved_training_episodes": 1600,
+  "merge_persistence": "Initial mounted output retained a complete temporary weight file. Its safetensors header and full length were checked, then server-side content-addressed copies restored the final filename and the actual adapter processor files. Evaluation uses those unchanged computed weights. The example now supports local serialization plus direct SDK bucket sync; that path is checked separately.",
+  "corrected_public_bucket_export": {
+    "current_public_script_completed": true,
+    "full_4b_weights_file_size_equal": true,
+    "tensor_names_shapes_dtypes_match": true,
+    "full_serialization_header_equal": true,
+    "artifact_checks": {
+      "model.safetensors": {
+        "original_bytes": 9078620536,
+        "sdk_bytes": 9078620536,
+        "xet_hash_identical": true
+      },
+      "config.json": {
+        "original_bytes": 2882,
+        "sdk_bytes": 2882,
+        "xet_hash_identical": true
+      },
+      "processor_config.json": {
+        "original_bytes": 1220,
+        "sdk_bytes": 1220,
+        "xet_hash_identical": true
+      },
+      "chat_template.jinja": {
+        "original_bytes": 7756,
+        "sdk_bytes": 7756,
+        "xet_hash_identical": true
+      },
+      "tokenizer.json": {
+        "original_bytes": 19989339,
+        "sdk_bytes": 19989339,
+        "xet_hash_identical": true
+      },
+      "tokenizer_config.json": {
+        "original_bytes": 2512,
+        "sdk_bytes": 2511,
+        "xet_hash_identical": false
+      }
+    },
+    "full_4b_weights_identical_to_evaluated_model": true,
+    "tokenizer_config_difference": {
+      "is_local": [
+        false,
+        true
+      ]
+    }
+  },
+  "observed_behavior": {
+    "base_recursive_child_runs": 10,
+    "trained_recursive_child_runs": 0,
+    "training_async_starts": 11,
+    "completed_training_async_search_wait_sequences_found": 0,
+    "trained_guided_hotpot_cases": 3,
+    "trained_guided_hotpot_cases_with_child": 0,
+    "trained_guided_synthetic_cases": 1,
+    "trained_guided_synthetic_cases_with_child": 0,
+    "interpretation": "Improved REPL question answering on this slice; no evidence of learned recursive or parallel delegation. Async mechanism demonstrated separately by manual orchestration with a real frozen GPU child."
+  },
+  "evaluation_dates_utc": [
+    "2026-11-24",
+    "2026-11-25"
+  ],
+  "analysis_runtime_versions": {
+    "numpy": "2.5.5",
+    "matplotlib": "3.11.2"
+  }
+}

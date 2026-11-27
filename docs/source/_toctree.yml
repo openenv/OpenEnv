@@ -53,6 +53,8 @@
       title: Train a Wordle Agent
     - local: tutorials/sudoku-grpo
       title: Train a Sudoku Agent
+    - local: tutorials/repl-hotpotqa-grpo
+      title: Train a Recursive Language Model on HotpotQA
     - local: tutorials/rl-training-2048
       title: Play 2048 with GRPO
     - local: tutorials/sft-warmup

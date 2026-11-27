@@ -1,0 +1,43 @@
+{
+  "num_questions": 100,
+  "training_steps": 50,
+  "models": {
+    "Base": {
+      "correct": 6,
+      "submitted_answers": 37,
+      "exact_match": 0.06,
+      "exact_match_wilson_95_interval": [
+        0.027786123963188192,
+        0.1247681544589592
+      ],
+      "mean_reward": 0.057999999999999996,
+      "mean_recursive_child_runs": 0.1,
+      "emitted_tool_calls": 1042,
+      "parsed_tool_calls": 1038
+    },
+    "GRPO": {
+      "correct": 56,
+      "submitted_answers": 92,
+      "exact_match": 0.56,
+      "exact_match_wilson_95_interval": [
+        0.4622810465167699,
+        0.6532797336983921
+      ],
+      "mean_reward": 0.56,
+      "mean_recursive_child_runs": 0.0,
+      "emitted_tool_calls": 429,
+      "parsed_tool_calls": 429
+    }
+  },
+  "paired_accuracy_change": 0.5,
+  "paired_bootstrap_95_interval": [
+    0.4,
+    0.6
+  ],
+  "uncertainty_method": "Per-model Wilson 95% intervals; paired percentile bootstrap, 10,000 resamples, seed 2026. One training run.",
+  "source_sha256": {
+    "trainer_state": "e5058b96b589a317410985d0a88fb9f69594dfa2f2c940d16a4f1f1e5433397f",
+    "base": "a4a702533b34900ca12cb20543c658e3cf1ced82bddb16d0fb9fb51147a6c37f",
+    "trained": "6af51eb662ced0c9e20db9b73a62a7af0f32b8b0d152718414c1cbeb6f239cc3"
+  }
+}
