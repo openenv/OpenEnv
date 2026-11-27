@@ -983,6 +983,15 @@ def test_shell_background_session_view_write_wait_kill(shell):
     assert "SESSION TERMINATED" in shell.shell_view(id="py")
 
 
+def test_shell_view_shows_prompt_without_newline(shell):
+    shell.shell_exec(
+        id="s", command='python3 -c \'print("hi", input("Name: "))\'', block=False
+    )
+
+    assert shell.shell_wait(id="s", wait_seconds=0.5) == "Name: "
+    assert "hi Ada" in shell.shell_write_to_process(id="s", command="Ada")
+
+
 def test_shell_wait_returns_output_when_session_finishes(shell):
     shell.shell_exec(id="s", command="sleep 0.2; echo done", block=False)
 

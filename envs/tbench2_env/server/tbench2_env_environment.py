@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import codecs
 import io
 import logging
 import math
@@ -124,9 +125,12 @@ class _ShellSession:
         self.reader.start()
 
     def _read(self) -> None:
-        for line in iter(self.process.stdout.readline, ""):
+        # Read whatever is available, not whole lines: a prompt without a trailing
+        # newline (`read -p "Name: "`, `input("> ")`) must reach the agent.
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        while chunk := os.read(self.process.stdout.fileno(), 4096):
             with self._lock:
-                self._chunks.append(line)
+                self._chunks.append(decoder.decode(chunk))
 
     def running(self) -> bool:
         return self.process.poll() is None
@@ -160,7 +164,7 @@ class _ShellSession:
                 os.killpg(self.process.pid, signal.SIGKILL)
                 self.process.wait()
             except ProcessLookupError:
-                pass
+                pass  # The process group already exited.
         self.reader.join(timeout=1)
 
 
@@ -186,8 +190,6 @@ class _TerminalSessions:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            errors="replace",
             start_new_session=True,
         )
 
@@ -210,14 +212,13 @@ class _TerminalSessions:
         try:
             output, _ = process.communicate(timeout=timeout or self.timeout)
         except subprocess.TimeoutExpired as exc:
-            partial = exc.output or ""
-            if isinstance(partial, bytes):
-                partial = partial.decode("utf-8", errors="replace")
+            partial = (exc.output or b"").decode("utf-8", errors="replace")
             self.sessions[id] = _ShellSession(process, partial)
             return (
                 f"Command did not complete within {timeout or self.timeout} seconds. "
                 f"It keeps running as session '{id}': use view, wait or kill with this session_id."
             )
+        output = output.decode("utf-8", errors="replace")
         return (
             output if output.strip() else "Command executed successfully (no output)."
         )
@@ -226,7 +227,7 @@ class _TerminalSessions:
         session = self._session(id)
         if not session.running():
             raise ValueError(f"Session '{id}' has finished.")
-        session.process.stdin.write(command + "\n")
+        session.process.stdin.write((command + "\n").encode())
         session.process.stdin.flush()
         session.wait_quiet()
         return self.shell_view(id)
@@ -251,7 +252,7 @@ class _TerminalSessions:
         try:
             session.process.wait(timeout=wait_seconds)
         except subprocess.TimeoutExpired:
-            pass
+            pass  # Still running: return what it printed so far.
         return self.shell_view(id)
 
     def shell_kill_process(self, id: str) -> None:
