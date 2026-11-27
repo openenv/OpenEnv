@@ -20,6 +20,7 @@ from openenv.harbor.images import (
     build_copy_layer_tar,
     build_harbor_images,
     classify_dockerfile,
+    compute_environment_hash,
     DockerBuildxBuilder,
     HarborImageError,
     KanikoHFJobsBuilder,
@@ -766,6 +767,52 @@ def test_build_harbor_images_deduplicates_routes_and_resumes(tmp_path: Path):
         assert resumed["total_tasks"] == 2
         assert resumed["resolved"] == 2
         assert run_calls == []
+
+
+def test_environment_hash_ignores_files_the_dockerfile_never_copies(tmp_path: Path):
+    run_df = "FROM python:3.12-slim\nWORKDIR /testbed\nRUN pip install pytest\n"
+    a = _write_task(
+        tmp_path, "a", dockerfile=run_df, env_files={"source/app.py": "x = 1\n"}
+    )
+    b = _write_task(
+        tmp_path, "b", dockerfile=run_df, env_files={"source/app.py": "x = 2\n"}
+    )
+    # Uploaded by Harbor at runtime, not baked into the image: one build serves both tasks
+    assert compute_environment_hash(a) == compute_environment_hash(b)
+
+    copy_df = "FROM python:3.12-slim\nCOPY source/ /app/\n"
+    c = _write_task(
+        tmp_path,
+        "c",
+        dockerfile=copy_df,
+        env_files={"source/app.py": "x = 1\n", "notes.txt": "a"},
+    )
+    d = _write_task(
+        tmp_path,
+        "d",
+        dockerfile=copy_df,
+        env_files={"source/app.py": "x = 2\n", "notes.txt": "a"},
+    )
+    e = _write_task(
+        tmp_path,
+        "e",
+        dockerfile=copy_df,
+        env_files={"source/app.py": "x = 1\n", "notes.txt": "b"},
+    )
+    assert compute_environment_hash(c) != compute_environment_hash(
+        d
+    )  # copied file differs
+    assert compute_environment_hash(c) == compute_environment_hash(
+        e
+    )  # only an uncopied file differs
+
+    # A bind mount reads the context without COPY: every file counts
+    mount_df = (
+        "FROM python:3.12-slim\nRUN --mount=type=bind,target=/src pip install /src\n"
+    )
+    f = _write_task(tmp_path, "f", dockerfile=mount_df, env_files={"setup.py": "a"})
+    g = _write_task(tmp_path, "g", dockerfile=mount_df, env_files={"setup.py": "b"})
+    assert compute_environment_hash(f) != compute_environment_hash(g)
 
 
 def test_cli_build_images_plan_json(tmp_path: Path):

@@ -666,13 +666,50 @@ def audit_environment(
     return file_hashes
 
 
+def _context_sources(dockerfile_text: str) -> list[str] | None:
+    """Build-context paths a Dockerfile reads through COPY/ADD, or ``None`` when that cannot be told statically.
+
+    Files under ``environment/`` that no instruction reads (e.g. a source tree Harbor uploads at runtime) cannot
+    change the image, so they must not split otherwise identical builds.
+    """
+    sources: list[str] = []
+    for line in _join_dockerfile_lines(dockerfile_text):
+        op, _, rest = line.partition(" ")
+        if "--mount" in rest:  # RUN --mount=type=bind reads the context without COPY
+            return None
+        if op.upper() not in {"COPY", "ADD"}:
+            continue
+        flags = []
+        rest = rest.strip()
+        while rest.startswith("--"):
+            flag, _, rest = rest.partition(" ")
+            flags.append(flag)
+            rest = rest.lstrip()
+        if any(
+            flag.startswith("--from=") for flag in flags
+        ):  # another stage or image, not the context
+            continue
+        try:
+            items = json.loads(rest) if rest.startswith("[") else shlex.split(rest)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        for source in items[:-1]:
+            source = str(source)
+            if op.upper() == "ADD" and "://" in source:  # a URL, not the context
+                continue
+            if "$" in source or "**" in PurePosixPath(source.lstrip("/")).parts:
+                return None
+            sources.append(source)
+    return sources
+
+
 def compute_environment_hash(
     task_dir: Path,
     *,
     extra_dockerfile: str | None = None,
     existing_docker_image: str | None = None,
 ) -> str:
-    """Deterministic SHA-256 of a task's effective build context."""
+    """Deterministic SHA-256 of a task's effective build context: the Dockerfile and the files it copies."""
     env_dir = task_dir / "environment"
     digest = hashlib.sha256()
     if extra_dockerfile:
@@ -683,7 +720,18 @@ def compute_environment_hash(
         digest.update((existing_docker_image or "").encode("utf-8") + b"\0")
         return digest.hexdigest()
 
-    for path in sorted(env_dir.rglob("*")):
+    dockerfile = env_dir / "Dockerfile"
+    sources = _context_sources(
+        dockerfile.read_text(encoding="utf-8") + "\n" + (extra_dockerfile or "")
+    )
+    if sources is None:
+        paths = set(env_dir.rglob("*"))
+    else:
+        paths = {dockerfile}
+        for source in sources:
+            for match in _resolve_copy_sources(env_dir, source):
+                paths |= {match, *match.rglob("*")} if match.is_dir() else {match}
+    for path in sorted(paths):
         if path.is_dir() or path.is_symlink():
             continue
         rel = path.relative_to(env_dir).as_posix()
