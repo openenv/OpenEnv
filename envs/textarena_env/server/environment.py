@@ -243,7 +243,9 @@ class TextArenaEnvironment(Environment):
         self._state.last_info = info or {}
 
         observation = self._build_observation()
-        observation.done = done
+        observation.done = done or (
+            self.max_turns is not None and self._state.step_count >= self.max_turns
+        )
 
         reward = self._extract_reward()
         observation.reward = reward

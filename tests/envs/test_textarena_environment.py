@@ -331,7 +331,9 @@ def fake_textarena(monkeypatch):
         environment, "_TEXTARENA_MODULE", SimpleNamespace(make=lambda **kw: Game())
     )
     rng_state = random.getstate()
-    yield lambda: TextArenaEnvironment(env_id="test", download_nltk=False)
+    yield lambda **kwargs: TextArenaEnvironment(
+        env_id="test", download_nltk=False, **kwargs
+    )
     random.setstate(rng_state)
 
 
@@ -341,6 +343,15 @@ def test_seed_forwarding_without_optional_dependencies(fake_textarena):
     env.reset(seed=0)
     assert env._ta_env.draw == random.Random(0).random()
     assert random.getstate() == before
+
+
+def test_max_turns_ends_the_episode(fake_textarena):
+    env = fake_textarena(max_turns=2)
+    env.reset()
+
+    dones = [env.step(TextArenaAction(message="go")).done for _ in range(2)]
+
+    assert dones == [False, True]
 
 
 def test_failed_seeded_reset_restores_rng(fake_textarena, monkeypatch):
