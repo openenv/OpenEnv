@@ -528,3 +528,52 @@ def test_trial_uri_with_escaped_characters_still_finds_the_trace(tmp_path, name)
     found = rollout._trial_dir(trial_result, tmp_path / name, "trial")
     assert found == trial_dir.resolve()
     assert rollout.load_trace(found)[1] == "atif"
+
+
+# --- sandbox memory floor ---------------------------------------------------
+def _config_for(tmp_path, memory_mb=None):
+    pytest.importorskip("harbor.models.trial.config")
+    task = tmp_path / "task"
+    task.mkdir(exist_ok=True)
+    env = "[environment]\n" + (f"memory_mb = {memory_mb}\n" if memory_mb else "")
+    (task / "task.toml").write_text(env)
+    return rollout.build_trial_config(
+        task_dir=task,
+        harness="opencode",
+        sandbox="docker",
+        intercept_url="http://proxy",
+        session_id="test",
+        model="Qwen/Qwen3.5-2B",
+        trial_name="test",
+        trials_dir=tmp_path,
+    )
+
+
+def test_sandbox_memory_floor_raises_a_small_task_limit(monkeypatch, tmp_path):
+    """opencode runs inside the sandbox and holds ~0.75 GB itself; a 1 GB task OOM-kills it."""
+    monkeypatch.setenv("OPENENV_HARBOR_SANDBOX_MEMORY_MB", "4096")
+    assert _config_for(tmp_path, memory_mb=1024).environment.override_memory_mb == 4096
+
+
+def test_sandbox_memory_floor_never_lowers_a_task_limit(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENENV_HARBOR_SANDBOX_MEMORY_MB", "4096")
+    assert _config_for(tmp_path, memory_mb=8192).environment.override_memory_mb is None
+
+
+def test_sandbox_memory_floor_applies_when_the_task_declares_none(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("OPENENV_HARBOR_SANDBOX_MEMORY_MB", "4096")
+    assert _config_for(tmp_path).environment.override_memory_mb == 4096
+
+
+def test_no_floor_keeps_the_task_limit(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENENV_HARBOR_SANDBOX_MEMORY_MB", raising=False)
+    assert _config_for(tmp_path, memory_mb=1024).environment.override_memory_mb is None
+
+
+@pytest.mark.parametrize("bad", ["4g", "0", "-1", "1.5"])
+def test_malformed_memory_floor_is_rejected(monkeypatch, tmp_path, bad):
+    monkeypatch.setenv("OPENENV_HARBOR_SANDBOX_MEMORY_MB", bad)
+    with pytest.raises(ValueError, match="OPENENV_HARBOR_SANDBOX_MEMORY_MB"):
+        _config_for(tmp_path, memory_mb=1024)

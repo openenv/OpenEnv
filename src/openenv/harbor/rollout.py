@@ -236,6 +236,40 @@ def _pick_reward(
     )
 
 
+def _sandbox_memory_mb() -> int | None:
+    """`OPENENV_HARBOR_SANDBOX_MEMORY_MB`: a deployment-wide sandbox memory floor, or None.
+
+    Harbor installs some harnesses INSIDE the task sandbox, so the agent shares the task's memory
+    limit with the code it runs. OpenCode's own process (Bun) holds ~0.75 GB, which leaves almost
+    nothing under a 1 GB task limit: on SmolDataEnvs-style tasks 19% of training rollouts and 8% of
+    eval trials were OOM-killed (exit 137) before the agent finished. The task file is the right
+    place to change that, but a trainer serving someone else's dataset cannot edit it.
+
+    Raises a limit and never lowers it: Harbor applies `override_memory_mb` as an override, so this
+    is only passed through when it exceeds the task's own `memory_mb`.
+    """
+    raw = os.environ.get("OPENENV_HARBOR_SANDBOX_MEMORY_MB", "").strip()
+    if not raw:
+        return None
+    if not raw.isdigit() or int(raw) <= 0:
+        raise ValueError(
+            f"OPENENV_HARBOR_SANDBOX_MEMORY_MB must be a positive integer (MB), got {raw!r}"
+        )
+    return int(raw)
+
+
+def _task_memory_mb(task_dir: Path | str) -> int | None:
+    """The task's own `[environment] memory_mb`, if it declares one."""
+    import tomllib
+
+    try:
+        data = tomllib.loads((Path(str(task_dir)) / "task.toml").read_text())
+    except (OSError, ValueError):
+        return None
+    value = (data.get("environment") or {}).get("memory_mb")
+    return int(value) if isinstance(value, int | float) else None
+
+
 def build_trial_config(
     *,
     task_dir: Path | str,
@@ -303,6 +337,15 @@ def build_trial_config(
         env=agent_env,
         override_timeout_sec=agent_timeout_sec,
     )
+    memory_floor = _sandbox_memory_mb()
+    task_memory = _task_memory_mb(task_dir)
+    override_memory_mb = (
+        memory_floor
+        if memory_floor is not None
+        and (task_memory is None or memory_floor > task_memory)
+        else None
+    )
+
     return TrialConfig(
         task=TaskConfig(path=Path(str(task_dir))),
         agent=agent,
@@ -316,6 +359,11 @@ def build_trial_config(
             ),
             delete=not keep_sandbox,
             force_build=force_build,
+            **(
+                {"override_memory_mb": override_memory_mb}
+                if override_memory_mb is not None
+                else {}
+            ),
             **(
                 {"kwargs": environment_kwargs} if environment_kwargs is not None else {}
             ),
