@@ -703,6 +703,25 @@ result = total
 
         assert obs.metadata.get("result") == 15  # Sum of 1+2+3+4+5
 
+    def test_code_mode_top_level_names_visible_inside_functions(
+        self, mcp_server_with_tools
+    ):
+        """Test names defined at the top level are visible inside functions."""
+        env = _TestMCPEnv(mcp_server_with_tools)
+        env.reset()
+
+        code = """
+import math
+k = 10
+def f(n):
+    return add(a=n, b=k) + math.floor(2.5)
+result = [f(1), (lambda: add(a=k, b=1))()]
+"""
+
+        obs = env.execute_code(code)
+
+        assert obs.metadata.get("result") == [13, 11]
+
 
 # =============================================================================
 # Code Mode with Mode-Aware Tools

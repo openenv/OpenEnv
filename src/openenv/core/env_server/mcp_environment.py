@@ -310,12 +310,11 @@ class MCPEnvironment(Environment):
             Observation with result in metadata["result"] or error in
             metadata["error"].
         """
-        namespace = self.get_callables()
-
-        result_dict: Dict[str, Any] = {}
+        # A single dict keeps top-level names visible inside functions the code defines.
+        namespace: Dict[str, Any] = self.get_callables()
         try:
-            exec(code, namespace, result_dict)
-            result = result_dict.get("result")
+            exec(code, namespace)
+            result = namespace.get("result")
             return Observation(done=False, reward=0.0, metadata={"result": result})
         except SyntaxError as e:
             return Observation(
