@@ -85,8 +85,9 @@ env.reset(
 
 Setup failure ends the reset response with `done=True` and returns captured
 setup results. Verify commands run when `terminal(final_answer="...")` is
-called. Reward defaults to `passed_verify_commands / total_verify_commands`. A
-verify command can override this by writing a float to:
+called. Reward defaults to `passed_verify_commands / total_verify_commands`.
+Without verify commands, submitting a final answer ends the episode with reward
+`0.0`. A verify command can override this by writing a float to:
 
 ```text
 /home/user/logs/verifier/reward.txt

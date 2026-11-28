@@ -57,6 +57,7 @@ class TerminusEnvironment(MCPEnvironment):
             if final_answer:
                 self._state.submitted_answer = final_answer
                 if not self._state.verify_commands:
+                    self._state.last_reward = 0.0
                     return f"Answer submitted: {final_answer}"
                 summary = self._run_verify_commands()
                 return (

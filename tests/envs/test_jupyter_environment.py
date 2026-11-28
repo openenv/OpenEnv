@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import shlex
@@ -217,6 +218,22 @@ def test_final_answer_runs_verify_commands():
     ]
     assert "exit 1" in fake_sandbox.process_commands
     assert "exit 1" not in fake_sandbox.shell_commands
+
+
+def test_final_answer_without_verify_commands_ends_the_episode():
+    def fresh_env():
+        env = JupyterEnvironment()
+        env._sandbox = FakeSandbox()
+        env._state = JupyterState(episode_id="episode-1", sandbox_id="fake-sandbox")
+        return env
+
+    action = CallToolAction(tool_name="final_answer", arguments={"answer": "done"})
+    obs = fresh_env().step(action)
+    async_obs = asyncio.run(fresh_env().step_async(action))
+
+    assert "Answer submitted: done" in _extract_text(obs.result)
+    assert (obs.done, obs.reward) == (True, 0.0)
+    assert (async_obs.done, async_obs.reward) == (True, 0.0)
 
 
 REWARD_FILE = "/home/user/logs/verifier/reward.txt"
