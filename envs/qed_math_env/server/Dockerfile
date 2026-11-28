@@ -19,7 +19,7 @@
 # Run:
 #   docker run -p 8000:8000 -e OPENAI_API_KEY=$OPENAI_API_KEY qed-math-env:latest
 
-ARG BASE_IMAGE=ghcr.io/huggingface/openenv-base:latest
+ARG BASE_IMAGE=ghcr.io/openenv/openenv-base:latest
 FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app

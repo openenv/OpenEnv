@@ -262,9 +262,11 @@ consecutive calls from different replicas; comparing values directly misread one
 
 ## Training with TRL
 
-TRL trains a policy on these rollouts with `AsyncGRPOTrainer` (`trl.experimental`, TRL 1.15 or
-later): you pass a `HarborSessionFactory` (a `functools.partial` with the server URL), and a
-`HarnessRolloutWorker` calls it with its sampling policy, opens one session per rollout and trains on each session's validated `TrainingTrace`.
+TRL trains a policy on these rollouts with `HarnessAsyncGRPOTrainer`
+(`trl.experimental.async_grpo.openenv_harness`, TRL 1.18 or later), an `AsyncGRPOTrainer` whose
+rollouts are harness sessions: you pass a
+`HarborSessionFactory` (a `functools.partial` with the server URL), and the trainer calls it with its
+sampling policy, opens one session per rollout and trains on each session's validated `TrainingTrace`.
 
 - [`examples/async_grpo_harbor`](https://github.com/huggingface/trl/tree/main/examples/async_grpo_harbor):
   a complete training script, with local setup and a Hugging Face Jobs launcher.

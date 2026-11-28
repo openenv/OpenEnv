@@ -144,7 +144,7 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=300.0,
         help=(
-            "Per-command budget inside the sandbox. The camel toolkit defaults "
+            "Per-command budget inside the sandbox. The environment defaults "
             "to 20s, which truncates real agent commands (default: 300)."
         ),
     )

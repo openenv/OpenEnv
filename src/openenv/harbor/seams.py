@@ -957,9 +957,10 @@ def custom(import_path: str) -> Seam:
     Harbor already constructs agents from an import path. What it cannot know is how to point one
     at the capture proxy, and that depends only on what the class is:
 
-      * a subclass of an agent with a seam (its `name()` is in `SEAMS`, e.g. your own opencode
-        subclass) is wired exactly like that agent. Where the seam's wiring lives in an OpenEnv
-        subclass (pi's `InterceptPi` writes models.json), yours must subclass that class;
+      * a subclass of an agent with a seam (the nearest class in its MRO whose `name()` is in
+        `SEAMS`, e.g. your own opencode subclass, even one that renames itself) is wired exactly
+        like that agent. Where the seam's wiring lives in an OpenEnv subclass (pi's `InterceptPi`
+        writes models.json), yours must subclass that class;
       * a host-side agent (a plain `BaseAgent`, like terminus-2) makes its model calls from THIS
         process, so it gets `api_base` (the proxy's `/v1` URL) and `api_key` (the capture session
         id) as constructor kwargs. Nothing reaches the sandbox or the verifier;
@@ -986,10 +987,25 @@ def custom(import_path: str) -> Seam:
         raise KeyError(
             f"cannot import harness {import_path!r}: {type(exc).__name__}: {exc}"
         ) from exc
-    try:
-        parent = cls.name()
-    except Exception:  # noqa: BLE001 - a name() that needs an instance is not a known agent
-        parent = None
+    # The nearest class in the MRO that names a known agent: a subclass that renames itself (MiMo's
+    # `MimoOpenCode` is `mimo-opencode`) still installs and talks to the model like its parent. Every
+    # renaming class before it must derive from it, so mixing in an unrelated agent (whose install
+    # and run would win) is still refused rather than wired like the known one.
+    parent = None
+    renamed: list[type] = []
+    for base in cls.__mro__:
+        if "name" not in vars(base):
+            continue
+        try:
+            named = base.name()
+        except Exception:  # noqa: BLE001 - a name() that needs an instance is not a known agent
+            named = None
+        if named in SEAMS:
+            if all(issubclass(r, base) for r in renamed):
+                parent = named
+            break
+        if named is not None:
+            renamed.append(base)
     if parent in SEAMS:
         wired_by = SEAMS[parent].import_path
         if wired_by:
