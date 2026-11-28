@@ -186,3 +186,7 @@ uv run --frozen python examples/record_trace.py outputs/example-traces
 ```
 
 Generated traces and validation logs are not included in the environment package.
+
+## Contributors
+
+Contributed by Huaiming Li (Famou Agent Team, Baidu AI Cloud).
