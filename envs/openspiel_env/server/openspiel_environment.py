@@ -115,6 +115,7 @@ class OpenSpielEnvironment(Environment):
 
         # Track last opponent action for learning
         self._last_opponent_action: int | None = None
+        self._final_observation: OpenSpielObservation | None = None
 
     def web_actions(
         self, observation: Dict[str, Any]
@@ -169,6 +170,7 @@ class OpenSpielEnvironment(Environment):
         )
         self._state.step_count = 0
         self._last_opponent_action = None
+        self._final_observation = None
 
         # Autoplay opponent turns until agent's turn
         time_step = self._auto_play_opponents(time_step)
@@ -190,12 +192,18 @@ class OpenSpielEnvironment(Environment):
 
         Returns:
             Observation after action execution (and opponent turns if multi-player).
+            Once the game has ended, the final observation is returned again until
+            `reset()`.
 
         Raises:
             ValueError: If action is not an OpenSpielAction.
         """
         if not isinstance(action, OpenSpielAction):
             raise ValueError(f"Expected OpenSpielAction, got {type(action)}")
+
+        # A finished game is not restarted by further steps
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
 
         # Apply agent's action
         if self.is_turn_based:
@@ -227,8 +235,10 @@ class OpenSpielEnvironment(Environment):
         if self.is_turn_based:
             time_step = self._auto_play_opponents(time_step)
 
-        # Convert to OpenEnv observation
-        return self._make_observation(time_step)
+        obs = self._make_observation(time_step)
+        if obs.done:
+            self._final_observation = obs.model_copy(deep=True)
+        return obs
 
     @property
     def state(self) -> OpenSpielState:

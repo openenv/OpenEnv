@@ -104,3 +104,20 @@ class TestResetSeed:
         assert (obs.info_state, obs.legal_actions, obs.opponent_last_action) == (
             expected[0]
         )
+
+
+class TestStepAfterDone:
+    """A finished game is not restarted by further steps."""
+
+    def test_step_after_done_returns_final_observation_until_reset(self):
+        env = OpenSpielEnvironment("tic_tac_toe", opponent_policy="first")
+        obs = env.reset()
+        while not obs.done:
+            obs = env.step(OpenSpielAction(action_id=obs.legal_actions[0]))
+        steps = env.state.step_count
+
+        again = env.step(OpenSpielAction(action_id=0))
+        assert again == obs
+        assert env.state.step_count == steps
+
+        assert not env.reset().done
