@@ -2,13 +2,15 @@
 
 **Status**: In Review
 **Created**: 10/14/2025
-**Amended**: November 12, 2025 _(a "Cloud Sandbox Providers" amendment is proposed below, pending author sign-off — see Amendment History)_
+**Amended**: 2026-11-19
 **Authors**: @Darktex, @pankit-eng, @jspisak, @zkwentz
 **RFC ID:** 002
 
 ## Amendment History
 
-**June 14, 2026** (proposed by @thegovind — pending review/sign-off by the RFC 002 authors): Added the "Cloud Sandbox Providers" subsection — a provider-neutral capability mapping, protocol invariants, and security invariants for adapting hosted sandbox runtimes onto the existing `ContainerProvider` contract without changing the client/server protocol.
+**2026-11-19** (ratified by @burtenshaw after a 7-day objection window): Accepted the "Cloud Sandbox Providers" amendment. Added its admission criteria, and corrected S1 to allow the loopback and in-cluster plaintext legs that `HFSandboxProvider` and `KubernetesProvider` already use, plus local development cluster gateways behind an explicit opt-in.
+
+**June 14, 2026** (proposed by @thegovind): Added the "Cloud Sandbox Providers" subsection — a provider-neutral capability mapping, protocol invariants, and security invariants for adapting hosted sandbox runtimes onto the existing `ContainerProvider` contract without changing the client/server protocol.
 
 **November 12, 2025**: Added tool duality (sim vs prod), Docker Compose patterns, positioning framework (OpenEnv vs systems built on top), and graceful degradation principles.
 
@@ -145,9 +147,7 @@ class ContainerProvider(ABC):
 
 #### Cloud Sandbox Providers
 
-> **Status:** proposed amendment, pending review/sign-off by the RFC 002 authors.
-> The normative invariants below (protocol + security) are not finalized until
-> the original authors approve.
+> **Status:** accepted 2026-11-19. See Amendment History.
 
 Cloud sandbox platforms expose the same small set of capabilities under
 different names. A cloud sandbox provider is an adapter that maps those
@@ -214,9 +214,14 @@ data, steal credentials, or reach the orchestrator. Treat the workload as
 hostile — no provider feature may rely on in-sandbox code being well-behaved —
 and enforce:
 
-S1. **Encrypted transport only.** The returned `base_url` is `https`/`wss`;
-   plaintext (`http`/`ws`) is rejected so episode traffic is never sent in the
-   clear.
+S1. **Encrypted transport only.** Episode traffic never leaves the host or the
+   cluster in the clear. The returned `base_url` is `https`/`wss`, with three
+   plaintext exceptions: a loopback proxy that forwards over `https`/`wss`
+   (`HFSandboxProvider` returns `http://127.0.0.1:{port}`), an in-cluster
+   Service address (`KubernetesProvider` returns
+   `http://{name}.{namespace}:{port}`), and a gateway of a local development
+   cluster on the same host (Kind, Minikube) behind an explicit opt-in such as
+   `allow_insecure=True`. Any other plaintext (`http`/`ws`) URL is rejected.
 S2. **Ingress URLs are bearer capabilities.** An anonymous or self-authenticating
    URL grants full control of the environment to whoever holds it: never logged,
    scoped and time-boxed, and network-restricted where possible. Authenticated
@@ -250,6 +255,36 @@ becomes an OpenEnv cloud provider by subclassing `ContainerProvider` and
 satisfying the invariants above. No change to the `EnvClient`/server protocol is
 required, and multiple unrelated provider SDKs can sit behind the same contract
 — which is what keeps it genuinely provider-neutral.
+
+##### Admission criteria
+
+A new cloud sandbox provider is admitted to core when it meets all of these:
+
+1. **Contract only.** One module that subclasses `ContainerProvider`, with no
+   changes to `EnvClient`, the server protocol, or the runtime package
+   re-exports.
+2. **An optional extra that resolves.** The SDK is OSI-licensed and published
+   on PyPI, the provider imports it lazily, and the extra resolves under
+   `uv sync --all-extras` on every supported Python. Environment markers are
+   allowed.
+3. **A generally available backend.** Self-hostable open source, or a hosted
+   service anyone can sign up for.
+4. **Security invariants.** S1 to S6 hold, with two exceptions: plaintext only
+   on the legs S1 allows (loopback, in-cluster, or a local development cluster
+   behind an explicit opt-in such as `allow_insecure=True`), and public ingress
+   only behind an explicit opt-in such as `public=True`. The provider documents
+   its egress and cloud metadata posture.
+5. **Evidence.** Fake-SDK tests that pin the real SDK's method names and
+   arguments, plus one live round trip recorded at the PR head: the `/ws`
+   upgrade returns `101`, `reset()` and `step()` complete, and cleanup is
+   confirmed. Hosted backends also show that the metadata endpoint is denied.
+6. **A named owner.** The provider's guide section names an owner for SDK
+   breakage. A provider whose extra stays broken in CI can be excluded from CI
+   and deprecated under the deprecation policy in `.claude/docs/INVARIANTS.md`:
+   a `FutureWarning` that names the removal release, at least two minor
+   releases after the first warning.
+7. **When to use which.** If an existing provider reaches the same backend,
+   the guide says when to use each.
 
 ### Key Design Decisions
 
