@@ -60,6 +60,12 @@ openenv validate ./my_env --level static
 openenv validate ./my_env --level runtime --local --output report.json
 ```
 
+Static reports include the declared CPU, memory, scratch disk, and per-episode
+timeout under `static.resource_declaration`. Missing required fields are reported
+by `static.manifest`. The separate `static.timeout_ceiling` check compares the
+declared timeout with the selected policy's maximum (3,600 seconds in the bundled
+policies).
+
 For served packages, runtime validation requires Docker and a `validation.execution` declaration in
 `openenv.yaml`. The declaration points to a bounded JSON replay plan containing
 one reset and a sequence of actions. The validator builds an immutable image,

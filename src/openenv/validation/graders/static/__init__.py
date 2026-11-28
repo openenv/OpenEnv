@@ -1,5 +1,6 @@
 """Static-level graders."""
 
 from .manifest import StaticManifestGrader
+from .resources import ResourceDeclarationGrader, TimeoutCeilingGrader
 
-__all__ = ["StaticManifestGrader"]
+__all__ = ["ResourceDeclarationGrader", "StaticManifestGrader", "TimeoutCeilingGrader"]
