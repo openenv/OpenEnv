@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from collections import UserDict
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -34,6 +35,21 @@ class SimpleTokenizer:
         if hasattr(token_ids, "tolist") and callable(token_ids.tolist):
             token_ids = token_ids.tolist()
         return "".join(chr(token) for token in token_ids)
+
+
+class BatchEncodingTokenizer(SimpleTokenizer):
+    """Like transformers 5, returns a BatchEncoding unless return_dict=False."""
+
+    def apply_chat_template(self, conversation, return_dict: bool = True, **kwargs):
+        tokens = super().apply_chat_template(conversation, **kwargs)
+        return UserDict(input_ids=tokens) if return_dict else tokens
+
+
+def test_chat_reset_with_batch_encoding_tokenizer() -> None:
+    """Reset should work when the tokenizer returns a BatchEncoding by default."""
+    env = ChatEnvironment(tokenizer=BatchEncodingTokenizer(), system_prompt="Hi")
+
+    assert env.reset().tokens == [ord("H"), ord("i")]
 
 
 def test_chat_reset_with_system_prompt_keeps_tokens_serializable() -> None:
