@@ -109,6 +109,8 @@ class DMControlObservation(Observation):
     done: bool
 ```
 
+Once `done` is `True`, further `step()` calls (the WebSocket session) do not advance the simulation. They return the final observation again until the next `reset()`.
+
 ### State
 
 ```python
