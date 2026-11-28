@@ -104,3 +104,21 @@ class TestResetSeed:
         assert (obs.info_state, obs.legal_actions, obs.opponent_last_action) == (
             expected[0]
         )
+
+
+class TestSimultaneousGames:
+    """Simultaneous-move games take the agent's action plus the opponent's."""
+
+    def test_reset_and_step_matrix_rps(self):
+        env = OpenSpielEnvironment("matrix_rps")
+        obs = env.reset()
+        assert obs.legal_actions == [0, 1, 2] and not obs.done
+        obs = env.step(OpenSpielAction(action_id=0))
+        assert obs.done and obs.game_phase == "terminal"
+        assert env.state.step_count == 1
+
+    def test_step_reports_the_opponent_action(self):
+        env = OpenSpielEnvironment("matrix_rps", opponent_policy="last")
+        env.reset()
+        obs = env.step(OpenSpielAction(action_id=0))
+        assert obs.opponent_last_action == 2
