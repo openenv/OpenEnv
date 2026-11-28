@@ -21,13 +21,19 @@ class CodeSafetyTransform(Transform):
 
     def __init__(self, penalty: float = -1.0):
         self.penalty = penalty
+        # \b stops a match inside a longer name such as my_open( or model.eval(
+        # style names; (?<![\w.]) keeps eval( and exec( from matching inside
+        # identifiers or method calls. popen/Popen are listed because \bopen(
+        # no longer catches them.
         self.dangerous_patterns = [
-            r"import\s+os",
-            r"import\s+subprocess",
-            r"eval\(",
-            r"exec\(",
+            r"\bimport\s+os\b",
+            r"\bimport\s+subprocess\b",
+            r"(?<![\w.])eval\(",
+            r"(?<![\w.])exec\(",
             r"__import__",
-            r"open\(",
+            r"\bopen\(",
+            r"\bpopen\(",
+            r"\bPopen\(",
         ]
 
     def __call__(self, observation: Observation) -> Observation:

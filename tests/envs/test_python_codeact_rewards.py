@@ -16,8 +16,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 pytest.importorskip("smolagents", reason="smolagents is not installed")
 
 
-from envs.coding_env.models import CodeAction
+from envs.coding_env.models import CodeAction, CodeObservation
 from envs.coding_env.server.python_codeact_env import PythonCodeActEnv
+from envs.coding_env.server.transforms import CodeSafetyTransform
 
 
 # ============================================================================
@@ -271,3 +272,58 @@ z = x + y
     # Should be flagged as dangerous even with safe code mixed in
     assert obs.reward < 0, "Code with dangerous import should have negative reward"
     assert "safety_violation" in obs.metadata
+
+
+# ============================================================================
+# CodeSafetyTransform boundaries
+# ============================================================================
+
+
+def _safety(code):
+    obs = CodeObservation(metadata={"last_code": code})
+    return CodeSafetyTransform()(obs)
+
+
+class TestCodeSafetyTransform:
+    """The safety penalty must hit dangerous calls, not names that contain one."""
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "ast.literal_eval(s)",
+            "urllib.request.urlopen(u)",
+            "import osmnx",
+            "import os_helpers",
+            "model.eval()",
+            'df.eval("a + b")',
+        ],
+        ids=["literal_eval", "urlopen", "osmnx", "os_helpers", "model.eval", "df.eval"],
+    )
+    def test_names_containing_a_pattern_are_not_penalized(self, code):
+        obs = _safety(code)
+
+        assert obs.reward == 0.0
+        assert "safety_violation" not in obs.metadata
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "import os",
+            "import os.path",
+            "import os, sys",
+            "import subprocess",
+            "eval('1+1')",
+            "exec('x=1')",
+            "__import__('os')",
+            "open('f.txt')",
+            "io.open('f')",
+            "os.open('f', 0)",
+            "os.popen('ls')",
+            "subprocess.Popen(['ls'])",
+        ],
+    )
+    def test_dangerous_code_is_penalized(self, code):
+        obs = _safety(code)
+
+        assert obs.reward == -1.0
+        assert "safety_violation" in obs.metadata
