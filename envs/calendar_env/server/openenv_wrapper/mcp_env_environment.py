@@ -22,7 +22,7 @@ is in config.py.
 
 import asyncio
 import logging
-from typing import Union
+from typing import Any, Optional, Union
 from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
@@ -107,14 +107,24 @@ class MCPEnvironment(Environment):
 
         logger.debug(f"Request context set: database_id={self._current_database_id}")
 
-    def reset(self) -> MCPObservation:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        episode_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> MCPObservation:
         """
         Reset the environment to initial state.
+
+        Args:
+            seed: Accepted for API compatibility. Tool calls run against the
+                database and have no random state, so it has no effect.
+            episode_id: Optional episode identifier (generated if omitted)
 
         Returns:
             MCPObservation with environment information and available tool count
         """
-        self._state = State(episode_id=str(uuid4()), step_count=0)
+        self._state = State(episode_id=episode_id if episode_id is not None else str(uuid4()), step_count=0)
         self._reset_count += 1
         self._successful_tool_calls = 0
         self._failed_tool_calls = 0
