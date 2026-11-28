@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.*"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -754,8 +754,8 @@ name = "httpcore2"
 version = "2.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11", marker = "sys_platform != 'emscripten'" },
-    { name = "truststore", marker = "sys_platform != 'emscripten'" },
+    { name = "h11" },
+    { name = "truststore" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/15/8c/e925b1c92018abb3a1863ce1549d76d2381e334d21d65d4ac8f65dabd78a/httpcore2-2.13.0.tar.gz", hash = "sha256:2adc8be4fb285fbcd6d894298db3b52c177e74b6674eda3a76bd36be3292a3db", size = 67740, upload-time = "2026-09-14T14:18:04.717Z" }
 wheels = [
@@ -1266,7 +1266,7 @@ dependencies = [
 requires-dist = [
     { name = "azure-containerapps-sandbox", marker = "extra == 'aca'", specifier = ">=0.1.0b2,<0.2.0" },
     { name = "azure-identity", marker = "extra == 'aca'", specifier = ">=1.23.0" },
-    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.136.0,<1" },
+    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.136.0,<3" },
     { name = "fastapi", specifier = ">=0.133.0" },
     { name = "fastapi-guard", marker = "extra == 'security'", specifier = ">=8.0.3,<9.0.0" },
     { name = "fastmcp", specifier = ">=4.0.10,<5.0.0" },
@@ -1911,8 +1911,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
