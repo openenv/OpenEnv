@@ -507,8 +507,12 @@ class StepEnvSessionAdapter(ResourceSession):
         if self._closed:
             return
         self._closed = True
-        if hasattr(self._client, "close") and callable(self._client.close):
-            self._client.close()
+        try:
+            if hasattr(self._client, "close") and callable(self._client.close):
+                self._client.close()
+        except BaseException:
+            self._closed = False
+            raise
 
 
 class SessionMCPBridge:
