@@ -1,0 +1,49 @@
+{
+  "case_id": "toy_case_001",
+  "conditions": ["control", "treated"],
+  "true_pathway": "MAPK signaling",
+  "sample_ids": ["C1", "C2", "T1", "T2"],
+  "sample_metadata": {
+    "C1": "control",
+    "C2": "control",
+    "T1": "treated",
+    "T2": "treated"
+  },
+  "default_contrast": {
+    "reference": "control",
+    "alternate": "treated"
+  },
+  "counts": {
+    "DUSP6": [100, 110, 800, 820],
+    "FOS": [90, 100, 750, 760],
+    "JUN": [80, 85, 700, 710],
+    "EGR1": [70, 75, 600, 620],
+    "MAPK1": [60, 65, 500, 520],
+    "AKT1": [200, 210, 205, 215],
+    "PIK3CA": [150, 155, 152, 158],
+    "PTEN": [180, 175, 182, 178],
+    "MTOR": [120, 125, 122, 128],
+    "GAPDH": [1000, 1050, 1020, 1010],
+    "ACTB": [900, 920, 910, 905],
+    "TUBB": [400, 410, 405, 408],
+    "HPRT": [150, 155, 152, 154],
+    "PPIA": [500, 510, 505, 508],
+    "RPLP0": [800, 820, 810,815]
+  },
+  "pathway_genes": {
+    "MAPK signaling": ["DUSP6", "FOS", "JUN", "EGR1", "MAPK1"],
+    "ERK cascade": ["DUSP6", "FOS", "MAPK1", "JUN"],
+    "PI3K-Akt signaling": ["AKT1", "PIK3CA", "PTEN", "MTOR"]
+  },
+  "analysis_options": {
+    "min_total_count": 10,
+    "padj_alpha": 0.05,
+    "de_query_direction": "up",
+    "min_abs_log2fc": 0.0,
+    "ora_min_pathway_genes": 3
+  },
+  "expert_budget": 2,
+  "expert_penalty": 0.25,
+  "expert_hint": "The strongest ORA signal aligns with genes that rise sharply under the treated condition; check overlap genes across top pathways for hub effects.",
+  "strict_mode": false
+}
