@@ -44,6 +44,8 @@ class Connect4Environment(Environment):
         self.board = np.zeros((self.ROWS, self.COLUMNS), dtype=np.int8)
         self.next_player = 1
         self.invalid_move_played = False
+        # Kept once the game ends; later steps return it again until reset().
+        self._final_observation: Connect4Observation | None = None
 
         self._state = Connect4State(
             board=self.board.copy().tolist(),
@@ -54,6 +56,11 @@ class Connect4Environment(Environment):
         return self._make_observation()
 
     def step(self, action: Connect4Action):
+        # After a win, a draw or an invalid move no piece is dropped and nothing
+        # is scored: return the final observation again.
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
+
         col = action.column
         # reward = 0.0
         done = False
@@ -82,7 +89,10 @@ class Connect4Environment(Environment):
             step_count=self._state.step_count + 1,
         )
 
-        return self._make_observation(reward, done)
+        obs = self._make_observation(reward, done)
+        if done:
+            self._final_observation = obs.model_copy(deep=True)
+        return obs
 
     def _make_observation(self, reward=0.0, done=False):
         legal_actions = [c for c in range(self.COLUMNS) if self.board[0, c] == 0]

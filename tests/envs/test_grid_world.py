@@ -94,3 +94,21 @@ class TestResetSeed:
         env = GridWorldEnvironment()
         asyncio.run(env.reset_async(seed=3, episode_id="async-1"))
         assert env.state.episode_id == "async-1"
+
+
+class TestStepAfterDone:
+    """Steps after the goal is reached return the final observation again."""
+
+    def test_goal_pays_only_once(self):
+        env = GridWorldEnvironment()
+        env.reset()
+        for move in [MoveAction.DOWN] * 4 + [MoveAction.RIGHT] * 4:
+            final = env.step(GridWorldAction(action=move))
+        assert final.done and final.reward == 1.0
+
+        for move in (MoveAction.UP, MoveAction.DOWN):
+            assert env.step(GridWorldAction(action=move)) == final
+        assert env.state.step_count == 8
+
+        assert not env.reset().done
+        assert env.step(GridWorldAction(action=MoveAction.DOWN)).reward == -0.1

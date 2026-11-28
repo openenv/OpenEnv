@@ -122,6 +122,30 @@ class TestChessEnvironment:
         assert obs.reward == 0.0
         assert obs.legal_moves == []
 
+    def test_steps_after_checkmate_return_the_final_observation(self, env):
+        env.reset()
+        for move in ("f2f3", "e7e5", "g2g4", "d8h4"):  # Fool's mate
+            final = env.step(ChessAction(move=move))
+        assert final.done and final.result == "0-1"
+
+        assert env.step(ChessAction(move="e2e4")) == final
+        assert env.state.step_count == 4
+
+    @pytest.mark.parametrize(
+        "fen",
+        [
+            "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3",
+            "7k/5K2/6Q1/8/8/8/8/8 b - - 0 1",
+        ],
+        ids=["checkmate", "stalemate"],
+    )
+    def test_steps_after_a_terminal_reset_return_the_reset_observation(self, env, fen):
+        initial = env.reset(fen=fen)
+        assert initial.done
+
+        assert env.step(ChessAction(move="a2a3")) == initial
+        assert env.state.step_count == 0
+
 
 class TestChessEnvironmentWithOpponent:
     """Test Chess environment with opponent configured."""

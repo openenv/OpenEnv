@@ -71,6 +71,8 @@ class ChessEnvironment(Environment):
         self._state = None
         self._agent_color = chess.WHITE
         self._agent_move_count = 0  # Track agent moves for discounting
+        # Kept once the game ends; later steps return it again until reset().
+        self._final_observation: ChessObservation | None = None
         self.reset()
 
     def reset(
@@ -124,6 +126,7 @@ class ChessEnvironment(Environment):
             move_history=[],
         )
         self._agent_move_count = 0
+        self._final_observation = None
 
         # The opponent moves first when it is not the agent's turn: Black on the
         # standard board, or the side to move in a custom FEN.
@@ -132,7 +135,10 @@ class ChessEnvironment(Environment):
 
         # Check if starting position is already terminal (e.g., custom FEN with checkmate/stalemate)
         _, done = self._calculate_reward_and_done()
-        return self._make_observation(done=done)
+        obs = self._make_observation(done=done)
+        if done:
+            self._final_observation = obs.model_copy(deep=True)
+        return obs
 
     def step(self, action: ChessAction):
         """
@@ -146,6 +152,11 @@ class ChessEnvironment(Environment):
         """
         if self._board is None:
             raise RuntimeError("Environment not initialized. Call reset() first.")
+
+        # After the game ends no move is played and nothing is scored: return
+        # the final observation again until reset().
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
 
         # Parse the move
         try:
@@ -174,6 +185,8 @@ class ChessEnvironment(Environment):
             reward, done = self._calculate_reward_and_done()
 
         obs = self._make_observation(reward=reward, done=done)
+        if done:
+            self._final_observation = obs.model_copy(deep=True)
 
         # Feed to rubric for trajectory accumulation
         self._apply_rubric(action, obs)

@@ -90,6 +90,8 @@ class MazeEnvironment(Environment[MazeAction, MazeObservation, MazeState]):
 
         self._state = MazeState(episode_id=str(uuid4()), step_count=0)
         self._reset_count = 0
+        # Kept once the episode ends; later steps return it again until reset().
+        self._final_observation: MazeObservation | None = None
         self._sync_state(done=False)
 
     def reset(
@@ -128,6 +130,7 @@ class MazeEnvironment(Environment[MazeAction, MazeObservation, MazeState]):
             step_count=0,
         )
         self._reset_count += 1
+        self._final_observation = None
         self._sync_state(done=False)
 
         return self._build_observation(reward=0.0, done=False, status=Status.PLAYING)
@@ -148,13 +151,21 @@ class MazeEnvironment(Environment[MazeAction, MazeObservation, MazeState]):
         Returns:
             MazeObservation with the result of the action
         """
+        # After a win or a loss the agent doesn't move and nothing is scored:
+        # return the final observation again, so the exit can't pay twice.
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
+
         self._state.step_count += 1
 
         _, reward, status = self.env.step(int(action.action))
         done = status in (Status.WIN, Status.LOSE)
         self._sync_state(done=done)
 
-        return self._build_observation(reward=reward, done=done, status=status)
+        obs = self._build_observation(reward=reward, done=done, status=status)
+        if done:
+            self._final_observation = obs.model_copy(deep=True)
+        return obs
 
     def _build_observation(
         self, reward: float, done: bool, status: Status

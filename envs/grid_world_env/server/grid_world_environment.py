@@ -37,6 +37,8 @@ class GridWorldEnvironment(Environment):
 
         # Initialize the base OpenEnv State Container
         self._state = State(episode_id=str(uuid.uuid4()), step_count=0)
+        # Kept once the episode ends; later steps return it again until reset().
+        self._final_observation: GridWorldObservation | None = None
 
     def reset(
         self,
@@ -57,6 +59,7 @@ class GridWorldEnvironment(Environment):
         # Update State
         self.agent_x = 0
         self.agent_y = 0
+        self._final_observation = None
 
         self._state.step_count = 0
         self._state.episode_id = (
@@ -72,6 +75,11 @@ class GridWorldEnvironment(Environment):
         )
 
     def step(self, action: GridWorldAction) -> GridWorldObservation:
+        # After the goal is reached the agent doesn't move and nothing is scored:
+        # return the final observation again, so the goal can't pay twice.
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
+
         # Increment step counter in the base State
         self._state.step_count += 1
         # =============================================
@@ -112,9 +120,12 @@ class GridWorldEnvironment(Environment):
             done = True
             message = "You found the goal!"
 
-        return GridWorldObservation(
+        obs = GridWorldObservation(
             x=self.agent_x, y=self.agent_y, message=message, reward=reward, done=done
         )
+        if done:
+            self._final_observation = obs.model_copy(deep=True)
+        return obs
 
     def web_actions(
         self, observation: Dict[str, Any]
