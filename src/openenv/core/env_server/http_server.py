@@ -1723,7 +1723,9 @@ class HTTPEnvServer:
 
                         try:
                             jsonrpc_dict = json.loads(raw_message)
-                            jsonrpc_request = JsonRpcRequest(**jsonrpc_dict)
+                            jsonrpc_request = JsonRpcRequest.model_validate(
+                                jsonrpc_dict
+                            )
                         except json.JSONDecodeError as e:
                             error_resp = JsonRpcResponse.error_response(
                                 JsonRpcErrorCode.PARSE_ERROR,
@@ -2122,6 +2124,16 @@ all schema information needed to interact with the environment.
                                 data={
                                     "message": f"Invalid JSON: {e}",
                                     "code": WSErrorCode.INVALID_JSON,
+                                }
+                            )
+                            await websocket.send_text(error_resp.model_dump_json())
+                            continue
+
+                        if not isinstance(message_dict, dict):
+                            error_resp = WSErrorResponse(
+                                data={
+                                    "message": "Message must be a JSON object",
+                                    "code": WSErrorCode.VALIDATION_ERROR,
                                 }
                             )
                             await websocket.send_text(error_resp.model_dump_json())
