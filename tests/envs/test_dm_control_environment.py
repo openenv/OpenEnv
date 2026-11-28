@@ -27,3 +27,26 @@ def test_dm_control_web_playground():
     jpeg = base64.b64decode(frame.split("base64,")[1].split('"')[0])
     assert jpeg.startswith(b"\xff\xd8")
     assert env.render_web({}) is None
+
+
+def test_reset_seed_repeats_the_initial_state():
+    def first_positions(seed):
+        env = DMControlEnvironment()
+        try:
+            return env.reset(seed=seed).observations["position"]
+        finally:
+            env.close()
+
+    assert first_positions(0) == first_positions(0)
+    assert first_positions(0) != first_positions(1)
+
+
+def test_reset_keeps_the_given_episode_id():
+    env = DMControlEnvironment()
+    try:
+        env.reset(episode_id="episode-7")
+        assert env.state.episode_id == "episode-7"
+        env.reset()
+        assert env.state.episode_id != "episode-7"
+    finally:
+        env.close()
