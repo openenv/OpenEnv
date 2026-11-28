@@ -398,7 +398,7 @@ class LocalDockerProvider(ContainerProvider):
         """
         import time
 
-        clean_image = image.split("/")[-1].split(":")[0]
+        clean_image = image.split("/")[-1].split("@")[0].split(":")[0]
         timestamp = int(time.time() * 1000)
         return f"{clean_image}-{timestamp}"
 
@@ -714,7 +714,7 @@ class DockerSwarmProvider(ContainerProvider):
     def _generate_service_name(self, image: str) -> str:
         import time
 
-        clean_image = image.split("/")[-1].split(":")[0]
+        clean_image = image.split("/")[-1].split("@")[0].split(":")[0]
         timestamp = int(time.time() * 1000)
         return f"{clean_image}-swarm-{timestamp}"
 
