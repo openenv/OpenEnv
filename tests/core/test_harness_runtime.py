@@ -186,6 +186,58 @@ class TestStepEnvSessionAdapter:
                 initial_messages_builder=lambda result, task: [],
             )
 
+    def test_session_can_retry_after_client_close_fails(self):
+        class FlakyCloseEnv(FakeSyncEnv):
+            close_attempts = 0
+
+            def close(self):
+                self.close_attempts += 1
+                if self.close_attempts == 1:
+                    raise ConnectionError("provider stop failed")
+                super().close()
+
+        env = FlakyCloseEnv()
+        session = StepEnvSessionAdapter(
+            client=env,
+            tool_specs=[],
+            action_builder=lambda name, arguments: None,
+            initial_messages_builder=lambda result, task: [],
+        )
+
+        with pytest.raises(ConnectionError, match="provider stop failed"):
+            session.close()
+        assert not env.closed
+
+        session.close()
+        session.close()
+
+        assert env.closed
+        assert env.close_attempts == 2
+
+    def test_session_close_does_not_delegate_again_while_in_progress(self):
+        class ReentrantCloseEnv(FakeSyncEnv):
+            close_attempts = 0
+
+            def close(self):
+                self.close_attempts += 1
+                if self.close_attempts == 1:
+                    session.close()
+                super().close()
+
+        env = ReentrantCloseEnv()
+        session = StepEnvSessionAdapter(
+            client=env,
+            tool_specs=[],
+            action_builder=lambda name, arguments: None,
+            initial_messages_builder=lambda result, task: [],
+        )
+
+        session.close()
+        session.close()
+
+        assert env.closed
+        assert env.close_attempts == 1
+
     def test_session_closes_client_when_reset_fails(self):
         class FailingResetEnv(FakeSyncEnv):
             def reset(self, **kwargs: Any) -> StepResult[dict[str, Any]]:
