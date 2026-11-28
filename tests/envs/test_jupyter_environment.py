@@ -153,6 +153,66 @@ def test_shell_tool_updates_notebook_state():
     assert env.state.cells[0].cell_type == "shell"
 
 
+def test_edit_replaces_the_last_code_cell_not_a_shell_cell():
+    env = JupyterEnvironment()
+    env._sandbox = FakeSandbox()
+    env._state = JupyterState(episode_id="episode-1", sandbox_id="fake-sandbox")
+
+    def call(tool_name, **arguments):
+        env.step(CallToolAction(tool_name=tool_name, arguments=arguments))
+
+    call("add_and_execute_code_cell", code="x = 1")
+    call("execute_shell_command", command="pwd")
+    call("edit_and_execute_current_cell", code="x = 2")
+
+    assert [(c.cell_type, c.code) for c in env.state.cells] == [
+        ("code", "x = 2"),
+        ("shell", "$ pwd"),
+    ]
+    assert [c["code"] for c in env._tracker.cells] == ["x = 2", "$ pwd"]
+
+
+def test_ui_reports_the_edited_cell_status_not_a_trailing_shell_cell():
+    pytest.importorskip("gradio")
+    import asyncio
+
+    from jupyter_env.server.gradio_ui import jupyter_ui_builder
+
+    class FailingCodeSandbox(FakeSandbox):
+        def run_code(self, code: str) -> CellResult:
+            result = super().run_code(code)
+            if "raise" in code:
+                result.success = False
+            return result
+
+    env = JupyterEnvironment()
+    env._sandbox = FailingCodeSandbox()
+    env._state = JupyterState(episode_id="episode-1", sandbox_id="fake-sandbox")
+
+    class WebManager:
+        def get_state(self):
+            return env.state.model_dump()
+
+        async def step_environment(self, action):
+            env.step(CallToolAction(**action))
+
+    demo = jupyter_ui_builder(WebManager(), [], None, False, "Jupyter", None)
+    on_edit_run = next(
+        f.fn for f in demo.fns.values() if f.fn.__name__ == "on_edit_run"
+    )
+    env.step(
+        CallToolAction(
+            tool_name="add_and_execute_code_cell", arguments={"code": "x = 1"}
+        )
+    )
+    env.step(
+        CallToolAction(tool_name="execute_shell_command", arguments={"command": "pwd"})
+    )
+
+    *_, status = asyncio.run(on_edit_run("raise ValueError()"))
+    assert status.startswith("✗")
+
+
 def test_reset_runs_setup_and_stores_verify_commands(monkeypatch):
     monkeypatch.setenv("E2B_API_KEY", "fake-key")
     env = JupyterEnvironment()
