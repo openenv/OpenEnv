@@ -444,6 +444,45 @@ class TestMCPHarnessAdapter:
 
         assert session.verified is False
 
+    def test_run_white_box_assistant_message_lists_only_executed_tool_calls(self):
+        env = FakeSyncEnv()
+        session = StepEnvSessionAdapter(
+            client=env,
+            task="white-box-task",
+            tool_specs=[
+                Tool(name=name, description=name, input_schema={"type": "object"})
+                for name in ("a", "b")
+            ],
+            action_builder=lambda name, arguments: name,
+            initial_messages_builder=lambda result, task: [
+                {"role": "user", "content": "Solve the task"}
+            ],
+        )
+        turns = iter(
+            [
+                LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="call-1", name="a", args={}),
+                        ToolCall(id="call-2", name="b", args={}),
+                    ],
+                ),
+                LLMResponse(content="Done"),
+            ]
+        )
+
+        result = MCPHarnessAdapter().run_white_box(
+            model_step=lambda messages, tools, sampling: ModelStepResult(
+                response=next(turns)
+            ),
+            session=session,
+            limits=HarnessRunLimits(max_tool_calls_per_turn=1),
+        )
+
+        announced = [call["id"] for call in result.messages[1]["tool_calls"]]
+        answered = [m["tool_call_id"] for m in result.messages if m["role"] == "tool"]
+        assert announced == answered == ["call-1"]
+
 
 class TestBuildHarnessRolloutFunc:
     """Tests for the TRL rollout helper built on sessions/harnesses."""

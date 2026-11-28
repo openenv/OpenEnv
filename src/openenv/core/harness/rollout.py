@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import (
     Any,
     Callable,
@@ -616,8 +616,13 @@ class MCPHarnessAdapter(HarnessAdapter):
 
         for turn_index in range(run_limits.max_turns):
             step_result = model_step(messages, tools, dict(run_limits.sampling))
-            assistant_message = step_result.response.to_message_dict()
-            messages.append(assistant_message)
+            tool_calls = step_result.response.tool_calls
+            if run_limits.max_tool_calls_per_turn is not None:
+                tool_calls = tool_calls[: run_limits.max_tool_calls_per_turn]
+            # Announce only the executed tool calls; each one needs a tool reply.
+            messages.append(
+                replace(step_result.response, tool_calls=tool_calls).to_message_dict()
+            )
 
             result.prompt_ids.extend(step_result.prompt_ids)
             result.completion_ids.extend(step_result.completion_ids)
@@ -643,10 +648,6 @@ class MCPHarnessAdapter(HarnessAdapter):
             if not step_result.response.tool_calls:
                 result.done = True
                 break
-
-            tool_calls = step_result.response.tool_calls
-            if run_limits.max_tool_calls_per_turn is not None:
-                tool_calls = tool_calls[: run_limits.max_tool_calls_per_turn]
 
             for tool_call in tool_calls:
                 if (
