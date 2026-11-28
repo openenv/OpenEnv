@@ -8,7 +8,10 @@ that the harness drives. There is no meaningful `step()` to expose while opencod
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
+import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -17,6 +20,8 @@ from openenv.core.env_server.mcp_environment import MCPEnvironment
 from openenv.core.env_server.types import Observation
 
 from .models import HarborState
+
+logger = logging.getLogger(__name__)
 
 # A rollout is minutes, not seconds. OpenEnv's MCP tools default to 30s and there is no config knob,
 # so the only way to raise it is to shadow `step`/`step_async` and inject a default.
@@ -38,6 +43,58 @@ def _trials_dir() -> Path:
     return Path(
         os.environ.get("OPENENV_HARBOR_TRIALS_DIR") or "/tmp/openenv-harbor-trials"
     )
+
+
+def _trials_max_age_s() -> float:
+    """`OPENENV_HARBOR_TRIALS_MAX_AGE_S`, or 0 (keep everything, the default)."""
+    raw = os.environ.get("OPENENV_HARBOR_TRIALS_MAX_AGE_S", "").strip()
+    if not raw:
+        return 0.0
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(
+            f"OPENENV_HARBOR_TRIALS_MAX_AGE_S must be a number of seconds, got {raw!r}"
+        ) from None
+    if value < 0:
+        raise ValueError(f"OPENENV_HARBOR_TRIALS_MAX_AGE_S must be >= 0, got {raw!r}")
+    return value
+
+
+def prune_trials(
+    trials_dir: Path, max_age_s: float, *, now: float | None = None
+) -> int:
+    """Delete trial directories under `trials_dir` not modified for `max_age_s` seconds.
+
+    For training, where every rollout's trace is already returned in the result and the directory is
+    only scratch: a 200-step run with 8 rollouts per step left 6,300 directories (8.8 GB) on `/tmp`
+    and filled the disk mid-run. Age is the newest mtime inside the directory, not the directory's
+    own, so a trial still being written is never removed. Only direct subdirectories are touched.
+    `max_age_s <= 0` is a no-op. Returns the number removed. Never raises.
+    """
+    if max_age_s <= 0 or not trials_dir.is_dir():
+        return 0
+    cutoff = (time.time() if now is None else now) - max_age_s
+    removed = 0
+    try:
+        entries = list(trials_dir.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
+        try:
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            newest = max(
+                (p.lstat().st_mtime for p in entry.rglob("*")),
+                default=entry.lstat().st_mtime,
+            )
+            if max(newest, entry.lstat().st_mtime) >= cutoff:
+                continue
+            shutil.rmtree(entry)
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 class HarborEnvironment(MCPEnvironment):
@@ -361,6 +418,19 @@ class HarborEnvironment(MCPEnvironment):
             )
 
         result = await _resolve_and_run()
+
+        # Scratch cleanup for long training runs: opt-in, after the rollout, never fatal. The rollout
+        # already finished, so nothing here may turn its result into a tool error: a malformed setting
+        # or an unreadable directory is logged and skipped. Runs in a worker thread so a large
+        # directory does not stall the event loop serving other sessions.
+        try:
+            max_age_s = _trials_max_age_s()
+            if max_age_s > 0:
+                import asyncio
+
+                await asyncio.to_thread(prune_trials, _trials_dir(), max_age_s)
+        except Exception as exc:  # noqa: BLE001 - cleanup must not fail a finished rollout
+            logger.warning("trial cleanup skipped: %s", exc)
 
         self._state.rollouts_completed += 1
         self._state.last_reward = result.reward

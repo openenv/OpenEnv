@@ -492,6 +492,13 @@ An unset UI flag keeps the default for where the server runs.
 
 Refuses to start only if the endpoint is unreachable. One that cannot return token ids starts as an eval deployment and says so.
 
+Each rollout leaves a Harbor trial directory under `OPENENV_HARBOR_TRIALS_DIR` (default
+`/tmp/openenv-harbor-trials`), and the server never deletes them. That is right for evals, where the
+trace is the evidence, but a training run fills the disk: 200 steps with 8 rollouts each left 6,300
+directories (8.8 GB). The rollout's trace is already in the result the trainer receives, so set
+`OPENENV_HARBOR_TRIALS_MAX_AGE_S` (for example `1800`) to delete trial directories untouched for that
+long after each rollout. Unset or `0` keeps everything.
+
 ### `openenv harbor push`
 
 Deploy the same server to a Hugging Face Space.
