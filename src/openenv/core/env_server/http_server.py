@@ -1358,6 +1358,10 @@ class HTTPEnvServer:
                 if hasattr(_env, "set_mode"):
                     _env.set_mode(mode.value)
                 should_close = True
+            in_flight = self._session_operations_in_flight
+            if managed_session_id:
+                in_flight[managed_session_id] = in_flight.get(managed_session_id, 0) + 1
+                self._update_session_activity(managed_session_id)
             try:
                 mcp_client = getattr(_env, "mcp_client", None)
                 mcp_server = getattr(_env, "mcp_server", None)
@@ -1586,6 +1590,9 @@ class HTTPEnvServer:
                 )
             finally:
                 if managed_session_id:
+                    in_flight[managed_session_id] -= 1
+                    if in_flight[managed_session_id] == 0:
+                        del in_flight[managed_session_id]
                     self._update_session_activity(
                         managed_session_id,
                         increment_step=(method == McpMethod.TOOLS_CALL),
@@ -1738,6 +1745,17 @@ class HTTPEnvServer:
                             )
                             await websocket.send_text(error_resp.model_dump_json())
                             continue
+
+                        # The reaper or shutdown may have destroyed this
+                        # session (closing its env and freeing its slot).
+                        if session_id not in self._sessions:
+                            error_resp = JsonRpcResponse.error_response(
+                                JsonRpcErrorCode.SERVER_ERROR,
+                                "Session expired or was closed; open a new connection",
+                                request_id=jsonrpc_request.id,
+                            )
+                            await websocket.send_text(error_resp.model_dump_json())
+                            break
 
                         try:
                             # Call mcp_handler with session environment

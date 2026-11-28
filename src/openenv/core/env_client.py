@@ -765,10 +765,22 @@ class EnvClient(ABC, Generic[ActT, ObsT, StateT]):
         # Check for error response
         if response.get("type") == "error":
             error_data = response.get("data", {})
-            raise RuntimeError(
+            message = (
                 f"Server error: {error_data.get('message', 'Unknown error')} "
                 f"(code: {error_data.get('code', 'UNKNOWN')})"
             )
+            if error_data.get("code") == "SESSION_ERROR":
+                # The server has destroyed the session (idle reaper or shutdown)
+                # and closes the socket. Drop it, so a retried step() raises
+                # SessionLostError too and reset() reconnects.
+                ws = self._ws
+                self._ws = None
+                self._ws_loop = None
+                self._schedule_socket_close(ws)
+                raise SessionLostError(
+                    f"{message}. Call reset() to start a new episode."
+                )
+            raise RuntimeError(message)
 
         return response
 
