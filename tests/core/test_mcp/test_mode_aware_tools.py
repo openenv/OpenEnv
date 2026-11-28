@@ -24,6 +24,7 @@ References:
 """
 
 import asyncio
+import time
 
 import pytest
 from fastmcp import FastMCP
@@ -33,6 +34,7 @@ from openenv.core.env_server.mcp_types import (
     CallToolObservation,
     ListToolsAction,
     ListToolsObservation,
+    ToolErrorType,
 )
 from openenv.core.env_server.types import Observation
 
@@ -732,3 +734,30 @@ class TestErrorHandling:
             "Result should be awaited, not a coroutine"
         )
         assert result_sim == "ASYNC_SIM_99", f"Expected ASYNC_SIM_99, got {result_sim}"
+
+
+class TestModeToolTimeout:
+    """Mode-specific tools honor timeout_s like FastMCP-registered tools."""
+
+    @pytest.mark.parametrize("is_async", [False, True])
+    def test_slow_mode_tool_times_out(self, is_async):
+        env = MinimalMCPEnv(FastMCP("test-server"))
+
+        if is_async:
+
+            @env.tool()
+            async def slow() -> str:
+                await asyncio.sleep(1)
+                return "done"
+
+        else:
+
+            @env.tool()
+            def slow() -> str:
+                time.sleep(1)
+                return "done"
+
+        obs = env.step(CallToolAction(tool_name="slow", arguments={}), timeout_s=0.1)
+
+        assert obs.error is not None
+        assert obs.error.error_type == ToolErrorType.TIMEOUT
