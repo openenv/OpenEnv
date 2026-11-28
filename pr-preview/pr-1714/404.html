@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenEnv</title>
+<meta name="description" content="This page does not exist. Go back to the OpenEnv docs.">
+<meta name="robots" content="noindex">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="OpenEnv">
+<meta property="og:title" content="OpenEnv">
+<meta property="og:description" content="This page does not exist. Go back to the OpenEnv docs.">
+<meta property="og:url" content="https://openenv.github.io/OpenEnv/pr-preview/pr-1714/404">
+<meta property="og:image" content="https://openenv.github.io/OpenEnv/pr-preview/pr-1714/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/OpenEnv/pr-preview/pr-1714/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/OpenEnv/pr-preview/pr-1714/favicon.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/OpenEnv/pr-preview/pr-1714/apple-touch-icon.png">
+<link rel="preload" href="/OpenEnv/pr-preview/pr-1714/fonts/lato-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/OpenEnv/pr-preview/pr-1714/docs.css">
+<link rel="stylesheet" href="/OpenEnv/pr-preview/pr-1714/shell.css">
+<script>
+  if (location.pathname.endsWith("/")) {
+    history.replaceState(null, "", location.pathname + "index" + location.search + location.hash);
+  }
+  const pageFetch = window.fetch;
+  window.fetch = (input, init) => {
+    const page = location.href.replace(/#.*$/, "");
+    if (input === page && new Headers(init?.headers).get("Accept") === "text/plain") {
+      input = page + ".md";
+    }
+    return pageFetch(input, init);
+  };
+</script>
+<script>
+  try {
+    const theme = localStorage.getItem("theme");
+    if (theme === "dark" || (!theme && matchMedia("(prefers-color-scheme: dark)").matches)) {
+      document.documentElement.classList.add("dark");
+    }
+  } catch {}
+</script>
+</head>
+<body data-sveltekit-reload>
+<header class="site-header">
+  <button class="menu-button" aria-label="Toggle navigation" onclick="document.body.classList.toggle('nav-open')">&#9776;</button>
+  <a class="site-title" href="/OpenEnv/pr-preview/pr-1714/"><svg viewBox="0 0 256 256" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="14" stroke-linejoin="round" d="M127.5 19 L219 68 L219 188 L127.5 237 L36 188 L36 68 Z M36 68 L127.5 117 L219 68 M127.5 117 L127.5 237"/></svg><span>OpenEnv</span></a>
+  <span class="version-badge">PR #1714</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/openenv/OpenEnv">GitHub</a>
+  <button class="theme-button" aria-label="Toggle dark mode" onclick="const dark = document.documentElement.classList.toggle('dark'); try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch {}">&#9680;</button>
+</header>
+<div class="site-layout">
+<nav class="site-nav"><ul><li><details open><summary>Get Started</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/">Overview</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/getting-started">Getting Started</a></li></ul></details></li><li><details open><summary>Concepts</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/guides/concepts">Core Concepts</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/mcp-environment">MCP Environments</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/rewards">Rewards</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/rubrics">Rubrics</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/auto-discovery">Auto-Discovery</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/catalog-discovery">Catalog Discovery</a></li><li><details><summary>Advanced Concepts</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/guides/simulation-vs-production">Simulation vs Production</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/async-sync">Async vs Sync</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/runtime-providers">Runtime Providers</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/task-api">The Task API</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/customizing-web-ui">Customizing the Web UI</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/request-security">Request Security</a></li></ul></details></li></ul></details></li><li><details open><summary>Learn</summary><ul><li><details><summary>Basics</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/index">Overview</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/openenv-tutorial">Hello World</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/first-environment">Your First Environment</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/getting_started/environment-builder">Deploying an Environment</a></li></ul></details></li><li><details><summary>Training</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/guides/training">Overview</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/end-to-end-walkthrough">Train a Reasoning Model</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/wordle-grpo">Train a Wordle Agent</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/sudoku-grpo">Train a Sudoku Agent</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/rl-training-2048">Play 2048 with GRPO</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/sft-warmup">Collect Rollouts for SFT</a></li></ul></details></li><li><details><summary>Harnesses</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/harnesses">Overview</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/browsergym-harness">White-Box: Train a Web Agent on BrowserGym</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/harbor-harness">Black-Box: Train Real Agents with Harbor</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/claude-code-harness">Evaluate Claude Code in an Environment</a></li></ul></details></li><li><details><summary>Evals</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/evaluation-inspect">Evaluating with Environments</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/tutorials/seahaven-environment">Tool-Use Environments (Seahaven)</a></li></ul></details></li></ul></details></li><li><details><summary>Environments</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/environments">Environments</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/echo">Echo</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/coding">Coding</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/jupyter">Jupyter</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/terminus">Terminus</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/coding_tools">Coding Tools</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/data_analysis">Data Analysis</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/harbor">Harbor</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/guides/harbor-provider-qualification">Harbor Qualification</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/chat">Chat</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/atari">Atari</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/openspiel">OpenSpiel</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/sumo">SUMO-RL</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/finrl">FinRL</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/llm_capacity">LLM Capacity Reservation</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/textarena">TextArena</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/git">Git</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/dipg">DIPG Safety</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/snake">Snake</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/websearch">Web Search</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/browsergym">BrowserGym</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/helium_browser">Helium Browser</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/repl">REPL</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/calendar">Calendar</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/carla">CARLA</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/chess">Chess</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/connect4">Connect4</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/dm_control">DM Control</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/finqa">FinQA</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/fraud_triage">Fraud Triage</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/grid_world">Grid World</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/julia">Julia</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/kernrl">KernRL</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/maze">Maze</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/openapp">OpenApp</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/qed_math">QED Math</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/reasoning_gym">Reasoning Gym</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/spatial_gym">Spatial-Gym</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/tau2">τ²-bench</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/tbench2">TBench2</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/thinkingbox">ThinkingBox</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/unity">Unity</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/wildfire">Wildfire</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/agent_world_model">Agent World Model</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/pelican_svg">Pelican SVG</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/posttrain">Post-training</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/sophistry_bench_sprint">Sophistry Bench Sprint</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/ortools">OR-Tools</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/stripe_world">Stripe World</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/harvest_rush">Harvest Rush</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/environments/sql_optim">SQL Query Optimization</a></li></ul></details></li><li><details><summary>API Reference</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/reference/index">Overview</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/reference/core">Core API</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/reference/cli">CLI</a></li></ul></details></li><li><details><summary>Project</summary><ul><li><a href="/OpenEnv/pr-preview/pr-1714/contributing">Contributing to OpenEnv</a></li><li><a href="/OpenEnv/pr-preview/pr-1714/getting_started/contributing-envs">Contributing Environments</a></li></ul></details></li></ul></nav>
+<main class="site-main">
+<div class="prose prose-doc dark:prose-light max-w-4xl mx-auto break-words relative">
+<h1>Page not found</h1><p>This page does not exist. Go back to the <a href="/OpenEnv/pr-preview/pr-1714/">OpenEnv docs</a>.</p>
+</div>
+<footer class="site-footer">
+  <a href="https://github.com/openenv/OpenEnv">GitHub</a>
+  <a href="https://github.com/openenv/OpenEnv/blob/main/LICENSE">BSD-3-Clause license</a>
+  <span>Built with <a href="https://github.com/huggingface/doc-builder">doc-builder</a></span>
+</footer>
+</main>
+
+</div>
+
+</body>
+</html>

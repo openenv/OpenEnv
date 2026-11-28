@@ -1,0 +1,1 @@
+function c(t){if(/^\/docs\//.test(t)){const e=t.slice(1).split("/");e.shift();const n=e.shift(),s=/^(?:(master|main)|v[\d.]+(rc\d+)?|pr_\d+)$/.test(e[0])?e.shift():"v0.15.0",o=/^[a-z]{2}(-[A-Za-z]{2})?$/.test(e[0])?e.shift():"en",i=e.join("/");if(n==="openenv"&&s==="v0.15.0"&&o==="en")return`/OpenEnv/v0.15.0/${i}`}}export{c as g};

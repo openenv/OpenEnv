@@ -1,0 +1,1 @@
+function a(e){if(/^\/docs\//.test(e)){const n=e.slice(1).split("/");n.shift();const t=n.shift(),s=/^(?:(master|main)|v[\d.]+(rc\d+)?|pr_\d+)$/.test(n[0])?n.shift():"main",i=/^[a-z]{2}(-[A-Za-z]{2})?$/.test(n[0])?n.shift():"en",o=n.join("/");if(t==="openenv"&&s==="main"&&i==="en")return`/OpenEnv/pr-preview/pr-1721/${o}`}}export{a as g};
