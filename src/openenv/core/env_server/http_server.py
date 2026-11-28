@@ -10,6 +10,7 @@ over HTTP and WebSocket endpoints that EnvClient can consume.
 from __future__ import annotations
 
 import asyncio
+import enum
 import inspect
 import json
 import logging
@@ -122,6 +123,8 @@ def _make_json_serializable(obj: Any) -> Any:
         return None
     if isinstance(obj, (str, int, float, bool)):
         return obj
+    if isinstance(obj, enum.Enum):
+        return _make_json_serializable(obj.value)
     if isinstance(obj, (list, tuple)):
         return [_make_json_serializable(item) for item in obj]
     if isinstance(obj, dict):
