@@ -406,7 +406,7 @@ def build(
     if env_path is None:
         env_path_obj = Path.cwd()
     else:
-        env_path_obj = Path(env_path)
+        env_path_obj = Path(env_path).resolve()
 
     # Validate environment path
     if not env_path_obj.exists():

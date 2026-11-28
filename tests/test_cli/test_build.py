@@ -4,7 +4,10 @@
 
 import builtins
 from pathlib import Path
+from types import SimpleNamespace
 
+from openenv.cli.__main__ import app
+from openenv.cli.commands import build as build_module
 from openenv.cli.commands.build import (
     _detect_build_context,
     _docker_build_command,
@@ -13,6 +16,7 @@ from openenv.cli.commands.build import (
     _prepare_standalone_build,
     tomllib,
 )
+from typer.testing import CliRunner
 
 
 def test_detect_build_context_uses_envs_child_as_in_repo(tmp_path: Path) -> None:
@@ -159,3 +163,22 @@ def test_inrepo_build_preserves_environment_dependencies(tmp_path):
         dependencies = tomllib.load(f)["project"]["dependencies"]
     assert dependencies == ["openenv-echo-env", "openenv @ file:///app/env/openenv"]
     assert not (built / "uv.lock").exists()
+
+
+def test_build_accepts_dot_as_env_path(tmp_path, monkeypatch):
+    env = tmp_path / "my_env"
+    (env / "server").mkdir(parents=True)
+    (env / "openenv.yaml").write_text("name: my_env\n")
+    (env / "server" / "Dockerfile").write_text("FROM scratch\n")
+    commands = []
+    monkeypatch.setattr(
+        build_module,
+        "_run_command",
+        lambda cmd, **kwargs: commands.append(cmd) or SimpleNamespace(returncode=0),
+    )
+    monkeypatch.chdir(env)
+
+    result = CliRunner().invoke(app, ["build", "."])
+
+    assert result.exit_code == 0, result.output
+    assert commands[0][:4] == ["docker", "build", "-t", "openenv-my"]
