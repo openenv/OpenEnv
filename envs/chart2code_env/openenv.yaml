@@ -1,0 +1,44 @@
+spec_version: 1
+name: chart2code_env
+type: space
+runtime: fastapi
+app: chart2code_env.server.app:app
+port: 8000
+
+description: >
+  Multimodal chart-to-code. The agent sees a PNG of a chart and writes
+  matplotlib code that draws it again, with a few renders to check its draft
+  before it submits. The reward compares the submitted figure's artists (bar
+  heights, line points, wedge angles, text, colors, axes) with the target's,
+  so it is deterministic and needs no judge.
+version: "0.1.0"
+
+environment:
+  level: easy        # easy, medium or hard
+  split: train       # train (seeds below 10^9) or test (500 fixed tasks per level)
+  max_renders: 4
+  timeout_s: 30
+
+rubric:
+  type: sequential
+  name: Chart2CodeRubric
+  layers:
+    - name: gate
+      description: >
+        The code must run, leave a figure with data in it, and use no raster
+        image (imshow, figimage, OffsetImage). Otherwise the reward is zero.
+    - name: structure
+      weight: 0.2
+      description: Axes and the kind of each series (bar, barh, line, scatter, pie), and log scales, matched F1-style.
+    - name: data
+      weight: 0.45
+      description: >
+        Values per matched series, with error relative to the target's range:
+        full credit within 2%, none beyond 10%. Missing or extra points and
+        series lower the score.
+    - name: text
+      weight: 0.2
+      description: Title, axis labels, category tick labels, legend entries and pie labels, matched F1-style after normalization.
+    - name: color
+      weight: 0.15
+      description: Color distance of each matched series, or of each wedge.

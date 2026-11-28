@@ -167,6 +167,8 @@
     title: Agent World Model
   - local: environments/pelican_svg
     title: Pelican SVG
+  - local: environments/chart2code
+    title: Chart2Code
   - local: environments/posttrain
     title: Post-training
   - local: environments/sophistry_bench_sprint
