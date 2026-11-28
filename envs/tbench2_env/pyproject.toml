@@ -17,7 +17,6 @@ dependencies = [
     # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
     "openenv>=0.2.3",
     # Environment-specific dependencies
-    "camel-ai>=0.2.90",
     # Docker-backed mode (optional, for full TB2.0 compatibility)
     "docker>=7.1.0",
     # TOML parsing (tomllib for Python 3.11+, tomli for older versions)

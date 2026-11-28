@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import codecs
 import io
 import logging
 import math
@@ -15,9 +16,12 @@ import os
 import re
 import shlex
 import shutil
+import signal
+import subprocess
+import sys
 import tarfile
 import threading
-import sys
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -40,8 +44,6 @@ try:
 except ImportError:
     # Standalone imports (when environment is standalone with openenv from pip)
     from models import Tbench2Action, Tbench2Observation, Tbench2State
-
-_CAMEL_IMPORT_ERROR: Exception | None = None
 
 # Official TB2 fixed paths: tests/test.sh assumes it runs from /tests and
 # writes /logs/verifier/reward.txt. Module-level only so unit tests can
@@ -77,8 +79,8 @@ def _extractall(tar: tarfile.TarFile, dest: str) -> None:
         tar.extractall(dest)
 
 
-# The only server environment variables the agent's shell gets (plus LC_*, UV_*
-# and the toolkit's own runtime paths). Tokens and keys stay in the server.
+# The only server environment variables the agent's shell gets (plus LC_* and
+# UV_*). Tokens and keys stay in the server.
 _SHELL_ENV_ALLOWLIST = (
     "PATH",
     "HOME",
@@ -101,34 +103,170 @@ def set_non_dumpable() -> None:
         ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0)  # PR_SET_DUMPABLE
 
 
-def _require_terminal_toolkit() -> Any:
-    global _CAMEL_IMPORT_ERROR
-    if _CAMEL_IMPORT_ERROR is not None:
-        raise RuntimeError(
-            "camel-ai (TerminalToolkit) is required for TB2. Install from PyPI or from the CAMEL repo."
-        ) from _CAMEL_IMPORT_ERROR
+def _shell_env() -> dict[str, str]:
+    """Environment for the agent's and the verifier's commands, without the server's secrets."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k in _SHELL_ENV_ALLOWLIST or k.startswith(("LC_", "UV_"))
+    }
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
 
-    try:
-        from camel.toolkits import TerminalToolkit
-    except Exception as exc:  # pragma: no cover
-        _CAMEL_IMPORT_ERROR = exc
-        raise RuntimeError(
-            "camel-ai (TerminalToolkit) is required for TB2. Install from PyPI or from the CAMEL repo."
-        ) from exc
 
-    class _TerminalToolkit(TerminalToolkit):
-        """Runs the agent's and the verifier's commands without the server's secrets."""
+class _ShellSession:
+    """A command running in the background, with its output collected by a reader thread."""
 
-        def _get_env_vars(self) -> dict[str, str]:
-            return {
-                k: v
-                for k, v in super()._get_env_vars().items()
-                if k in _SHELL_ENV_ALLOWLIST
-                or k.startswith(("LC_", "UV_"))
-                or k in self._runtime_env_vars
-            }
+    def __init__(self, process: subprocess.Popen, output: str = "") -> None:
+        self.process = process
+        self._chunks = [output] if output else []
+        self._lock = threading.Lock()
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
 
-    return _TerminalToolkit
+    def _read(self) -> None:
+        # Read whatever is available, not whole lines: a prompt without a trailing
+        # newline (`read -p "Name: "`, `input("> ")`) must reach the agent.
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        while chunk := os.read(self.process.stdout.fileno(), 4096):
+            with self._lock:
+                self._chunks.append(decoder.decode(chunk))
+
+    def running(self) -> bool:
+        return self.process.poll() is None
+
+    def take_output(self) -> str:
+        """Output produced since the last call."""
+        with self._lock:
+            output, self._chunks = "".join(self._chunks), []
+        return output
+
+    def wait_quiet(self, idle_s: float = 0.5, max_s: float = 5.0) -> None:
+        """Wait until the session stops printing for *idle_s*, or *max_s* passes."""
+        deadline = time.monotonic() + max_s
+        size, quiet_since = -1, time.monotonic()
+        while time.monotonic() < deadline and self.running():
+            with self._lock:
+                current = sum(len(c) for c in self._chunks)
+            if current != size:
+                size, quiet_since = current, time.monotonic()
+            elif time.monotonic() - quiet_since >= idle_s:
+                return
+            time.sleep(0.05)
+        self.reader.join(timeout=0.5)
+
+    def kill(self) -> None:
+        if self.running():
+            try:
+                os.killpg(self.process.pid, signal.SIGTERM)
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                os.killpg(self.process.pid, signal.SIGKILL)
+                self.process.wait()
+            except ProcessLookupError:
+                pass  # The process group already exited.
+        self.reader.join(timeout=1)
+
+
+class _TerminalSessions:
+    """Runs the agent's and the verifier's shell commands in the task workdir.
+
+    Commands run with `bash -c` in their own process group and get only the variables
+    in `_SHELL_ENV_ALLOWLIST` (plus `LC_*` and `UV_*`), so tokens and keys stay in the
+    server. A blocking command that outlives its timeout keeps running as a background
+    session the agent can view, wait for or kill.
+    """
+
+    def __init__(self, working_directory: str, timeout: float) -> None:
+        self.working_directory = working_directory
+        self.timeout = timeout
+        self.sessions: dict[str, _ShellSession] = {}
+
+    def _start(self, command: str) -> subprocess.Popen:
+        return subprocess.Popen(
+            ["bash", "-c", command],
+            cwd=self.working_directory,
+            env=_shell_env(),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    def _session(self, id: str) -> _ShellSession:
+        if id not in self.sessions:
+            raise ValueError(f"No session found with ID '{id}'.")
+        return self.sessions[id]
+
+    def shell_exec(
+        self, id: str, command: str, block: bool = True, timeout: float | None = None
+    ) -> str:
+        if id in self.sessions and self.sessions[id].running():
+            raise ValueError(
+                f"Session '{id}' is still running. Use another session_id or kill it first."
+            )
+        process = self._start(command)
+        if not block:
+            self.sessions[id] = _ShellSession(process)
+            return f"Session '{id}' started. Use view, write, wait or kill with this session_id."
+        try:
+            output, _ = process.communicate(timeout=timeout or self.timeout)
+        except subprocess.TimeoutExpired as exc:
+            partial = (exc.output or b"").decode("utf-8", errors="replace")
+            self.sessions[id] = _ShellSession(process, partial)
+            return (
+                f"Command did not complete within {timeout or self.timeout} seconds. "
+                f"It keeps running as session '{id}': use view, wait or kill with this session_id."
+            )
+        output = output.decode("utf-8", errors="replace")
+        return (
+            output if output.strip() else "Command executed successfully (no output)."
+        )
+
+    def shell_write_to_process(self, id: str, command: str) -> str:
+        session = self._session(id)
+        if not session.running():
+            raise ValueError(f"Session '{id}' has finished.")
+        session.process.stdin.write((command + "\n").encode())
+        session.process.stdin.flush()
+        session.wait_quiet()
+        return self.shell_view(id)
+
+    def shell_view(self, id: str) -> str:
+        session = self._session(id)
+        running = session.running()
+        if not running:
+            session.reader.join(timeout=1)
+        output = session.take_output()
+        if running:
+            return output or "[No new output] The session is still running."
+        return (
+            output + "\n--- SESSION TERMINATED ---"
+            if output
+            else "--- SESSION TERMINATED (no new output) ---"
+        )
+
+    def shell_wait(self, id: str, wait_seconds: float) -> str:
+        """Wait up to *wait_seconds* for the session to finish, then return its new output."""
+        session = self._session(id)
+        try:
+            session.process.wait(timeout=wait_seconds)
+        except subprocess.TimeoutExpired:
+            pass  # Still running: return what it printed so far.
+        return self.shell_view(id)
+
+    def shell_kill_process(self, id: str) -> None:
+        self._session(id).kill()
+
+    def shell_write_content_to_file(self, content: str, file_path: str) -> None:
+        path = Path(self.working_directory, file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    def close(self) -> None:
+        for session in self.sessions.values():
+            session.kill()
+        self.sessions.clear()
 
 
 def _download_tb2_repo(cache_dir: Path) -> Path:
@@ -322,7 +460,6 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
         tasks_dir: str | None = None,
         output_dir: str | None = None,
         command_timeout_s: float | None = None,
-        safe_mode: bool = False,
         default_task_id: str | None = None,
         withhold_tests: bool | None = None,
     ) -> None:
@@ -344,7 +481,6 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
         if command_timeout_s is None:
             command_timeout_s = float(os.getenv("TB2_COMMAND_TIMEOUT_S", "20.0"))
         self.command_timeout_s = command_timeout_s
-        self.safe_mode = safe_mode
         self.default_task_id = default_task_id or os.getenv(
             "TB2_DEFAULT_TASK_ID", "headless-terminal"
         )
@@ -364,8 +500,6 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
     ) -> Tbench2Observation:
         del seed
 
-        TerminalToolkit = _require_terminal_toolkit()
-
         task_id = (
             kwargs.get("task_id") or kwargs.get("task_name") or self.default_task_id
         )
@@ -378,12 +512,6 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
         self._task_dir = task_dir
         if self.withhold_tests:
             self._withhold_verifier_assets(task_dir)
-
-        trial_name = f"{resolved_task_id}.{episode_id or uuid4().hex}"
-        session_logs_dir = (
-            self.output_dir / trial_name / "terminal_toolkit_session_logs"
-        )
-        session_logs_dir.mkdir(parents=True, exist_ok=True)
 
         # Commands run in the task image's real WORKDIR — where agents and
         # the canonical harness expect to operate, and not always /app
@@ -400,15 +528,10 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
         if not (workdir and Path(workdir).is_dir()):
             workdir = str(task_dir)
         self._workdir = workdir
-        # No install_dependencies: evaluation runs the task's canonical
-        # tests/test.sh, which pins its own pytest toolchain via uvx (see
-        # _evaluate_canonical), so the toolkit venv does not need pytest.
-        self._terminal_toolkit = TerminalToolkit(
-            timeout=self.command_timeout_s,
-            working_directory=workdir,
-            use_docker_backend=False,
-            session_logs_dir=session_logs_dir,
-            safe_mode=self.safe_mode,
+        if self._terminal_toolkit is not None:
+            self._terminal_toolkit.close()
+        self._terminal_toolkit = _TerminalSessions(
+            working_directory=workdir, timeout=self.command_timeout_s
         )
         self._verifier_timeout_s = _read_timeout(
             task_dir, fallback=_DEFAULT_VERIFIER_TIMEOUT_S
@@ -467,9 +590,6 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
 
         try:
             if action.action_type == "exec":
-                # Pass the timeout explicitly: camel's shell_exec has its own
-                # per-call default (20s) and ignores the constructor timeout,
-                # which silently truncates any longer-running agent command.
                 output = self._terminal_toolkit.shell_exec(
                     command=action.command,
                     block=action.block,
@@ -537,6 +657,8 @@ class Tbench2Environment(Environment[Tbench2Action, Tbench2Observation, Tbench2S
         return self._state
 
     def close(self) -> None:
+        if self._terminal_toolkit is not None:
+            self._terminal_toolkit.close()
         self._terminal_toolkit = None
         self._task_dir = None
         self._verifier_timeout_s = _DEFAULT_VERIFIER_TIMEOUT_S

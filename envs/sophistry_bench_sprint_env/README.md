@@ -103,8 +103,8 @@ completions) — same underlying finding, different degenerate strategy dependin
 uv run --project envs/sophistry_bench_sprint_env --extra dev \
   pytest tests/envs/test_sophistry_bench_sprint_environment.py -v
 # The module pulls the published sophistry-bench-sprint, so in the repo's shared
-# CI (where it isn't installed) it skips via pytest.importorskip — same as other
-# envs with heavy deps (e.g. tbench2's camel guard).
+# CI (where it isn't installed) it skips via pytest.importorskip, like other
+# envs with heavy deps.
 
 # Container
 openenv build sophistry_bench_sprint_env
