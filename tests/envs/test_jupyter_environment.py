@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import shlex
@@ -217,6 +218,76 @@ def test_final_answer_runs_verify_commands():
     ]
     assert "exit 1" in fake_sandbox.process_commands
     assert "exit 1" not in fake_sandbox.shell_commands
+
+
+def _answered_env(sandbox):
+    env = JupyterEnvironment()
+    env._sandbox = sandbox
+    env._state = JupyterState(
+        episode_id="episode-1",
+        sandbox_id="fake-sandbox",
+        verify_commands=["true", "exit 1"],
+    )
+    final = env.step(
+        CallToolAction(tool_name="final_answer", arguments={"answer": "done"})
+    )
+    return env, final
+
+
+def test_steps_after_the_answer_return_the_final_observation():
+    sandbox = FakeSandbox()
+    env, final = _answered_env(sandbox)
+    assert final.done and final.reward == 0.5
+    commands = sandbox.shell_commands + sandbox.process_commands
+
+    for action in (
+        CallToolAction(
+            tool_name="execute_shell_command", arguments={"command": "echo hi"}
+        ),
+        CallToolAction(tool_name="final_answer", arguments={"answer": "other"}),
+        ListToolsAction(),
+    ):
+        assert env.step(action) == final
+
+    assert sandbox.shell_commands + sandbox.process_commands == commands
+    assert env.state.step_count == 1
+    assert env.state.submitted_answer == "done"
+
+
+def test_async_steps_after_the_answer_return_the_final_observation():
+    sandbox = FakeSandbox()
+    env, final = _answered_env(sandbox)
+    commands = sandbox.shell_commands + sandbox.process_commands
+
+    obs = asyncio.run(
+        env.step_async(
+            CallToolAction(
+                tool_name="execute_shell_command", arguments={"command": "echo hi"}
+            )
+        )
+    )
+
+    assert obs == final
+    assert sandbox.shell_commands + sandbox.process_commands == commands
+
+
+def test_reset_starts_a_new_episode_after_the_answer(monkeypatch):
+    monkeypatch.setenv("E2B_API_KEY", "fake-key")
+    monkeypatch.setattr(
+        "jupyter_env.server.jupyter_environment.E2BSandbox",
+        lambda api_key: FakeSandbox(),
+    )
+    env, _ = _answered_env(FakeSandbox())
+
+    env.reset()
+    obs = env.step(
+        CallToolAction(
+            tool_name="add_and_execute_code_cell", arguments={"code": "1 + 1"}
+        )
+    )
+
+    assert not obs.done
+    assert "ran: 1 + 1" in _extract_text(obs.result)
 
 
 REWARD_FILE = "/home/user/logs/verifier/reward.txt"

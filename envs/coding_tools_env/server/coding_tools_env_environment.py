@@ -37,6 +37,7 @@ class CodingToolsEnvironment(MCPEnvironment):
     def __init__(self):
         self._sandbox: Optional[E2BSandbox] = None
         self._state = CodingToolsState(episode_id=str(uuid4()), step_count=0)
+        self._final_observation: Optional[Observation] = None
 
         mcp = FastMCP("coding_tools_env")
 
@@ -240,6 +241,7 @@ class CodingToolsEnvironment(MCPEnvironment):
             self._sandbox.kill()
             self._sandbox = None
 
+        self._final_observation = None
         api_key = os.environ.get("E2B_API_KEY")
         self._state = CodingToolsState(
             episode_id=episode_id or str(uuid4()),
@@ -339,11 +341,16 @@ class CodingToolsEnvironment(MCPEnvironment):
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> Observation:
+        # Once the answer is scored, later steps run no tool and score nothing:
+        # they return the final observation until reset().
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
         self._state.step_count += 1
         obs = super().step(action, timeout_s=timeout_s, **kwargs)
         if self._state.submitted and self._state.last_reward is not None:
             obs.done = True
             obs.reward = self._state.last_reward
+            self._final_observation = obs.model_copy(deep=True)
         return obs
 
     async def step_async(
@@ -352,11 +359,16 @@ class CodingToolsEnvironment(MCPEnvironment):
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> Observation:
+        # Once the answer is scored, later steps run no tool and score nothing:
+        # they return the final observation until reset().
+        if self._final_observation is not None:
+            return self._final_observation.model_copy(deep=True)
         self._state.step_count += 1
         obs = await super().step_async(action, timeout_s=timeout_s, **kwargs)
         if self._state.submitted and self._state.last_reward is not None:
             obs.done = True
             obs.reward = self._state.last_reward
+            self._final_observation = obs.model_copy(deep=True)
         return obs
 
     @property

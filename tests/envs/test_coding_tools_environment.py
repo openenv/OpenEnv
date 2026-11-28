@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import pathlib
@@ -195,6 +196,65 @@ def test_write_read_edit_and_submit(monkeypatch):
     assert env.state.last_reward == 1.0
     assert "test -f answer.txt" in fake.process_commands
     assert "test -f answer.txt" not in fake.shell_commands
+
+
+def _answered_env(monkeypatch, sandbox):
+    monkeypatch.setenv("E2B_API_KEY", "fake")
+    monkeypatch.setattr(
+        "coding_tools_env.server.coding_tools_env_environment.E2BSandbox",
+        lambda api_key: sandbox,
+    )
+    env = CodingToolsEnvironment()
+    env.reset(verify=["true", "exit 1"])
+    final = env.step(CallToolAction(tool_name="submit_solution", arguments={}))
+    return env, final
+
+
+def test_steps_after_the_submission_return_the_final_observation(monkeypatch):
+    sandbox = FakeSandbox()
+    env, final = _answered_env(monkeypatch, sandbox)
+    assert final.done and final.reward == 0.5
+    commands = sandbox.shell_commands + sandbox.process_commands
+
+    for action in (
+        CallToolAction(tool_name="write", arguments={"file_path": "a", "content": "x"}),
+        CallToolAction(tool_name="submit_solution", arguments={}),
+        ListToolsAction(),
+    ):
+        assert env.step(action) == final
+
+    assert sandbox.shell_commands + sandbox.process_commands == commands
+    assert "a" not in sandbox.files
+    assert env.state.step_count == 1
+
+
+def test_async_steps_after_the_submission_return_the_final_observation(monkeypatch):
+    sandbox = FakeSandbox()
+    env, final = _answered_env(monkeypatch, sandbox)
+
+    obs = asyncio.run(
+        env.step_async(
+            CallToolAction(
+                tool_name="write", arguments={"file_path": "a", "content": "x"}
+            )
+        )
+    )
+
+    assert obs == final
+    assert "a" not in sandbox.files
+
+
+def test_reset_starts_a_new_episode_after_the_submission(monkeypatch):
+    sandbox = FakeSandbox()
+    env, _ = _answered_env(monkeypatch, sandbox)
+
+    env.reset()
+    obs = env.step(
+        CallToolAction(tool_name="write", arguments={"file_path": "a", "content": "x"})
+    )
+
+    assert not obs.done
+    assert sandbox.files["a"] == "x"
 
 
 @pytest.mark.parametrize(

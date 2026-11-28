@@ -22,6 +22,8 @@ negative rewards and values above 1 are accepted too. A value that is not a
 finite number is ignored, the pass rate is used, and the reason is recorded in
 `state.reward_override_ignored`.
 
+Once the answer is scored, further `step()` calls (the WebSocket session) run no tool and score nothing. They return the final observation again (`done=True`, same reward) until the next `reset()`.
+
 Verify commands, the clearing of that file and the read of it run as their own
 sandbox processes through E2B's process API, as `root` in `/home/user`, rather
 than as a `subprocess.run` cell in the code-interpreter kernel. Nothing done to
