@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.126,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.15,
+    "limit": 500000,
+    "penalty_apr": 0.041,
+    "start_drawn": 190700,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Northside Goods",
+  "rent": 64500,
+  "seed": 3000077,
+  "skus": [
+    {
+      "base_demand": 374.5,
+      "elasticity": 2.11,
+      "holding_cost": 5,
+      "id": "A",
+      "liquidation_frac": 0.39,
+      "name": "Sourdough loaf",
+      "ref_price": 544,
+      "season_amp": 0.19,
+      "season_phase": 47,
+      "shrink_rate": 0.027,
+      "start_on_hand": 1093,
+      "start_price": 544,
+      "start_unit_cost": 245
+    },
+    {
+      "base_demand": 188.3,
+      "elasticity": 2.07,
+      "holding_cost": 3,
+      "id": "B",
+      "liquidation_frac": 0.31,
+      "name": "Sparkling water 6pk",
+      "ref_price": 424,
+      "season_amp": 0.142,
+      "season_phase": 24,
+      "shrink_rate": 0.0135,
+      "start_on_hand": 399,
+      "start_price": 424,
+      "start_unit_cost": 208
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 483,
+    "hire_cost": 30100,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 30100
+  },
+  "start_cash": 500000,
+  "start_invoices": [
+    {
+      "amount": 75100,
+      "due_in_weeks": 1,
+      "supplier": "S1"
+    },
+    {
+      "amount": 71300,
+      "due_in_weeks": 0,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 1,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 480000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 280,
+      "name": "Keystone Trade",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 245
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 200000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 190,
+      "name": "Acme Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 208
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

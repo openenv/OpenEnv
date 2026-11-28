@@ -1,0 +1,106 @@
+{
+  "credit": {
+    "apr": 0.085,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.24,
+    "limit": 1800000,
+    "penalty_apr": 0.042,
+    "start_drawn": 369400,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Bluebird Grocers",
+  "rent": 298500,
+  "seed": 3000041,
+  "skus": [
+    {
+      "base_demand": 278.2,
+      "elasticity": 2.21,
+      "holding_cost": 8,
+      "id": "A",
+      "liquidation_frac": 0.4,
+      "name": "Dog food 2kg",
+      "ref_price": 1714,
+      "season_amp": 0.065,
+      "season_phase": 44,
+      "shrink_rate": 0.0076,
+      "start_on_hand": 946,
+      "start_price": 1714,
+      "start_unit_cost": 768
+    },
+    {
+      "base_demand": 292.2,
+      "elasticity": 1.71,
+      "holding_cost": 6,
+      "id": "B",
+      "liquidation_frac": 0.43,
+      "name": "Olive oil",
+      "ref_price": 1274,
+      "season_amp": 0.126,
+      "season_phase": 28,
+      "shrink_rate": 0.0059,
+      "start_on_hand": 1007,
+      "start_price": 1274,
+      "start_unit_cost": 556
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 460,
+    "hire_cost": 36900,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 36900
+  },
+  "start_cash": 1610000,
+  "start_invoices": [],
+  "start_week_of_year": 6,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 1040000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 200,
+      "name": "Lakeside Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 768
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 970000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 250,
+      "name": "Acme Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 2,
+      "unit_cost": 556
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

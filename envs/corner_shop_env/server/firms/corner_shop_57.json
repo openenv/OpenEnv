@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.129,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.25,
+    "limit": 600000,
+    "penalty_apr": 0.048,
+    "start_drawn": 111700,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Main St Market",
+  "rent": 32500,
+  "seed": 3000057,
+  "skus": [
+    {
+      "base_demand": 355.8,
+      "elasticity": 1.85,
+      "holding_cost": 2,
+      "id": "A",
+      "liquidation_frac": 0.42,
+      "name": "Tea 40 bags",
+      "ref_price": 314,
+      "season_amp": 0.241,
+      "season_phase": 51,
+      "shrink_rate": 0.0247,
+      "start_on_hand": 995,
+      "start_price": 314,
+      "start_unit_cost": 168
+    },
+    {
+      "base_demand": 242.3,
+      "elasticity": 1.46,
+      "holding_cost": 4,
+      "id": "B",
+      "liquidation_frac": 0.36,
+      "name": "Hand cream",
+      "ref_price": 549,
+      "season_amp": 0.179,
+      "season_phase": 20,
+      "shrink_rate": 0.0205,
+      "start_on_hand": 423,
+      "start_price": 549,
+      "start_unit_cost": 256
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 601,
+    "hire_cost": 31900,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 31900
+  },
+  "start_cash": 325400,
+  "start_invoices": [
+    {
+      "amount": 65700,
+      "due_in_weeks": 0,
+      "supplier": "S1"
+    }
+  ],
+  "start_week_of_year": 20,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 320000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 200,
+      "name": "Lakeside Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 168
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 300000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 210,
+      "name": "Valley Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 256
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

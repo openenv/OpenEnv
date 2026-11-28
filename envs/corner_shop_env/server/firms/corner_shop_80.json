@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.124,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.2,
+    "limit": 1000000,
+    "penalty_apr": 0.041,
+    "start_drawn": 171600,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Riverside Mart",
+  "rent": 139500,
+  "seed": 3000080,
+  "skus": [
+    {
+      "base_demand": 217.9,
+      "elasticity": 1.62,
+      "holding_cost": 4,
+      "id": "A",
+      "liquidation_frac": 0.33,
+      "name": "Candles",
+      "ref_price": 714,
+      "season_amp": 0.17,
+      "season_phase": 37,
+      "shrink_rate": 0.0167,
+      "start_on_hand": 692,
+      "start_price": 714,
+      "start_unit_cost": 318
+    },
+    {
+      "base_demand": 287.7,
+      "elasticity": 1.79,
+      "holding_cost": 8,
+      "id": "B",
+      "liquidation_frac": 0.43,
+      "name": "Coffee beans 1kg",
+      "ref_price": 1144,
+      "season_amp": 0.056,
+      "season_phase": 1,
+      "shrink_rate": 0.0291,
+      "start_on_hand": 791,
+      "start_price": 1144,
+      "start_unit_cost": 529
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 557,
+    "hire_cost": 30900,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 30900
+  },
+  "start_cash": 680300,
+  "start_invoices": [
+    {
+      "amount": 58300,
+      "due_in_weeks": 0,
+      "supplier": "S1"
+    },
+    {
+      "amount": 100200,
+      "due_in_weeks": 2,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 18,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 300000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 160,
+      "name": "Prime Foods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 318
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 1060000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 190,
+      "name": "Metro Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 529
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

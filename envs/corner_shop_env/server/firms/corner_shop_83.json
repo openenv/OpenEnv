@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.113,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.14,
+    "limit": 600000,
+    "penalty_apr": 0.059,
+    "start_drawn": 160800,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Corner Shop",
+  "rent": 20000,
+  "seed": 3000083,
+  "skus": [
+    {
+      "base_demand": 381.8,
+      "elasticity": 2.06,
+      "holding_cost": 1,
+      "id": "A",
+      "liquidation_frac": 0.45,
+      "name": "Pasta 500g",
+      "ref_price": 164,
+      "season_amp": 0.159,
+      "season_phase": 32,
+      "shrink_rate": 0.0211,
+      "start_on_hand": 1452,
+      "start_price": 164,
+      "start_unit_cost": 81
+    },
+    {
+      "base_demand": 299.0,
+      "elasticity": 2.1,
+      "holding_cost": 2,
+      "id": "B",
+      "liquidation_frac": 0.34,
+      "name": "Sparkling water 6pk",
+      "ref_price": 329,
+      "season_amp": 0.114,
+      "season_phase": 14,
+      "shrink_rate": 0.025,
+      "start_on_hand": 846,
+      "start_price": 329,
+      "start_unit_cost": 177
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 630,
+    "hire_cost": 28500,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 28500
+  },
+  "start_cash": 253900,
+  "start_invoices": [
+    {
+      "amount": 43000,
+      "due_in_weeks": 0,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 35,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 120000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 180,
+      "name": "Coastal Trading",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 81
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 200000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 110,
+      "name": "Acme Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 177
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

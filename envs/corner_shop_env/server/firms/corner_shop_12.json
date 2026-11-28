@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.114,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.23,
+    "limit": 1900000,
+    "penalty_apr": 0.046,
+    "start_drawn": 575900,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Pine Pantry",
+  "rent": 206000,
+  "seed": 3000012,
+  "skus": [
+    {
+      "base_demand": 448.8,
+      "elasticity": 1.85,
+      "holding_cost": 1,
+      "id": "A",
+      "liquidation_frac": 0.49,
+      "name": "Notebook",
+      "ref_price": 224,
+      "season_amp": 0.211,
+      "season_phase": 47,
+      "shrink_rate": 0.0128,
+      "start_on_hand": 1365,
+      "start_price": 224,
+      "start_unit_cost": 104
+    },
+    {
+      "base_demand": 341.2,
+      "elasticity": 1.78,
+      "holding_cost": 10,
+      "id": "B",
+      "liquidation_frac": 0.37,
+      "name": "Coffee beans 1kg",
+      "ref_price": 1419,
+      "season_amp": 0.051,
+      "season_phase": 51,
+      "shrink_rate": 0.0218,
+      "start_on_hand": 871,
+      "start_price": 1419,
+      "start_unit_cost": 622
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 510,
+    "hire_cost": 36800,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 36800
+  },
+  "start_cash": 877400,
+  "start_invoices": [
+    {
+      "amount": 127600,
+      "due_in_weeks": 2,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 24,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 210000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 300,
+      "name": "Lakeside Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 4,
+      "unit_cost": 104
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 1220000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 280,
+      "name": "Union Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 622
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

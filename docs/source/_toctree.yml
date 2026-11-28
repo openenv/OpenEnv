@@ -179,6 +179,8 @@
     title: Harvest Rush
   - local: environments/sql_optim
     title: SQL Query Optimization
+  - local: environments/corner_shop
+    title: Corner Shop
   title: Environments
 - isExpanded: false
   sections:

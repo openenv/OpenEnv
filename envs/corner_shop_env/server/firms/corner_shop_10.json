@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.14,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.2,
+    "limit": 700000,
+    "penalty_apr": 0.04,
+    "start_drawn": 29200,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Main St Market",
+  "rent": 32000,
+  "seed": 3000010,
+  "skus": [
+    {
+      "base_demand": 267.5,
+      "elasticity": 1.82,
+      "holding_cost": 4,
+      "id": "A",
+      "liquidation_frac": 0.41,
+      "name": "AA batteries 4pk",
+      "ref_price": 489,
+      "season_amp": 0.169,
+      "season_phase": 19,
+      "shrink_rate": 0.0166,
+      "start_on_hand": 559,
+      "start_price": 489,
+      "start_unit_cost": 280
+    },
+    {
+      "base_demand": 185.1,
+      "elasticity": 1.47,
+      "holding_cost": 2,
+      "id": "B",
+      "liquidation_frac": 0.35,
+      "name": "Notebook",
+      "ref_price": 224,
+      "season_amp": 0.222,
+      "season_phase": 10,
+      "shrink_rate": 0.0217,
+      "start_on_hand": 444,
+      "start_price": 224,
+      "start_unit_cost": 107
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 589,
+    "hire_cost": 30900,
+    "max_headcount": 4,
+    "severance_weeks": 2.0,
+    "start_headcount": 1,
+    "wage": 30900
+  },
+  "start_cash": 231700,
+  "start_invoices": [
+    {
+      "amount": 35300,
+      "due_in_weeks": 1,
+      "supplier": "S1"
+    },
+    {
+      "amount": 26200,
+      "due_in_weeks": 1,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 10,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 410000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 170,
+      "name": "Metro Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 280
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 110000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 170,
+      "name": "Coastal Trading",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 107
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

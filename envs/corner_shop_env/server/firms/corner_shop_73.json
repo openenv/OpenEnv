@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.121,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.17,
+    "limit": 1200000,
+    "penalty_apr": 0.056,
+    "start_drawn": 363900,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Corner Shop",
+  "rent": 39000,
+  "seed": 3000073,
+  "skus": [
+    {
+      "base_demand": 420.0,
+      "elasticity": 2.07,
+      "holding_cost": 3,
+      "id": "A",
+      "liquidation_frac": 0.48,
+      "name": "Hot sauce",
+      "ref_price": 369,
+      "season_amp": 0.128,
+      "season_phase": 43,
+      "shrink_rate": 0.0293,
+      "start_on_hand": 1195,
+      "start_price": 369,
+      "start_unit_cost": 208
+    },
+    {
+      "base_demand": 312.1,
+      "elasticity": 2.3,
+      "holding_cost": 4,
+      "id": "B",
+      "liquidation_frac": 0.33,
+      "name": "AA batteries 4pk",
+      "ref_price": 549,
+      "season_amp": 0.207,
+      "season_phase": 38,
+      "shrink_rate": 0.006,
+      "start_on_hand": 1113,
+      "start_price": 549,
+      "start_unit_cost": 301
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 551,
+    "hire_cost": 35300,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 35300
+  },
+  "start_cash": 485400,
+  "start_invoices": [
+    {
+      "amount": 104900,
+      "due_in_weeks": 2,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 36,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 410000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 270,
+      "name": "Prime Foods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 208
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 460000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 200,
+      "name": "Acme Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 301
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

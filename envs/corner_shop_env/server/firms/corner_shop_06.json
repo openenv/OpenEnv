@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.09,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.24,
+    "limit": 1100000,
+    "penalty_apr": 0.052,
+    "start_drawn": 284700,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Harbor Provisions",
+  "rent": 50000,
+  "seed": 3000006,
+  "skus": [
+    {
+      "base_demand": 372.9,
+      "elasticity": 2.29,
+      "holding_cost": 3,
+      "id": "A",
+      "liquidation_frac": 0.4,
+      "name": "Oat milk",
+      "ref_price": 404,
+      "season_amp": 0.211,
+      "season_phase": 16,
+      "shrink_rate": 0.0098,
+      "start_on_hand": 955,
+      "start_price": 404,
+      "start_unit_cost": 173
+    },
+    {
+      "base_demand": 351.7,
+      "elasticity": 1.51,
+      "holding_cost": 2,
+      "id": "B",
+      "liquidation_frac": 0.41,
+      "name": "Hot sauce",
+      "ref_price": 374,
+      "season_amp": 0.187,
+      "season_phase": 47,
+      "shrink_rate": 0.0158,
+      "start_on_hand": 567,
+      "start_price": 374,
+      "start_unit_cost": 219
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 620,
+    "hire_cost": 31200,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 31200
+  },
+  "start_cash": 412500,
+  "start_invoices": [
+    {
+      "amount": 77900,
+      "due_in_weeks": 1,
+      "supplier": "S1"
+    },
+    {
+      "amount": 72800,
+      "due_in_weeks": 0,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 43,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 390000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 250,
+      "name": "Keystone Trade",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 4,
+      "unit_cost": 173
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 360000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 260,
+      "name": "Acme Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 219
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

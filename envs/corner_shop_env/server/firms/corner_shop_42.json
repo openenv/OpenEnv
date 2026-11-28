@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.122,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.24,
+    "limit": 600000,
+    "penalty_apr": 0.055,
+    "start_drawn": 62000,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Main St Market",
+  "rent": 41000,
+  "seed": 3000042,
+  "skus": [
+    {
+      "base_demand": 326.8,
+      "elasticity": 2.2,
+      "holding_cost": 2,
+      "id": "A",
+      "liquidation_frac": 0.46,
+      "name": "Oat milk",
+      "ref_price": 329,
+      "season_amp": 0.097,
+      "season_phase": 50,
+      "shrink_rate": 0.0187,
+      "start_on_hand": 624,
+      "start_price": 329,
+      "start_unit_cost": 159
+    },
+    {
+      "base_demand": 457.3,
+      "elasticity": 1.49,
+      "holding_cost": 3,
+      "id": "B",
+      "liquidation_frac": 0.45,
+      "name": "Notebook",
+      "ref_price": 309,
+      "season_amp": 0.062,
+      "season_phase": 40,
+      "shrink_rate": 0.0149,
+      "start_on_hand": 1527,
+      "start_price": 309,
+      "start_unit_cost": 134
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 617,
+    "hire_cost": 36300,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 36300
+  },
+  "start_cash": 474900,
+  "start_invoices": [
+    {
+      "amount": 36900,
+      "due_in_weeks": 1,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 25,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 200000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 210,
+      "name": "Acme Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 4,
+      "unit_cost": 159
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 260000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 240,
+      "name": "Union Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 134
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

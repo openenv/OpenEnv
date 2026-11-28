@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.117,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.22,
+    "limit": 600000,
+    "penalty_apr": 0.049,
+    "start_drawn": 102400,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Harbor Provisions",
+  "rent": 34000,
+  "seed": 3000088,
+  "skus": [
+    {
+      "base_demand": 511.0,
+      "elasticity": 1.75,
+      "holding_cost": 1,
+      "id": "A",
+      "liquidation_frac": 0.41,
+      "name": "Pasta 500g",
+      "ref_price": 164,
+      "season_amp": 0.052,
+      "season_phase": 15,
+      "shrink_rate": 0.0147,
+      "start_on_hand": 1751,
+      "start_price": 164,
+      "start_unit_cost": 78
+    },
+    {
+      "base_demand": 402.4,
+      "elasticity": 1.97,
+      "holding_cost": 2,
+      "id": "B",
+      "liquidation_frac": 0.38,
+      "name": "Dish soap",
+      "ref_price": 314,
+      "season_amp": 0.233,
+      "season_phase": 37,
+      "shrink_rate": 0.0216,
+      "start_on_hand": 696,
+      "start_price": 314,
+      "start_unit_cost": 137
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 620,
+    "hire_cost": 31700,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 31700
+  },
+  "start_cash": 447400,
+  "start_invoices": [
+    {
+      "amount": 46100,
+      "due_in_weeks": 1,
+      "supplier": "S1"
+    }
+  ],
+  "start_week_of_year": 34,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 170000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 290,
+      "name": "Ridge Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 4,
+      "unit_cost": 78
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 190000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 270,
+      "name": "Metro Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 137
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

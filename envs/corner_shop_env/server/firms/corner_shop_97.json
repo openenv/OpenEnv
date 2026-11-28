@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.081,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.18,
+    "limit": 1300000,
+    "penalty_apr": 0.05,
+    "start_drawn": 11500,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Oak Lane Store",
+  "rent": 65000,
+  "seed": 3000097,
+  "skus": [
+    {
+      "base_demand": 402.5,
+      "elasticity": 1.92,
+      "holding_cost": 3,
+      "id": "A",
+      "liquidation_frac": 0.45,
+      "name": "Sourdough loaf",
+      "ref_price": 439,
+      "season_amp": 0.075,
+      "season_phase": 1,
+      "shrink_rate": 0.0173,
+      "start_on_hand": 1491,
+      "start_price": 439,
+      "start_unit_cost": 242
+    },
+    {
+      "base_demand": 171.5,
+      "elasticity": 1.84,
+      "holding_cost": 10,
+      "id": "B",
+      "liquidation_frac": 0.34,
+      "name": "Coffee beans 1kg",
+      "ref_price": 1044,
+      "season_amp": 0.099,
+      "season_phase": 37,
+      "shrink_rate": 0.0093,
+      "start_on_hand": 545,
+      "start_price": 1044,
+      "start_unit_cost": 559
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 475,
+    "hire_cost": 31600,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 31600
+  },
+  "start_cash": 614000,
+  "start_invoices": [
+    {
+      "amount": 103300,
+      "due_in_weeks": 0,
+      "supplier": "S1"
+    }
+  ],
+  "start_week_of_year": 47,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 500000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 230,
+      "name": "Coastal Trading",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 242
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 590000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 100,
+      "name": "Prime Foods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 2,
+      "unit_cost": 559
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

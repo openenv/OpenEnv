@@ -1,0 +1,117 @@
+{
+  "credit": {
+    "apr": 0.113,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.22,
+    "limit": 500000,
+    "penalty_apr": 0.057,
+    "start_drawn": 118900,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Harbor Provisions",
+  "rent": 43500,
+  "seed": 3000052,
+  "skus": [
+    {
+      "base_demand": 186.8,
+      "elasticity": 2.47,
+      "holding_cost": 2,
+      "id": "A",
+      "liquidation_frac": 0.49,
+      "name": "Oat milk",
+      "ref_price": 299,
+      "season_amp": 0.156,
+      "season_phase": 13,
+      "shrink_rate": 0.0275,
+      "start_on_hand": 697,
+      "start_price": 299,
+      "start_unit_cost": 159
+    },
+    {
+      "base_demand": 154.0,
+      "elasticity": 2.0,
+      "holding_cost": 9,
+      "id": "B",
+      "liquidation_frac": 0.4,
+      "name": "Olive oil",
+      "ref_price": 1034,
+      "season_amp": 0.024,
+      "season_phase": 49,
+      "shrink_rate": 0.0102,
+      "start_on_hand": 372,
+      "start_price": 1034,
+      "start_unit_cost": 571
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 586,
+    "hire_cost": 36100,
+    "max_headcount": 4,
+    "severance_weeks": 2.0,
+    "start_headcount": 1,
+    "wage": 36100
+  },
+  "start_cash": 333000,
+  "start_invoices": [
+    {
+      "amount": 70500,
+      "due_in_weeks": 2,
+      "supplier": "S1"
+    },
+    {
+      "amount": 47100,
+      "due_in_weeks": 1,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 18,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 180000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 160,
+      "name": "Ridge Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 4,
+      "unit_cost": 159
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 540000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 150,
+      "name": "Union Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 571
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

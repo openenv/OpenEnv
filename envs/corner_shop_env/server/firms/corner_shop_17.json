@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.112,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.25,
+    "limit": 700000,
+    "penalty_apr": 0.047,
+    "start_drawn": 268600,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Riverside Mart",
+  "rent": 20000,
+  "seed": 3000017,
+  "skus": [
+    {
+      "base_demand": 395.5,
+      "elasticity": 2.03,
+      "holding_cost": 2,
+      "id": "A",
+      "liquidation_frac": 0.48,
+      "name": "Notebook",
+      "ref_price": 194,
+      "season_amp": 0.005,
+      "season_phase": 36,
+      "shrink_rate": 0.0235,
+      "start_on_hand": 898,
+      "start_price": 194,
+      "start_unit_cost": 106
+    },
+    {
+      "base_demand": 384.8,
+      "elasticity": 2.36,
+      "holding_cost": 2,
+      "id": "B",
+      "liquidation_frac": 0.35,
+      "name": "Oat milk",
+      "ref_price": 264,
+      "season_amp": 0.248,
+      "season_phase": 7,
+      "shrink_rate": 0.0269,
+      "start_on_hand": 1133,
+      "start_price": 264,
+      "start_unit_cost": 153
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 790,
+    "hire_cost": 29100,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 29100
+  },
+  "start_cash": 369300,
+  "start_invoices": [
+    {
+      "amount": 25500,
+      "due_in_weeks": 2,
+      "supplier": "S1"
+    }
+  ],
+  "start_week_of_year": 10,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 140000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 180,
+      "name": "Prime Foods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 4,
+      "unit_cost": 106
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 230000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 2,
+      "min_order": 170,
+      "name": "Lakeside Supply",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 153
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

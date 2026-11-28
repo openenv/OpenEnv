@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.133,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.22,
+    "limit": 1000000,
+    "penalty_apr": 0.043,
+    "start_drawn": 220100,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Elm & Co",
+  "rent": 55000,
+  "seed": 3000037,
+  "skus": [
+    {
+      "base_demand": 386.4,
+      "elasticity": 2.31,
+      "holding_cost": 5,
+      "id": "A",
+      "liquidation_frac": 0.3,
+      "name": "Granola",
+      "ref_price": 484,
+      "season_amp": 0.207,
+      "season_phase": 26,
+      "shrink_rate": 0.0056,
+      "start_on_hand": 846,
+      "start_price": 484,
+      "start_unit_cost": 265
+    },
+    {
+      "base_demand": 417.8,
+      "elasticity": 1.99,
+      "holding_cost": 2,
+      "id": "B",
+      "liquidation_frac": 0.4,
+      "name": "Tea 40 bags",
+      "ref_price": 404,
+      "season_amp": 0.021,
+      "season_phase": 44,
+      "shrink_rate": 0.0103,
+      "start_on_hand": 832,
+      "start_price": 404,
+      "start_unit_cost": 206
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 605,
+    "hire_cost": 36200,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 36200
+  },
+  "start_cash": 580400,
+  "start_invoices": [
+    {
+      "amount": 66900,
+      "due_in_weeks": 2,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 23,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 500000,
+      "hold_after_weeks": 3,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 280,
+      "name": "Metro Distributors",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 265
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 460000,
+      "hold_after_weeks": 3,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 340,
+      "name": "Coastal Trading",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 4,
+      "unit_cost": 206
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

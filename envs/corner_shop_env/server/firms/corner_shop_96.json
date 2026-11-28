@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.084,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.19,
+    "limit": 2300000,
+    "penalty_apr": 0.045,
+    "start_drawn": 284100,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Pine Pantry",
+  "rent": 246500,
+  "seed": 3000096,
+  "skus": [
+    {
+      "base_demand": 402.8,
+      "elasticity": 2.14,
+      "holding_cost": 8,
+      "id": "A",
+      "liquidation_frac": 0.35,
+      "name": "Coffee beans 1kg",
+      "ref_price": 1374,
+      "season_amp": 0.002,
+      "season_phase": 51,
+      "shrink_rate": 0.0175,
+      "start_on_hand": 859,
+      "start_price": 1374,
+      "start_unit_cost": 587
+    },
+    {
+      "base_demand": 278.4,
+      "elasticity": 1.37,
+      "holding_cost": 4,
+      "id": "B",
+      "liquidation_frac": 0.33,
+      "name": "AA batteries 4pk",
+      "ref_price": 599,
+      "season_amp": 0.086,
+      "season_phase": 17,
+      "shrink_rate": 0.0131,
+      "start_on_hand": 596,
+      "start_price": 599,
+      "start_unit_cost": 298
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 555,
+    "hire_cost": 30800,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 30800
+  },
+  "start_cash": 1116600,
+  "start_invoices": [
+    {
+      "amount": 146600,
+      "due_in_weeks": 0,
+      "supplier": "S1"
+    }
+  ],
+  "start_week_of_year": 46,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 1370000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 230,
+      "name": "Prime Foods",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 3,
+      "unit_cost": 587
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 370000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 150,
+      "name": "Union Wholesale",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 3,
+      "unit_cost": 298
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}

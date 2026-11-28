@@ -1,0 +1,38 @@
+# Copyright 2026 Kayam
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-corner-shop-env"
+version = "0.1.0"
+description = "Corner Shop for OpenEnv - run a small shop for 13 weeks, scored by a going-concern reward that catches end-of-episode cheating"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.14.0",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[project.urls]
+Source = "https://github.com/kayamlabs/corner-shop"
+
+[project.scripts]
+server = "corner_shop_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["corner_shop_env", "corner_shop_env.server", "corner_shop_env.server.going_concern"]
+package-dir = { "corner_shop_env" = ".", "corner_shop_env.server" = "server", "corner_shop_env.server.going_concern" = "server/going_concern" }
+
+[tool.setuptools.package-data]
+"corner_shop_env.server" = ["firms/*.json"]

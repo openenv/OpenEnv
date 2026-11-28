@@ -1,0 +1,112 @@
+{
+  "credit": {
+    "apr": 0.128,
+    "call_grace_weeks": 4,
+    "covenant_min_current_ratio": 1.19,
+    "limit": 1400000,
+    "penalty_apr": 0.047,
+    "start_drawn": 187200,
+    "test_every_weeks": 4
+  },
+  "events": {
+    "bulk_offer_p": 0.08,
+    "cost_increase_p": 0.02,
+    "demand_shock_p": 0.03,
+    "promo_p": 0.06,
+    "scam_legit_p": 0.3,
+    "scam_p": 0.0,
+    "supplier_disruption_p": 0.02
+  },
+  "history_weeks": 4,
+  "name": "Riverside Mart",
+  "rent": 92000,
+  "seed": 3000047,
+  "skus": [
+    {
+      "base_demand": 430.5,
+      "elasticity": 1.63,
+      "holding_cost": 2,
+      "id": "A",
+      "liquidation_frac": 0.45,
+      "name": "Hot sauce",
+      "ref_price": 384,
+      "season_amp": 0.239,
+      "season_phase": 15,
+      "shrink_rate": 0.0184,
+      "start_on_hand": 1062,
+      "start_price": 384,
+      "start_unit_cost": 217
+    },
+    {
+      "base_demand": 277.4,
+      "elasticity": 1.91,
+      "holding_cost": 6,
+      "id": "B",
+      "liquidation_frac": 0.45,
+      "name": "Coffee beans 1kg",
+      "ref_price": 1009,
+      "season_amp": 0.229,
+      "season_phase": 18,
+      "shrink_rate": 0.0259,
+      "start_on_hand": 639,
+      "start_price": 1009,
+      "start_unit_cost": 522
+    }
+  ],
+  "staff": {
+    "capacity_per_head": 594,
+    "hire_cost": 33200,
+    "max_headcount": 6,
+    "severance_weeks": 2.0,
+    "start_headcount": 2,
+    "wage": 33200
+  },
+  "start_cash": 525200,
+  "start_invoices": [
+    {
+      "amount": 130400,
+      "due_in_weeks": 0,
+      "supplier": "S2"
+    }
+  ],
+  "start_week_of_year": 28,
+  "suppliers": [
+    {
+      "adversarial": false,
+      "credit_limit": 440000,
+      "hold_after_weeks": 2,
+      "id": "S1",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 260,
+      "name": "Keystone Trade",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "A",
+      "terms_weeks": 2,
+      "unit_cost": 217
+    },
+    {
+      "adversarial": false,
+      "credit_limit": 620000,
+      "hold_after_weeks": 2,
+      "id": "S2",
+      "late_delivery_p": 0.05,
+      "late_fee_rate": 0.015,
+      "lead_time": 1,
+      "min_order": 230,
+      "name": "Coastal Trading",
+      "overbill_p": 0.0,
+      "prepay": false,
+      "short_ship_p": 0.0,
+      "sku": "B",
+      "terms_weeks": 2,
+      "unit_cost": 522
+    }
+  ],
+  "tier": 1,
+  "version": "gen1-0.1.0",
+  "weeks": 13
+}
