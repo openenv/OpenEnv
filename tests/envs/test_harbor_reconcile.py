@@ -381,3 +381,62 @@ def test_partial_usage_cannot_hide_disagreement(failure):
     else:
         native["steps"].append({"source": "agent", "metrics": {"completion_tokens": 5}})
     assert not reconcile(doc, native).ok
+
+
+# --- converters that split reasoning out of completion_tokens ---------------
+def split_trace(visible, reasoning):
+    """opencode's shape: `completion_tokens` is visible output only, reasoning sits in extra."""
+    return {
+        "schema_version": "1.0",
+        "agent": {"name": "opencode"},
+        "steps": [
+            {
+                "source": "agent",
+                "metrics": {"completion_tokens": v, "extra": {"reasoning_tokens": r}},
+            }
+            for v, r in zip(visible, reasoning, strict=True)
+        ],
+    }
+
+
+def test_reasoning_split_out_of_completion_tokens_still_reconciles():
+    """Harbor's opencode converter reports OpenCode's `tokens.output`, which excludes thinking. The
+    intercept counts every sampled token, so a thinking model failed every rollout with
+    turn_mismatch even though both sides were right (Qwen3.5: 56 visible + 37 reasoning = 93)."""
+    report = reconcile(document([93, 140]), split_trace([56, 100], [37, 40]))
+    assert report.ok
+    assert "atif_reasoning_split" in codes(report)
+    assert "turns_match" in codes(report)
+
+
+def test_reasoning_is_not_added_when_completion_tokens_already_agree():
+    """A converter that already counts reasoning inside completion_tokens must not be double counted:
+    the plain comparison wins and the split path is never consulted."""
+    report = reconcile(document([93, 140]), split_trace([93, 140], [37, 40]))
+    assert report.ok
+    assert "atif_reasoning_split" not in codes(report)
+
+
+def test_reasoning_split_cannot_hide_a_real_disagreement():
+    """Adding reasoning back is only accepted when it produces agreement. Counts that disagree either
+    way still fail the rollout."""
+    report = reconcile(document([93, 140]), split_trace([56, 100], [30, 40]))
+    assert not report.ok
+    assert "turn_mismatch" in fatal_codes(report)
+    assert "atif_reasoning_split" not in codes(report)
+
+
+def test_reasoning_split_with_auxiliary_calls_reconciles():
+    """Split counts combine with the auxiliary-call path: the harness made one extra call that ATIF
+    did not log, and the rest agree once reasoning is added back."""
+    report = reconcile(document([93, 140, 12]), split_trace([56, 100], [37, 40]))
+    assert report.ok
+    assert "atif_reasoning_split" in codes(report)
+    assert "atif_aux_calls" in codes(report)
+
+
+def test_merge_into_atif_accepts_reasoning_split_counts():
+    doc = document([93, 140])
+    merged = atif.merge_into_atif(split_trace([56, 100], [37, 40]), doc)
+    steps = [s for s in merged["steps"] if s["source"] == "agent"]
+    assert [len(s["metrics"]["completion_token_ids"]) for s in steps] == [93, 140]
